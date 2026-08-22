@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rps7200"
+version = "0.1.0"
+description = "Console and Python scanning for the Reflecta RPS 7200, with raw RGB + infrared output"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+# Only changes which TIFF implementation is used; the built-in one is complete.
+tifffile = ["tifffile>=2021.7.2"]
+
+[project.scripts]
+rps7200 = "rps7200.cli:main"
+
+[tool.setuptools]
+packages = ["rps7200"]
