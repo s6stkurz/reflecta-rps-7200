@@ -10,3 +10,10 @@ venv/
 # scan output
 *.tif
 *.tiff
+
+# USB captures - these record traffic from every device on the bus,
+# including keyboard HID reports (i.e. keystrokes). Keep them local.
+*.pcapng
+*.pcap
+
+.DS_Store

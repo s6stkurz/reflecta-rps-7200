@@ -190,6 +190,8 @@ _lib.libusb_release_interface.argtypes = [_handle_p, ctypes.c_int]
 _lib.libusb_release_interface.restype = ctypes.c_int
 _lib.libusb_reset_device.argtypes = [_handle_p]
 _lib.libusb_reset_device.restype = ctypes.c_int
+_lib.libusb_clear_halt.argtypes = [_handle_p, ctypes.c_ubyte]
+_lib.libusb_clear_halt.restype = ctypes.c_int
 _lib.libusb_get_device.argtypes = [_handle_p]
 _lib.libusb_get_device.restype = _dev_p
 _lib.libusb_get_active_config_descriptor.argtypes = [
@@ -289,6 +291,13 @@ class Transport:
         self._raw_open()
 
         if reset:
+            # Clear a stalled bulk endpoint first: while it is halted every
+            # control transfer times out, so the bridge reset below cannot get
+            # through until this succeeds.
+            try:
+                self.clear_halt()
+            except Exception:
+                pass
             try:
                 self.reset()
             except UsbError as exc:
@@ -423,6 +432,11 @@ class Transport:
         if rc < 0 and not (
             rc == LIBUSB_ERROR_TIMEOUT and transferred.value > 0
         ):
+            # Drain the stall before it poisons every later control transfer.
+            try:
+                self.clear_halt()
+            except Exception:
+                pass
             raise UsbError(
                 f"bulk read of {len(view)} bytes failed after "
                 f"{transferred.value} bytes: {_err(rc)}"
@@ -438,6 +452,19 @@ class Transport:
         self._control_out(PORT_PAR_CTRL, _C1284_NINIT | _C1284_NSTROBE)
         self._control_out(PORT_PAR_CTRL, _C1284_NINIT)
         self._control_out(PORT_PAR_DATA, 0xFF)
+
+    def clear_halt(self) -> None:
+        """Clear a stalled bulk-in endpoint.
+
+        A bulk read that times out mid-transfer leaves the endpoint stalled,
+        and the bridge's IEEE1284 reset cannot clear that -- every later control
+        transfer then times out and only a power cycle recovers it. Clearing the
+        halt is the targeted fix and avoids the power cycle.
+        """
+        if not self._handle:
+            return
+        rc = _lib.libusb_clear_halt(self._handle, self.bulk_in_ep)
+        self._log(f"clear_halt on ep {self.bulk_in_ep:#04x}: {_err(rc) if rc else 'ok'}")
 
     def reset(self) -> None:
         """Reset the bridge's IEEE1284 layer (not a USB port reset)."""

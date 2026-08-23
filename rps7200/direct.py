@@ -35,6 +35,8 @@ SCSI_COPY = 0x18
 SCSI_INQUIRY = 0x12
 SCSI_MODE_SELECT = 0x15
 SCSI_SCAN = 0x1B
+SCSI_SLIDE = 0xD1
+SCSI_SET_SCAN_HEAD = 0xD2
 SCSI_READ_GAIN_OFFSET = 0xD7
 SCSI_WRITE_GAIN_OFFSET = 0xDC
 SCSI_READ_STATE = 0xDD
@@ -44,6 +46,8 @@ SUB_SCAN_FRAME = 0x12
 SUB_EXPOSURE = 0x13
 SUB_HIGHLIGHT_SHADOW = 0x14
 SUB_CALIBRATION_INFO = 0x15
+SUB_CAL_DATA = 0x16
+SUB_CMD_17 = 0x17
 
 # Mode: passes
 ONE_PASS_COLOR = 0x80
@@ -64,6 +68,12 @@ QUALITY_SKIP_SHADING = 0x08   # what CyberView sets, and why it works
 QUALITY_FAST_INFRARED = 0x80
 
 BYTE_ORDER_INTEL = 0x01
+
+# Slide / autofeed transport actions
+SLIDE_NEXT = 0x04
+SLIDE_PREV = 0x05
+SLIDE_INIT = 0x10
+SLIDE_RELOAD = 0x40
 
 #: Scanner coordinates are in units of 1/7200 inch.
 COORD_PER_INCH = 7200
@@ -228,11 +238,17 @@ class DirectScanner:
         return self
 
     def close(self) -> None:
-        if self._scanning:
-            try:
-                self.stop_scan()
-            except UsbError:
-                pass
+        # Always attempt both, whatever state we think we are in: a scan left
+        # running, or a command left half-issued, wedges the scanner until it is
+        # power-cycled, and our idea of the state may be wrong.
+        try:
+            self.stop_scan()
+        except Exception:
+            pass
+        try:
+            self.t.reset()
+        except Exception:
+            pass
         if self._own_transport:
             self.t.close()
 
@@ -296,7 +312,7 @@ class DirectScanner:
 
     def read_state(self, retries: int = 3) -> State:
         d = self._query(
-            _cmd(SCSI_READ_STATE, 12), 12, "read_state", retries=retries
+            _cmd(SCSI_READ_STATE, 13), 13, "read_state", retries=retries
         )
         return State(
             button=bool(d[0]), warming_up=bool(d[5]), scanning=d[6], busy=d[8]
@@ -486,7 +502,7 @@ class DirectScanner:
         data[6] = color_format
         data[8] = BYTE_ORDER_INTEL
         data[9] = quality
-        data[12] = halftone_pattern
+        data[12] = halftone_pattern if halftone_pattern else 0x02
         data[13] = line_threshold
         data[14] = 0x10
 
@@ -498,7 +514,47 @@ class DirectScanner:
 
     # -- scanning ----------------------------------------------------------
 
-    def start_scan(self, retries: int = 3) -> None:
+    def cmd_17(self, value: int = 1) -> None:
+        """Vendor command 0x17, sent right after the scan frame.
+
+        This is what makes the scanner *grant* "skip shading analysis". Without
+        it, MODE SELECT with quality bit 0x08 is refused with sense 0x82
+        ("calibration disable not granted"), the scanner insists on a shading
+        pass, and the shading read then stalls at 32768 bytes.
+
+        pieusb has this command but only issues it for models its config marks
+        as having a slide transport -- which is 0 for model 0x31 -- so the stock
+        backend never sends it here. CyberView always does.
+
+        Captured bytes: cmd `0a 00 00 00 06 00`, data `17 00 02 00 01 00`.
+        """
+        data = bytearray(6)
+        data[0:2] = SUB_CMD_17.to_bytes(2, "little")
+        data[2:4] = (2).to_bytes(2, "little")
+        data[4:6] = value.to_bytes(2, "little")
+        self._log(f"cmd_17({value})")
+        self.t.command(_cmd(SCSI_WRITE, 6), data=bytes(data))
+
+    def slide(self, action: int = SLIDE_INIT) -> None:
+        """Drive the film/slide transport.
+
+        pieusb only issues this when its config marks the model as having a
+        slide transport, and for model 0x31 that flag is 0, so the stock backend
+        never initialises the transport at all -- even though INQUIRY reports an
+        ADF. SLIDE_NEXT is also how a whole strip gets advanced frame by frame.
+        """
+        names = {
+            SLIDE_NEXT: "next",
+            SLIDE_PREV: "prev",
+            SLIDE_INIT: "init",
+            SLIDE_RELOAD: "reload",
+        }
+        self._log(f"slide transport: {names.get(action, hex(action))}")
+        # Second byte is 0x16 in CyberView's traffic; pieusb sends 0x01.
+        data = bytes([action, 0x16, 0x00, 0x00])
+        self.t.command(_cmd(SCSI_SLIDE, 4), data=data)
+
+    def start_scan(self, retries: int = 15) -> None:
         """Begin scanning.
 
         The scanner answers CHECK CONDITION / UNIT ATTENTION with sense code
@@ -521,8 +577,24 @@ class DirectScanner:
                     f"  sense key={key:#04x} code={code:#04x} qual={qual:#04x}"
                     f" -- {describe_sense(key, code, qual)}"
                 )
+                if code == 0x04:
+                    # Still becoming ready. TEST UNIT READY can already report
+                    # good while START SCAN does not, so waiting on that would
+                    # spin; sleep on a real clock instead. ~80s from cold.
+                    self._log("  still becoming ready; sleeping 10s")
+                    time.sleep(10)
+                    continue
                 time.sleep(0.5)
 
+        # Leave the scanner usable; an abandoned start wedges it otherwise.
+        try:
+            self.t.command(_cmd(SCSI_SCAN, 0))
+        except Exception:
+            pass
+        try:
+            self.t.reset()
+        except Exception:
+            pass
         code, qual = last if last else (0, 0)
         raise CalibrationRequired(
             f"scanner refused to start: {describe_sense(6, code, qual)} "
@@ -551,7 +623,7 @@ class DirectScanner:
     def get_gain_offset(self) -> Settings:
         """Read the scanner's current exposure/gain/offset."""
         d = self._query(
-            _cmd(SCSI_READ_GAIN_OFFSET, 103), 103, "get_gain_offset"
+            _cmd(SCSI_READ_GAIN_OFFSET, 123), 123, "get_gain_offset"
         )
 
         def short(offset: int) -> int:
