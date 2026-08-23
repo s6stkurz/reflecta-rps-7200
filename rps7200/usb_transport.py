@@ -56,9 +56,13 @@ _IEEE_PREAMBLE = (0xFF, 0xAA, 0x55, 0x00, 0xFF, 0x87, 0x78)
 
 SCSI_COMMAND_LEN = 6
 
-#: Bytes fetched per length handshake. The stock backend asks for the whole
-#: payload at once; this scanner delivers exactly 32 KB and then stalls, so the
-#: payload is windowed instead. Tunable via ``RPS7200_MAX_WINDOW`` for probing.
+#: Bytes fetched per length handshake.
+#:
+#: The vendor software announces a whole read in one handshake, but windowing
+#: at 32 KB is what the two verified full scans used and it works, so it stays.
+#: What does matter is the batch size in read_planes: 216 lines per READ is the
+#: vendor's value and works; 64 does not, and the device simply sends nothing.
+#: Tunable via ``RPS7200_MAX_WINDOW`` for probing.
 MAX_WINDOW = int(os.environ.get("RPS7200_MAX_WINDOW", 0x8000))
 
 #: Bytes per individual bulk transfer inside a window.

@@ -69,6 +69,22 @@ QUALITY_FAST_INFRARED = 0x80
 
 BYTE_ORDER_INTEL = 0x01
 
+#: Bytes prefixed to each line in INDEX colour format; the first is the ASCII
+#: channel letter.
+INDEX_HEADER = 2
+
+#: Channel letters, in the order the scanner tags them.
+CHANNEL_ORDER = "RGBI"
+
+#: Full scan extent, 0-based pixels at maximum resolution. Matches the vendor
+#: software's frame and this scanner's 10344 x 6888 CCD. Used so that scanning
+#: needs no INQUIRY: neither CyberView nor any run that scanned successfully
+#: issues one, and doing so from inside the scan flow has broken reads.
+FULL_FRAME = (0, 0, 10343, 6887)
+
+#: CCD mask length the vendor software requests (pieusb uses shading_width).
+CCD_MASK_SIZE = 5172
+
 # Slide / autofeed transport actions
 SLIDE_NEXT = 0x04
 SLIDE_PREV = 0x05
@@ -91,6 +107,15 @@ class CalibrationRequired(RuntimeError):
 
 class ScanReadError(RuntimeError):
     """The scanner refused a read of image data."""
+
+
+class EndOfData(ScanReadError):
+    """The scanner has no more scan lines to give.
+
+    Reported as ILLEGAL REQUEST / ASC 0x20 once a scan is exhausted, which is
+    indistinguishable by sense alone from a genuinely invalid command -- so it
+    is only treated as end-of-data mid-read.
+    """
 
 
 _SENSE_KEYS = {
@@ -225,6 +250,7 @@ class DirectScanner:
         self._own_transport = transport is None
         self.t = transport or Transport(verbose=verbose)
         self._scanning = False
+        self._inquiry: Inquiry | None = None
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -241,10 +267,8 @@ class DirectScanner:
         # Always attempt both, whatever state we think we are in: a scan left
         # running, or a command left half-issued, wedges the scanner until it is
         # power-cycled, and our idea of the state may be wrong.
-        try:
-            self.stop_scan()
-        except Exception:
-            pass
+        # No STOP SCAN here either; see scan().
+        self._scanning = False
         try:
             self.t.reset()
         except Exception:
@@ -260,7 +284,9 @@ class DirectScanner:
 
     # -- basic commands ----------------------------------------------------
 
-    def inquiry(self) -> Inquiry:
+    def inquiry(self, refresh: bool = False) -> Inquiry:
+        if not refresh and self._inquiry is not None:
+            return self._inquiry
         head = self.t.command(_cmd(SCSI_INQUIRY, 5), read_size=5)
         length = head[4] + 4
         d = self.t.command(_cmd(SCSI_INQUIRY, length), read_size=length)
@@ -272,7 +298,7 @@ class DirectScanner:
             return int.from_bytes(d[offset : offset + 2], "little")
 
         # Offsets follow sanei_pieusb_cmd_inquiry in pieusb_scancmd.c.
-        return Inquiry(
+        result = Inquiry(
             vendor=text(8, 8),
             product=text(16, 16),
             model=short(116),
@@ -287,6 +313,8 @@ class DirectScanner:
             frame=(short(108), short(110), short(112), short(114)),
             preview_resolution=short(54),
         )
+        self._inquiry = result
+        return result
 
     def _query(
         self, command: bytes, read_size: int, label: str, retries: int = 3
@@ -504,7 +532,11 @@ class DirectScanner:
         data[9] = quality
         data[12] = halftone_pattern if halftone_pattern else 0x02
         data[13] = line_threshold
-        data[14] = 0x10
+        # Byte 14 is 0x21 for a four-channel RGBI pass and 0x10 for RGB,
+        # from captures of the vendor software with and without infrared
+        # cleaning enabled. pieusb hardcodes 0x10 (its comment reads "?"),
+        # which is why it never yields an infrared plane.
+        data[14] = 0x21 if passes == ONE_PASS_RGBI else 0x10
 
         self._log(
             f"mode res={resolution} passes={passes:#04x} depth={depth:#04x} "
@@ -601,6 +633,23 @@ class DirectScanner:
             f"(sense code {code:#04x}/{qual:#04x})"
         )
 
+    def finish_scan(self, polls: int = 3) -> None:
+        """End a completed scan the way the vendor software does.
+
+        CyberView never sends STOP SCAN. It reads all the data and then polls
+        READ_STATE while the scanner settles. Sending STOP SCAN after a
+        successful read appears to be what leaves this scanner unresponsive to
+        the next session, so it is reserved for cancelling a scan that is still
+        running.
+        """
+        self._scanning = False
+        for _ in range(polls):
+            try:
+                self.read_state()
+            except (CheckCondition, UsbError, ScanReadError):
+                return
+            time.sleep(0.2)
+
     def stop_scan(self) -> None:
         """Stop scanning. Never raises -- it runs on the cleanup path.
 
@@ -636,7 +685,7 @@ class DirectScanner:
             light=d[75],
         )
 
-    def set_gain_offset(self, s: Settings) -> None:
+    def set_gain_offset(self, s: Settings, infrared: bool = False) -> None:
         """Write exposure/gain/offset.
 
         The scanner will not accept a data READ until this has been sent -- it
@@ -649,8 +698,12 @@ class DirectScanner:
             data[6 + i] = int(s.offset[i]) & 0xFF
             data[12 + i] = int(s.gain[i]) & 0xFF
         data[15] = s.light & 0xFF
-        data[16] = s.extra_entries & 0xFF
+        # With infrared enabled the vendor software sets byte 16 (extra
+        # entries) and byte 27; both are 0 for a plain RGB pass.
+        data[16] = 1 if infrared else (s.extra_entries & 0xFF)
         data[17] = s.double_times & 0xFF
+        if infrared:
+            data[27] = 1
         data[18:20] = int(s.exposure[3]).to_bytes(2, "little")
         data[20] = int(s.offset[3]) & 0xFF
         data[22] = int(s.gain[3]) & 0xFF
@@ -658,14 +711,14 @@ class DirectScanner:
         self._log(f"gain/offset {s.describe()}")
         self.t.command(_cmd(SCSI_WRITE_GAIN_OFFSET, 29), data=bytes(data))
 
-    def calibrate(self) -> Settings:
+    def calibrate(self, infrared: bool = False) -> Settings:
         """Read the scanner's calibration values and write them back.
 
         Enough to satisfy the device's calibration requirement without the
         shading-data read that it cannot complete.
         """
         settings = self.get_gain_offset()
-        self.set_gain_offset(settings)
+        self.set_gain_offset(settings, infrared=infrared)
         return settings
 
     def get_ccd_mask(self, size: int) -> bytes:
@@ -691,7 +744,11 @@ class DirectScanner:
         )
 
     def read_lines(
-        self, lines: int, bytes_per_line: int, retries: int = 3
+        self,
+        lines: int,
+        bytes_per_line: int,
+        retries: int = 3,
+        timeout_ms: int = 120_000,
     ) -> bytes:
         """Read ``lines`` scan lines.
 
@@ -703,7 +760,9 @@ class DirectScanner:
         for _ in range(retries):
             try:
                 return self.t.command(
-                    _cmd(SCSI_READ, lines), read_size=lines * bytes_per_line
+                    _cmd(SCSI_READ, lines),
+                    read_size=lines * bytes_per_line,
+                    timeout_ms=timeout_ms,
                 )
             except CheckCondition:
                 try:
@@ -712,117 +771,213 @@ class DirectScanner:
                     last = f"(sense unavailable: {exc})"
                 self._log(f"  read_lines: {last}")
                 time.sleep(0.3)
+        if "asc=0x20" in last or "code=0x20" in last:
+            raise EndOfData(
+                f"scanner has no more lines (asked for {lines}): {last}"
+            )
         raise ScanReadError(
             f"reading {lines} lines x {bytes_per_line} bytes was refused: {last}"
         )
 
-    def read_image(
+    def read_planes(
         self,
         params: ScanParameters,
         channels: int,
-        max_batch: int = 32,
-        timeout: float = 600.0,
+        batch: int = 216,
+        timeout: float = 1800.0,
+        poll: float = 0.25,
+        idle_timeout: float = 60.0,
     ) -> np.ndarray:
-        """Read a whole frame, pacing against the scanner's available lines.
+        """Read a frame and deinterleave it into ``(H, W, channels)``.
 
-        The scanner exposes ``available_lines``; asking for more than it has
-        ready is what makes a read block until it times out. Batches are capped
-        so a single transfer stays modest.
+        In INDEX colour format the scanner sends one colour plane per line,
+        each prefixed with a 2-byte header whose first byte is the ASCII channel
+        letter -- 'R', 'G', 'B' or 'I'. A frame is therefore ``channels x height``
+        lines of ``bytes_per_line + 2``.
+
+        Reads are paced against ``available_lines``, which rises as the scanner
+        physically scans. Asking for more lines than it has ready makes the read
+        stall until it times out, and a bulk timeout is unrecoverable -- the
+        device then needs a power cycle. This is why the vendor software's reads
+        come in uneven sizes (216, 3, 216, 216, 105, 105): it takes whatever is
+        ready.
         """
-        bpl = params.bytes_per_line
-        total = params.lines
-        out = bytearray(total * bpl)
-        got_lines = 0
+        bpl = params.bytes_per_line + INDEX_HEADER
+        total_lines = channels * params.lines
         deadline = time.monotonic() + timeout
 
-        while got_lines < total:
+        chunks: list[bytes] = []
+        got = 0
+        idle_since: float | None = None
+        while got < total_lines:
             if time.monotonic() > deadline:
                 raise TimeoutError(
-                    f"read {got_lines}/{total} lines before timing out"
+                    f"read {got}/{total_lines} lines before timing out"
                 )
-            current = self.get_parameters()
-            ready = min(current.available_lines, total - got_lines, max_batch)
-            if ready <= 0:
-                time.sleep(0.2)
-                continue
-            # Clear any pending condition first; the scanner rejects READ with
-            # ILLEGAL REQUEST while one is outstanding.
-            self.test_unit_ready()
-            chunk = self.read_lines(ready, bpl)
-            offset = got_lines * bpl
-            out[offset : offset + len(chunk)] = chunk
-            got_lines += ready
-            self._log(f"{got_lines}/{total} lines")
 
-        depth_bytes = bpl // (params.width * channels) if params.width else 2
+            available = self.get_parameters().available_lines
+            if available <= 0:
+                # Nothing scanned yet. Give up only if it stays empty for a
+                # long while, which means the scan has stalled rather than
+                # simply being slower than us.
+                now = time.monotonic()
+                idle_since = idle_since or now
+                if now - idle_since > idle_timeout:
+                    raise ScanReadError(
+                        f"scanner produced no further lines for "
+                        f"{idle_timeout:.0f}s at {got}/{total_lines}"
+                    )
+                time.sleep(poll)
+                continue
+            idle_since = None
+
+            n = min(available, total_lines - got, batch)
+            self.test_unit_ready()
+            try:
+                chunks.append(self.read_lines(n, bpl))
+            except EndOfData:
+                # The scan is exhausted. How many lines that is depends on how
+                # many colour planes the scanner actually produced, so trust it
+                # rather than the expected count.
+                self._log(f"end of data at {got}/{total_lines} lines")
+                break
+            got += n
+            self._log(f"{got}/{total_lines} lines (had {available} ready)")
+
+        return self._deinterleave(b"".join(chunks), params, channels)
+
+    @staticmethod
+    def _deinterleave(
+        blob: bytes, params: ScanParameters, channels: int
+    ) -> np.ndarray:
+        bpl = params.bytes_per_line + INDEX_HEADER
+        depth_bytes = params.bytes_per_line // params.width if params.width else 2
         dtype = np.dtype("<u2") if depth_bytes == 2 else np.dtype(np.uint8)
-        return np.frombuffer(bytes(out), dtype=dtype).reshape(
-            total, params.width, channels
-        )
+
+        planes: dict[str, list[np.ndarray]] = {}
+        for i in range(len(blob) // bpl):
+            line = blob[i * bpl : (i + 1) * bpl]
+            tag = chr(line[0])
+            planes.setdefault(tag, []).append(
+                np.frombuffer(line[INDEX_HEADER:], dtype=dtype)
+            )
+
+        order = [c for c in CHANNEL_ORDER if c in planes]
+        if not order:
+            raise ScanReadError(
+                "no recognisable channel tags in scan data; "
+                f"saw {sorted(set(planes))!r}"
+            )
+        if len(order) != channels:
+            raise ScanReadError(
+                f"expected {channels} channels {list(CHANNEL_ORDER[:channels])}, "
+                f"but the scanner produced {len(order)}: {order} "
+                f"({ {c: len(v) for c, v in planes.items()} })"
+            )
+
+        height = min(len(planes[c]) for c in order)
+        return np.stack([np.array(planes[c][:height]) for c in order], axis=-1)
 
     # -- orchestration -----------------------------------------------------
 
     def scan(
         self,
-        resolution: int = 600,
+        resolution: int = 300,
         infrared: bool = True,
         depth: int = DEPTH_16,
         frame: tuple[int, int, int, int] | None = None,
-        skip_shading: bool = True,
+        advance: bool = False,
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        """Run one full scan and return ``(image, metadata)``."""
-        info = self.inquiry()
-        self.wait_warm()
+        """Run one scan and return ``(image, metadata)``.
 
-        # Setup order follows sane_start in pieusb.c. The scanner rejects a
-        # data READ with ILLEGAL REQUEST unless it has been taken through this
-        # sequence, so the ordering is load-bearing rather than incidental.
+        The command order here is the vendor software's, recovered from a USB
+        capture. It is load-bearing: in particular :meth:`cmd_17` must follow
+        the scan frame, or the scanner refuses to skip shading analysis and the
+        scan cannot complete. See the README.
+        """
+        # Open with READ_STATE polling, as the vendor software does.
+        for _ in range(4):
+            try:
+                if not self.read_state().warming_up:
+                    break
+            except (CheckCondition, ScanReadError):
+                pass
+            time.sleep(1)
+        self.wait_warm()
+        self.test_unit_ready()
+
         self.set_exposure_time()
         self.set_highlight_shadow()
-        self.get_shading_parms()
 
         if frame is None:
-            frame = (0, 0, info.ccd_width - 1, info.ccd_length - 1)
+            frame = FULL_FRAME
         self.set_scan_frame(*frame)
-        self.calibrate()
-        self.wait_ready()
+
+        # Must come after the scan frame. Without it the scanner will not grant
+        # "skip shading analysis" and insists on a shading pass it cannot serve.
+        try:
+            self.cmd_17(1)
+        except CheckCondition:
+            self._log("  cmd_17 reported a condition; continuing")
+
+        settings = self.get_gain_offset()
+        self.set_gain_offset(settings, infrared=infrared)
 
         passes = ONE_PASS_RGBI if infrared else ONE_PASS_COLOR
         channels = 4 if infrared else 3
-        color_format = FORMAT_INDEX if infrared else FORMAT_PIXEL
         self.set_mode(
             resolution=resolution,
             passes=passes,
             depth=depth,
-            color_format=color_format,
-            skip_shading=skip_shading,
+            color_format=FORMAT_INDEX,
+            skip_shading=True,
         )
+        self.test_unit_ready()
+
+        self.slide(SLIDE_INIT)
         self.wait_ready()
 
+        started = time.monotonic()
         self.start_scan()
         try:
             self.wait_ready()
-            # The scanner rejects data reads with ILLEGAL REQUEST until
-            # exposure/gain/offset have been written.
-            self.calibrate()
+            self.get_ccd_mask(CCD_MASK_SIZE)
             params = self.get_parameters()
             self._log(
                 f"params width={params.width} lines={params.lines} "
-                f"bpl={params.bytes_per_line} avail={params.available_lines}"
+                f"bpl={params.bytes_per_line}"
             )
-            image = self.read_image(params, channels)
-        finally:
-            self.stop_scan()
+            image = self.read_planes(params, channels)
+            if advance:
+                self.slide(SLIDE_NEXT)
+        except BaseException:
+            # Deliberately no STOP SCAN. The vendor software never sends it,
+            # and issuing it here reliably leaves the scanner unresponsive to
+            # the next session, needing a power cycle. Settling the bridge is
+            # enough to leave things usable.
+            self._scanning = False
+            try:
+                self.t.reset()
+            except UsbError:
+                pass
+            raise
+        else:
+            self.finish_scan()
 
         meta = {
             "resolution_dpi": resolution,
             "channels": channels,
-            "channel_order": ["R", "G", "B", "I"][:channels],
+            "channel_order": [c for c in CHANNEL_ORDER][:channels]
+            if not infrared
+            else list(CHANNEL_ORDER),
             "depth": 16 if depth == DEPTH_16 else 8,
             "frame": list(frame),
             "width": int(params.width),
-            "lines": int(params.lines),
+            "height": int(params.lines),
             "bytes_per_line": int(params.bytes_per_line),
-            "skip_shading": skip_shading,
+            "exposure": settings.exposure,
+            "gain": settings.gain,
+            "offset": settings.offset,
+            "duration_s": round(time.monotonic() - started, 1),
         }
         return image, meta

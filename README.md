@@ -241,8 +241,12 @@ USB bus. CyberView skips shading entirely and reads image data directly.
 
 Also learned from the capture:
 
-- **`available_lines` must not gate the read.** It reads 0 while a read of the
-  same lines succeeds. Waiting on it was wrong.
+- **`available_lines` paces the read.** It rises as the scanner physically
+  scans, and asking for more lines than are ready stalls the read until it times
+  out -- which is unrecoverable and costs a power cycle. This is why the vendor
+  software's reads come in uneven sizes (216, 3, 216, 216, 105, 105): it takes
+  whatever is ready. (It reads a constant 0 or 7 when the command sequence is
+  wrong, which is misleading; with the correct sequence it behaves properly.)
 - **INDEX colour format delivers one colour plane per line**, each with a 2-byte
   index header, so a scan is `channels x height` lines of `2*width + 2` bytes.
   CyberView's reads were 216+3+216+216+105+105 = 861 lines = 3 x 287 rows.
