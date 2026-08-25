@@ -41,6 +41,7 @@ SCSI_SET_SCAN_HEAD = 0xD2
 SCSI_READ_GAIN_OFFSET = 0xD7
 SCSI_WRITE_GAIN_OFFSET = 0xDC
 SCSI_READ_STATE = 0xDD
+SCSI_VENDOR_E7 = 0xE7   # sent once at session start; purpose unknown
 
 # Sub-commands carried in a WRITE payload
 SUB_SCAN_FRAME = 0x12
@@ -1193,15 +1194,48 @@ class DirectScanner:
             return full_frame
         return x0, y0, x1, y1
 
+    def session_start(self) -> None:
+        """Open a session the way the vendor software does after power-on.
+
+        INQUIRY, then the vendor command 0xE7, then REQUEST SENSE and a SLIDE
+        with `00 01 00 04`. 0xE7 takes no data and its meaning is unknown, but
+        it appears at the start of every captured session and only in the two
+        captures that contain a successful calibration -- so it may be what
+        puts the scanner into a state where calibration is accepted.
+        """
+        self.inquiry(refresh=True)
+        try:
+            self.t.command(_cmd(SCSI_VENDOR_E7, 4))
+            self._log("0xE7 accepted")
+        except CheckCondition:
+            try:
+                self._log(f"0xE7: {self.describe_sense_bytes(self.sense())}")
+            except UsbError:
+                pass
+        except UsbError as exc:
+            self._log(f"0xE7 failed: {exc}")
+        try:
+            self.sense()
+        except UsbError:
+            pass
+        try:
+            self.slide(0x00, param=0x01)
+        except (CheckCondition, UsbError) as exc:
+            self._log(f"opening slide failed: {exc}")
+
     def calibrate_shading(self, timeout: float = 300.0) -> dict[str, Any]:
         """Run the scanner's shading calibration, as the vendor does at startup.
 
-        DOES NOT WORK. Every observable detail below matches a capture taken
-        from scanner power-on, yet READ is still refused with ASC 0x20 and no
-        calibration data is returned. The likely missing piece is the ``0xe7``
-        command (`e7 01 00 00 04 00`) the vendor sends once just after INQUIRY:
-        it appears in both captures containing a calibration and nowhere else,
-        and its meaning is unknown. Use flat_field_gain() for striping instead.
+        This runs and returns data: 40 blocks, 1.66 MB, the scanner ending the
+        pass itself. Whether it actually improves striping is UNVERIFIED -- the
+        scan that would have measured it stalled before completing.
+
+        What blocked this for four attempts was a PARAM call of my own: the
+        vendor issues none during calibration, and mine was refused and
+        evidently disturbed the pass. The width comes from the frame instead.
+        The 0xe7 vendor command is not involved -- it is refused with ASC 0x20,
+        and the vendor follows it immediately with REQUEST SENSE, so it is
+        refused there too.
 
         Reconstructed from a capture taken from scanner power-on: this is the
         very first thing the vendor software does once the device is ready, and
@@ -1262,14 +1296,17 @@ class DirectScanner:
         self.wait_ready()
 
         started = time.monotonic()
+        # Width comes from the frame, not from PARAM: the vendor issues no
+        # PARAM at all during calibration, and calling it here is rejected and
+        # may disturb the scan. Lines are 16-bit whatever the mode depth says.
+        x0, _, x1, _ = CALIBRATION_FRAME
+        width = round((x1 - x0) * 3600 / COORD_PER_INCH)
+        bpl = 2 * width + INDEX_HEADER
+
         self.start_scan()
         drained = 0
         try:
-            self.wait_ready()
-            params = self.get_parameters()
-            # 16-bit lines regardless of the mode depth
-            bpl = 2 * params.width + INDEX_HEADER
-            self._log(f"calibration reads: {bpl} bytes/line")
+            self._log(f"calibration reads: {bpl} bytes/line (width {width})")
 
             # The vendor issues nothing at all for nine seconds after START
             # SCAN -- not a poll, literal silence -- then TEST UNIT READY and
@@ -1279,23 +1316,32 @@ class DirectScanner:
             time.sleep(10.0)
             self.test_unit_ready()
 
+            # The vendor alternates 4-line and 72-line reads, but conditionally
+            # -- after a 4-line read it sometimes takes 72 and sometimes not,
+            # judging by the data. Since that condition is unknown, read in
+            # small fixed blocks until the scanner refuses. A refusal (ASC 0x20)
+            # is answered before any transfer and is harmless; asking for lines
+            # that do not exist stalls the bulk transfer instead, and a bulk
+            # timeout leaves the device needing a power cycle.
             deadline = time.monotonic() + timeout
-            for lines in (4, 72, 4, 72, 4, 72, 4):
-                if time.monotonic() > deadline:
-                    break
+            blocks = 0
+            while time.monotonic() < deadline:
                 try:
                     self.set_gain_offset(self.get_gain_offset())
                 except (CheckCondition, ScanReadError):
                     pass
                 try:
-                    chunk = self.read_lines(lines, bpl, retries=2)
+                    chunk = self.read_lines(4, bpl, retries=1)
                 except NoDataYet:
-                    time.sleep(0.2)
+                    time.sleep(0.05)
                     continue
                 except (EndOfData, ScanReadError):
+                    self._log(f"  scanner finished after {blocks} blocks")
                     break
                 drained += len(chunk)
-                self._log(f"  read {lines} lines -> {len(chunk)} bytes")
+                blocks += 1
+                if blocks % 10 == 0:
+                    self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
             self.get_ccd_mask(CCD_MASK_SIZE)
         finally:
             self.finish_scan()
