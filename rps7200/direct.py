@@ -63,9 +63,14 @@ FORMAT_PIXEL = 0x01   # R,G,B[,I] interleaved per pixel
 FORMAT_LINE = 0x02
 FORMAT_INDEX = 0x04
 
-# Mode: quality bitmask
+# Mode: quality field. Bytes 9 and 10 of the MODE payload behave as one
+# 16-bit little-endian value. Across 33 scan cycles in six captures of the
+# vendor software, 32 send 0x0008 and exactly one sends 0x0800 -- so 0x0008
+# means "reuse the calibration already held" and 0x0800 means "calibrate now".
+# Sending neither (both bytes zero) does nothing at all.
 QUALITY_SHARPEN = 0x02
-QUALITY_SKIP_SHADING = 0x08   # what CyberView sets, and why it works
+QUALITY_SKIP_SHADING = 0x08     # reuse existing calibration
+QUALITY_CALIBRATE = 0x0800      # run a shading calibration pass
 QUALITY_FAST_INFRARED = 0x80
 
 BYTE_ORDER_INTEL = 0x01
@@ -702,6 +707,7 @@ class DirectScanner:
         depth: int = DEPTH_16,
         color_format: int = FORMAT_PIXEL,
         skip_shading: bool = True,
+        calibrate: bool = False,
         sharpen: bool = False,
         fast_infrared: bool = False,
         halftone_pattern: int = 0,
@@ -715,8 +721,10 @@ class DirectScanner:
         quality = 0
         if sharpen:
             quality |= QUALITY_SHARPEN
-        if skip_shading:
-            quality |= QUALITY_SKIP_SHADING
+        if calibrate:
+            quality |= QUALITY_CALIBRATE      # byte 10; excludes skip-shading
+        elif skip_shading:
+            quality |= QUALITY_SKIP_SHADING   # byte 9
         if fast_infrared:
             quality |= QUALITY_FAST_INFRARED
 
@@ -727,7 +735,7 @@ class DirectScanner:
         data[5] = depth
         data[6] = color_format
         data[8] = BYTE_ORDER_INTEL
-        data[9] = quality
+        data[9:11] = int(quality).to_bytes(2, "little")
         data[12] = halftone_pattern if halftone_pattern else 0x02
         data[13] = line_threshold
         # Byte 14 is 0x21 for a four-channel RGBI pass and 0x10 for RGB,
@@ -1196,9 +1204,15 @@ class DirectScanner:
         calibrates, and per-element gain variation shows up as vertical
         striping.
 
-        This is why the vendor needs no clear film for flat-fielding: the
-        scanner corrects itself, and the correction then applies at every
-        resolution. Best run with clear or unexposed film in the transport.
+        DOES NOT WORK YET. This reproduces the one calibration cycle visible
+        across six captures -- 16-bit quality 0x0800, 8-bit depth, 3600 dpi, the
+        vendor's calibration frame, the 128-byte CALINFO read, cmd_17, and the
+        gain/offset echoing -- and the pass does run (50s rather than the 10s of
+        an unaccepted one, and the info block reads correctly). But measured
+        striping on clear film is unchanged afterwards, so whatever completes
+        the calibration is not visible in the capture: most likely something the
+        host computes from the data it reads, or the unexplained 0xe7 command
+        sent once at session start. Use flat_field_gain() instead.
 
         The data returned during this pass is calibration data, not an image --
         it carries no channel tags -- so it is drained and discarded.
@@ -1218,7 +1232,22 @@ class DirectScanner:
 
         self.set_exposure_time()
         self.set_highlight_shadow()
+
+        # Calibration reads a 128-byte info block, where an ordinary scan preps
+        # differently and reads 32. Captured: prep `95 00 02 00 00 00`, then
+        # READ 0x80 bytes.
+        prep = bytearray(6)
+        prep[0:2] = (SUB_CALIBRATION_INFO | 0x80).to_bytes(2, "little")
+        prep[2:4] = (2).to_bytes(2, "little")
+        try:
+            self.t.command(_cmd(SCSI_WRITE, 6), data=bytes(prep))
+            info = self._query(_cmd(SCSI_READ, 128), 128, "calibration_info")
+            self._log(f"calibration info: {len(info)} bytes, {info[:12].hex(' ')}")
+        except (CheckCondition, ScanReadError) as exc:
+            self._log(f"calibration info read failed ({exc}); continuing")
+
         self.set_scan_frame(*frame)
+        # cmd_17 IS sent here by the vendor, even for a calibration pass.
         try:
             self.cmd_17(1)
         except CheckCondition:
@@ -1229,9 +1258,9 @@ class DirectScanner:
         self.set_mode(
             resolution=resolution,
             passes=ONE_PASS_COLOR,
-            depth=DEPTH_16,
+            depth=DEPTH_8,               # the vendor calibrates in 8-bit
             color_format=FORMAT_INDEX,
-            skip_shading=False,          # the whole point: let it calibrate
+            calibrate=True,              # quality 0x0800, not 0x0008
         )
         self.test_unit_ready()
         self.slide(SLIDE_INIT)
@@ -1266,6 +1295,14 @@ class DirectScanner:
                     break
                 idle_since = None
                 drained += len(chunk)
+                # The vendor re-reads and re-writes gain/offset between reads
+                # during this pass; the values barely change, so this looks like
+                # keeping the scanner's own loop turning rather than the host
+                # computing anything.
+                try:
+                    self.set_gain_offset(self.get_gain_offset())
+                except (CheckCondition, ScanReadError):
+                    pass
             self._log(f"calibration data drained: {drained} bytes")
         finally:
             self.finish_scan()
