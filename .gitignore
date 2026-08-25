@@ -17,3 +17,8 @@ venv/
 *.pcap
 
 .DS_Store
+
+# working data, kept locally
+scans/
+previews/
+captures/
