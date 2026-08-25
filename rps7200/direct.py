@@ -235,6 +235,10 @@ def batch_for(bytes_per_line: int) -> int:
 MIN_INSET_X = 96
 MIN_INSET_Y = 71
 
+#: Frame the vendor scans for shading calibration -- the lower part of the
+#: transport, not the picture area.
+CALIBRATION_FRAME = (0, 3431, 10343, 6888)
+
 #: Full scan extent, 0-based pixels at maximum resolution. Matches the vendor
 #: software's frame and this scanner's 10344 x 6888 CCD. Used so that scanning
 #: needs no INQUIRY: neither CyberView nor any run that scanned successfully
@@ -773,7 +777,7 @@ class DirectScanner:
         self._log(f"cmd_17({value})")
         self.t.command(_cmd(SCSI_WRITE, 6), data=bytes(data))
 
-    def slide(self, action: int = SLIDE_INIT) -> None:
+    def slide(self, action: int = SLIDE_INIT, param: int = 0x16) -> None:
         """Drive the film/slide transport.
 
         pieusb only issues this when its config marks the model as having a
@@ -789,7 +793,7 @@ class DirectScanner:
         }
         self._log(f"slide transport: {names.get(action, hex(action))}")
         # Second byte is 0x16 in CyberView's traffic; pieusb sends 0x01.
-        data = bytes([action, 0x16, 0x00, 0x00])
+        data = bytes([action, param, 0x00, 0x00])
         self.t.command(_cmd(SCSI_SLIDE, 4), data=data)
 
     def start_scan(
@@ -1189,37 +1193,34 @@ class DirectScanner:
             return full_frame
         return x0, y0, x1, y1
 
-    def calibrate_shading(
-        self,
-        resolution: int = 3600,
-        frame: tuple[int, int, int, int] | None = None,
-        timeout: float = 600.0,
-    ) -> dict[str, Any]:
-        """Run the scanner's own shading calibration.
+    def calibrate_shading(self, timeout: float = 300.0) -> dict[str, Any]:
+        """Run the scanner's shading calibration, as the vendor does at startup.
 
-        The mode quality bit 0x08 means "skip shading analysis", i.e. reuse the
-        calibration already held -- not "apply no correction". The vendor
-        software runs exactly one scan per session with that bit clear, and
-        every later scan reuses the result. Without it the scanner never
-        calibrates, and per-element gain variation shows up as vertical
-        striping.
+        DOES NOT WORK. Every observable detail below matches a capture taken
+        from scanner power-on, yet READ is still refused with ASC 0x20 and no
+        calibration data is returned. The likely missing piece is the ``0xe7``
+        command (`e7 01 00 00 04 00`) the vendor sends once just after INQUIRY:
+        it appears in both captures containing a calibration and nowhere else,
+        and its meaning is unknown. Use flat_field_gain() for striping instead.
 
-        DOES NOT WORK YET. This reproduces the one calibration cycle visible
-        across six captures -- 16-bit quality 0x0800, 8-bit depth, 3600 dpi, the
-        vendor's calibration frame, the 128-byte CALINFO read, cmd_17, and the
-        gain/offset echoing -- and the pass does run (50s rather than the 10s of
-        an unaccepted one, and the info block reads correctly). But measured
-        striping on clear film is unchanged afterwards, so whatever completes
-        the calibration is not visible in the capture: most likely something the
-        host computes from the data it reads, or the unexplained 0xe7 command
-        sent once at session start. Use flat_field_gain() instead.
+        Reconstructed from a capture taken from scanner power-on: this is the
+        very first thing the vendor software does once the device is ready, and
+        every later scan reuses the result (mode quality 0x0008, "reuse", versus
+        0x0800 here, "calibrate now").
 
-        The data returned during this pass is calibration data, not an image --
-        it carries no channel tags -- so it is drained and discarded.
+        Details that matter, all of which differ from an ordinary scan:
+
+        * frame ``(0, 3431, 10343, 6888)`` -- the lower part of the transport
+        * 3600 dpi, three channels, mode depth 8-bit
+        * ``SLIDE INIT`` carries ``10 01 00 00`` here, not the 0x15/0x16 second
+          byte seen elsewhere
+        * calibration lines come back **16-bit regardless of the mode depth**:
+          2 * width + 2 bytes, so 10346 at 3600 dpi. Sizing the read from the
+          mode depth reads nothing at all, which is why an earlier attempt
+          drained zero bytes.
+        * the vendor alternates 4-line and 72-line reads, re-reading and
+          re-writing gain/offset between them
         """
-        frame = frame or (0, 1440, 10344, 5450)   # the vendor's calibration frame
-        self._log(f"shading calibration at {resolution} dpi, frame {frame}")
-
         for _ in range(4):
             try:
                 if not self.read_state().warming_up:
@@ -1233,84 +1234,74 @@ class DirectScanner:
         self.set_exposure_time()
         self.set_highlight_shadow()
 
-        # Calibration reads a 128-byte info block, where an ordinary scan preps
-        # differently and reads 32. Captured: prep `95 00 02 00 00 00`, then
-        # READ 0x80 bytes.
         prep = bytearray(6)
         prep[0:2] = (SUB_CALIBRATION_INFO | 0x80).to_bytes(2, "little")
         prep[2:4] = (2).to_bytes(2, "little")
         try:
             self.t.command(_cmd(SCSI_WRITE, 6), data=bytes(prep))
             info = self._query(_cmd(SCSI_READ, 128), 128, "calibration_info")
-            self._log(f"calibration info: {len(info)} bytes, {info[:12].hex(' ')}")
+            self._log(f"calibration info: {info[:12].hex(' ')}")
         except (CheckCondition, ScanReadError) as exc:
             self._log(f"calibration info read failed ({exc}); continuing")
 
-        self.set_scan_frame(*frame)
-        # cmd_17 IS sent here by the vendor, even for a calibration pass.
+        self.set_scan_frame(*CALIBRATION_FRAME)
         try:
             self.cmd_17(1)
         except CheckCondition:
-            self._log("  cmd_17 reported a condition; continuing")
-        settings = self.get_gain_offset()
-        self.set_gain_offset(settings)
+            pass
+        self.set_gain_offset(self.get_gain_offset())
 
         self.set_mode(
-            resolution=resolution,
+            resolution=3600,
             passes=ONE_PASS_COLOR,
-            depth=DEPTH_8,               # the vendor calibrates in 8-bit
+            depth=DEPTH_8,
             color_format=FORMAT_INDEX,
-            calibrate=True,              # quality 0x0800, not 0x0008
+            calibrate=True,
         )
-        self.test_unit_ready()
-        self.slide(SLIDE_INIT)
+        self.slide(SLIDE_INIT, param=0x01)
         self.wait_ready()
 
         started = time.monotonic()
         self.start_scan()
+        drained = 0
         try:
             self.wait_ready()
-            self.get_ccd_mask(CCD_MASK_SIZE)
             params = self.get_parameters()
-            bpl = params.bytes_per_line + INDEX_HEADER
-            batch = batch_for(bpl)
-            self._log(
-                f"draining calibration data: {params.lines} lines x {bpl} bytes"
-            )
+            # 16-bit lines regardless of the mode depth
+            bpl = 2 * params.width + INDEX_HEADER
+            self._log(f"calibration reads: {bpl} bytes/line")
 
-            drained = 0
+            # The vendor issues nothing at all for nine seconds after START
+            # SCAN -- not a poll, literal silence -- then TEST UNIT READY and
+            # its first read. Polling here instead appears to disturb the
+            # calibration: doing so left every read refused with ASC 0x20.
+            self._log("waiting 10s in silence, as the vendor does")
+            time.sleep(10.0)
+            self.test_unit_ready()
+
             deadline = time.monotonic() + timeout
-            idle_since: float | None = None
-            while time.monotonic() < deadline:
-                try:
-                    chunk = self.read_lines(batch, bpl, retries=1)
-                except NoDataYet:
-                    now = time.monotonic()
-                    idle_since = idle_since or now
-                    if now - idle_since > 60.0:
-                        break
-                    time.sleep(0.02)
-                    continue
-                except EndOfData:
+            for lines in (4, 72, 4, 72, 4, 72, 4):
+                if time.monotonic() > deadline:
                     break
-                idle_since = None
-                drained += len(chunk)
-                # The vendor re-reads and re-writes gain/offset between reads
-                # during this pass; the values barely change, so this looks like
-                # keeping the scanner's own loop turning rather than the host
-                # computing anything.
                 try:
                     self.set_gain_offset(self.get_gain_offset())
                 except (CheckCondition, ScanReadError):
                     pass
-            self._log(f"calibration data drained: {drained} bytes")
+                try:
+                    chunk = self.read_lines(lines, bpl, retries=2)
+                except NoDataYet:
+                    time.sleep(0.2)
+                    continue
+                except (EndOfData, ScanReadError):
+                    break
+                drained += len(chunk)
+                self._log(f"  read {lines} lines -> {len(chunk)} bytes")
+            self.get_ccd_mask(CCD_MASK_SIZE)
         finally:
             self.finish_scan()
 
         return {
             "shading_calibration": True,
-            "resolution_dpi": resolution,
-            "frame": list(frame),
             "bytes_drained": drained,
             "duration_s": round(time.monotonic() - started, 1),
         }
