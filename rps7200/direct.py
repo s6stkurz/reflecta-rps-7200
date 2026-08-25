@@ -247,6 +247,52 @@ def correct_scan(
     return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
 
 
+def destripe(
+    image: np.ndarray,
+    defects: np.ndarray,
+    margin: int = 10,
+    max_correction: float = 2.0,
+) -> np.ndarray:
+    """Remove known column defects, measuring their strength in this scan.
+
+    A flat locates defects reliably, but their magnitude changes with exposure:
+    the same defect measured 4.7% in a flat and 9.6% in a scan taken at a
+    different exposure, so importing the strength from the flat only half
+    corrects it.
+
+    So take the positions from the flat and the strength from the image. For
+    each run of defective columns, the expected column profile is interpolated
+    from good columns on either side; the ratio of actual to expected is the
+    defect's strength here, and dividing by it removes exactly that. Nothing
+    outside a known defect is touched, so real vertical detail elsewhere in the
+    picture survives.
+    """
+    if defects.shape[0] != image.shape[1] or not defects.any():
+        return image
+
+    out = image.astype(np.float64).copy()
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], defects.view(np.int8), [0]))))
+    runs = list(zip(edges[::2], edges[1::2]))
+
+    for c in range(image.shape[2]):
+        prof = np.median(out[..., c], axis=0)
+        for lo, hi in runs:
+            left = slice(max(0, lo - margin), lo)
+            right = slice(hi, min(len(prof), hi + margin))
+            good_x = np.concatenate([np.arange(len(prof))[left], np.arange(len(prof))[right]])
+            if good_x.size < 2:
+                continue
+            expected = np.interp(np.arange(lo, hi), good_x, prof[good_x])
+            actual = prof[lo:hi]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ratio = np.where(expected > 0, actual / expected, 1.0)
+            ratio = np.clip(np.where(np.isfinite(ratio), ratio, 1.0),
+                            1.0 / max_correction, max_correction)
+            out[:, lo:hi, c] /= ratio[None, :]
+
+    return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
+
+
 def flat_field_gain(
     flat: np.ndarray,
     highpass: bool = True,
