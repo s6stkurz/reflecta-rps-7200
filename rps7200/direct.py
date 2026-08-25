@@ -93,22 +93,20 @@ READ_BUDGET_BYTES = 512 * 1024
 MAX_BATCH_LINES = 216
 
 
-def gain_from_calibration(
-    data: bytes, bytes_per_line: int, highpass: bool = True, window: int = 65
-) -> np.ndarray:
-    """Build a flat-field gain from the scanner's own calibration data.
+def calibration_references(
+    data: bytes, bytes_per_line: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split calibration data into dark and light references.
 
-    :meth:`DirectScanner.calibrate_shading` returns 16-bit lines tagged by
-    channel -- 40 each of R, G, B and I -- read from the scanner's internal
-    reference area rather than through film. That makes it a better source for
-    the correction than a flat shot through an unexposed negative: no film base
-    to cancel, no risk of a scratch in the flat being stamped into every scan.
+    The pass captures a two-point sensor calibration, not an image: roughly
+    half the lines are a dark reference (lamp blocked, giving each element's
+    offset and dark current) and half a light reference (lamp unobstructed,
+    giving each element's gain). This is why it works on an unknown film strip
+    -- it never measures the film.
 
-    Returns ``(width, channels)`` in R, G, B, I order, as
-    :func:`apply_flat_field` expects.
+    Returns ``(dark, light)``, each ``(width, channels)`` in R, G, B, I order.
     """
     lines = len(data) // bytes_per_line
-    width = (bytes_per_line - INDEX_HEADER) // 2
     planes: dict[str, list[np.ndarray]] = {}
     for i in range(lines):
         line = data[i * bytes_per_line : (i + 1) * bytes_per_line]
@@ -120,24 +118,53 @@ def gain_from_calibration(
     if not order:
         raise ValueError(f"no channel tags in calibration data; saw {sorted(planes)}")
 
-    stack = np.stack(
-        [np.median(np.array(planes[c], dtype=np.float64), axis=0) for c in order],
-        axis=-1,
-    )   # (width, channels)
+    darks, lights = [], []
+    for c in order:
+        rows = np.array(planes[c], dtype=np.float64)
+        level = rows.mean(axis=1)
+        # Split at the midpoint of the range: the two groups are far apart.
+        cut = (level.min() + level.max()) / 2.0
+        dark_rows, light_rows = rows[level <= cut], rows[level > cut]
+        if dark_rows.size == 0 or light_rows.size == 0:
+            raise ValueError(
+                f"channel {c!r} has no clear dark/light split "
+                f"(levels {level.min():.0f}..{level.max():.0f})"
+            )
+        darks.append(np.median(dark_rows, axis=0))
+        lights.append(np.median(light_rows, axis=0))
+
+    return np.stack(darks, axis=-1), np.stack(lights, axis=-1)
+
+
+def gain_from_calibration(
+    data: bytes, bytes_per_line: int, highpass: bool = True, window: int = 65
+) -> np.ndarray:
+    """Per-column gain from the scanner's own calibration data.
+
+    Uses the dark and light references properly: an element's response is
+    ``light - dark``, so the gain is that span normalised. Taking a plain
+    median across all the lines instead would average black and white together
+    and measure nothing useful.
+
+    Returns ``(width, channels)`` in R, G, B, I order, for
+    :func:`apply_flat_field`.
+    """
+    dark, light = calibration_references(data, bytes_per_line)
+    span = light - dark
+    span = np.where(span > 1.0, span, 1.0)
 
     if highpass:
         k = max(3, int(window) | 1)
         pad = k // 2
-        smooth = np.empty_like(stack)
-        for c in range(stack.shape[1]):
-            padded = np.pad(stack[:, c], pad, mode="reflect")
-            smooth[:, c] = np.convolve(padded, np.ones(k) / k, mode="valid")
-        reference = smooth
+        reference = np.empty_like(span)
+        for c in range(span.shape[1]):
+            padded = np.pad(span[:, c], pad, mode="reflect")
+            reference[:, c] = np.convolve(padded, np.ones(k) / k, mode="valid")
     else:
-        reference = stack.mean(axis=0, keepdims=True)
+        reference = span.mean(axis=0, keepdims=True)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        gain = stack / reference
+        gain = span / reference
     return np.where(np.isfinite(gain) & (gain > 0), gain, 1.0)
 
 
@@ -222,29 +249,111 @@ def combine_flats(flats: Sequence[np.ndarray]) -> np.ndarray:
     return np.median(np.stack(stack), axis=0).astype(stack[0].dtype)
 
 
-def resample_gain(gain: np.ndarray, width: int) -> np.ndarray:
-    """Rescale a flat-field gain to a different image width.
+def resample_reference(
+    reference: np.ndarray,
+    ref_frame: tuple[int, int, int, int],
+    width: int,
+    frame: tuple[int, int, int, int],
+) -> np.ndarray:
+    """Map a per-column reference onto a scan's columns by scanner position.
 
-    CCD elements are physical and fixed, so one flat captured at high
-    resolution serves every lower one: a scan at half the resolution bins pairs
-    of elements, so the gain bins the same way. This means calibrating once --
-    ideally at the highest resolution used -- rather than once per resolution.
-
-    Widths that are not exact multiples fall back to interpolation, which is
-    approximate but close, since neighbouring elements differ only slightly.
+    Columns must be matched by where they sit on the sensor, not by a width
+    ratio. The calibration covers one x range and a scan may cover another, at
+    any resolution; scaling by width alone drifts progressively across the
+    frame, which smears each stripe over its neighbours instead of cancelling
+    it -- visibly making stripes broader and softer rather than removing them.
     """
-    have = gain.shape[0]
-    if have == width:
-        return gain
-    if have % width == 0:
-        factor = have // width
-        return gain[: width * factor].reshape(width, factor, gain.shape[1]).mean(axis=1)
+    rx0, _, rx1, _ = ref_frame
+    sx0, _, sx1, _ = frame
+    have = reference.shape[0]
 
-    src = np.linspace(0.0, 1.0, have)
-    dst = np.linspace(0.0, 1.0, width)
+    # x position of each source sample and each destination column
+    src_x = rx0 + (np.arange(have) + 0.5) * (rx1 - rx0) / have
+    dst_x = sx0 + (np.arange(width) + 0.5) * (sx1 - sx0) / width
+
     return np.stack(
-        [np.interp(dst, src, gain[:, c]) for c in range(gain.shape[1])], axis=-1
+        [np.interp(dst_x, src_x, reference[:, c]) for c in range(reference.shape[1])],
+        axis=-1,
     )
+
+
+def defective_columns(
+    light: np.ndarray, tolerance: float = 0.06, window: int = 25
+) -> np.ndarray:
+    """Find columns that respond abnormally under uniform illumination.
+
+    A CCD element that reads far from its neighbours when the lamp shines
+    evenly is genuinely defective, and shows in scans as a sharp vertical line.
+    This is different from the gain variation a flat-field corrects, and needs
+    interpolation rather than scaling.
+
+    Note the scanner's own CCD mask is *not* a defect map: it flags every 12th
+    column exactly, which is structural. Interpolating on it would blur 8% of
+    the image for nothing.
+
+    Returns a boolean array, True where the column is defective.
+    """
+    k = max(3, int(window) | 1)
+    pad = k // 2
+    bad = np.zeros(light.shape[0], dtype=bool)
+    for c in range(light.shape[1]):
+        col = light[:, c]
+        smooth = np.convolve(np.pad(col, pad, mode="reflect"), np.ones(k) / k, "valid")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            dev = np.abs(col - smooth) / np.where(smooth > 0, smooth, 1)
+        bad |= dev > tolerance
+    return bad
+
+
+def interpolate_columns(image: np.ndarray, bad: np.ndarray) -> np.ndarray:
+    """Replace defective columns by interpolating from their good neighbours."""
+    if bad.shape[0] != image.shape[1] or not bad.any():
+        return image
+    good = np.flatnonzero(~bad)
+    idx = np.flatnonzero(bad)
+    if good.size == 0:
+        return image
+    out = image.astype(np.float64).copy()
+    for c in range(image.shape[2]):
+        for row in range(out.shape[0]):
+            out[row, idx, c] = np.interp(idx, good, out[row, good, c])
+    return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
+
+
+def apply_calibration(
+    image: np.ndarray,
+    dark: np.ndarray,
+    gain: np.ndarray,
+    frame: tuple[int, int, int, int],
+    ref_frame: tuple[int, int, int, int] | None = None,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Full two-point correction: ``(raw - dark) / gain``.
+
+    Both halves matter. The dark reference is a per-element offset -- additive,
+    so dividing alone cannot remove it. The gain is the element's response
+    span. Applying only the gain, as an earlier version did, leaves the
+    additive component untouched.
+    """
+    ref_frame = ref_frame or CALIBRATION_FRAME
+    w = image.shape[1]
+    d = resample_reference(dark, ref_frame, w, frame)
+    g = resample_reference(gain, ref_frame, w, frame)
+
+    channels = min(image.shape[2], d.shape[1], g.shape[1])
+    out = image.astype(np.float64).copy()
+    out[..., :channels] -= d[None, :, :channels]
+    out[..., :channels] /= np.where(g[None, :, :channels] > 0, g[None, :, :channels], 1.0)
+
+    if mask is not None and mask.shape[0] == w:
+        bad = np.flatnonzero(mask == 0)
+        good = np.flatnonzero(mask != 0)
+        if good.size and bad.size:
+            for c in range(image.shape[2]):
+                for row in range(out.shape[0]):
+                    out[row, bad, c] = np.interp(bad, good, out[row, good, c])
+
+    return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
 
 
 def apply_flat_field(
@@ -252,8 +361,10 @@ def apply_flat_field(
 ) -> np.ndarray:
     """Divide out the per-column gain, and interpolate flagged dead columns."""
     if image.shape[1] != gain.shape[0]:
-        # One flat serves every resolution; bin or interpolate it to fit.
-        gain = resample_gain(gain, image.shape[1])
+        # Legacy path: no frame information, so interpolate across the width.
+        # Prefer apply_calibration(), which matches columns by scanner position.
+        frame = (0, 0, gain.shape[0], 1)
+        gain = resample_reference(gain, frame, image.shape[1], frame)
     channels = min(image.shape[2], gain.shape[1])
     out = image.astype(np.float64).copy()
     out[..., :channels] /= gain[None, :, :channels]
@@ -1520,6 +1631,20 @@ class DirectScanner:
         the scan frame, or the scanner refuses to skip shading analysis and the
         scan cannot complete. See the README.
         """
+        if auto_exposure:
+            # Probe in the same mode as the scan. Scans otherwise run at the
+            # scanner's defaults, which land around 3-10% of full scale --
+            # most of the 16-bit range unused. Probing in a different mode does
+            # not work: the channels, blue especially, behave differently with
+            # and without infrared, so an RGB probe cannot predict an RGBI scan.
+            self._log(f"auto-exposure: probing (infrared={infrared})")
+            exposure_scale = self.auto_exposure(
+                target=exposure_target, infrared=infrared
+            )
+            self._log(
+                f"auto-exposure: {[round(v, 3) for v in exposure_scale]}"
+            )
+
         # Open with READ_STATE polling, as the vendor software does.
         for _ in range(4):
             try:
