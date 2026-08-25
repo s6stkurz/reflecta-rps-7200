@@ -27,15 +27,24 @@ from rps7200.direct import (
 
 Image.MAX_IMAGE_PIXELS = None
 FULL = (0, 0, 10343, 6887)
+SIGMA = float(__import__("os").environ.get("RPS_SIGMA", 3.0))
 
 
 def worst_defect(image: np.ndarray, edge: int = 60) -> float:
-    """Largest column deviation, in percent, ignoring the film edge."""
-    col = np.median(image[..., 1].astype(np.float64), axis=0)
+    """Largest column deviation, in percent, ignoring the film edge.
+
+    Measured over every channel. Looking at green alone understates it badly --
+    this is a trilinear CCD and its worst defects sit in one colour, so a
+    green-only metric read 9.62% where the true figure was 14.43%.
+    """
+    worst = 0.0
     k, pad = 25, 12
-    smooth = np.convolve(np.pad(col, pad, mode="reflect"), np.ones(k) / k, "valid")
-    dev = np.abs(col - smooth) / np.median(col)
-    return 100 * dev[edge:-edge].max()
+    for c in range(image.shape[2]):
+        col = np.median(image[..., c].astype(np.float64), axis=0)
+        smooth = np.convolve(np.pad(col, pad, mode="reflect"), np.ones(k) / k, "valid")
+        dev = np.abs(col - smooth) / np.median(col)
+        worst = max(worst, 100 * dev[edge:-edge].max())
+    return worst
 
 
 def invert(image: np.ndarray) -> np.ndarray:
@@ -59,17 +68,20 @@ def main() -> None:
     print(f"scan {scan_path}  {raw.shape}")
 
     vignette, _ = scanner_corrections(flat, tolerance=0.015)
-    # Threshold the flat against its own noise rather than a fixed percentage:
-    # a fixed cutoff flagged 453 mostly-noise columns, which dilation then blew
-    # up to 81% of the image for no gain in correction.
-    flat_defects = flat_defect_sigma(flat) > 4.0
+    # Both detectors are thresholded against their own noise rather than a fixed
+    # percentage: a fixed cutoff flagged 453 mostly-noise columns, which dilation
+    # then blew up to 81% of the image for no gain. Both are per-channel, because
+    # this sensor's defects usually sit in one colour only.
+    nc = raw.shape[2]
+    flat_defects = (flat_defect_sigma(flat) > 4.0)[:, :nc]
     from_flat = resample_reference(
-        flat_defects.astype(float)[:, None], FULL, raw.shape[1], FULL
-    )[:, 0] > 0.3
-    from_scan = find_column_defects(raw, tolerance=0.02, agreement=0.6)
+        flat_defects.astype(float), FULL, raw.shape[1], FULL
+    ) > 0.3
+    from_scan = find_column_defects(raw, sigma=SIGMA)
     defects = from_flat | from_scan
-    print(f"defects: {from_flat.sum()} from flat, {from_scan.sum()} from scan, "
-          f"{defects.sum()} combined")
+    print(f"defects: {from_flat.any(1).sum()} columns from flat, "
+          f"{from_scan.any(1).sum()} from scan, {defects.any(1).sum()} combined "
+          f"({defects.sum()} column-channels)")
 
     work = raw
     if use_vignette:

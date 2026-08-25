@@ -24,6 +24,7 @@ from typing import Any
 
 import numpy as np
 
+from .shading import ShadingReference, apply_shading, calculate_shading
 from .usb_transport import CheckCondition, NoDataYet, Transport, UsbError
 
 # SCSI opcodes
@@ -256,11 +257,12 @@ def flat_defect_sigma(flat: np.ndarray, window: int = 25) -> np.ndarray:
     hand-picked cutoff is correspondingly unstable: 1.5% flagged 453 columns,
     mostly noise, while 4% flagged 8 and missed real defects.
 
-    Returns the per-column maximum across channels.
+    Returns one value per column *per channel*: see `column_defect_sigma` for
+    why the channels must not be pooled.
     """
     k = max(3, int(window) | 1)
     pad = k // 2
-    worst = np.zeros(flat.shape[1])
+    out = np.zeros((flat.shape[1], flat.shape[2]))
     for c in range(flat.shape[2]):
         col = np.median(flat[..., c].astype(np.float64), axis=0)
         level = np.median(col)
@@ -272,61 +274,95 @@ def flat_defect_sigma(flat: np.ndarray, window: int = 25) -> np.ndarray:
         noise = 1.4826 * np.median(np.abs(dev - np.median(dev)))
         if noise <= 0:
             continue
-        worst = np.maximum(worst, np.abs(dev) / noise)
-    return worst
+        out[:, c] = np.abs(dev) / noise
+    return out
 
 
-def find_column_defects(
+def column_defect_sigma(
     image: np.ndarray,
     bands: int = 8,
-    tolerance: float = 0.02,
-    agreement: float = 0.75,
     window: int = 25,
 ) -> np.ndarray:
-    """Find column defects in a scan, without mistaking them for the picture.
+    """Per-column defect strength of a scan, in sigma, one value per channel.
 
-    The discriminator is consistency down the frame: a defective column reads
-    wrong in *every* row, while vertical detail in a photograph does not. So the
-    image is split into horizontal bands and each band's column profile checked
-    independently; a column counts as defective only if most bands agree.
+    Two things separate a defective column from the picture itself.
 
-    This finds defects a flat misses. A flat locates them at its own exposure,
-    and their strength varies with exposure, so a flat taken at different
-    settings flags only the strongest -- in one scan it caught the 9.6% defect
-    but not four others between 3% and 7%.
+    *Consistency down the frame.* A defective column reads wrong in every row,
+    while vertical detail in a photograph does not. So the frame is split into
+    horizontal bands, each band's column profile is measured against its
+    neighbours, and the **median across bands** is kept. A defect survives that
+    median; an edge in the picture, present in only some bands and with varying
+    sign, collapses towards zero.
+
+    *Independence between colours.* This is a trilinear CCD -- red, green and
+    blue sit on separate rows of photosites -- so a bad element produces a
+    defect in one colour only. Pooling the channels therefore hides real
+    defects: a column deviating 3.9% in green in all eight bands, and under 2%
+    in red and blue, is a textbook green-line defect, yet requiring agreement
+    across channels scores it 0.46 and discards it. Each channel is measured
+    and thresholded on its own.
+
+    The scale is each channel's own noise floor, from the median absolute
+    deviation, because the absolute strength varies with exposure -- the same
+    defect measured 4.7% in a flat and 9.6% in a scan.
     """
-    h = image.shape[0]
-    if h < bands * 4:
-        bands = max(1, h // 4)
+    h, w, nc = image.shape
+    bands = max(1, min(int(bands), h // 4))
     k = max(3, int(window) | 1)
     pad = k // 2
 
-    votes = np.zeros(image.shape[1], dtype=float)
-    for b in range(bands):
-        rows = slice(b * h // bands, (b + 1) * h // bands)
-        for c in range(image.shape[2]):
+    out = np.zeros((w, nc))
+    for c in range(nc):
+        devs = []
+        for b in range(bands):
+            rows = slice(b * h // bands, (b + 1) * h // bands)
             prof = np.median(image[rows, :, c].astype(np.float64), axis=0)
             level = np.median(prof)
             if level <= 0:
                 continue
             smooth = np.convolve(np.pad(prof, pad, mode="reflect"),
                                  np.ones(k) / k, mode="valid")
-            with np.errstate(divide="ignore", invalid="ignore"):
-                dev = np.abs(prof - smooth) / np.where(smooth > 0, smooth, 1)
-            votes += (dev > tolerance).astype(float)
+            devs.append((prof - smooth) / level)
+        if not devs:
+            continue
+        dev = np.median(np.stack(devs), axis=0)
+        noise = 1.4826 * np.median(np.abs(dev - np.median(dev)))
+        if noise <= 0:
+            continue
+        out[:, c] = np.abs(dev) / noise
+    return out
 
-    votes /= bands * image.shape[2]
-    return votes >= agreement
+
+def find_column_defects(
+    image: np.ndarray,
+    bands: int = 8,
+    sigma: float = 4.0,
+    window: int = 25,
+) -> np.ndarray:
+    """Columns of a scan that are defective, as a (width, channels) mask.
+
+    Thin wrapper over `column_defect_sigma`; the threshold is in units of the
+    scan's own noise, so it does not have to be retuned per exposure.
+
+    This finds defects a flat misses. A flat locates them at its own exposure
+    and their strength varies with exposure, so a flat taken at other settings
+    flags only the strongest -- in one scan it caught the 9.6% defect but not
+    four others between 3% and 7%.
+    """
+    return column_defect_sigma(image, bands=bands, window=window) > sigma
 
 
 def dilate_defects(defects: np.ndarray, by: int = 3) -> np.ndarray:
-    """Widen each defect run.
+    """Widen each defect run, along the column axis only.
 
     Detection tends to flag a defect's core but not its shoulders, and a
     partially covered defect is only partially corrected -- the middle is
     fixed and the edges remain, which still reads as a line. Widening costs
     little, since the correction measures each column's own strength and
     leaves a healthy column essentially untouched.
+
+    Accepts a 1-D mask or a per-channel (width, channels) one; a per-channel
+    mask is widened within each channel, never across them.
     """
     if by <= 0 or not defects.any():
         return defects
@@ -343,6 +379,7 @@ def destripe(
     margin: int = 10,
     max_correction: float = 2.0,
     dilate: int = 3,
+    max_run: int = 96,
 ) -> np.ndarray:
     """Remove known column defects, measuring their strength in this scan.
 
@@ -357,23 +394,35 @@ def destripe(
     defect's strength here, and dividing by it removes exactly that. Nothing
     outside a known defect is touched, so real vertical detail elsewhere in the
     picture survives.
+
+    `defects` may be a 1-D mask, applied to every channel, or a per-channel
+    (width, channels) one. Prefer the latter: on this trilinear CCD a defect
+    usually belongs to one colour, and scaling all three to fix it tints the
+    column instead of repairing it.
     """
     if defects.shape[0] != image.shape[1] or not defects.any():
         return image
 
+    if defects.ndim == 1:
+        defects = np.repeat(defects[:, None], image.shape[2], axis=1)
     defects = dilate_defects(defects, dilate)
     out = image.astype(np.float64).copy()
-    edges = np.flatnonzero(np.diff(np.concatenate(([0], defects.view(np.int8), [0]))))
-    runs = list(zip(edges[::2], edges[1::2]))
 
     for c in range(image.shape[2]):
+        mask = defects[:, c].view(np.int8)
+        edges = np.flatnonzero(np.diff(np.concatenate(([0], mask, [0]))))
+        runs = list(zip(edges[::2], edges[1::2]))
         prof = np.median(out[..., c], axis=0)
         for lo, hi in runs:
-            left = slice(max(0, lo - margin), lo)
-            right = slice(hi, min(len(prof), hi + margin))
-            good_x = np.concatenate([np.arange(len(prof))[left], np.arange(len(prof))[right]])
-            if good_x.size < 2:
-                continue
+            if hi - lo > max_run:
+                continue  # too wide to be a sensor defect; a straight
+                          # interpolation across it would flatten the picture
+            left = np.arange(max(0, lo - margin), lo)
+            right = np.arange(hi, min(len(prof), hi + margin))
+            if left.size < 2 or right.size < 2:
+                continue  # a run against the frame edge is the film border,
+                          # not a bad column, and has no good data on one side
+            good_x = np.concatenate([left, right])
             expected = np.interp(np.arange(lo, hi), good_x, prof[good_x])
             actual = prof[lo:hi]
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -837,6 +886,10 @@ class DirectScanner:
         self.t = transport or Transport(verbose=verbose)
         self._scanning = False
         self._inquiry: Inquiry | None = None
+        # The shading reference this session has acquired. The scanner returns
+        # raw pixels and never applies it itself -- see rps7200.shading.
+        self._shading: ShadingReference | None = None
+        self._ccd_mask: bytes | None = None
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -1723,14 +1776,32 @@ class DirectScanner:
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
-            self.get_ccd_mask(CCD_MASK_SIZE)
+            mask = self.get_ccd_mask(CCD_MASK_SIZE)
         finally:
             self.finish_scan()
 
+        data = b"".join(collected)
+        # The point of the pass. The scanner measured its per-column response
+        # and handed it back; it does not apply it, so a calibration whose
+        # result is discarded genuinely changes nothing in the image.
+        self._shading = calculate_shading(data, width)
+        if self._shading is None:
+            self._log("calibration returned no usable shading lines")
+        else:
+            self._ccd_mask = mask
+            self._log(
+                f"shading reference: {width} columns, channels "
+                f"{self._shading.channels}, means "
+                f"{[round(self._shading.mean[c], 1) for c in self._shading.channels]}"
+            )
+
         return {
             "shading_calibration": True,
-            "data": b"".join(collected) if keep_data else None,
+            "data": data if keep_data else None,
+            "reference": self._shading,
+            "ccd_mask": mask,
             "bytes_per_line": bpl,
+            "pixels_per_line": width,
             "bytes_drained": drained,
             "duration_s": round(time.monotonic() - started, 1),
         }
@@ -1840,6 +1911,7 @@ class DirectScanner:
         auto_exposure: bool = False,
         exposure_target: float = 0.7,
         skip_shading: bool = True,
+        shading: bool = True,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -1847,6 +1919,12 @@ class DirectScanner:
         capture. It is load-bearing: in particular :meth:`cmd_17` must follow
         the scan frame, or the scanner refuses to skip shading analysis and the
         scan cannot complete. See the README.
+
+        ``shading`` applies this session's shading reference, which is what
+        removes the vertical striping. The scanner measures its per-column
+        response but returns raw pixels, so without a reference -- acquired by
+        :meth:`calibrate_shading`, once per session, as the vendor does at
+        power-on -- the stripes are simply left in.
         """
         if auto_exposure:
             # Probe in the same mode as the scan. Scans otherwise run at the
@@ -1926,7 +2004,10 @@ class DirectScanner:
         self.start_scan()
         try:
             self.wait_ready()
-            self.get_ccd_mask(CCD_MASK_SIZE)
+            # Read per pass, not once: the mask marks which CCD pixels *this*
+            # pass samples, which is what keeps the shading columns aligned at
+            # reduced resolutions.
+            ccd_mask = self.get_ccd_mask(CCD_MASK_SIZE)
             params = self.get_parameters()
             self._log(
                 f"params width={params.width} lines={params.lines} "
@@ -1945,9 +2026,26 @@ class DirectScanner:
         else:
             self.finish_scan()
 
+        shading_report = None
+        if shading and self._shading is not None:
+            image, shading_report = apply_shading(image, self._shading, ccd_mask)
+            self._log(
+                f"shading corrected: {shading_report['columns']}/"
+                f"{shading_report['width']} columns"
+                + (f", {shading_report['clipped']} samples clipped"
+                   if shading_report["clipped"] else "")
+            )
+        elif shading:
+            self._log(
+                "no shading reference: returning raw pixels. Run "
+                "calibrate_shading() once per session -- the scanner does not "
+                "correct its own output"
+            )
+
         meta = {
             "resolution_dpi": resolution,
             "channels": channels,
+            "shading": shading_report,
             "channel_order": [c for c in CHANNEL_ORDER][:channels]
             if not infrared
             else list(CHANNEL_ORDER),
