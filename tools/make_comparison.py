@@ -21,7 +21,8 @@ from PIL import Image
 
 from rps7200 import tiff
 from rps7200.direct import (
-    find_column_defects, destripe, resample_reference, scanner_corrections,
+    find_column_defects, destripe, flat_defect_sigma, resample_reference,
+    scanner_corrections,
 )
 
 Image.MAX_IMAGE_PIXELS = None
@@ -57,7 +58,11 @@ def main() -> None:
     flat = tiff.read(flat_path)
     print(f"scan {scan_path}  {raw.shape}")
 
-    vignette, flat_defects = scanner_corrections(flat, tolerance=0.015)
+    vignette, _ = scanner_corrections(flat, tolerance=0.015)
+    # Threshold the flat against its own noise rather than a fixed percentage:
+    # a fixed cutoff flagged 453 mostly-noise columns, which dilation then blew
+    # up to 81% of the image for no gain in correction.
+    flat_defects = flat_defect_sigma(flat) > 4.0
     from_flat = resample_reference(
         flat_defects.astype(float)[:, None], FULL, raw.shape[1], FULL
     )[:, 0] > 0.3

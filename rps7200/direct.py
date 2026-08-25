@@ -247,6 +247,35 @@ def correct_scan(
     return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
 
 
+def flat_defect_sigma(flat: np.ndarray, window: int = 25) -> np.ndarray:
+    """How far each column of a flat departs from its neighbours, in sigma.
+
+    Scaled by the flat's own noise, estimated robustly from the median absolute
+    deviation, so the threshold does not have to be guessed. That matters
+    because the defects here reach only 4-12x the noise floor, and a
+    hand-picked cutoff is correspondingly unstable: 1.5% flagged 453 columns,
+    mostly noise, while 4% flagged 8 and missed real defects.
+
+    Returns the per-column maximum across channels.
+    """
+    k = max(3, int(window) | 1)
+    pad = k // 2
+    worst = np.zeros(flat.shape[1])
+    for c in range(flat.shape[2]):
+        col = np.median(flat[..., c].astype(np.float64), axis=0)
+        level = np.median(col)
+        if level <= 0:
+            continue
+        smooth = np.convolve(np.pad(col, pad, mode="reflect"),
+                             np.ones(k) / k, mode="valid")
+        dev = (col - smooth) / level
+        noise = 1.4826 * np.median(np.abs(dev - np.median(dev)))
+        if noise <= 0:
+            continue
+        worst = np.maximum(worst, np.abs(dev) / noise)
+    return worst
+
+
 def find_column_defects(
     image: np.ndarray,
     bands: int = 8,
