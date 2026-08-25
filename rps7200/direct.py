@@ -247,11 +247,73 @@ def correct_scan(
     return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
 
 
+def find_column_defects(
+    image: np.ndarray,
+    bands: int = 8,
+    tolerance: float = 0.02,
+    agreement: float = 0.75,
+    window: int = 25,
+) -> np.ndarray:
+    """Find column defects in a scan, without mistaking them for the picture.
+
+    The discriminator is consistency down the frame: a defective column reads
+    wrong in *every* row, while vertical detail in a photograph does not. So the
+    image is split into horizontal bands and each band's column profile checked
+    independently; a column counts as defective only if most bands agree.
+
+    This finds defects a flat misses. A flat locates them at its own exposure,
+    and their strength varies with exposure, so a flat taken at different
+    settings flags only the strongest -- in one scan it caught the 9.6% defect
+    but not four others between 3% and 7%.
+    """
+    h = image.shape[0]
+    if h < bands * 4:
+        bands = max(1, h // 4)
+    k = max(3, int(window) | 1)
+    pad = k // 2
+
+    votes = np.zeros(image.shape[1], dtype=float)
+    for b in range(bands):
+        rows = slice(b * h // bands, (b + 1) * h // bands)
+        for c in range(image.shape[2]):
+            prof = np.median(image[rows, :, c].astype(np.float64), axis=0)
+            level = np.median(prof)
+            if level <= 0:
+                continue
+            smooth = np.convolve(np.pad(prof, pad, mode="reflect"),
+                                 np.ones(k) / k, mode="valid")
+            with np.errstate(divide="ignore", invalid="ignore"):
+                dev = np.abs(prof - smooth) / np.where(smooth > 0, smooth, 1)
+            votes += (dev > tolerance).astype(float)
+
+    votes /= bands * image.shape[2]
+    return votes >= agreement
+
+
+def dilate_defects(defects: np.ndarray, by: int = 3) -> np.ndarray:
+    """Widen each defect run.
+
+    Detection tends to flag a defect's core but not its shoulders, and a
+    partially covered defect is only partially corrected -- the middle is
+    fixed and the edges remain, which still reads as a line. Widening costs
+    little, since the correction measures each column's own strength and
+    leaves a healthy column essentially untouched.
+    """
+    if by <= 0 or not defects.any():
+        return defects
+    out = defects.copy()
+    for shift in range(1, by + 1):
+        out[shift:] |= defects[:-shift]
+        out[:-shift] |= defects[shift:]
+    return out
+
+
 def destripe(
     image: np.ndarray,
     defects: np.ndarray,
     margin: int = 10,
     max_correction: float = 2.0,
+    dilate: int = 3,
 ) -> np.ndarray:
     """Remove known column defects, measuring their strength in this scan.
 
@@ -270,6 +332,7 @@ def destripe(
     if defects.shape[0] != image.shape[1] or not defects.any():
         return image
 
+    defects = dilate_defects(defects, dilate)
     out = image.astype(np.float64).copy()
     edges = np.flatnonzero(np.diff(np.concatenate(([0], defects.view(np.int8), [0]))))
     runs = list(zip(edges[::2], edges[1::2]))
