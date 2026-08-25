@@ -1,0 +1,39 @@
+{
+  "resolution_dpi": 900,
+  "channels": 4,
+  "channel_order": [
+    "R",
+    "G",
+    "B",
+    "I"
+  ],
+  "depth": 16,
+  "frame": [
+    0,
+    0,
+    10343,
+    6887
+  ],
+  "width": 1292,
+  "height": 860,
+  "bytes_per_line": 2584,
+  "exposure": [
+    9604,
+    6506,
+    6506,
+    7745
+  ],
+  "gain": [
+    39,
+    33,
+    21,
+    21
+  ],
+  "offset": [
+    13,
+    10,
+    30,
+    11
+  ],
+  "duration_s": 226.6
+}

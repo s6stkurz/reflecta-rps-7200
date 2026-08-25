@@ -68,7 +68,9 @@ MAX_WINDOW = int(os.environ.get("RPS7200_MAX_WINDOW", 0x8000))
 #: Bytes per individual bulk transfer inside a window.
 BULK_CHUNK = 0x4000
 
-_CONTROL_TIMEOUT_MS = 5_000
+#: Control transfers can be slow to answer while the scanner is busy: at 1800
+#: dpi a status read took longer than a 5s timeout allowed, aborting the scan.
+_CONTROL_TIMEOUT_MS = 30_000
 _BULK_TIMEOUT_MS = 30_000
 
 
@@ -84,6 +86,10 @@ class UsbStatus(IntEnum):
 
 class UsbError(RuntimeError):
     """A libusb call failed."""
+
+
+class NoDataYet(UsbError):
+    """The scanner returned no data because it has not scanned that far yet."""
 
 
 class ScannerNotFound(RuntimeError):
@@ -284,13 +290,17 @@ class Transport:
             raise UsbError(f"could not claim interface 0: {_err(rc)}")
         self._interface = 0
 
-    def open(self, reset: bool = True) -> Transport:
-        """Open the scanner and put the bridge into a known state.
+    def open(self, reset: bool = False) -> Transport:
+        """Open the scanner.
 
-        Never calls ``libusb_reset_device``: on macOS a port reset makes this
-        device drop off the bus for good and it needs a power cycle to return.
-        The bridge's own IEEE1284 reset is the safe equivalent, and is what the
-        SANE backend uses too.
+        No reset by default. Captures of the vendor software show it never
+        sends IEEE1284 RESET (0x30) at all -- only 0x00 and 0xE0 -- and issuing
+        one here left the scanner working for exactly one session and wedged for
+        the next. Pass ``reset=True`` only to recover a device that is already
+        unresponsive.
+
+        Never calls ``libusb_reset_device`` either: on macOS a port reset makes
+        this device drop off the bus for good until it is power-cycled.
         """
         self._raw_open()
 
@@ -521,9 +531,14 @@ class Transport:
                     view[got + window_got : got + window_got + chunk], timeout_ms
                 )
                 if n == 0:
-                    raise UsbError(
-                        f"bulk read returned no data at offset {got + window_got} "
-                        f"of {size}"
+                    # Normal: the scanner answers a READ with zero bytes while
+                    # it has nothing scanned yet. Captures of the vendor
+                    # software show 82% of its reads returning empty at 1800
+                    # dpi, retried every ~20ms. Report it so the caller can
+                    # retry rather than treating it as an error.
+                    raise NoDataYet(
+                        f"scanner has no data ready ({got + window_got} of "
+                        f"{size} bytes so far)"
                     )
                 window_got += n
             got += window_got
@@ -551,13 +566,10 @@ class Transport:
             # discards the sense data that explains what went wrong.
             raise
         except UsbError:
-            # Leave the bridge usable. A command abandoned mid-sequence makes
-            # the next session's first control transfer time out, which then
-            # needs a power cycle to clear.
-            try:
-                self.reset()
-            except UsbError:
-                pass
+            # No reset here. It was added to clear a command abandoned
+            # mid-sequence, but captures show the vendor software never sends
+            # IEEE1284 RESET, and doing so is what left the *next* session
+            # unable to talk to the scanner at all.
             raise
 
     def _command(

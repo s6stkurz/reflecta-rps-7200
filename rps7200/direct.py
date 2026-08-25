@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 
-from .usb_transport import CheckCondition, Transport, UsbError
+from .usb_transport import CheckCondition, NoDataYet, Transport, UsbError
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
@@ -76,6 +76,31 @@ INDEX_HEADER = 2
 #: Channel letters, in the order the scanner tags them.
 CHANNEL_ORDER = "RGBI"
 
+#: Read budget per READ command. Captures show the vendor software sizing its
+#: batches to about this many bytes -- 208 lines x 2522 at 900 dpi, 104 x 5042
+#: at 1800 -- subject to :data:`MAX_BATCH_LINES`.
+READ_BUDGET_BYTES = 512 * 1024
+
+#: Upper bound on lines per READ, which the vendor software never exceeds even
+#: when the byte budget would allow far more (216 x 430 at 300 dpi).
+MAX_BATCH_LINES = 216
+
+
+def batch_for(bytes_per_line: int) -> int:
+    """Lines to request per READ, mirroring the vendor software."""
+    if bytes_per_line <= 0:
+        return MAX_BATCH_LINES
+    fits = -(-READ_BUDGET_BYTES // bytes_per_line)   # round up, as the vendor does
+    return max(1, min(MAX_BATCH_LINES, fits))
+
+
+#: Inset the vendor software keeps clear of the film edge -- every frame it
+#: detected began at x=96, y=71. Not applied by default here: trimming loses
+#: real image area, so detection returns the full picture it finds. Pass
+#: ``inset=True`` to :meth:`DirectScanner.detect_frame` to trim like CyberView.
+MIN_INSET_X = 96
+MIN_INSET_Y = 71
+
 #: Full scan extent, 0-based pixels at maximum resolution. Matches the vendor
 #: software's frame and this scanner's 10344 x 6888 CCD. Used so that scanning
 #: needs no INQUIRY: neither CyberView nor any run that scanned successfully
@@ -103,6 +128,10 @@ def _cmd(opcode: int, size: int) -> bytes:
 
 class CalibrationRequired(RuntimeError):
     """The scanner insists on calibrating and will not start the scan."""
+
+
+class NoMediaLoaded(RuntimeError):
+    """No film is loaded in the transport."""
 
 
 class ScanReadError(RuntimeError):
@@ -215,12 +244,27 @@ class ScanParameters:
     available_lines: int  # lines ready to read right now
 
 
+#: Bit seen set in the state byte when a strip holder was inserted (0x0D empty,
+#: 0x4D loaded). Its exact meaning is unconfirmed -- it has since read 0x0D with
+#: film demonstrably loaded -- so it is reported but never used to block a scan.
+MEDIA_PRESENT = 0x40
+
+
 @dataclass
 class State:
     button: bool
     warming_up: bool
     scanning: int
     busy: int
+
+    @property
+    def media_loaded(self) -> bool:
+        """Whether film is in the transport.
+
+        The scanner ejects the strip at the end of every scan, so this is False
+        again after each frame until the film is re-inserted.
+        """
+        return bool(self.scanning & MEDIA_PRESENT)
 
 
 @dataclass
@@ -267,12 +311,10 @@ class DirectScanner:
         # Always attempt both, whatever state we think we are in: a scan left
         # running, or a command left half-issued, wedges the scanner until it is
         # power-cycled, and our idea of the state may be wrong.
-        # No STOP SCAN here either; see scan().
+        # No STOP SCAN and no bridge reset: the vendor software sends neither,
+        # and resetting here is what left the next session unable to talk to the
+        # scanner.
         self._scanning = False
-        try:
-            self.t.reset()
-        except Exception:
-            pass
         if self._own_transport:
             self.t.close()
 
@@ -586,17 +628,29 @@ class DirectScanner:
         data = bytes([action, 0x16, 0x00, 0x00])
         self.t.command(_cmd(SCSI_SLIDE, 4), data=data)
 
-    def start_scan(self, retries: int = 15) -> None:
+    def start_scan(
+        self,
+        retries: int = 15,
+        ready_timeout: float = 600.0,
+        ready_poll: float = 1.0,
+    ) -> None:
         """Begin scanning.
 
-        The scanner answers CHECK CONDITION / UNIT ATTENTION with sense code
-        0x82 ("calibration disable not granted") when asked to skip shading
-        analysis. UNIT ATTENTION is a one-shot notification in SCSI -- reading
-        the sense clears the condition -- so the command is retried.
+        Two distinct conditions have to be waited out, and they are counted
+        separately:
+
+        * NOT READY (ASC 0x04) -- the scanner is still preparing. This is not a
+          failure and does not consume a retry; higher resolutions take longer,
+          60+ seconds at 1800 dpi. Polled until ``ready_timeout``.
+        * UNIT ATTENTION 0x82 ("calibration disable not granted") and friends --
+          one-shot conditions that clear when read. These do consume a retry,
+          but typically need two or three attempts before the scan starts.
         """
+        deadline = time.monotonic() + ready_timeout
+        attempts = 0
         last: tuple[int, int] | None = None
-        for attempt in range(1, retries + 1):
-            self._log(f"start scan (attempt {attempt})")
+
+        while True:
             try:
                 self.t.command(_cmd(SCSI_SCAN, 1))
                 self._scanning = True
@@ -605,28 +659,24 @@ class DirectScanner:
                 info = self.sense()
                 key, code, qual = info[2] & 0x0F, info[12], info[13]
                 last = (code, qual)
-                self._log(
-                    f"  sense key={key:#04x} code={code:#04x} qual={qual:#04x}"
-                    f" -- {describe_sense(key, code, qual)}"
-                )
-                if code == 0x04:
-                    # Still becoming ready. TEST UNIT READY can already report
-                    # good while START SCAN does not, so waiting on that would
-                    # spin; sleep on a real clock instead. ~80s from cold.
-                    self._log("  still becoming ready; sleeping 10s")
-                    time.sleep(10)
+
+                if code == 0x04:          # still becoming ready
+                    if time.monotonic() > deadline:
+                        break
+                    time.sleep(ready_poll)
                     continue
+
+                attempts += 1
+                self._log(
+                    f"  start_scan: {describe_sense(key, code, qual)} "
+                    f"(retry {attempts}/{retries})"
+                )
+                if attempts >= retries or time.monotonic() > deadline:
+                    break
                 time.sleep(0.5)
 
         # Leave the scanner usable; an abandoned start wedges it otherwise.
-        try:
-            self.t.command(_cmd(SCSI_SCAN, 0))
-        except Exception:
-            pass
-        try:
-            self.t.reset()
-        except Exception:
-            pass
+        self._scanning = False
         code, qual = last if last else (0, 0)
         raise CalibrationRequired(
             f"scanner refused to start: {describe_sense(6, code, qual)} "
@@ -783,10 +833,10 @@ class DirectScanner:
         self,
         params: ScanParameters,
         channels: int,
-        batch: int = 216,
-        timeout: float = 1800.0,
-        poll: float = 0.25,
-        idle_timeout: float = 60.0,
+        batch: int | None = None,
+        timeout: float = 3600.0,
+        poll: float = 0.02,
+        idle_timeout: float = 120.0,
     ) -> np.ndarray:
         """Read a frame and deinterleave it into ``(H, W, channels)``.
 
@@ -804,7 +854,13 @@ class DirectScanner:
         """
         bpl = params.bytes_per_line + INDEX_HEADER
         total_lines = channels * params.lines
+        if batch is None:
+            batch = batch_for(bpl)
         deadline = time.monotonic() + timeout
+
+        self._log(
+            f"reading {total_lines} lines x {bpl} bytes, {batch} per request"
+        )
 
         chunks: list[bytes] = []
         got = 0
@@ -815,34 +871,32 @@ class DirectScanner:
                     f"read {got}/{total_lines} lines before timing out"
                 )
 
-            available = self.get_parameters().available_lines
-            if available <= 0:
-                # Nothing scanned yet. Give up only if it stays empty for a
-                # long while, which means the scan has stalled rather than
-                # simply being slower than us.
+            n = min(batch, total_lines - got)
+            try:
+                chunk = self.read_lines(n, bpl, retries=1)
+            except NoDataYet:
+                # The scanner has not scanned this far yet. This is its normal
+                # way of saying "wait" -- the vendor software sees it on most
+                # of its reads and simply asks again a moment later. Notably it
+                # does not poll scan parameters to pace itself, and doing so
+                # here was slow enough at high resolution to abort the scan.
                 now = time.monotonic()
                 idle_since = idle_since or now
                 if now - idle_since > idle_timeout:
                     raise ScanReadError(
-                        f"scanner produced no further lines for "
-                        f"{idle_timeout:.0f}s at {got}/{total_lines}"
-                    )
+                        f"no data for {idle_timeout:.0f}s at "
+                        f"{got}/{total_lines} lines"
+                    ) from None
                 time.sleep(poll)
                 continue
-            idle_since = None
-
-            n = min(available, total_lines - got, batch)
-            self.test_unit_ready()
-            try:
-                chunks.append(self.read_lines(n, bpl))
             except EndOfData:
-                # The scan is exhausted. How many lines that is depends on how
-                # many colour planes the scanner actually produced, so trust it
-                # rather than the expected count.
                 self._log(f"end of data at {got}/{total_lines} lines")
                 break
+
+            idle_since = None
+            chunks.append(chunk)
             got += n
-            self._log(f"{got}/{total_lines} lines (had {available} ready)")
+            self._log(f"{got}/{total_lines} lines")
 
         return self._deinterleave(b"".join(chunks), params, channels)
 
@@ -878,6 +932,92 @@ class DirectScanner:
         height = min(len(planes[c]) for c in order)
         return np.stack([np.array(planes[c][:height]) for c in order], axis=-1)
 
+    # -- prescan and framing -----------------------------------------------
+
+    def prescan(
+        self, resolution: int = 300, frame: tuple[int, int, int, int] | None = None
+    ) -> tuple[np.ndarray, ScanParameters]:
+        """Low-resolution RGB pass over the full transport.
+
+        This is what the vendor software runs before every frame: 300 dpi,
+        three channels, 8-bit, covering the whole scan area. It carries no
+        infrared -- captures confirm the prescan is always ``passes=0x80`` --
+        and exists to find where the picture actually sits.
+        """
+        image, meta = self.scan(
+            resolution=resolution,
+            infrared=False,
+            depth=DEPTH_8,
+            frame=frame or FULL_FRAME,
+            prescan=False,
+        )
+        params = ScanParameters(
+            width=meta["width"],
+            lines=meta["height"],
+            bytes_per_line=meta["bytes_per_line"],
+            filter_offset1=0,
+            filter_offset2=0,
+            available_lines=0,
+        )
+        return image, params
+
+    @staticmethod
+    def detect_frame(
+        image: np.ndarray,
+        full_frame: tuple[int, int, int, int] = FULL_FRAME,
+        threshold: float = 0.25,
+        pad: int = 0,
+        inset: bool = False,
+    ) -> tuple[int, int, int, int]:
+        """Locate the picture within a prescan image.
+
+        Film base and the gaps between frames are close to uniform, while the
+        picture varies; so the picture is the region whose per-row and
+        per-column variation rises above a fraction of the maximum. Returns
+        scanner coordinates (0-based pixels at maximum resolution), ready to
+        pass to :meth:`set_scan_frame`.
+        """
+        grey = image.astype(np.float64)
+        if grey.ndim == 3:
+            grey = grey.mean(axis=2)
+
+        col = grey.std(axis=0)
+        row = grey.std(axis=1)
+
+        def bounds(profile: np.ndarray) -> tuple[int, int]:
+            peak = float(profile.max())
+            if peak <= 0:
+                return 0, len(profile) - 1
+            active = np.flatnonzero(profile >= peak * threshold)
+            if active.size == 0:
+                return 0, len(profile) - 1
+            return int(active[0]), int(active[-1])
+
+        c0, c1 = bounds(col)
+        r0, r1 = bounds(row)
+        h, w = grey.shape
+
+        fx0, fy0, fx1, fy1 = full_frame
+        span_x, span_y = fx1 - fx0, fy1 - fy0
+
+        x0 = fx0 + int(round((max(0, c0 - pad) / w) * span_x))
+        x1 = fx0 + int(round((min(w - 1, c1 + pad) / w) * span_x))
+        y0 = fy0 + int(round((max(0, r0 - pad) / h) * span_y))
+        y1 = fy0 + int(round((min(h - 1, r1 + pad) / h) * span_y))
+
+        if inset:
+            # Opt-in only: trims the film edge the way CyberView does, at the
+            # cost of a little real image area.
+            x0 = max(x0, fx0 + MIN_INSET_X)
+            y0 = max(y0, fy0 + MIN_INSET_Y)
+            x1 = min(x1, fx1 - MIN_INSET_X)
+            y1 = min(y1, fy1 - MIN_INSET_Y)
+
+        # Never return a degenerate window.
+        if x1 <= x0 or y1 <= y0:
+            return full_frame
+        return x0, y0, x1, y1
+
     # -- orchestration -----------------------------------------------------
 
     def scan(
@@ -887,6 +1027,8 @@ class DirectScanner:
         depth: int = DEPTH_16,
         frame: tuple[int, int, int, int] | None = None,
         advance: bool = False,
+        require_media: bool = True,
+        prescan: bool = False,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -905,6 +1047,17 @@ class DirectScanner:
             time.sleep(1)
         self.wait_warm()
         self.test_unit_ready()
+
+        if require_media:
+            state = self.read_state()
+            if not state.media_loaded:
+                # Reported, not enforced: this bit has read clear with film
+                # definitely loaded, so trusting it would block valid scans.
+                # Let the scanner itself refuse if there is really no film.
+                self._log(
+                    f"note: state {state.scanning:#04x} suggests no film, but "
+                    "that bit is not reliable; continuing"
+                )
 
         self.set_exposure_time()
         self.set_highlight_shadow()
@@ -956,10 +1109,6 @@ class DirectScanner:
             # the next session, needing a power cycle. Settling the bridge is
             # enough to leave things usable.
             self._scanning = False
-            try:
-                self.t.reset()
-            except UsbError:
-                pass
             raise
         else:
             self.finish_scan()
