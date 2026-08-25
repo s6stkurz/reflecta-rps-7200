@@ -93,6 +93,54 @@ READ_BUDGET_BYTES = 512 * 1024
 MAX_BATCH_LINES = 216
 
 
+def gain_from_calibration(
+    data: bytes, bytes_per_line: int, highpass: bool = True, window: int = 65
+) -> np.ndarray:
+    """Build a flat-field gain from the scanner's own calibration data.
+
+    :meth:`DirectScanner.calibrate_shading` returns 16-bit lines tagged by
+    channel -- 40 each of R, G, B and I -- read from the scanner's internal
+    reference area rather than through film. That makes it a better source for
+    the correction than a flat shot through an unexposed negative: no film base
+    to cancel, no risk of a scratch in the flat being stamped into every scan.
+
+    Returns ``(width, channels)`` in R, G, B, I order, as
+    :func:`apply_flat_field` expects.
+    """
+    lines = len(data) // bytes_per_line
+    width = (bytes_per_line - INDEX_HEADER) // 2
+    planes: dict[str, list[np.ndarray]] = {}
+    for i in range(lines):
+        line = data[i * bytes_per_line : (i + 1) * bytes_per_line]
+        planes.setdefault(chr(line[0]), []).append(
+            np.frombuffer(line[INDEX_HEADER:], dtype="<u2")
+        )
+
+    order = [c for c in CHANNEL_ORDER if c in planes]
+    if not order:
+        raise ValueError(f"no channel tags in calibration data; saw {sorted(planes)}")
+
+    stack = np.stack(
+        [np.median(np.array(planes[c], dtype=np.float64), axis=0) for c in order],
+        axis=-1,
+    )   # (width, channels)
+
+    if highpass:
+        k = max(3, int(window) | 1)
+        pad = k // 2
+        smooth = np.empty_like(stack)
+        for c in range(stack.shape[1]):
+            padded = np.pad(stack[:, c], pad, mode="reflect")
+            smooth[:, c] = np.convolve(padded, np.ones(k) / k, mode="valid")
+        reference = smooth
+    else:
+        reference = stack.mean(axis=0, keepdims=True)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        gain = stack / reference
+    return np.where(np.isfinite(gain) & (gain > 0), gain, 1.0)
+
+
 def flat_field_gain(
     flat: np.ndarray,
     highpass: bool = True,
@@ -1223,7 +1271,9 @@ class DirectScanner:
         except (CheckCondition, UsbError) as exc:
             self._log(f"opening slide failed: {exc}")
 
-    def calibrate_shading(self, timeout: float = 300.0) -> dict[str, Any]:
+    def calibrate_shading(
+        self, timeout: float = 300.0, keep_data: bool = False
+    ) -> dict[str, Any]:
         """Run the scanner's shading calibration, as the vendor does at startup.
 
         This runs and returns data: 40 blocks, 1.66 MB, the scanner ending the
@@ -1305,6 +1355,7 @@ class DirectScanner:
 
         self.start_scan()
         drained = 0
+        collected: list[bytes] = []
         try:
             self._log(f"calibration reads: {bpl} bytes/line (width {width})")
 
@@ -1339,6 +1390,8 @@ class DirectScanner:
                     self._log(f"  scanner finished after {blocks} blocks")
                     break
                 drained += len(chunk)
+                if keep_data:
+                    collected.append(chunk)
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
@@ -1348,6 +1401,8 @@ class DirectScanner:
 
         return {
             "shading_calibration": True,
+            "data": b"".join(collected) if keep_data else None,
+            "bytes_per_line": bpl,
             "bytes_drained": drained,
             "duration_s": round(time.monotonic() - started, 1),
         }
