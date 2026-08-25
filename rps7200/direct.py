@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -84,6 +85,134 @@ READ_BUDGET_BYTES = 512 * 1024
 #: Upper bound on lines per READ, which the vendor software never exceeds even
 #: when the byte budget would allow far more (216 x 430 at 300 dpi).
 MAX_BATCH_LINES = 216
+
+
+def flat_field_gain(
+    flat: np.ndarray,
+    highpass: bool = True,
+    window: int = 65,
+    clip_fraction: float = 0.001,
+    saturation: int = 64000,
+) -> np.ndarray:
+    """Per-column gain from a flat field, normalised to a mean of 1.
+
+    Striping is per-CCD-element, so it is constant down each column and shows
+    up as high-frequency variation *across* columns. Film base density, lamp
+    falloff and vignetting vary smoothly across the sensor instead.
+
+    With ``highpass`` (the default) the profile is divided by a smoothed copy
+    of itself, so everything smooth cancels and only the element-to-element
+    jitter remains. That matters because the flat has to be captured through
+    *some* film: an unexposed colour negative carries a strong orange mask, and
+    baking it into the correction would tint every B&W or slide scan it was
+    applied to. High-pass gain is independent of film stock, development and
+    overall exposure.
+
+    Set ``highpass=False`` for a conventional full flat that also corrects lamp
+    falloff and vignetting -- but only apply that to scans of the same stock,
+    since it carries the base colour with it.
+
+    The column profile is a median, not a mean. Element gain is identical in
+    every row of a column, so it survives either; but dust and short defects
+    touch only a few rows and a median discards them outright. What a median
+    cannot reject is a scratch running the length of the film, since that marks
+    one column in every row and is geometrically indistinguishable from a CCD
+    stripe -- so the flat should be captured on unscratched film, or averaged
+    over several film positions (:func:`combine_flats`), which moves scratches
+    while leaving the sensor pattern fixed.
+
+    Raises if the flat is clipped: saturated columns record no variation, so
+    their stripes would go uncorrected.
+    """
+    if flat.ndim != 3:
+        raise ValueError(f"expected (H, W, C), got {flat.shape}")
+
+    clipped = (flat >= saturation).mean()
+    if clipped > clip_fraction:
+        raise ValueError(
+            f"flat field is {clipped:.1%} saturated (limit {clip_fraction:.1%}); "
+            "re-capture it with a lower exposure_scale"
+        )
+
+    profile = np.median(flat.astype(np.float64), axis=0)     # (W, C)
+
+    if highpass:
+        k = max(3, int(window) | 1)                          # odd window
+        pad = k // 2
+        smooth = np.empty_like(profile)
+        for c in range(profile.shape[1]):
+            padded = np.pad(profile[:, c], pad, mode="reflect")
+            smooth[:, c] = np.convolve(padded, np.ones(k) / k, mode="valid")
+        reference = smooth
+    else:
+        reference = profile.mean(axis=0, keepdims=True)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        gain = profile / reference
+    return np.where(np.isfinite(gain) & (gain > 0), gain, 1.0)
+
+
+def combine_flats(flats: Sequence[np.ndarray]) -> np.ndarray:
+    """Merge several flats taken at different film positions.
+
+    The sensor pattern sits at the same columns in every capture; a scratch in
+    the film moves with the film. Taking the median across captures keeps the
+    former and rejects the latter.
+    """
+    stack = [np.asarray(f) for f in flats]
+    if not stack:
+        raise ValueError("no flats given")
+    shapes = {f.shape for f in stack}
+    if len(shapes) != 1:
+        raise ValueError(f"flats differ in shape: {shapes}")
+    return np.median(np.stack(stack), axis=0).astype(stack[0].dtype)
+
+
+def resample_gain(gain: np.ndarray, width: int) -> np.ndarray:
+    """Rescale a flat-field gain to a different image width.
+
+    CCD elements are physical and fixed, so one flat captured at high
+    resolution serves every lower one: a scan at half the resolution bins pairs
+    of elements, so the gain bins the same way. This means calibrating once --
+    ideally at the highest resolution used -- rather than once per resolution.
+
+    Widths that are not exact multiples fall back to interpolation, which is
+    approximate but close, since neighbouring elements differ only slightly.
+    """
+    have = gain.shape[0]
+    if have == width:
+        return gain
+    if have % width == 0:
+        factor = have // width
+        return gain[: width * factor].reshape(width, factor, gain.shape[1]).mean(axis=1)
+
+    src = np.linspace(0.0, 1.0, have)
+    dst = np.linspace(0.0, 1.0, width)
+    return np.stack(
+        [np.interp(dst, src, gain[:, c]) for c in range(gain.shape[1])], axis=-1
+    )
+
+
+def apply_flat_field(
+    image: np.ndarray, gain: np.ndarray, mask: np.ndarray | None = None
+) -> np.ndarray:
+    """Divide out the per-column gain, and interpolate flagged dead columns."""
+    if image.shape[1] != gain.shape[0]:
+        # One flat serves every resolution; bin or interpolate it to fit.
+        gain = resample_gain(gain, image.shape[1])
+    channels = min(image.shape[2], gain.shape[1])
+    out = image.astype(np.float64).copy()
+    out[..., :channels] /= gain[None, :, :channels]
+
+    if mask is not None and mask.shape[0] == image.shape[1]:
+        bad = np.flatnonzero(mask == 0)
+        good = np.flatnonzero(mask != 0)
+        if good.size and bad.size:
+            for c in range(image.shape[2]):
+                for row in range(out.shape[0]):
+                    out[row, bad, c] = np.interp(bad, good, out[row, good, c])
+
+    return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
 
 
 def batch_for(bytes_per_line: int) -> int:
@@ -277,6 +406,33 @@ class Settings:
     light: int = 4
     extra_entries: int = 0
     double_times: int = 0
+
+    def scaled(self, factor: float | Sequence[float]) -> Settings:
+        """Copy with exposure multiplied, clamped to the 16-bit field.
+
+        ``factor`` may be one number for every channel, or one per channel in
+        R, G, B, I order -- the channels need very different exposures, most
+        obviously blue, which saturates far sooner than the rest with no film
+        in the transport.
+        """
+        if isinstance(factor, (int, float)):
+            if factor == 1.0:
+                return self
+            factors = [float(factor)] * len(self.exposure)
+        else:
+            factors = list(factor)
+            factors += [1.0] * (len(self.exposure) - len(factors))
+        return Settings(
+            exposure=[
+                int(max(100, min(65535, round(e * f))))
+                for e, f in zip(self.exposure, factors)
+            ],
+            gain=list(self.gain),
+            offset=list(self.offset),
+            light=self.light,
+            extra_entries=self.extra_entries,
+            double_times=self.double_times,
+        )
 
     def describe(self) -> str:
         return (
@@ -767,8 +923,15 @@ class DirectScanner:
         Enough to satisfy the device's calibration requirement without the
         shading-data read that it cannot complete.
         """
-        settings = self.get_gain_offset()
+        settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings, infrared=infrared)
+        if exposure_scale != 1.0:
+            shown = (
+                f"x{exposure_scale:g}"
+                if isinstance(exposure_scale, (int, float))
+                else "x" + "/".join(f"{v:g}" for v in exposure_scale)
+            )
+            self._log(f"exposure scaled {shown}: {settings.describe()}")
         return settings
 
     def get_ccd_mask(self, size: int) -> bytes:
@@ -1018,6 +1181,193 @@ class DirectScanner:
             return full_frame
         return x0, y0, x1, y1
 
+    def calibrate_shading(
+        self,
+        resolution: int = 3600,
+        frame: tuple[int, int, int, int] | None = None,
+        timeout: float = 600.0,
+    ) -> dict[str, Any]:
+        """Run the scanner's own shading calibration.
+
+        The mode quality bit 0x08 means "skip shading analysis", i.e. reuse the
+        calibration already held -- not "apply no correction". The vendor
+        software runs exactly one scan per session with that bit clear, and
+        every later scan reuses the result. Without it the scanner never
+        calibrates, and per-element gain variation shows up as vertical
+        striping.
+
+        This is why the vendor needs no clear film for flat-fielding: the
+        scanner corrects itself, and the correction then applies at every
+        resolution. Best run with clear or unexposed film in the transport.
+
+        The data returned during this pass is calibration data, not an image --
+        it carries no channel tags -- so it is drained and discarded.
+        """
+        frame = frame or (0, 1440, 10344, 5450)   # the vendor's calibration frame
+        self._log(f"shading calibration at {resolution} dpi, frame {frame}")
+
+        for _ in range(4):
+            try:
+                if not self.read_state().warming_up:
+                    break
+            except (CheckCondition, ScanReadError):
+                pass
+            time.sleep(1)
+        self.wait_warm()
+        self.test_unit_ready()
+
+        self.set_exposure_time()
+        self.set_highlight_shadow()
+        self.set_scan_frame(*frame)
+        try:
+            self.cmd_17(1)
+        except CheckCondition:
+            self._log("  cmd_17 reported a condition; continuing")
+        settings = self.get_gain_offset()
+        self.set_gain_offset(settings)
+
+        self.set_mode(
+            resolution=resolution,
+            passes=ONE_PASS_COLOR,
+            depth=DEPTH_16,
+            color_format=FORMAT_INDEX,
+            skip_shading=False,          # the whole point: let it calibrate
+        )
+        self.test_unit_ready()
+        self.slide(SLIDE_INIT)
+        self.wait_ready()
+
+        started = time.monotonic()
+        self.start_scan()
+        try:
+            self.wait_ready()
+            self.get_ccd_mask(CCD_MASK_SIZE)
+            params = self.get_parameters()
+            bpl = params.bytes_per_line + INDEX_HEADER
+            batch = batch_for(bpl)
+            self._log(
+                f"draining calibration data: {params.lines} lines x {bpl} bytes"
+            )
+
+            drained = 0
+            deadline = time.monotonic() + timeout
+            idle_since: float | None = None
+            while time.monotonic() < deadline:
+                try:
+                    chunk = self.read_lines(batch, bpl, retries=1)
+                except NoDataYet:
+                    now = time.monotonic()
+                    idle_since = idle_since or now
+                    if now - idle_since > 60.0:
+                        break
+                    time.sleep(0.02)
+                    continue
+                except EndOfData:
+                    break
+                idle_since = None
+                drained += len(chunk)
+            self._log(f"calibration data drained: {drained} bytes")
+        finally:
+            self.finish_scan()
+
+        return {
+            "shading_calibration": True,
+            "resolution_dpi": resolution,
+            "frame": list(frame),
+            "bytes_drained": drained,
+            "duration_s": round(time.monotonic() - started, 1),
+        }
+
+    # -- exposure ----------------------------------------------------------
+
+    def auto_exposure(
+        self,
+        target: float = 0.7,
+        percentile: float = 99.5,
+        resolution: int = 300,
+        infrared: bool = False,
+        rounds: int = 3,
+        tolerance: float = 0.08,
+        start: Sequence[float] | None = None,
+    ) -> list[float]:
+        """Find per-channel exposure scales by probing at low resolution.
+
+        Aims to put ``percentile`` of each channel at ``target`` of full scale
+        -- high enough to use the range, with headroom so highlights do not
+        clip. Returns scales to hand to :meth:`scan` as ``exposure_scale``.
+
+        Probes in RGB by default: a three-channel pass takes seconds where a
+        four-channel one takes minutes, and the infrared exposure tracks the
+        visible channels closely enough to scale with them.
+
+        The channels differ enormously -- with no film in the transport blue
+        saturates while red sits near a fifth of scale -- so this is per
+        channel rather than one global factor.
+        """
+        channels = 4 if infrared else 3
+        scales = list(start) if start else [1.0] * channels
+        full = 65535.0
+
+        for round_no in range(1, rounds + 1):
+            image, _ = self.scan(
+                resolution=resolution,
+                infrared=infrared,
+                exposure_scale=scales,
+            )
+            levels = [
+                float(np.percentile(image[..., c], percentile)) / full
+                for c in range(image.shape[2])
+            ]
+            self._log(
+                f"auto-exposure round {round_no}: "
+                + " ".join(
+                    f"{'RGBI'[c]}={levels[c]:.0%}" for c in range(len(levels))
+                )
+            )
+            if all(abs(v - target) <= tolerance for v in levels):
+                break
+
+            for c, level in enumerate(levels):
+                if c >= len(scales):
+                    break
+                if level <= 0.001:
+                    scales[c] *= 4.0            # far too dark to measure
+                elif level >= 0.999:
+                    scales[c] *= 0.25           # clipped; back well off
+                else:
+                    scales[c] *= target / level
+                scales[c] = max(0.01, min(8.0, scales[c]))
+
+        self._log(f"auto-exposure result: {[round(v, 3) for v in scales]}")
+        return scales
+
+    # -- flat field --------------------------------------------------------
+
+    def flat_field(
+        self,
+        resolution: int = 3600,
+        infrared: bool = True,
+        exposure_scale: float | Sequence[float] = 1.0,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Capture a flat field: a scan with nothing in the transport.
+
+        With no film attenuating it, the lamp lights the sensor evenly, so the
+        result is the response of the whole optical path -- per-element CCD
+        gain, lamp falloff and vignetting together. Dividing a scan by this
+        removes the fixed vertical striping.
+
+        Watch for clipping: saturated columns all read the same value and hide
+        the variation being measured, so :func:`flat_field_gain` rejects a flat
+        that is clipped. Reduce ``exposure_scale`` if that happens.
+        """
+        image, meta = self.scan(
+            resolution=resolution,
+            infrared=infrared,
+            exposure_scale=exposure_scale,
+        )
+        meta["flat_field"] = True
+        return image, meta
+
     # -- orchestration -----------------------------------------------------
 
     def scan(
@@ -1029,6 +1379,10 @@ class DirectScanner:
         advance: bool = False,
         require_media: bool = True,
         prescan: bool = False,
+        exposure_scale: float | Sequence[float] = 1.0,
+        auto_exposure: bool = False,
+        exposure_target: float = 0.7,
+        skip_shading: bool = True,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -1073,8 +1427,15 @@ class DirectScanner:
         except CheckCondition:
             self._log("  cmd_17 reported a condition; continuing")
 
-        settings = self.get_gain_offset()
+        settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings, infrared=infrared)
+        if exposure_scale != 1.0:
+            shown = (
+                f"x{exposure_scale:g}"
+                if isinstance(exposure_scale, (int, float))
+                else "x" + "/".join(f"{v:g}" for v in exposure_scale)
+            )
+            self._log(f"exposure scaled {shown}: {settings.describe()}")
 
         passes = ONE_PASS_RGBI if infrared else ONE_PASS_COLOR
         channels = 4 if infrared else 3
@@ -1083,7 +1444,7 @@ class DirectScanner:
             passes=passes,
             depth=depth,
             color_format=FORMAT_INDEX,
-            skip_shading=True,
+            skip_shading=skip_shading,
         )
         self.test_unit_ready()
 
@@ -1127,6 +1488,9 @@ class DirectScanner:
             "exposure": settings.exposure,
             "gain": settings.gain,
             "offset": settings.offset,
+            "exposure_scale": list(exposure_scale)
+            if not isinstance(exposure_scale, (int, float))
+            else exposure_scale,
             "duration_s": round(time.monotonic() - started, 1),
         }
         return image, meta
