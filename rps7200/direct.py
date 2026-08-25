@@ -168,6 +168,85 @@ def gain_from_calibration(
     return np.where(np.isfinite(gain) & (gain > 0), gain, 1.0)
 
 
+def _smooth(profile: np.ndarray, window: int) -> np.ndarray:
+    """Moving average down axis 0, reflecting at the edges."""
+    k = max(3, int(window) | 1)
+    pad = k // 2
+    out = np.empty_like(profile)
+    for c in range(profile.shape[1]):
+        padded = np.pad(profile[:, c], pad, mode="reflect")
+        out[:, c] = np.convolve(padded, np.ones(k) / k, mode="valid")
+    return out
+
+
+def scanner_corrections(
+    flat: np.ndarray, tolerance: float = 0.02, defect_window: int = 25,
+    vignette_window: int = 301,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Derive vignetting profile and bad-column mask from a clear-film scan.
+
+    A scan of clear film is uniformly lit, so everything in it is the scanner.
+    Two separate defects live there and need opposite treatment:
+
+    * **Vignetting** -- a smooth ~22% falloff from centre to edge, horizontal
+      only (the lamp lights a line across the film; the carriage travels down
+      it). Corrected by dividing, since it is multiplicative and smooth.
+    * **Bad columns** -- sharp 3-5% outliers where a sensor element misreads.
+      Dividing cannot fix these; the column carries no useful signal, so it has
+      to be interpolated from its neighbours.
+
+    Returns ``(vignette, bad)``: the smooth profile normalised to its peak, and
+    a boolean mask of defective columns.
+    """
+    profile = np.median(flat.astype(np.float64), axis=0)          # (W, C)
+
+    local = _smooth(profile, defect_window)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        dev = np.abs(profile - local) / np.where(local > 0, local, 1)
+    bad = np.any(dev > tolerance, axis=1)
+
+    # Fit the vignette on good columns only, so defects do not drag it around.
+    clean = profile.copy()
+    good = np.flatnonzero(~bad)
+    if good.size and bad.any():
+        idx = np.flatnonzero(bad)
+        for c in range(profile.shape[1]):
+            clean[idx, c] = np.interp(idx, good, profile[good, c])
+
+    vignette = _smooth(clean, vignette_window)
+    peak = vignette.max(axis=0, keepdims=True)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        vignette = vignette / np.where(peak > 0, peak, 1)
+    return np.where(np.isfinite(vignette) & (vignette > 0), vignette, 1.0), bad
+
+
+def correct_scan(
+    image: np.ndarray,
+    vignette: np.ndarray,
+    bad: np.ndarray,
+    frame: tuple[int, int, int, int],
+    ref_frame: tuple[int, int, int, int],
+) -> np.ndarray:
+    """Interpolate bad columns, then divide out vignetting.
+
+    Order matters: a bad column would otherwise be scaled rather than replaced,
+    and would still be visible. Apply this to linear scan data, before any
+    inversion -- an inversion curve is steep where a flat sits and multiplies
+    both defects several-fold, after which they cannot be removed cleanly.
+    """
+    w = image.shape[1]
+    v = resample_reference(vignette, ref_frame, w, frame)
+    flags = resample_reference(
+        bad.astype(float)[:, None], ref_frame, w, frame
+    )[:, 0] > 0.3
+
+    out = interpolate_columns(image, flags).astype(np.float64)
+    channels = min(image.shape[2], v.shape[1])
+    out[..., :channels] /= np.where(v[None, :, :channels] > 0.05,
+                                    v[None, :, :channels], 1.0)
+    return np.clip(out, 0, np.iinfo(image.dtype).max).astype(image.dtype)
+
+
 def flat_field_gain(
     flat: np.ndarray,
     highpass: bool = True,
