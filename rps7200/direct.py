@@ -922,6 +922,10 @@ class DirectScanner:
         # raw pixels and never applies it itself -- see rps7200.shading.
         self._shading: ShadingReference | None = None
         self._ccd_mask: bytes | None = None
+        # The last pass's bytes exactly as the scanner sent them, kept only
+        # when asked: enough to rebuild the image if the decode ever changes.
+        self.last_raw: bytes | None = None
+        self.last_raw_layout: dict[str, Any] | None = None
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -1474,6 +1478,7 @@ class DirectScanner:
         timeout: float = 3600.0,
         poll: float = 0.02,
         idle_timeout: float = 120.0,
+        keep_raw: bool = False,
     ) -> np.ndarray:
         """Read a frame and deinterleave it into ``(H, W, channels)``.
 
@@ -1535,7 +1540,23 @@ class DirectScanner:
             got += n
             self._log(f"{got}/{total_lines} lines")
 
-        return self._deinterleave(b"".join(chunks), params, channels)
+        blob = b"".join(chunks)
+        if keep_raw:
+            # Everything a decoder needs, so the bytes stay meaningful without
+            # this object. Line stride includes the 2-byte channel tag.
+            self.last_raw = blob
+            self.last_raw_layout = {
+                "format": "index",
+                "bytes_per_line": int(params.bytes_per_line),
+                "line_stride": int(params.bytes_per_line) + INDEX_HEADER,
+                "index_header": INDEX_HEADER,
+                "width": int(params.width),
+                "lines": int(params.lines),
+                "channels": int(channels),
+                "byte_order": "little",
+                "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
+            }
+        return self._deinterleave(blob, params, channels)
 
     @staticmethod
     def _deinterleave(
@@ -1874,6 +1895,7 @@ class DirectScanner:
         locked = locks_white_balance(film)
         channels = 4 if infrared else 3
         scales = list(start) if start else [1.0] * channels
+        limited = [False] * channels
         full = 65535.0
 
         # The exposure every scale is relative to, read once. :meth:`scan`
@@ -1919,25 +1941,30 @@ class DirectScanner:
                     scales[c] *= 0.25           # clipped; back well off
                 else:
                     scales[c] *= target / measured
-                scales[c] = max(0.01, min(8.0, scales[c]))
+                # Bound by what the timer can actually hold, not by a
+                # guess. A fixed cap of 8x used to stop blue short: with film
+                # loaded the device's own blue exposure sits low (6506 in one
+                # scan), leaving room for 10x, and the cap -- not the hardware
+                # -- was what kept the blue record dark.
+                ceiling = 65535 / base.exposure[c] if base.exposure[c] else 8.0
+                if scales[c] > ceiling:
+                    limited[c] = True
+                scales[c] = max(0.01, min(ceiling, scales[c]))
 
         self._log(f"auto-exposure result: {[round(v, 3) for v in scales]}")
 
-        # Exposure is a 16-bit timer count: the product of the device's own
-        # exposure and the scale is clamped, and past full scale the firmware
-        # wraps and the pass comes out darker. Blue starts near the top, so a
-        # negative can ask for more blue than the hardware has left. Say so --
-        # silently returning a scale that cannot be applied reads as a metering
-        # failure later.
-        for c, scale in enumerate(scales):
-            if c >= len(base.exposure):
-                break
-            wanted = base.exposure[c] * scale
-            if wanted > 65535:
+        # Exposure is a 16-bit timer count, and past full scale the firmware
+        # wraps -- the pass comes out darker, not brighter. A channel that
+        # wanted more than the timer holds was held at the ceiling and did not
+        # reach the target; say so, because silently returning a scale that
+        # could not be applied reads as a metering failure later.
+        for c, was_limited in enumerate(limited):
+            if was_limited and c < len(base.exposure):
                 self._log(
-                    f"  note: {'RGBI'[c]} wants exposure {wanted:.0f} but the "
-                    f"timer stops at 65535 ({65535 / base.exposure[c]:.2f}x is "
-                    f"all that is left); this channel cannot reach the target"
+                    f"  note: {'RGBI'[c]} is held at the timer ceiling "
+                    f"({65535 / base.exposure[c]:.2f}x of exposure "
+                    f"{base.exposure[c]} is all there is); this channel could "
+                    f"not reach the target"
                 )
         return scales
 
@@ -1985,6 +2012,7 @@ class DirectScanner:
         skip_shading: bool = True,
         shading: bool = True,
         film: str = FILM_NEGATIVE,
+        keep_raw: bool = False,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -2091,7 +2119,7 @@ class DirectScanner:
                 f"params width={params.width} lines={params.lines} "
                 f"bpl={params.bytes_per_line}"
             )
-            image = self.read_planes(params, channels)
+            image = self.read_planes(params, channels, keep_raw=keep_raw)
             if advance:
                 self.slide(SLIDE_NEXT)
         except BaseException:

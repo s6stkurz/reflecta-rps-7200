@@ -25,8 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import tiff
+from rps7200 import library, tiff
 from rps7200.direct import DirectScanner
+from rps7200.library import FilmNotes
 from rps7200.shading import ShadingReference
 
 
@@ -48,6 +49,17 @@ def main() -> int:
                     help="metering only: a negative is metered per channel to "
                          "take the orange mask off before the ADC; everything "
                          "else keeps its cast")
+    ap.add_argument("--library", nargs="?", const="library", default=None,
+                    metavar="DIR",
+                    help="also file this scan in the reusable library, with its "
+                         "raw bytes and calibration, so it can be re-decoded "
+                         "and re-corrected later without rescanning")
+    ap.add_argument("--stock", default="", help="film stock, e.g. 'Kodak Gold 200'")
+    ap.add_argument("--frame", default="", help="frame position on the roll")
+    ap.add_argument("--subject", default="")
+    ap.add_argument("--notes", default="", help="anything about this frame worth "
+                                                "knowing later, e.g. 'dust top left'")
+    ap.add_argument("--tag", action="append", default=[], dest="tags")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     args = ap.parse_args()
 
@@ -85,7 +97,22 @@ def main() -> int:
             auto_exposure=args.auto_exposure,
             film=args.film,
             shading=not args.no_shading,
+            keep_raw=args.library is not None,
         )
+        entry = None
+        if args.library is not None:
+            entry = library.save(
+                image, meta,
+                root=args.library,
+                film=FilmNotes(stock=args.stock, frame=args.frame,
+                               subject=args.subject, notes=args.notes),
+                tags=args.tags,
+                reference=s._shading,
+                ccd_mask=s._ccd_mask,
+                raw=s.last_raw,
+                raw_layout=s.last_raw_layout,
+                inquiry=info,
+            )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +123,12 @@ def main() -> int:
         r = meta["shading"]
         print(f"shading: {r['columns']}/{r['width']} columns corrected, "
               f"{r['clipped']} samples clipped")
+    if entry is not None:
+        print(f"filed in the library as {entry}")
+        raw_mb = (entry / "raw.bin.gz").stat().st_size / 1e6 if (
+            entry / "raw.bin.gz").exists() else 0
+        print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- this scan can "
+              f"be re-decoded and re-corrected without the scanner")
     return 0
 
 

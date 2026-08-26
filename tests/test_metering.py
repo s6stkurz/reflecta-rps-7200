@@ -127,7 +127,17 @@ def test_a_channel_against_the_timer_ceiling_is_reported(capsys):
     exposure than the hardware has left. That has to be said, not swallowed."""
     s = FakeScanner((1.0, 1.0, 0.05), base=(8000, 20000, 60000, 8000))
     s.verbose = True
-    s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=2)
+    scales = s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=2)
     out = capsys.readouterr().out
-    assert "timer stops at 65535" in out
-    assert "cannot reach the target" in out
+    assert "held at the timer ceiling" in out
+    assert "could not reach the target" in out
+    # and the scale it returns must be one the device can actually apply
+    assert 60000 * scales[2] <= 65535
+
+
+def test_the_scale_cap_is_the_timer_not_a_fixed_number():
+    """A fixed 8x cap used to stop blue short of what the hardware allows."""
+    s = FakeScanner((1.0, 1.0, 0.02), base=(6506, 6506, 6506, 8000))
+    scales = s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=3)
+    assert scales[2] > 8.0, "blue was capped below the timer ceiling"
+    assert 6506 * scales[2] == pytest.approx(65535, rel=0.01)
