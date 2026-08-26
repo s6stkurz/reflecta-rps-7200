@@ -4,14 +4,22 @@
     python3 tools/library.py list
     python3 tools/library.py verify
     python3 tools/library.py reconstruct        # re-decode every entry
+    python3 tools/library.py duplicates         # what is redundant, and why
+    python3 tools/library.py duplicates --delete
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
 which entries no longer match what was saved.
+
+`duplicates` finds entries that are the same scan of the same picture at the
+same protocol revision -- the scanner was driven identically, so one of them
+holds nothing the other does not. It only reports; `--delete` is what removes
+them, and `--keep N` leaves more than one of each behind.
 """
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -23,8 +31,14 @@ from rps7200 import library
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["list", "verify", "reconstruct", "reindex"])
+    ap.add_argument("action",
+                    choices=["list", "verify", "reconstruct", "reindex", "duplicates"])
     ap.add_argument("--root", default="library")
+    ap.add_argument("--delete", action="store_true",
+                    help="duplicates: actually remove them (default is a dry run)")
+    ap.add_argument("--keep", type=int, default=1, metavar="N",
+                    help="duplicates: how many of each group to keep (default 1). "
+                         "Use 2 to retain a pair for pass-to-pass comparisons")
     args = ap.parse_args()
     root = Path(args.root)
 
@@ -66,6 +80,28 @@ def main() -> int:
               f"decode to what was stored" if changed
               else "\nevery entry still decodes to exactly what was stored")
         return 1 if changed else 0
+
+    elif args.action == "duplicates":
+        doomed = library.prunable(root, keep=args.keep)
+        if not doomed:
+            print(f"no duplicates (keeping {args.keep} of each group)")
+            return 0
+
+        freed = 0
+        for record, reason in doomed:
+            path = root / str(record.get("id"))
+            size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+            freed += size
+            print(f"{'removing' if args.delete else 'redundant'}: {path.name}"
+                  f"  ({size / 1e6:.1f} MB)\n    {reason}")
+            if args.delete:
+                shutil.rmtree(path)
+
+        print(f"\n{len(doomed)} entr{'y' if len(doomed) == 1 else 'ies'}, "
+              f"{freed / 1e6:.1f} MB"
+              + (" removed" if args.delete else " would be freed -- pass --delete"))
+        if args.delete:
+            library.reindex(root)
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

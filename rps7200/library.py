@@ -194,7 +194,7 @@ def save(
             for k in (
                 "resolution_dpi", "frame", "width", "height", "depth",
                 "channels", "channel_order", "bytes_per_line", "film",
-                "exposure_scale", "duration_s",
+                "exposure_scale", "duration_s", "protocol_revision",
             )
         },
         "device_settings": {
@@ -303,6 +303,78 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         f"decode CHANGED: {differing} of {image.size} samples differ "
         f"({100 * differing / image.size:.3f}%)"
     )
+
+
+def signature(record: dict[str, Any]) -> tuple:
+    """What makes two entries the same scan of the same picture.
+
+    The picture, plus how the scanner was driven to capture it. Two entries
+    sharing a signature are interchangeable: the device was told exactly the
+    same thing about the same frame, so neither holds anything the other does
+    not, and one of them is redundant.
+
+    `protocol_revision` is part of it deliberately. Entries only reduce to each
+    other while the conversation with the scanner is unchanged; once a command
+    or payload moves, scans taken before and after are different measurements
+    of the same film and both are worth keeping.
+
+    Deliberately *not* included: the exposure the metering happened to land on,
+    the shading reference, anything host-side. Those vary run to run without
+    changing what was asked for, and everything host-side is re-runnable from
+    the raw bytes.
+    """
+    scan, film = record.get("scan") or {}, record.get("film") or {}
+    return (
+        (film.get("stock") or "").strip().lower(),
+        (film.get("frame") or "").strip().lower(),
+        (film.get("subject") or "").strip().lower(),
+        scan.get("resolution_dpi"),
+        scan.get("channels"),
+        tuple(scan.get("frame") or ()),
+        scan.get("depth"),
+        scan.get("film"),
+        scan.get("protocol_revision"),
+    )
+
+
+def duplicates(root: Path | str = DEFAULT_ROOT) -> dict[tuple, list[dict[str, Any]]]:
+    """Groups of interchangeable entries, newest first within each group.
+
+    Only groups with more than one entry are returned.
+    """
+    groups: dict[tuple, list[dict[str, Any]]] = {}
+    for record in entries(root):
+        groups.setdefault(signature(record), []).append(record)
+    for group in groups.values():
+        group.sort(key=lambda r: str(r.get("created")), reverse=True)
+    return {sig: g for sig, g in groups.items() if len(g) > 1}
+
+
+def prunable(
+    root: Path | str = DEFAULT_ROOT, keep: int = 1
+) -> list[tuple[dict[str, Any], str]]:
+    """Which entries are redundant, and why. Nothing is deleted here.
+
+    Within a group the ones kept are chosen on what they can still be used for,
+    not on age: an entry carrying its raw bytes and its calibration can be
+    re-decoded and re-corrected, and one without cannot. Ties go to the newest.
+    """
+    def usefulness(record: dict[str, Any]) -> tuple:
+        raw = bool((record.get("raw") or {}).get("file"))
+        cal = bool((record.get("calibration") or {}).get("shading"))
+        return (raw, cal, str(record.get("created")))
+
+    out = []
+    for group in duplicates(root).values():
+        ranked = sorted(group, key=usefulness, reverse=True)
+        kept = ranked[:keep]
+        for record in ranked[keep:]:
+            best = kept[0].get("id")
+            reason = f"same scan of the same picture as {best}"
+            if not (record.get("raw") or {}).get("file"):
+                reason += "; no raw bytes either"
+            out.append((record, reason))
+    return out
 
 
 def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:

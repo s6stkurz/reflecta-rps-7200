@@ -150,3 +150,67 @@ def test_the_index_summarises_every_entry(tmp_path):
     assert len(summary) == 2
     assert {e["film"] for e in summary} == {"Kodak Gold 200"}
     assert all(e["dpi"] == 1800 for e in summary)
+
+
+# --- duplicates -------------------------------------------------------------
+
+def entry_with(tmp_path, *, stock="Kodak Gold 200", frame="3", dpi=1800,
+               revision=1, raw=True, reference=True, channels=3):
+    stream, image = index_stream(16, 8, channels)
+    meta = {
+        "resolution_dpi": dpi, "channels": channels,
+        "channel_order": list(CHANNEL_ORDER[:channels]),
+        "width": 16, "height": 8, "depth": 16, "frame": [0, 0, 10343, 6887],
+        "bytes_per_line": 32, "film": "negative", "shading": None,
+        "protocol_revision": revision,
+    }
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": channels}
+    ref = ShadingReference(
+        ref={c: np.full(16, 30000.0) for c in range(channels)},
+        mean={c: 30000.0 for c in range(channels)}, pixels_per_line=16,
+    ) if reference else None
+    return library.save(
+        image, meta, root=tmp_path, film=FilmNotes(stock=stock, frame=frame),
+        reference=ref, raw=stream if raw else None,
+        raw_layout=layout if raw else None,
+    )
+
+
+def test_the_same_scan_of_the_same_picture_is_a_duplicate(tmp_path):
+    entry_with(tmp_path)
+    entry_with(tmp_path)
+    doomed = library.prunable(tmp_path)
+    assert len(doomed) == 1
+    assert "same scan of the same picture" in doomed[0][1]
+
+
+def test_a_different_picture_or_setting_is_not(tmp_path):
+    entry_with(tmp_path, frame="3")
+    entry_with(tmp_path, frame="4")            # different frame
+    entry_with(tmp_path, frame="3", dpi=3600)  # different resolution
+    assert library.prunable(tmp_path) == []
+
+
+def test_scans_across_a_protocol_change_are_both_kept(tmp_path):
+    """Once the conversation with the scanner moves, they are different
+    measurements of the same film, not copies of one."""
+    entry_with(tmp_path, revision=1)
+    entry_with(tmp_path, revision=2)
+    assert library.prunable(tmp_path) == []
+
+
+def test_the_entry_that_can_still_be_used_is_the_one_kept(tmp_path):
+    """Age does not decide it: raw bytes and calibration do."""
+    keeper = entry_with(tmp_path, raw=True, reference=True)
+    entry_with(tmp_path, raw=False, reference=False)   # newer, but a dead end
+    doomed = library.prunable(tmp_path)
+    assert len(doomed) == 1
+    assert doomed[0][0]["id"] != keeper.name
+    assert "no raw bytes either" in doomed[0][1]
+
+
+def test_keep_two_retains_a_pair_for_comparison(tmp_path):
+    for _ in range(3):
+        entry_with(tmp_path)
+    assert len(library.prunable(tmp_path, keep=1)) == 2
+    assert len(library.prunable(tmp_path, keep=2)) == 1

@@ -27,6 +27,18 @@ import numpy as np
 from .shading import ShadingReference, apply_shading, calculate_shading
 from .usb_transport import CheckCondition, NoDataYet, Transport, UsbError
 
+# The revision of what this driver *says to the scanner*: the command
+# sequence, its order, and the payloads. Two scans of one picture taken at the
+# same settings and the same revision are interchangeable -- the scanner was
+# driven identically, so neither holds anything the other does not, and the
+# library treats them as duplicates.
+#
+# Bump this whenever the conversation with the device changes: a command added,
+# removed or reordered, a payload byte altered, a different frame or mode. Do
+# NOT bump it for host-side work -- decoding, shading, metering maths -- since
+# those are re-runnable from the raw bytes every entry keeps.
+PROTOCOL_REVISION = 1
+
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
 SCSI_REQUEST_SENSE = 0x03
@@ -2152,6 +2164,7 @@ class DirectScanner:
             "resolution_dpi": resolution,
             "channels": channels,
             "film": film,
+            "protocol_revision": PROTOCOL_REVISION,
             "shading": shading_report,
             "channel_order": [c for c in CHANNEL_ORDER][:channels]
             if not infrared
