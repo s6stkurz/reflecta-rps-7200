@@ -43,6 +43,11 @@ def main() -> int:
     ap.add_argument("--no-shading", action="store_true",
                     help="return raw pixels, for comparison")
     ap.add_argument("--auto-exposure", action="store_true")
+    ap.add_argument("--film", default="negative",
+                    choices=["negative", "positive", "kodachrome", "bw"],
+                    help="metering only: a negative is metered per channel to "
+                         "take the orange mask off before the ADC; everything "
+                         "else keeps its cast")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     args = ap.parse_args()
 
@@ -78,6 +83,7 @@ def main() -> int:
             resolution=args.dpi,
             infrared=args.ir,
             auto_exposure=args.auto_exposure,
+            film=args.film,
             shading=not args.no_shading,
         )
 

@@ -1,0 +1,133 @@
+"""Metering tests: what the exposure loop does without the scanner attached.
+
+The load-bearing piece is the film type. A colour negative is metered one
+channel at a time, which takes the orange mask off before the ADC; every other
+film keeps its balance, because there the cast is the picture and pulling the
+channels apart removes it.
+"""
+
+import numpy as np
+import pytest
+
+from rps7200.direct import (
+    FILM_BW,
+    FILM_KODACHROME,
+    FILM_NEGATIVE,
+    FILM_POSITIVE,
+    DirectScanner,
+    Settings,
+    locks_white_balance,
+)
+
+
+class FakeScanner(DirectScanner):
+    """A scanner whose passes are simulated from a per-channel transmission.
+
+    Exposure is linear in integration time, as the sensor is, and clipped at
+    full scale -- enough to exercise the metering loop end to end.
+    """
+
+    def __init__(self, transmission, base=(8000, 20000, 50000, 8000)):
+        self.verbose = False
+        self._settings = Settings(
+            exposure=list(base), gain=[40, 33, 21, 25], offset=[12, 10, 28, 10]
+        )
+        self.transmission = transmission
+        self.passes = []
+
+    def get_gain_offset(self):
+        return self._settings
+
+    def set_gain_offset(self, s, infrared=False):
+        self._settings = s
+
+    def scan(self, resolution=300, infrared=False, exposure_scale=1.0, **kw):
+        settings = self._settings.scaled(exposure_scale)
+        self._settings = settings          # SET GAIN OFFSET persists
+        n = 4 if infrared else 3
+        self.passes.append(list(settings.exposure[:n]))
+        level = [
+            min(1.0, settings.exposure[c] / 65535.0 * self.transmission[c])
+            for c in range(n)
+        ]
+        return (np.full((8, 8, n), 0.0) + np.array(level) * 65535).astype(np.uint16), {}
+
+
+def test_only_a_negative_is_metered_per_channel():
+    assert locks_white_balance(FILM_NEGATIVE) is False
+    for film in (FILM_POSITIVE, FILM_KODACHROME, FILM_BW):
+        assert locks_white_balance(film) is True
+
+
+def test_unknown_film_is_refused():
+    with pytest.raises(ValueError, match="unknown film type"):
+        locks_white_balance("colour-negative")
+
+
+def test_a_slide_keeps_its_cast():
+    """The whole point: a locked meter must not equalise the channels.
+
+    Metered well below full scale so the 16-bit timer does not clamp a channel
+    and confuse a clamp for a metering decision; the ceiling has its own test.
+    """
+    cast = (1.0, 0.6, 0.35)          # a warm slide
+    s = FakeScanner(cast, base=(8000, 12000, 16000))
+    scales = s.auto_exposure(target=0.4, film=FILM_POSITIVE, rounds=3)
+
+    exposures = s.passes[-1]
+    ratios = [e / exposures[0] for e in exposures]
+    nominal = [8000 / 8000, 12000 / 8000, 16000 / 8000]
+    assert ratios == pytest.approx(nominal, rel=0.02), (
+        "a locked meter moved the channels apart, which takes the cast off"
+    )
+    assert len(set(round(v, 6) for v in scales[:3])) == 1
+
+
+def test_a_negative_is_pulled_apart():
+    """The orange mask must come off before the ADC, not after."""
+    mask = (0.9, 0.7, 0.5)           # blue attenuated most, as a mask does
+    s = FakeScanner(mask, base=(10000, 10000, 10000, 8000))
+    s.auto_exposure(target=0.4, film=FILM_NEGATIVE, rounds=4)
+
+    r, g, b = s.passes[-1][:3]
+    assert b > g > r, "a negative was not metered per channel"
+
+
+def test_locked_metering_never_clips_a_channel():
+    s = FakeScanner((0.30, 0.85, 1.0), base=(9000, 9000, 9000))
+    s.auto_exposure(target=0.8, film=FILM_BW, rounds=4)
+    settings = s.get_gain_offset()
+    levels = [
+        settings.exposure[c] / 65535.0 * s.transmission[c] for c in range(3)
+    ]
+    assert max(levels) <= 1.0 + 1e-9
+    assert max(levels) == pytest.approx(0.8, abs=0.1)
+
+
+def test_scales_do_not_compound_across_rounds():
+    """SET GAIN OFFSET persists on the device, so each round must restore the base.
+
+    Without that, round three multiplies a base that round two already scaled
+    and the pass comes back wildly over-exposed. The returned scale is relative
+    to the original exposure, so the device must end up at exactly that.
+    """
+    base = (6000, 9000, 12000)
+    s = FakeScanner((0.9, 0.7, 0.5), base=base + (8000,))
+    scales = s.auto_exposure(target=0.4, film=FILM_NEGATIVE, rounds=3)
+
+    final = s.get_gain_offset().exposure[:3]
+    expected = [min(65535, round(b * v)) for b, v in zip(base, scales[:3])]
+    assert final == pytest.approx(expected, rel=0.01), (
+        f"exposure compounded across rounds: {final} vs {expected}"
+    )
+
+
+def test_a_channel_against_the_timer_ceiling_is_reported(capsys):
+    """Blue starts near the top of the timer, so a negative can ask for more
+    exposure than the hardware has left. That has to be said, not swallowed."""
+    s = FakeScanner((1.0, 1.0, 0.05), base=(8000, 20000, 60000, 8000))
+    s.verbose = True
+    s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=2)
+    out = capsys.readouterr().out
+    assert "timer stops at 65535" in out
+    assert "cannot reach the target" in out

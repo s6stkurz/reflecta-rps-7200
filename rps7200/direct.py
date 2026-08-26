@@ -674,6 +674,38 @@ FULL_FRAME = (0, 0, 10343, 6887)
 #: CCD mask length the vendor software requests (pieusb uses shading_width).
 CCD_MASK_SIZE = 5172
 
+# Film types, for metering. Only the white-balance rule depends on these.
+FILM_NEGATIVE = "negative"
+FILM_POSITIVE = "positive"
+FILM_KODACHROME = "kodachrome"
+FILM_BW = "bw"
+FILM_TYPES = (FILM_NEGATIVE, FILM_POSITIVE, FILM_KODACHROME, FILM_BW)
+
+
+def locks_white_balance(film: str) -> bool:
+    """Whether metering must move the visible channels together.
+
+    A colour negative's orange mask sits over the whole frame. Metering the
+    channels as one group leaves it there to be quantised through, and the blue
+    record ends up in a fraction of the range it could have had -- so a negative
+    is metered per channel, which takes the mask off before the ADC instead of
+    after it.
+
+    Everything else keeps its balance. A slide, a Kodachrome and a black and
+    white negative all carry their cast because that cast *is* the picture;
+    stretching each channel to the same target on its own takes it off.
+
+    Note what this scanner can actually deliver on the negative side. Blue sits
+    near the top of the 16-bit exposure timer before any film is loaded -- the
+    lamp is weak there and the blue filter passes little -- so there is only
+    about x1.2 of exposure left to give it. The mask can be taken off red and
+    green; on blue the hardware has almost nothing left. See
+    :meth:`DirectScanner.auto_exposure`, which reports when it hits that.
+    """
+    if film not in FILM_TYPES:
+        raise ValueError(f"unknown film type {film!r}; expected one of {FILM_TYPES}")
+    return film != FILM_NEGATIVE
+
 # Slide / autofeed transport actions
 SLIDE_NEXT = 0x04
 SLIDE_PREV = 0x05
@@ -1817,6 +1849,7 @@ class DirectScanner:
         rounds: int = 3,
         tolerance: float = 0.08,
         start: Sequence[float] | None = None,
+        film: str = FILM_NEGATIVE,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
 
@@ -1828,15 +1861,32 @@ class DirectScanner:
         four-channel one takes minutes, and the infrared exposure tracks the
         visible channels closely enough to scale with them.
 
+        ``film`` decides whether the visible channels are metered together or
+        apart -- see :func:`locks_white_balance`. This matters: metering a slide
+        per channel stretches each one to the same target and takes the cast
+        off the picture. Infrared is always metered on its own, being no part
+        of the colour balance.
+
         The channels differ enormously -- with no film in the transport blue
-        saturates while red sits near a fifth of scale -- so this is per
-        channel rather than one global factor.
+        saturates while red sits near a fifth of scale -- so a negative is
+        metered per channel rather than with one global factor.
         """
+        locked = locks_white_balance(film)
         channels = 4 if infrared else 3
         scales = list(start) if start else [1.0] * channels
         full = 65535.0
 
+        # The exposure every scale is relative to, read once. :meth:`scan`
+        # multiplies whatever the device currently holds, and SET GAIN OFFSET
+        # persists, so re-reading it each round would compound the scales.
+        base = self.get_gain_offset()
+        self._log(
+            f"auto-exposure: film={film}, "
+            f"{'locked (one factor for R/G/B)' if locked else 'per channel'}"
+        )
+
         for round_no in range(1, rounds + 1):
+            self.set_gain_offset(base, infrared=infrared)
             image, _ = self.scan(
                 resolution=resolution,
                 infrared=infrared,
@@ -1855,18 +1905,40 @@ class DirectScanner:
             if all(abs(v - target) <= tolerance for v in levels):
                 break
 
+            visible = levels[:3]
             for c, level in enumerate(levels):
                 if c >= len(scales):
                     break
-                if level <= 0.001:
+                # Locked: every visible channel moves by the one factor the
+                # brightest of them needs, so none clips and the proportions --
+                # the film's own cast -- survive. Infrared is metered alone.
+                measured = max(visible) if (locked and c < 3) else level
+                if measured <= 0.001:
                     scales[c] *= 4.0            # far too dark to measure
-                elif level >= 0.999:
+                elif measured >= 0.999:
                     scales[c] *= 0.25           # clipped; back well off
                 else:
-                    scales[c] *= target / level
+                    scales[c] *= target / measured
                 scales[c] = max(0.01, min(8.0, scales[c]))
 
         self._log(f"auto-exposure result: {[round(v, 3) for v in scales]}")
+
+        # Exposure is a 16-bit timer count: the product of the device's own
+        # exposure and the scale is clamped, and past full scale the firmware
+        # wraps and the pass comes out darker. Blue starts near the top, so a
+        # negative can ask for more blue than the hardware has left. Say so --
+        # silently returning a scale that cannot be applied reads as a metering
+        # failure later.
+        for c, scale in enumerate(scales):
+            if c >= len(base.exposure):
+                break
+            wanted = base.exposure[c] * scale
+            if wanted > 65535:
+                self._log(
+                    f"  note: {'RGBI'[c]} wants exposure {wanted:.0f} but the "
+                    f"timer stops at 65535 ({65535 / base.exposure[c]:.2f}x is "
+                    f"all that is left); this channel cannot reach the target"
+                )
         return scales
 
     # -- flat field --------------------------------------------------------
@@ -1912,6 +1984,7 @@ class DirectScanner:
         exposure_target: float = 0.7,
         skip_shading: bool = True,
         shading: bool = True,
+        film: str = FILM_NEGATIVE,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -1919,6 +1992,11 @@ class DirectScanner:
         capture. It is load-bearing: in particular :meth:`cmd_17` must follow
         the scan frame, or the scanner refuses to skip shading analysis and the
         scan cannot complete. See the README.
+
+        ``film`` reaches auto-exposure, and only auto-exposure: it decides
+        whether the visible channels are metered together or apart. Getting it
+        wrong on a slide takes the cast off the picture -- see
+        :func:`locks_white_balance`.
 
         ``shading`` applies this session's shading reference, which is what
         removes the vertical striping. The scanner measures its per-column
@@ -1934,7 +2012,7 @@ class DirectScanner:
             # and without infrared, so an RGB probe cannot predict an RGBI scan.
             self._log(f"auto-exposure: probing (infrared={infrared})")
             exposure_scale = self.auto_exposure(
-                target=exposure_target, infrared=infrared
+                target=exposure_target, infrared=infrared, film=film
             )
             self._log(
                 f"auto-exposure: {[round(v, 3) for v in exposure_scale]}"
@@ -2045,6 +2123,7 @@ class DirectScanner:
         meta = {
             "resolution_dpi": resolution,
             "channels": channels,
+            "film": film,
             "shading": shading_report,
             "channel_order": [c for c in CHANNEL_ORDER][:channels]
             if not infrared
