@@ -24,7 +24,7 @@ and sanei_pieusb_correct_shading (pieusb_specific.c:1207).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +48,11 @@ class ShadingReference:
     calibration, so it is cached on the Scanner exactly as the C backend caches
     it on the open handle (pieusb_specific.h:292-294).
 
+    ``ref`` is the **light** reference -- the lit path -- and ``dark`` the
+    unlit one, which the device sends in the same pass. ``dark`` may be empty:
+    the correction falls back to a single-point division then, as the SANE C
+    backend does throughout.
+
     ``pixels_per_line`` is the CCD-native width it was read at, kept so a
     reference cannot be applied to a pass the device sized differently.
     """
@@ -55,66 +60,119 @@ class ShadingReference:
     ref: dict[int, np.ndarray]
     mean: dict[int, float]
     pixels_per_line: int
+    dark: dict[int, np.ndarray] = field(default_factory=dict)
+    dark_mean: dict[int, float] = field(default_factory=dict)
 
     @property
     def channels(self) -> list[int]:
         return sorted(self.ref)
+
+    @property
+    def two_point(self) -> bool:
+        return bool(self.dark)
 
     def save(self, path: str | Path) -> None:
         np.savez_compressed(
             path,
             pixels_per_line=self.pixels_per_line,
             channels=np.array(self.channels),
+            dark_channels=np.array(sorted(self.dark), dtype=np.int64),
             **{f"ref{c}": self.ref[c] for c in self.channels},
             **{f"mean{c}": np.float64(self.mean[c]) for c in self.channels},
+            **{f"dark{c}": self.dark[c] for c in sorted(self.dark)},
+            **{f"darkmean{c}": np.float64(self.dark_mean[c]) for c in sorted(self.dark)},
         )
 
     @classmethod
     def load(cls, path: str | Path) -> "ShadingReference":
         with np.load(path) as z:
             channels = [int(c) for c in z["channels"]]
+            dark_channels = (
+                [int(c) for c in z["dark_channels"]] if "dark_channels" in z else []
+            )
             return cls(
                 ref={c: z[f"ref{c}"] for c in channels},
                 mean={c: float(z[f"mean{c}"]) for c in channels},
                 pixels_per_line=int(z["pixels_per_line"]),
+                dark={c: z[f"dark{c}"] for c in dark_channels},
+                dark_mean={c: float(z[f"darkmean{c}"]) for c in dark_channels},
             )
 
 
-def calculate_shading(data: bytes, pixels_per_line: int) -> ShadingReference | None:
-    """Average the raw calibration lines into a per-column reference.
+def calculate_shading(
+    data: bytes, pixels_per_line: int, split_ratio: float = 5.0
+) -> ShadingReference | None:
+    """Parse the calibration block into a dark and a light per-column reference.
 
     Calibration lines are **always 16-bit little-endian regardless of the mode
     depth**, carrying the same two-byte channel tag as image data. Sizing the
     read from an 8-bit mode reads nothing at all.
 
-    Returns None if the block held no recognisable lines.
+    The pass returns two phases, unlit first and lit second, interleaved by
+    channel throughout. Measured on this scanner: the dark lines average around
+    170 counts and the light ones around 47,000, so the two are separated by a
+    factor of roughly 250. They are split **by level rather than by counting
+    lines**, because the device's own descriptor declares 4 x 20 lines while
+    around 160 arrive -- one declaration for two phases -- so any split derived
+    from the declared counts would be wrong.
+
+    `pieusb`'s `calculate_shading` averages every line sharing a tag, blending
+    the two into one useless reference. That is worth knowing about but not
+    copying; the dark half matters here, varying 12-15% column to column
+    against the light half's 0.8%.
+
+    ``split_ratio`` is the smallest max/min ratio of line levels that counts as
+    two phases. Below it every line is treated as light and the correction
+    falls back to a single point.
     """
     stride = 2 + pixels_per_line * 2
     if stride <= 2 or len(data) < stride:
         return None
 
-    acc = {c: np.zeros(pixels_per_line, dtype=np.float64) for c in range(4)}
-    count = dict.fromkeys(range(4), 0)
-
+    # collect the lines per channel first; the split needs their levels
+    lines: dict[int, list[np.ndarray]] = {}
     for k in range(len(data) // stride):
         off = k * stride
         channel = TAG_TO_CHANNEL.get(data[off])
         if channel is None:
             continue
-        acc[channel] += np.frombuffer(
-            data, dtype="<u2", count=pixels_per_line, offset=off + 2
-        ).astype(np.float64)
-        count[channel] += 1
+        lines.setdefault(channel, []).append(
+            np.frombuffer(data, dtype="<u2", count=pixels_per_line, offset=off + 2)
+            .astype(np.float64)
+        )
+    if not lines:
+        return None
 
-    ref, mean = {}, {}
-    for c, n in count.items():
-        if not n:
-            continue
-        ref[c] = acc[c] / n
-        mean[c] = float(ref[c].mean())
+    ref: dict[int, np.ndarray] = {}
+    mean: dict[int, float] = {}
+    dark: dict[int, np.ndarray] = {}
+    dark_mean: dict[int, float] = {}
+
+    for channel, rows in lines.items():
+        levels = np.array([r.mean() for r in rows])
+        lo, hi = levels.min(), max(levels.max(), 1e-9)
+        if lo > 0 and hi / lo >= split_ratio:
+            # Two populations. Cut at the widest ratio gap between consecutive
+            # levels rather than at a fixed threshold, so the boundary is the
+            # data's own and not a guess about exposure.
+            order = np.argsort(levels)
+            ranked = levels[order]
+            gaps = ranked[1:] / np.maximum(ranked[:-1], 1e-9)
+            cut = ranked[int(np.argmax(gaps))]
+            is_dark = levels <= cut
+            if is_dark.any() and not is_dark.all():
+                stack = np.stack(rows)
+                dark[channel] = stack[is_dark].mean(axis=0)
+                dark_mean[channel] = float(dark[channel].mean())
+                ref[channel] = stack[~is_dark].mean(axis=0)
+                mean[channel] = float(ref[channel].mean())
+                continue
+        ref[channel] = np.mean(np.stack(rows), axis=0)
+        mean[channel] = float(ref[channel].mean())
+
     if not ref:
         return None
-    return ShadingReference(ref, mean, pixels_per_line)
+    return ShadingReference(ref, mean, pixels_per_line, dark, dark_mean)
 
 
 def build_width_to_loc(ccd_mask: bytes, width: int) -> np.ndarray:
@@ -135,14 +193,28 @@ def apply_shading(
 ) -> tuple[np.ndarray, dict[str, int]]:
     """Flat-field an ``(H, W, C)`` image from a reference. Returns (image, report).
 
-    Without a CCD mask the columns are matched one-to-one, which is only right
-    when the pass read every CCD pixel; pass the mask read during that pass
-    otherwise.
+    Two-point where the calibration gave both phases::
 
-    Over-range results are clamped rather than wrapped, and the count is
-    reported: the gain exceeds 1 wherever the lamp falls off, so edge columns
-    reach the ceiling at a lower raw value than centre ones, and heavy clipping
-    re-introduces banding in the highlights. Lower the exposure if it does.
+        value = (raw - dark[c][j]) * (mean_light[c] - mean_dark[c])
+                                   / (light[c][j] - dark[c][j])
+
+    and the single-point form the SANE C backend uses where it did not::
+
+        value = raw * mean_light[c] / light[c][j]
+
+    The dark half is worth the extra term: it varies 12-15% column to column
+    against the light half's 0.8%, and it is an *offset*, so it dominates
+    exactly where a negative is densest and the signal is smallest.
+
+    ``j`` is not the output column. The reference spans the whole CCD including
+    pixels this pass did not read, so the mask maps them -- see
+    :func:`build_width_to_loc`. Passing no mask matches columns one to one,
+    which is only right when the pass read every CCD pixel.
+
+    Over-range results are clamped rather than wrapped, and counted: the gain
+    exceeds 1 wherever the lamp falls off, so edge columns reach the ceiling at
+    a lower raw value than centre ones, and heavy clipping re-introduces
+    banding in the highlights. Lower the exposure if it does.
     """
     h, w, nc = image.shape
     if ccd_mask is None:
@@ -152,17 +224,25 @@ def apply_shading(
 
     out = image.copy()
     maxval = np.iinfo(image.dtype).max if np.issubdtype(image.dtype, np.integer) else None
-    report = {"columns": int(loc.size), "width": w, "clipped": 0, "uncorrected": 0}
+    report = {
+        "columns": int(loc.size), "width": w, "clipped": 0, "uncorrected": 0,
+        "two_point": int(reference.two_point),
+    }
 
     for c in range(nc):
         if c not in reference.ref:
             report["uncorrected"] += 1
             continue
-        gain = np.where(reference.ref[c][loc] > 0,
-                        reference.mean[c] / np.where(reference.ref[c][loc] > 0,
-                                                     reference.ref[c][loc], 1.0),
-                        1.0)
-        vals = image[:, : loc.size, c].astype(np.float64) * gain
+        light = reference.ref[c][loc]
+        if c in reference.dark:
+            dark = reference.dark[c][loc]
+            span = light - dark
+            gain = np.where(span > 0, (reference.mean[c] - reference.dark_mean[c]) / np.where(span > 0, span, 1.0), 1.0)
+            vals = (image[:, : loc.size, c].astype(np.float64) - dark) * gain
+        else:
+            gain = np.where(light > 0, reference.mean[c] / np.where(light > 0, light, 1.0), 1.0)
+            vals = image[:, : loc.size, c].astype(np.float64) * gain
+
         if maxval is not None:
             # floor(x + 0.5) reproduces the C's lround(); np.rint would not,
             # rounding halves to even.

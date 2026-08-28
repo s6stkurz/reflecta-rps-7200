@@ -1718,7 +1718,10 @@ class DirectScanner:
             self._log(f"opening slide failed: {exc}")
 
     def calibrate_shading(
-        self, timeout: float = 300.0, keep_data: bool = False
+        self,
+        timeout: float = 300.0,
+        keep_data: bool = False,
+        exposure_scale: float | Sequence[float] = 1.0,
     ) -> dict[str, Any]:
         """Run the scanner's shading calibration, as the vendor does at startup.
 
@@ -1779,7 +1782,17 @@ class DirectScanner:
             self.cmd_17(1)
         except CheckCondition:
             pass
-        self.set_gain_offset(self.get_gain_offset())
+        # Calibrate at the exposure the scans will use. The reference
+        # describes the sensor at one integration time and does not carry
+        # across a large change in it: measured on a real frame, a channel
+        # calibrated 3x below its scan exposure corrected 13.0% -> 1.4%, one
+        # 6x below 8.2% -> 2.0%, and one 10x below got WORSE, 10.0% -> 11.2%.
+        # The vendor writes 8277/28645/53160 immediately before this pass --
+        # scanning exposures, not the power-on defaults.
+        settings = self.get_gain_offset().scaled(exposure_scale)
+        self.set_gain_offset(settings)
+        if exposure_scale != 1.0:
+            self._log(f"calibrating at {settings.describe()}")
 
         self.set_mode(
             resolution=3600,
@@ -1795,8 +1808,31 @@ class DirectScanner:
         # Width comes from the frame, not from PARAM: the vendor issues no
         # PARAM at all during calibration, and calling it here is rejected and
         # may disturb the scan. Lines are 16-bit whatever the mode depth says.
+        # Column count from the device's own descriptor. `pixels_per_line`
+        # there is a BYTE count -- 10344 = 5172 columns x 16 bits -- which is
+        # easy to read as columns and be exactly twice wrong. The frame-derived
+        # value is the fallback, and the two are compared so a mismatch is
+        # visible rather than silent.
         x0, _, x1, _ = CALIBRATION_FRAME
         width = round((x1 - x0) * 3600 / COORD_PER_INCH)
+        try:
+            parms = self.get_shading_parms()
+        except (CheckCondition, ScanReadError) as exc:
+            self._log(f"shading descriptor unreadable ({exc}); sizing from the frame")
+        else:
+            declared = [e["pixels_per_line"] // 2 for e in parms if e.get("pixels_per_line")]
+            if declared:
+                if declared[0] != width:
+                    self._log(
+                        f"note: descriptor says {declared[0]} columns, the frame "
+                        f"implies {width}; using the descriptor"
+                    )
+                width = declared[0]
+            self._log(
+                f"shading descriptor: {len(parms)} entries, "
+                f"{sum(e.get('lines', 0) for e in parms)} lines declared, "
+                f"{width} columns"
+            )
         bpl = 2 * width + INDEX_HEADER
 
         self.start_scan()
@@ -1836,8 +1872,11 @@ class DirectScanner:
                     self._log(f"  scanner finished after {blocks} blocks")
                     break
                 drained += len(chunk)
-                if keep_data:
-                    collected.append(chunk)
+                # Always kept: the reference is built from these bytes, so
+                # collecting only on request meant the default path parsed an
+                # empty buffer and quietly produced no reference at all.
+                # `keep_data` decides whether the caller also gets them back.
+                collected.append(chunk)
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
@@ -2126,6 +2165,11 @@ class DirectScanner:
             # pass samples, which is what keeps the shading columns aligned at
             # reduced resolutions.
             ccd_mask = self.get_ccd_mask(CCD_MASK_SIZE)
+            # Kept for the caller: this pass's mask, not the calibration
+            # pass's. They differ -- the mask says which CCD pixels *this*
+            # resolution sampled -- so correcting a saved scan later needs
+            # this one.
+            self._ccd_mask = ccd_mask
             params = self.get_parameters()
             self._log(
                 f"params width={params.width} lines={params.lines} "
@@ -2145,7 +2189,21 @@ class DirectScanner:
             self.finish_scan()
 
         shading_report = None
-        if shading and self._shading is not None:
+        if (
+            shading
+            and self._shading is not None
+            and params.width > self._shading.pixels_per_line
+        ):
+            # The mask holds one byte per calibration column, so a pass wider
+            # than the calibration cannot be mapped -- at 7200 dpi the image is
+            # 10344 columns against 5172 in the reference. Correcting half the
+            # frame is worse than correcting none.
+            self._log(
+                f"shading skipped: this pass is {params.width} columns but the "
+                f"reference covers {self._shading.pixels_per_line}; returning "
+                f"raw pixels"
+            )
+        elif shading and self._shading is not None:
             image, shading_report = apply_shading(image, self._shading, ccd_mask)
             self._log(
                 f"shading corrected: {shading_report['columns']}/"

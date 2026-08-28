@@ -38,7 +38,8 @@
       "Bash(python3 -c \"from rps7200.direct import SCSI_COPY; print\\('SCSI_COPY =', hex\\(SCSI_COPY\\)\\)\")",
       "Bash(python3 /private/tmp/probe_cal.py)",
       "Bash(python3 /private/tmp/probe_shade2.py)",
-      "Bash(grep -vE '^\\\\[usb\\\\] read [0-9]+/[0-9]+ bytes$|shading parms')"
+      "Bash(grep -vE '^\\\\[usb\\\\] read [0-9]+/[0-9]+ bytes$|shading parms')",
+      "Bash(git commit *)"
     ]
   }
 }
