@@ -1452,12 +1452,20 @@ class DirectScanner:
         bytes_per_line: int,
         retries: int = 3,
         timeout_ms: int = 120_000,
+        max_wait_s: float = 300.0,
     ) -> bytes:
         """Read ``lines`` scan lines.
 
         Retries like :meth:`_query` does: a queued one-shot sense condition is
         reported against whichever command arrives next, so the first attempt
         can be rejected for something that has nothing to do with this read.
+
+        ``max_wait_s`` is well above the transport's 60 s default because a
+        read here waits on the scanner physically scanning, not on a bus
+        round trip. Infrared holds the device busy for its own ~212 s floor
+        however few lines were asked for, so at low resolution with IR the
+        60 s default expired first -- and abandoning a read mid-scan is what
+        leaves this device needing a power cycle.
         """
         last = ""
         for _ in range(retries):
@@ -1466,6 +1474,7 @@ class DirectScanner:
                     _cmd(SCSI_READ, lines),
                     read_size=lines * bytes_per_line,
                     timeout_ms=timeout_ms,
+                    max_wait_s=max_wait_s,
                 )
             except CheckCondition:
                 try:

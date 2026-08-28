@@ -99,20 +99,27 @@ def main() -> int:
             shading=not args.no_shading,
             keep_raw=args.library is not None,
         )
-        entry = None
+        # Everything the library needs, gathered while the session is open.
+        # Writing it happens after the session closes: filing an entry gzips
+        # well over a hundred megabytes, and holding the device open and idle
+        # through that has coincided with it going unresponsive.
+        pending = None
         if args.library is not None:
-            entry = library.save(
-                image, meta,
-                root=args.library,
-                film=FilmNotes(stock=args.stock, frame=args.frame,
-                               subject=args.subject, notes=args.notes),
-                tags=args.tags,
-                reference=s._shading,
-                ccd_mask=s._ccd_mask,
-                raw=s.last_raw,
-                raw_layout=s.last_raw_layout,
-                inquiry=info,
+            pending = dict(
+                reference=s._shading, ccd_mask=s._ccd_mask,
+                raw=s.last_raw, raw_layout=s.last_raw_layout, inquiry=info,
             )
+
+    entry = None
+    if pending is not None:
+        entry = library.save(
+            image, meta,
+            root=args.library,
+            film=FilmNotes(stock=args.stock, frame=args.frame,
+                           subject=args.subject, notes=args.notes),
+            tags=args.tags,
+            **pending,
+        )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
