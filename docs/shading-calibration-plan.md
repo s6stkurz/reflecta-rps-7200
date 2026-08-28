@@ -1,5 +1,69 @@
 # Apply the scanner's own shading calibration
 
+## Status: DONE — implemented, run on the scanner, verified
+
+Confirmed working on 2026-08-28 and confirmed by eye. What was measured, on
+real scans rather than predicted:
+
+**The correction removes the fixed column pattern.** Measured as how well the
+top half of a frame predicts the bottom, which separates a reproducible sensor
+pattern from picture content:
+
+```
+1800 dpi RGB          raw    corrected        worst column defect
+  R                 0.897  ->   0.265         13.01% ->  1.44%
+  G                 0.782  ->   0.242          8.20% ->  1.95%
+  IR (RGBI pass)        -           -          4.67% ->  0.89%
+```
+
+**Blue does not improve, and should not.** Its raw top/bottom correlation is
+0.153 — there is no fixed pattern to remove. Blue carries the least signal on
+this scanner (orange mask, weak lamp, exposure at the timer ceiling), so its
+column variation is noise, which alternates sign and no reference can subtract.
+
+**No sensor defects survive.** A colour-opposed detector (signed, per channel,
+relative to the other channels) flagged ~120 columns after correction, but the
+cross-frame test — the same column in two different film positions — showed
+those are picture content: the four columns common to both frames carry
+*opposite* tints in each, so they are coincidence, and the worst of them sits
+on an edge with 109x the frame's median gradient.
+
+**The library round-trips.** All three 1800 dpi RGBI entries verify, and
+re-decoding their stored raw bytes reproduces the stored pixels exactly.
+
+### What the plan got wrong, and what the hardware corrected
+
+- The two-point dark/light split is implemented and parses CyberView's own
+  calibration bytes correctly, but on real scans it measures **the same** as the
+  single-point form. The dark term is ~170 counts against signals of ~20000 and
+  does not transfer across exposures; scaling it made things worse. Kept because
+  it is the more principled form and costs nothing, not because it helped.
+- Calibrating at the scan's exposure does **not** help: the device meters the
+  calibration pass itself and returns the same ~48000 light level whatever is
+  written beforehand. `calibrate_shading(exposure_scale=...)` exists to make
+  that testable; the answer is no.
+
+### Three bugs the hardware found
+
+- `calibrate_shading` only collected lines when `keep_data` was set, so the
+  default path built the reference from an empty buffer and silently produced
+  none.
+- `scan()` discarded the CCD mask it reads, so the library stored the
+  calibration pass's mask against a scan at another resolution.
+- `SET GAIN OFFSET` does not persist across a scan sequence; exposure cannot be
+  pinned on the device between passes and must go through each scan's
+  `exposure_scale`.
+
+### Still open
+
+- **Blue behaves differently in RGBI than RGB** at identical exposure — 2.0x
+  brighter on one frame, ~3.7x on another, and not linear in between. Metering
+  in RGB and reusing the values is what CyberView does, but it keeps blue far
+  lower than this driver's auto-exposure does. Until that is understood, meter
+  an IR scan from its own throwaway IR pass rather than from an RGB probe.
+- The 7200 dpi guard is implemented but untested: the mask covers 5172 columns
+  and a 7200 dpi pass is 10344 wide, so the correction refuses and returns raw.
+
 ## Context
 
 Scans from this driver carry vertical colour stripes that CyberView's scans do not.
