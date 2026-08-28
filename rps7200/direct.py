@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 import numpy as np
@@ -686,12 +686,172 @@ FULL_FRAME = (0, 0, 10343, 6887)
 #: CCD mask length the vendor software requests (pieusb uses shading_width).
 CCD_MASK_SIZE = 5172
 
+#: A whole 35 mm frame, in scanner units at maximum resolution. From the vendor's
+#: own detected windows on a strip it had registered correctly -- (96,71) to
+#: (10175,6815), so 10079 wide -- against a 10344-unit transport window. A
+#: picture measuring much less than this has part of itself outside the
+#: aperture, which is the only way a drifted frame is visible: the prescan
+#: cannot see what the window does not cover.
+NOMINAL_FRAME_WIDTH = 10080
+
+#: Below this, a prescan is clear film rather than a picture, and a roll walking
+#: frame by frame has run off the end of the film. Measured as variation *down*
+#: the columns, so the lamp's horizontal falloff -- about 22% centre to edge, and
+#: present in a blank window too -- does not read as a picture.
+BLANK_CONTRAST = 0.02
+
+
+def frame_contrast(image: np.ndarray) -> float:
+    """How much a prescan varies down its columns, relative to its own level.
+
+    The discriminator for "is there a picture in the window at all", which is
+    what tells a roll it has reached the end of the film.
+
+    Down the columns, specifically. Vignetting and lamp falloff vary *across*
+    the sensor and are constant down it, so a window of blank film still varies
+    ~22% column to column while varying almost nothing row to row. Measuring
+    across the width would score empty film as a picture.
+
+    Relative to the mean, so it does not move with exposure.
+    """
+    grey = image.astype(np.float64)
+    if grey.ndim == 3:
+        grey = grey.mean(axis=2)
+    if grey.size == 0:
+        return 0.0
+    level = float(grey.mean())
+    if level <= 0:
+        return 0.0
+    return float(np.median(grey.std(axis=0)) / level)
+
+
+#: Fraction of the clear-aperture level below which a column is film. Measured
+#: on a C-41 negative: the clear strip read 143/153/153 in R/G/B and the film
+#: 34/15/7, so anything from 0.6 to 0.9 returns the same edges.
+FILM_LEVEL = 0.75
+
+#: How much brighter the clear aperture has to be than the median column before
+#: there is believed to be one in view at all. Below this the film fills the
+#: window, which is the normal case for a well-registered frame.
+CLEAR_RATIO = 2.0
+
+
+def film_bounds(
+    image: np.ndarray,
+    full_frame: tuple[int, int, int, int] = FULL_FRAME,
+    level: float = FILM_LEVEL,
+    clear_ratio: float = CLEAR_RATIO,
+) -> tuple[int, int, int, int]:
+    """Where the film sits in the transport window, by how much light it stops.
+
+    Film attenuates and an empty aperture does not, so the film's edge is a step
+    in *level*. :meth:`DirectScanner.detect_frame` looks for a step in variance
+    instead, and on a real negative that fails badly: a dark, low-contrast frame
+    varies less than the hard border at the film's edge, so a threshold set
+    relative to the peak selects the border and discards the picture. Measured
+    on this scanner it reduced a perfectly registered frame -- picture filling
+    the window edge to edge -- to a 0.26 mm sliver, and reported it as 35 mm of
+    drift.
+
+    Level does not have that failure mode, because it does not depend on picture
+    content at all. On one 300 dpi prescan of a C-41 negative the clear strip
+    read 143/153/153 in R/G/B against the film's 34/15/7, and every threshold
+    between 60% and 90% of the clear level returned the same edges.
+
+    With no clear aperture in view -- ``clear_ratio`` -- the film fills the
+    window, which is what a well-registered frame looks like, and the whole
+    window is returned. An *empty* window reads the same way; use
+    :func:`frame_contrast` to tell those apart, as :meth:`DirectScanner.scan_roll`
+    does before it calls this.
+    """
+    grey = image.astype(np.float64)
+    if grey.ndim == 3:
+        grey = grey.mean(axis=2)
+    if grey.size == 0:
+        return full_frame
+
+    fx0, fy0, fx1, fy1 = full_frame
+
+    def span(profile: np.ndarray, lo: int, hi: int, n: int) -> tuple[int, int]:
+        clear = float(np.percentile(profile, 98))
+        median = float(np.median(profile))
+        if median <= 0 or clear < median * clear_ratio:
+            return lo, hi                       # no empty aperture in view
+        covered = np.flatnonzero(profile < clear * level)
+        if covered.size == 0:
+            return lo, hi
+        return (
+            lo + int(round(covered[0] / n * (hi - lo))),
+            lo + int(round(covered[-1] / n * (hi - lo))),
+        )
+
+    x0, x1 = span(grey.mean(axis=0), fx0, fx1, grey.shape[1])
+    y0, y1 = span(grey.mean(axis=1), fy0, fy1, grey.shape[0])
+    if x1 <= x0 or y1 <= y0:
+        return full_frame
+    return x0, y0, x1, y1
+
+
+def registration(
+    image: np.ndarray,
+    full_frame: tuple[int, int, int, int] = FULL_FRAME,
+    threshold: float = 0.25,
+) -> dict[str, float | int]:
+    """Where the picture sits in the transport window, from a prescan.
+
+    The window is 36.5 mm and a 35 mm frame is 36 mm, so there is half a
+    millimetre of slack: a frame that has drifted is a frame with its edge
+    outside the aperture, and no scan window can get that back. The vendor's own
+    5-frame strip shows it happening -- its detected windows started at x=96 for
+    four frames and then at x=1727 for the fifth, which lost 6 mm of picture.
+
+    ``offset`` is signed, in scanner units at maximum resolution: positive means
+    the picture sits right of centre, i.e. the film is under-advanced.
+
+    ``shortfall`` is the one that matters, and it is why the width is measured at
+    all. A drifted frame cannot be seen directly -- the prescan only covers the
+    aperture, so a picture hanging outside it is simply not there to be found.
+    What shows instead is a picture *narrower* than a whole frame. The vendor's
+    fifth strip frame measured 8472 units against 10079 for the four before it:
+    1.6 k units, 5.7 mm, of picture that never reached the sensor.
+
+    Measurement only. Nothing here moves the film.
+    """
+    x0, _, x1, _ = film_bounds(image, full_frame)
+    fx0, _, fx1, _ = full_frame
+    width = x1 - x0
+    offset = (x0 + x1) / 2.0 - (fx0 + fx1) / 2.0
+    shortfall = max(0, NOMINAL_FRAME_WIDTH - width)
+
+    def mm(units: float) -> float:
+        return round(units * MM_PER_INCH / COORD_PER_INCH, 2)
+
+    return {
+        "x0": int(x0),
+        "x1": int(x1),
+        "width": int(width),
+        "offset": int(round(offset)),
+        "offset_mm": mm(offset),
+        "shortfall": int(shortfall),
+        "shortfall_mm": mm(shortfall),
+        "margin": int(min(x0 - fx0, fx1 - x1)),
+        "margin_mm": mm(min(x0 - fx0, fx1 - x1)),
+    }
+
+
 # Film types, for metering. Only the white-balance rule depends on these.
 FILM_NEGATIVE = "negative"
 FILM_POSITIVE = "positive"
 FILM_KODACHROME = "kodachrome"
 FILM_BW = "bw"
 FILM_TYPES = (FILM_NEGATIVE, FILM_POSITIVE, FILM_KODACHROME, FILM_BW)
+
+
+# How a roll is metered. See DirectScanner.scan_roll.
+METER_EACH = "each"
+METER_ONCE = "once"
+METER_NONE = "none"
+METER_MODES = (METER_EACH, METER_ONCE, METER_NONE)
 
 
 def locks_white_balance(film: str) -> bool:
@@ -864,6 +1024,10 @@ class State:
     warming_up: bool
     scanning: int
     busy: int
+    #: Where the transport has the film, counting from 0. This is the one
+    #: trustworthy signal that an advance has happened -- see
+    #: :meth:`DirectScanner.advance`.
+    position: int = 0
 
     @property
     def media_loaded(self) -> bool:
@@ -871,6 +1035,11 @@ class State:
 
         The scanner ejects the strip at the end of every scan, so this is False
         again after each frame until the film is re-inserted.
+
+        Unreliable, and only reported. The bit is clear in every state seen in
+        six captures of the vendor software, including ones taken with film
+        demonstrably loaded. :attr:`position` is what to trust about the
+        transport.
         """
         return bool(self.scanning & MEDIA_PRESENT)
 
@@ -919,6 +1088,29 @@ class Settings:
             f"gain={'-'.join(map(str, self.gain))} "
             f"offset={'-'.join(map(str, self.offset))} light={self.light}"
         )
+
+
+@dataclass
+class RollFrame:
+    """One picture from a roll, as :meth:`DirectScanner.scan_roll` yields it.
+
+    ``image`` and ``meta`` are None and empty on a frame that failed, or on a
+    dry run; ``error`` says which. A failed frame is still yielded, because a
+    roll takes hours and the caller needs to know what it lost without losing
+    the rest.
+    """
+
+    index: int                          # 0-based, from the start of the roll
+    position: int | None                # what READ_STATE said the transport held
+    image: np.ndarray | None
+    meta: dict[str, Any]
+    prescan: np.ndarray | None
+    registration: dict[str, Any]
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and self.image is not None
 
 
 class DirectScanner:
@@ -1028,7 +1220,11 @@ class DirectScanner:
             _cmd(SCSI_READ_STATE, 13), 13, "read_state", retries=retries
         )
         return State(
-            button=bool(d[0]), warming_up=bool(d[5]), scanning=d[6], busy=d[8]
+            button=bool(d[0]),
+            warming_up=bool(d[5]),
+            scanning=d[6],
+            busy=d[8],
+            position=d[2],
         )
 
     def sense(self) -> bytes:
@@ -1255,13 +1451,22 @@ class DirectScanner:
         self._log(f"cmd_17({value})")
         self.t.command(_cmd(SCSI_WRITE, 6), data=bytes(data))
 
-    def slide(self, action: int = SLIDE_INIT, param: int = 0x16) -> None:
+    def slide(
+        self, action: int = SLIDE_INIT, param: int = 0x16, value: int = 0
+    ) -> None:
         """Drive the film/slide transport.
 
         pieusb only issues this when its config marks the model as having a
         slide transport, and for model 0x31 that flag is 0, so the stock backend
         never initialises the transport at all -- even though INQUIRY reports an
         ADF. SLIDE_NEXT is also how a whole strip gets advanced frame by frame.
+
+        The payload is four bytes, ``action param 00 value``. ``param`` is 0x16
+        in the capture this driver was reconstructed from; it takes 0x01, 0x13,
+        0x14, 0x15 and 0x16 across the six captures with no visible difference,
+        so it is left where it is. ``value`` matters: every film advance the
+        vendor performs carries 1 there (once 2), never 0, which is what this
+        driver used to send.
         """
         names = {
             SLIDE_NEXT: "next",
@@ -1270,9 +1475,51 @@ class DirectScanner:
             SLIDE_RELOAD: "reload",
         }
         self._log(f"slide transport: {names.get(action, hex(action))}")
-        # Second byte is 0x16 in CyberView's traffic; pieusb sends 0x01.
-        data = bytes([action, param, 0x00, 0x00])
+        data = bytes([action, param, 0x00, value])
         self.t.command(_cmd(SCSI_SLIDE, 4), data=data)
+
+    def advance(
+        self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5
+    ) -> int | None:
+        """Move the film on by one frame, and wait until it has.
+
+        The payload is the vendor's: ``04 01 00 01``, seen three times in
+        ``600_ICE_FILM_STRIP_5.pcapng`` (with ``04 01 00 02`` once, for reasons
+        the capture does not explain -- the position still moved by one).
+
+        Waiting is the point. `READ_STATE` byte 2 is the transport position, and
+        it is the only signal in any capture that says the film has actually
+        moved: it stepped 0 -> 1 -> 2 -> 3 -> 4 across the strip session's four
+        advances, and stayed put through a session that never advanced. The new
+        value showed up 1.6 s to 6.2 s later, and the READ_STATE issued
+        immediately after the command came back empty every time -- so the poll
+        has to survive a failed read rather than treat it as the end.
+
+        Returns the new position, or None if it never moved -- which is how a
+        roll ends.
+        """
+        before = self._position()
+        self.slide(SLIDE_NEXT, param=0x01, value=steps)
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(poll)
+            now = self._position()
+            if now is not None and now != before:
+                self._log(f"advanced to position {now}")
+                return now
+        self._log(
+            f"no advance: position still {before} after {timeout:.0f}s -- "
+            "treating this as the end of the film"
+        )
+        return None
+
+    def _position(self) -> int | None:
+        """Transport position, or None if the scanner would not say."""
+        try:
+            return self.read_state(retries=1).position
+        except (CheckCondition, UsbError, ScanReadError, IndexError):
+            return None
 
     def start_scan(
         self,
@@ -1406,23 +1653,6 @@ class DirectScanner:
 
         self._log(f"gain/offset {s.describe()}")
         self.t.command(_cmd(SCSI_WRITE_GAIN_OFFSET, 29), data=bytes(data))
-
-    def calibrate(self, infrared: bool = False) -> Settings:
-        """Read the scanner's calibration values and write them back.
-
-        Enough to satisfy the device's calibration requirement without the
-        shading-data read that it cannot complete.
-        """
-        settings = self.get_gain_offset().scaled(exposure_scale)
-        self.set_gain_offset(settings, infrared=infrared)
-        if exposure_scale != 1.0:
-            shown = (
-                f"x{exposure_scale:g}"
-                if isinstance(exposure_scale, (int, float))
-                else "x" + "/".join(f"{v:g}" for v in exposure_scale)
-            )
-            self._log(f"exposure scaled {shown}: {settings.describe()}")
-        return settings
 
     def get_ccd_mask(self, size: int) -> bytes:
         """Read the CCD mask (SCSI COPY).
@@ -1622,6 +1852,12 @@ class DirectScanner:
         three channels, 8-bit, covering the whole scan area. It carries no
         infrared -- captures confirm the prescan is always ``passes=0x80`` --
         and exists to find where the picture actually sits.
+
+        Shading correction is off, and has to be: the reference is measured in
+        16-bit units and this pass is 8-bit, so subtracting its dark half would
+        drive every pixel to zero. A framing pass does not need the correction
+        anyway -- it is looking for where the picture stops, not at its
+        colour.
         """
         image, meta = self.scan(
             resolution=resolution,
@@ -1629,6 +1865,7 @@ class DirectScanner:
             depth=DEPTH_8,
             frame=frame or FULL_FRAME,
             prescan=False,
+            shading=False,
         )
         params = ScanParameters(
             width=meta["width"],
@@ -1655,6 +1892,15 @@ class DirectScanner:
         per-column variation rises above a fraction of the maximum. Returns
         scanner coordinates (0-based pixels at maximum resolution), ready to
         pass to :meth:`set_scan_frame`.
+
+        **Not reliable for locating film**, and measurement says so. The
+        threshold is a fraction of the *maximum*, so one high-variance column
+        sets the scale for all of them -- and the film's own edge, skewed a few
+        pixels across the sensor, is exactly that: it read std 36-59 on a real
+        prescan against the picture's 1-10. Four columns of 428 cleared the
+        threshold and a frame filling the window came back as a 0.26 mm sliver.
+        Use :func:`film_bounds`, which keys on level instead and does not depend
+        on picture content.
         """
         grey = image.astype(np.float64)
         if grey.ndim == 3:
@@ -1927,10 +2173,11 @@ class DirectScanner:
         percentile: float = 99.5,
         resolution: int = 300,
         infrared: bool = False,
-        rounds: int = 3,
+        rounds: int = 2,
         tolerance: float = 0.08,
         start: Sequence[float] | None = None,
         film: str = FILM_NEGATIVE,
+        infrared_blue_headroom: float = 4.0,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
 
@@ -1938,9 +2185,24 @@ class DirectScanner:
         -- high enough to use the range, with headroom so highlights do not
         clip. Returns scales to hand to :meth:`scan` as ``exposure_scale``.
 
-        Probes in RGB by default: a three-channel pass takes seconds where a
-        four-channel one takes minutes, and the infrared exposure tracks the
-        visible channels closely enough to scale with them.
+        **Always probes in RGB, never in infrared**, and in at most two rounds:
+        this is what the vendor software does. An infrared pass costs its own
+        ~212 s floor however few lines are asked for, so metering in infrared
+        would spend ten minutes to learn what a three-second pass can tell us.
+
+        ``infrared`` therefore does not change how the probe is taken. It says
+        the scan that follows will be RGBI, which matters only for blue: blue
+        comes back brighter in an RGBI pass than in an RGB one at the *same*
+        exposure -- measured 2.0x on one frame and about 3.7x on another -- so
+        a blue metered to fill the range in RGB clips in RGBI. Blue's target is
+        divided by ``infrared_blue_headroom`` to leave room for that.
+
+        Costing blue some exposure is the right trade here, and the vendor
+        makes it too: its own captures meter blue to 1475-5906 where green sits
+        near 40000, an order of magnitude down, and reuse those values verbatim
+        for the infrared scan. Blue on this scanner carries no fixed column
+        pattern -- it is noise-limited, not detail-limited -- so a darker blue
+        costs little, while a clipped blue is unrecoverable.
 
         ``film`` decides whether the visible channels are metered together or
         apart -- see :func:`locks_white_balance`. This matters: metering a slide
@@ -1953,7 +2215,9 @@ class DirectScanner:
         metered per channel rather than with one global factor.
         """
         locked = locks_white_balance(film)
-        channels = 4 if infrared else 3
+        # The probe is always three-channel; `infrared` describes the scan
+        # that follows, not this pass.
+        channels = 3
         scales = list(start) if start else [1.0] * channels
         limited = [False] * channels
         full = 65535.0
@@ -1968,10 +2232,10 @@ class DirectScanner:
         )
 
         for round_no in range(1, rounds + 1):
-            self.set_gain_offset(base, infrared=infrared)
+            self.set_gain_offset(base)
             image, _ = self.scan(
                 resolution=resolution,
-                infrared=infrared,
+                infrared=False,
                 exposure_scale=scales,
             )
             levels = [
@@ -1984,10 +2248,16 @@ class DirectScanner:
                     f"{'RGBI'[c]}={levels[c]:.0%}" for c in range(len(levels))
                 )
             )
-            if all(abs(v - target) <= tolerance for v in levels):
+            aims = [target] * len(levels)
+            if infrared and len(aims) > 2:
+                aims[2] = target / max(1.0, infrared_blue_headroom)
+            if all(abs(v - a) <= tolerance for v, a in zip(levels, aims)):
                 break
 
             visible = levels[:3]
+            targets = [target] * len(levels)
+            if infrared and len(targets) > 2:
+                targets[2] = target / max(1.0, infrared_blue_headroom)
             for c, level in enumerate(levels):
                 if c >= len(scales):
                     break
@@ -2000,7 +2270,7 @@ class DirectScanner:
                 elif measured >= 0.999:
                     scales[c] *= 0.25           # clipped; back well off
                 else:
-                    scales[c] *= target / measured
+                    scales[c] *= targets[c] / measured
                 # Bound by what the timer can actually hold, not by a
                 # guess. A fixed cap of 8x used to stop blue short: with film
                 # loaded the device's own blue exposure sits low (6506 in one
@@ -2093,12 +2363,17 @@ class DirectScanner:
         power-on -- the stripes are simply left in.
         """
         if auto_exposure:
-            # Probe in the same mode as the scan. Scans otherwise run at the
-            # scanner's defaults, which land around 3-10% of full scale --
-            # most of the 16-bit range unused. Probing in a different mode does
-            # not work: the channels, blue especially, behave differently with
-            # and without infrared, so an RGB probe cannot predict an RGBI scan.
-            self._log(f"auto-exposure: probing (infrared={infrared})")
+            # Probe in RGB whatever the scan will be, in at most two rounds --
+            # the vendor's own sequence. Scans otherwise run at the scanner's
+            # defaults, which land around 3-10% of full scale, most of the
+            # 16-bit range unused.
+            #
+            # Blue does behave differently with infrared enabled, coming back
+            # 2-3.7x brighter at the same exposure. That is handled by metering
+            # blue lower when an RGBI scan follows, not by probing in RGBI: an
+            # infrared probe costs its own ~212 s floor per round.
+            self._log(f"auto-exposure: probing in RGB (scan is "
+                      f"{'RGBI' if infrared else 'RGB'})")
             exposure_scale = self.auto_exposure(
                 target=exposure_target, infrared=infrared, film=film
             )
@@ -2185,8 +2460,6 @@ class DirectScanner:
                 f"bpl={params.bytes_per_line}"
             )
             image = self.read_planes(params, channels, keep_raw=keep_raw)
-            if advance:
-                self.slide(SLIDE_NEXT)
         except BaseException:
             # Deliberately no STOP SCAN. The vendor software never sends it,
             # and issuing it here reliably leaves the scanner unresponsive to
@@ -2196,6 +2469,12 @@ class DirectScanner:
             raise
         else:
             self.finish_scan()
+
+        # After the scan has settled, never inside it: the vendor polls
+        # READ_STATE for several seconds once the last line is read and only
+        # then moves the film.
+        if advance:
+            self.advance()
 
         shading_report = None
         if (
@@ -2250,3 +2529,203 @@ class DirectScanner:
             "duration_s": round(time.monotonic() - started, 1),
         }
         return image, meta
+
+    # -- rolls -------------------------------------------------------------
+
+    def scan_roll(
+        self,
+        frames: int | None = None,
+        resolution: int = 1800,
+        infrared: bool = True,
+        film: str = FILM_NEGATIVE,
+        meter: str = METER_EACH,
+        exposure_target: float = 0.7,
+        prescan_resolution: int = 300,
+        blank_contrast: float = BLANK_CONTRAST,
+        drift_warning: int = 240,
+        skip: int = 0,
+        keep_raw: bool = True,
+        max_failures: int = 3,
+        scan_frame: tuple[int, int, int, int] | None = None,
+        dry_run: bool = False,
+    ) -> Iterator[RollFrame]:
+        """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
+
+        A generator, not a list. At 3600 dpi a frame is ~142 MB of pixels plus
+        its raw bytes, so the caller has to write each one out and let it go;
+        collecting a roll in memory is not possible. It also means the caller
+        can stop mid-roll, and that a frame reaches disk the moment it exists
+        rather than at the end of a three-hour run.
+
+        The first picture is scanned **before** any advance -- the film is
+        already positioned at it when the roll starts. ``skip`` advances that
+        many times first, which is how a part-scanned roll is resumed.
+
+        Every frame is scanned at the full transport window. Cropping is a
+        host-side decision that can be revisited; a window detected wrongly
+        during an unattended run cannot.
+
+        ``drift_warning`` is how much narrower than a whole frame a picture may
+        measure before the log says the film has drifted -- 240 units is 0.85 mm,
+        comfortably past detection jitter and well short of losing anything.
+
+        Stops on whichever comes first: ``frames`` pictures, a prescan with no
+        picture in it (:func:`frame_contrast` below ``blank_contrast``), an
+        advance that does not move the film, or ``max_failures`` consecutive
+        failures. A single failed frame does not end the roll -- it is yielded
+        with ``error`` set and the roll goes on.
+
+        ``meter`` is one of:
+
+        ``"each"``
+            re-meter before every frame, which is what CyberView does -- its
+            gain/offset writes differ frame to frame.
+        ``"once"``
+            meter on the first picture and hold those scales for the roll. The
+            frames stay comparable to each other, which matters when the whole
+            roll is inverted with one set of parameters, and it saves ~45 s a
+            frame.
+        ``"none"``
+            scan at whatever the device holds.
+        """
+        if meter not in METER_MODES:
+            raise ValueError(
+                f"unknown meter mode {meter!r}; expected one of {METER_MODES}"
+            )
+        # Up front, not on the first frame: a bad film type raises from inside
+        # metering, and a roll would otherwise spend three failures discovering
+        # a typo it could have refused in the first second.
+        locks_white_balance(film)
+
+        window = scan_frame or FULL_FRAME
+
+        # The reference every frame is metered from. On this device READ
+        # GAIN/OFFSET returns a fixed reference rather than a readback, so this
+        # is the same value every frame anyway -- but reading it once and
+        # writing it back explicitly is what makes that assumption checkable
+        # instead of load-bearing and invisible.
+        baseline = self.get_gain_offset()
+        self._log(f"roll baseline exposure: {baseline.describe()}")
+
+        scales: float | Sequence[float] = 1.0
+        metered = False
+        failures = 0
+        index = 0
+
+        for _ in range(skip):
+            position = self.advance()
+            if position is None:
+                self._log("nothing to skip to: the transport did not move")
+                return
+            index += 1
+
+        while frames is None or index < skip + frames:
+            started = time.monotonic()
+            prescan_image = None
+            marks: dict[str, Any] = {}
+            position = self._position()
+
+            try:
+                prescan_image, _ = self.prescan(resolution=prescan_resolution)
+                contrast = frame_contrast(prescan_image)
+                marks = dict(registration(prescan_image, window))
+                marks["contrast"] = round(contrast, 4)
+                self._log(
+                    f"frame {index}: contrast {contrast:.3f}, "
+                    f"picture x{marks['x0']}..{marks['x1']}, "
+                    f"offset {marks['offset_mm']:+.2f} mm, "
+                    f"short by {marks['shortfall_mm']:.2f} mm"
+                )
+
+                if contrast < blank_contrast:
+                    self._log(
+                        f"frame {index}: nothing in the window "
+                        f"(contrast {contrast:.3f} < {blank_contrast}); "
+                        "end of film"
+                    )
+                    return
+
+                if marks["shortfall"] > drift_warning:
+                    # Reported, never corrected here. Nothing in six captures
+                    # moves the film by less than a whole frame, and
+                    # SET_SCAN_HEAD is never sent by anything, so there is no
+                    # verified way to nudge it back -- see
+                    # tools/transport_probe.py. Saying so is better than a
+                    # correction invented on the spot.
+                    self._log(
+                        f"frame {index}: picture is {marks['shortfall_mm']:.2f} mm "
+                        "narrower than a whole frame -- the film has drifted and "
+                        "part of it is outside the aperture"
+                    )
+
+                if dry_run:
+                    yield RollFrame(index, position, None, {}, prescan_image, marks)
+                else:
+                    if meter != METER_NONE and not (meter == METER_ONCE and metered):
+                        # Meter in RGB even for an RGBI scan, because that is
+                        # what the vendor does and because there is nothing in
+                        # the fourth channel to meter. Across all 17 passes of
+                        # the strip capture every metering pass is 300 dpi RGB
+                        # 8-bit, and the infrared exposure is 7745 in every one
+                        # of them -- prescans and scans alike -- while R, G and
+                        # B move freely. This scanner's own baseline reads
+                        # ...-7745 too: it is the device default, and CyberView
+                        # never touches it.
+                        #
+                        # It is also the difference between a roll that takes
+                        # half an hour and one that takes ninety minutes. A
+                        # four-channel pass has a ~212 s floor whatever the
+                        # resolution, so an RGBI probe costs a full scan; the
+                        # RGB probe costs 12 s. Settings.scaled() pads the
+                        # missing fourth factor with 1.0, which leaves infrared
+                        # exactly where the vendor leaves it.
+                        self.set_gain_offset(baseline, infrared=infrared)
+                        scales = self.auto_exposure(
+                            target=exposure_target, infrared=False, film=film
+                        )
+                        metered = True
+
+                    # Correct whether or not the device echoes back what was
+                    # written. It does not: across 17 READ GAIN/OFFSET
+                    # responses in the strip capture only bytes 66-68 -- the
+                    # live R/G/B offsets -- ever change, and the exposure fields
+                    # hold 9604/6506/6506/7745 however different the value just
+                    # written. So the read is a fixed reference, `scaled()`
+                    # always yields base x scale, and exposure cannot compound
+                    # frame to frame. One write costs nothing and keeps the roll
+                    # right if that ever stops being true.
+                    self.set_gain_offset(baseline, infrared=infrared)
+                    image, meta = self.scan(
+                        resolution=resolution,
+                        infrared=infrared,
+                        frame=window,
+                        exposure_scale=scales,
+                        film=film,
+                        keep_raw=keep_raw,
+                    )
+                    meta["roll_index"] = index
+                    meta["roll_position"] = position
+                    meta["registration"] = marks
+                    yield RollFrame(index, position, image, meta, prescan_image, marks)
+                failures = 0
+            # UsbError covers CheckCondition and NoDataYet. ValueError is in
+            # here because a roll runs for hours unattended: one frame that
+            # decodes to an unexpected shape should cost that frame, not the
+            # thirty after it.
+            except (UsbError, ScanReadError, CalibrationRequired,
+                    TimeoutError, ValueError) as exc:
+                failures += 1
+                self._log(f"frame {index} failed ({failures}/{max_failures}): {exc}")
+                yield RollFrame(
+                    index, position, None, {}, prescan_image, marks, error=str(exc)
+                )
+                if failures >= max_failures:
+                    self._log(f"giving up after {failures} consecutive failures")
+                    return
+
+            self._log(f"frame {index} took {time.monotonic() - started:.0f}s")
+            index += 1
+            if frames is not None and index >= skip + frames:
+                break
+            if self.advance() is None:
+                return

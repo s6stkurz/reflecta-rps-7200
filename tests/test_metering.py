@@ -141,3 +141,61 @@ def test_the_scale_cap_is_the_timer_not_a_fixed_number():
     scales = s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=3)
     assert scales[2] > 8.0, "blue was capped below the timer ceiling"
     assert 6506 * scales[2] == pytest.approx(65535, rel=0.01)
+
+
+# --- metering for an infrared scan, without an infrared probe ----------------
+
+def test_the_probe_is_never_infrared(monkeypatch):
+    """An IR pass costs its own ~212 s floor per round; the vendor never does it."""
+    s = FakeScanner((0.9, 0.7, 0.5), base=(10000, 10000, 10000, 8000))
+    modes = []
+    real = s.scan
+    def spy(*a, **kw):
+        modes.append(kw.get("infrared"))
+        return real(*a, **kw)
+    monkeypatch.setattr(s, "scan", spy)
+    s.auto_exposure(target=0.4, film=FILM_NEGATIVE, infrared=True, rounds=2)
+    assert modes and all(m is False for m in modes), (
+        f"metering probed in infrared: {modes}"
+    )
+
+
+def test_blue_is_metered_lower_when_an_ir_scan_follows():
+    """Blue returns 2-3.7x brighter in RGBI at the same exposure, so a blue
+    filling the range in RGB clips in RGBI."""
+    t = (0.9, 0.7, 0.5)
+    rgb = FakeScanner(t, base=(9000, 9000, 9000, 8000)).auto_exposure(
+        target=0.6, film=FILM_NEGATIVE, infrared=False, rounds=2)
+    ir = FakeScanner(t, base=(9000, 9000, 9000, 8000)).auto_exposure(
+        target=0.6, film=FILM_NEGATIVE, infrared=True, rounds=2,
+        infrared_blue_headroom=4.0)
+    assert ir[0] == pytest.approx(rgb[0], rel=0.02), "red should not change"
+    assert ir[1] == pytest.approx(rgb[1], rel=0.02), "green should not change"
+
+    # Compare the level blue actually reaches, not the scale: in RGB the scale
+    # runs into the 16-bit timer ceiling, so the scales are not proportional
+    # even though the aim is.
+    level = lambda scale: min(1.0, 9000 * scale / 65535.0 * t[2])
+    assert level(ir[2]) == pytest.approx(0.6 / 4.0, abs=0.03), (
+        f"blue aimed at {level(ir[2]):.3f}, wanted {0.6/4:.3f}"
+    )
+    assert level(ir[2]) < level(rgb[2]) / 2, (
+        "blue was not backed off for the infrared scan"
+    )
+
+
+def test_headroom_of_one_leaves_blue_alone():
+    t = (0.9, 0.7, 0.5)
+    a = FakeScanner(t, base=(9000, 9000, 9000, 8000)).auto_exposure(
+        target=0.6, film=FILM_NEGATIVE, infrared=True, rounds=2,
+        infrared_blue_headroom=1.0)
+    b = FakeScanner(t, base=(9000, 9000, 9000, 8000)).auto_exposure(
+        target=0.6, film=FILM_NEGATIVE, infrared=False, rounds=2)
+    assert a == pytest.approx(b, rel=0.02)
+
+
+def test_two_rounds_by_default():
+    """What the vendor takes: at most two prescans, then the scan."""
+    s = FakeScanner((0.9, 0.7, 0.5), base=(10000, 10000, 10000, 8000))
+    s.auto_exposure(target=0.4, film=FILM_NEGATIVE)
+    assert len(s.passes) <= 2, f"took {len(s.passes)} prescans"
