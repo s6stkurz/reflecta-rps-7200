@@ -49,11 +49,17 @@ def main() -> int:
                     help="metering only: a negative is metered per channel to "
                          "take the orange mask off before the ADC; everything "
                          "else keeps its cast")
-    ap.add_argument("--library", nargs="?", const="library", default=None,
+    ap.add_argument("--library", nargs="?", const="library", default="library",
                     metavar="DIR",
-                    help="also file this scan in the reusable library, with its "
-                         "raw bytes and calibration, so it can be re-decoded "
-                         "and re-corrected later without rescanning")
+                    help="file this scan in the reusable library, with its raw "
+                         "bytes and calibration, so it can be re-decoded and "
+                         "re-corrected later without rescanning (default: "
+                         "library/)")
+    ap.add_argument("--no-library", action="store_true",
+                    help="do not file this scan. The raw bytes and the "
+                         "session's calibration are then gone for good: neither "
+                         "can be recovered from the TIFF, so a later change to "
+                         "the decode or the correction cannot be applied to it")
     ap.add_argument("--stock", default="", help="film stock, e.g. 'Kodak Gold 200'")
     ap.add_argument("--frame", default="", help="frame position on the roll")
     ap.add_argument("--subject", default="")
@@ -62,6 +68,8 @@ def main() -> int:
     ap.add_argument("--tag", action="append", default=[], dest="tags")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     args = ap.parse_args()
+    if args.no_library:
+        args.library = None
 
     ref_path = Path(args.reference)
     with DirectScanner(verbose=args.verbose) as s:
