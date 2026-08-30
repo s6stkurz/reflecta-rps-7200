@@ -65,6 +65,14 @@ It needs a power cycle afterwards, so avoid these:
   darker, not brighter.
 - Bump `PROTOCOL_REVISION` in `rps7200/direct.py` when the commands sent to the
   device change — not for host-side work, which is re-runnable from raw bytes.
+- **There is no vignette, and no vignette correction should be added.** Measured
+  2026-08-30 by rotating an IT8 through all four insertions plus an empty-transport
+  flat; see `docs/vignette-plan.md`. The ~39% falloff across the frame is real but
+  lives entirely in x and shading already takes it to 1.4%. Along y it is 1.1%
+  *before* correction — and shading is per-column, so it cannot have flattened y.
+  An optic falls off in both directions; this falls off in neither. Re-run with
+  `tools/uniformity.py analyse --tag vignette-study` after any correction change:
+  it rebuilds from stored raw bytes, so the answer tracks the current pipeline.
 
 ## Never commit
 

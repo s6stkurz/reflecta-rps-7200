@@ -2520,6 +2520,11 @@ class DirectScanner:
             "width": int(params.width),
             "height": int(params.lines),
             "bytes_per_line": int(params.bytes_per_line),
+            # Read by get_parameters() and otherwise discarded. Recorded
+            # because two passes at an identical frame and dpi have correlated
+            # at lag -16 columns rather than lag 0, and these are the prime
+            # suspect -- a suspicion that cannot be tested without the numbers.
+            "filter_offsets": [int(params.filter_offset1), int(params.filter_offset2)],
             "exposure": settings.exposure,
             "gain": settings.gain,
             "offset": settings.offset,
@@ -2662,26 +2667,18 @@ class DirectScanner:
                     yield RollFrame(index, position, None, {}, prescan_image, marks)
                 else:
                     if meter != METER_NONE and not (meter == METER_ONCE and metered):
-                        # Meter in RGB even for an RGBI scan, because that is
-                        # what the vendor does and because there is nothing in
-                        # the fourth channel to meter. Across all 17 passes of
-                        # the strip capture every metering pass is 300 dpi RGB
-                        # 8-bit, and the infrared exposure is 7745 in every one
-                        # of them -- prescans and scans alike -- while R, G and
-                        # B move freely. This scanner's own baseline reads
-                        # ...-7745 too: it is the device default, and CyberView
-                        # never touches it.
-                        #
-                        # It is also the difference between a roll that takes
-                        # half an hour and one that takes ninety minutes. A
-                        # four-channel pass has a ~212 s floor whatever the
-                        # resolution, so an RGBI probe costs a full scan; the
-                        # RGB probe costs 12 s. Settings.scaled() pads the
-                        # missing fourth factor with 1.0, which leaves infrared
-                        # exactly where the vendor leaves it.
+                        # `infrared` here says the scan that follows is RGBI;
+                        # it does not make the probe infrared. auto_exposure
+                        # always probes in RGB. What the flag buys is blue's
+                        # headroom: blue comes back 2-3.7x brighter in RGBI than
+                        # in RGB at the same exposure, so a blue metered to fill
+                        # the range on an RGB probe clips in the scan. Passing
+                        # False here cost exactly that -- one roll metered blue
+                        # to 10.07x, which on a 6506 base pins the 16-bit timer
+                        # at its 65535 ceiling before the RGBI gain is applied.
                         self.set_gain_offset(baseline, infrared=infrared)
                         scales = self.auto_exposure(
-                            target=exposure_target, infrared=False, film=film
+                            target=exposure_target, infrared=infrared, film=film
                         )
                         metered = True
 

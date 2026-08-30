@@ -44,6 +44,14 @@ def main() -> int:
     ap.add_argument("--no-shading", action="store_true",
                     help="return raw pixels, for comparison")
     ap.add_argument("--auto-exposure", action="store_true")
+    ap.add_argument("--exposure-scale", default=None, metavar="X|R,G,B[,I]",
+                    help="hold exposure at this multiple of the scanner's own "
+                         "settings instead of metering. One value, or one per "
+                         "channel. Needed whenever several passes have to be "
+                         "comparable: SET GAIN OFFSET does not persist across a "
+                         "scan sequence, so every pass sets it afresh, and two "
+                         "passes metered independently are not the same "
+                         "measurement")
     ap.add_argument("--film", default="negative",
                     choices=["negative", "positive", "kodachrome", "bw"],
                     help="metering only: a negative is metered per channel to "
@@ -70,6 +78,13 @@ def main() -> int:
     args = ap.parse_args()
     if args.no_library:
         args.library = None
+
+    exposure_scale: float | list[float] = 1.0
+    if args.exposure_scale:
+        parts = [float(v) for v in args.exposure_scale.replace(",", " ").split()]
+        exposure_scale = parts[0] if len(parts) == 1 else parts
+    if args.auto_exposure and args.exposure_scale:
+        print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
 
     ref_path = Path(args.reference)
     with DirectScanner(verbose=args.verbose) as s:
@@ -102,7 +117,8 @@ def main() -> int:
         image, meta = s.scan(
             resolution=args.dpi,
             infrared=args.ir,
-            auto_exposure=args.auto_exposure,
+            exposure_scale=exposure_scale,
+            auto_exposure=args.auto_exposure and not args.exposure_scale,
             film=args.film,
             shading=not args.no_shading,
             keep_raw=args.library is not None,
