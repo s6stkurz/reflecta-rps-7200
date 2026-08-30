@@ -41,6 +41,23 @@ one to believe.
 has already made a scan worse once (`worst_defect` 4.47% -> 5.28%) by correcting
 a falloff it could not attribute.
 
+### Phase 2 (infrared) is deferred, not abandoned
+
+Not run, and on this evidence not needed. Phase 2 could only ever ask whether the
+field *differs* in infrared, and RGB turned out to have no field to differ from --
+so the likely answer is "no difference from nothing". It is also the expensive
+half: infrared holds the device busy for a ~212 s floor per pass whatever the
+resolution, so five passes is ~18 minutes that 600 dpi cannot shorten. And the
+infrared plane is a dust and scratch record rather than a picture, where a smooth
+brightness gradient does not matter in the first place.
+
+The code is built and tested, so this is a decision to defer rather than work to
+redo. `tools/uniformity.py capture --ir --tag vignette-study-ir` runs it, IT8
+only, nothing in the transport changing. Worth reaching for only if infrared ever
+starts behaving oddly in a way a smooth field would explain -- and the guards
+below still apply if it does, particularly the one about an infrared plane that
+came back unshaded.
+
 ### What the real data corrected in this plan
 
 Four things below were written from synthetic reasoning and were wrong on
@@ -316,6 +333,10 @@ IR pass of `"IT8 180"` and the 3-channel phase-1 pass of the same name already
 differ. Reuse the same subject strings and add `--tag vignette-study-ir`.
 
 ## Capture protocol — phase 2, IR
+
+> **Deferred, 2026-08-30.** Phase 1 found no field in RGB, so there is nothing
+> for infrared to differ from. Kept because the code is built and tested; see
+> *Phase 2 (infrared) is deferred* above for why it is not worth ~18 minutes now.
 
 Run this **only after phase 1 is complete and its verdict is in**. It is a comparison,
 not a characterisation: the question is narrowly *does the field change in IR*, and it
