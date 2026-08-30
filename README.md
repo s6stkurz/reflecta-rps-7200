@@ -403,11 +403,12 @@ Do not probe `READ(10)` (`0x28`) -- it times out and wedges the device.
 
 ## Licence
 
-GPL-2.0-or-later — see [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE).
 
 The shading correction in `rps7200/shading.py` follows the algorithm in SANE's
-`pieusb` backend (`pieusb_calculate_shading`, `sanei_pieusb_correct_shading`),
-which is GPL-2.0-or-later, so this project is licensed to match.
+`pieusb` backend (`pieusb_calculate_shading`, `sanei_pieusb_correct_shading`).
+That backend is GPL-2.0-**or-later**, and the "or later" is what makes GPL-3 an
+option: this project takes it, for the patent grant and the clearer terms.
 
 The rest was derived from the scanner's own behaviour and from USB captures of
 the vendor software, for interoperability. The captures themselves are not
