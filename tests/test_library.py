@@ -214,3 +214,44 @@ def test_keep_two_retains_a_pair_for_comparison(tmp_path):
         entry_with(tmp_path)
     assert len(library.prunable(tmp_path, keep=1)) == 2
     assert len(library.prunable(tmp_path, keep=2)) == 1
+
+
+def test_a_corrected_entry_reconstructs_without_crying_wolf(tmp_path):
+    """scan.tif may hold shading-corrected pixels, so a raw decode cannot match
+    it. Before this was handled, every corrected entry reported ~99% of samples
+    differing -- which would have hidden a real decode regression completely."""
+    from rps7200.shading import apply_shading
+
+    stream, image = index_stream(16, 8, 3)
+    reference = ShadingReference(
+        ref={c: np.linspace(28000, 32000, 16) for c in range(3)},
+        mean={c: 30000.0 for c in range(3)},
+        pixels_per_line=16,
+    )
+    corrected, report = apply_shading(image, reference, None)
+    assert not np.array_equal(corrected, image), "fixture must actually change pixels"
+
+    meta = {
+        "resolution_dpi": 1800, "channels": 3,
+        "channel_order": list(CHANNEL_ORDER[:3]),
+        "width": 16, "height": 8, "depth": 16, "bytes_per_line": 32,
+        "shading": report,                      # marks the stored image corrected
+    }
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(corrected, meta, root=tmp_path, film=FilmNotes(),
+                        reference=reference, raw=stream, raw_layout=layout)
+
+    rebuilt, verdict = library.reconstruct(path)
+    assert verdict == "identical to the stored image", verdict
+    assert np.array_equal(rebuilt, corrected)
+
+
+def test_a_corrected_entry_without_its_reference_says_so(tmp_path):
+    stream, image = index_stream(16, 8, 3)
+    meta = {"resolution_dpi": 1800, "channels": 3, "width": 16, "height": 8,
+            "bytes_per_line": 32, "shading": {"columns": 16, "width": 16}}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
+                        reference=None, raw=stream, raw_layout=layout)
+    _, verdict = library.reconstruct(path)
+    assert "reference is missing" in verdict, verdict

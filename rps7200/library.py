@@ -46,7 +46,7 @@ import numpy as np
 
 from . import tiff
 from .direct import DirectScanner, ScanParameters
-from .shading import ShadingReference
+from .shading import ShadingReference, apply_shading
 
 DEFAULT_ROOT = Path("library")
 INDEX = "index.json"
@@ -290,6 +290,25 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         image = DirectScanner._deinterleave(raw, params, int(layout["channels"]))
     except (KeyError, ValueError, TypeError) as exc:
         return None, f"could not decode: {exc}"
+
+    # scan.tif may hold shading-corrected pixels, so a raw decode can never
+    # match it: every corrected entry reported ~99% of samples differing, which
+    # made a real decode regression invisible among the false alarms. Re-apply
+    # the entry's own reference before comparing, so the check tests the whole
+    # path from bytes to stored image rather than half of it.
+    applied = (record.get("image") or {}).get("corrections_applied") or []
+    if "shading" in applied:
+        cal = record.get("calibration") or {}
+        ref_file, mask_file = cal.get("shading"), cal.get("ccd_mask")
+        if not ref_file or not (path / ref_file).exists():
+            return image, (
+                "stored image is shading-corrected but its reference is "
+                "missing, so it cannot be reproduced"
+            )
+        reference = ShadingReference.load(path / ref_file)
+        mask = ((path / mask_file).read_bytes()
+                if mask_file and (path / mask_file).exists() else None)
+        image, _ = apply_shading(image, reference, mask)
 
     stored = tiff.read(str(path / "scan.tif"))
     if image.shape != stored.shape:
