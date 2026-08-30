@@ -36,6 +36,15 @@ calibration, so decode and correction changes can be re-run offline.
   conservative. Tighten it for free: have each RGBI scan log its actual blue
   level against what the RGB prescan predicted, and the real range emerges over
   a few scans with no extra passes.
+
+  To settle the *cause* rather than work around it, one experiment closes it —
+  but every step must happen inside a single power-on, because a shading
+  reference belongs to the power-on that measured it (`docs/vignette-plan.md`,
+  "One phase, one power-on"): meter RGB on the empty transport and lock the
+  scale (~75 s); calibrate (~3-4 min); one RGB pass (~1 min); one RGBI pass at
+  the same locked exposure (~212 s infrared floor). About 10 minutes of scanner
+  time. The last pass against the one before it isolates filter transmission
+  from the gain path, because only the channel count differs.
 - **Passes sit at different column offsets and nobody knows why.** Two 3600 dpi
   passes of one frame correlate at r=0.936 only once shifted 16 columns, and a
   shading reference matched a scan best at lag -11/-12 across sessions.
