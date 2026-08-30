@@ -34,48 +34,100 @@ and scan, and writes the 4-channel data itself.
 
 ## Install
 
-Requires SANE and numpy:
-
 ```sh
-brew install sane-backends
 pip install -e .
 ```
 
-`tifffile` is optional — it is used automatically if present, but the built-in TIFF
-reader/writer is complete on its own.
+numpy and libusb are all that is needed — the driver talks to the scanner directly over
+USB and does **not** require SANE. `tifffile` is optional; it is used automatically when
+present, and the built-in TIFF reader/writer is complete on its own.
+
+A second, older interface (`rps7200 …`, `rps7200.device`) drives the scanner through
+SANE's `pieusb` backend. It still works and needs `brew install sane-backends`, but it
+cannot apply the shading correction described below. Prefer the direct driver.
 
 ## Use
 
+One calibration per power-on, then scan. Power the scanner on with **no film loaded**,
+wait for the lamp (about 80 s), then:
+
 ```sh
-rps7200 list                      # confirm the scanner is visible
-rps7200 list --options            # dump every backend option and its current value
+# calibrate, scan, correct, and file the result with its raw bytes
+python3 tools/scan.py --dpi 1800 --ir \
+    --stock "Kodak Gold 200" --frame 3 --notes "test frame"
 
-rps7200 prescan -o preview.tif    # preview (the scanner picks the resolution)
-
-rps7200 scan -o out/frame001.tif             # prescan + scan, 600 dpi
-rps7200 scan -o out/frame001.tif --dpi 3600  # higher resolution
-rps7200 scan -o scan.tif --split             # also write separate _rgb and _ir files
-rps7200 scan -o scan.tif --no-prescan        # skip the calibration prescan
-
-rps7200 inspect scan.tif          # verify channels, bit depth, and that IR is really IR
+python3 tools/scan.py --dpi 600                  # faster, RGB only
+python3 tools/scan.py --dpi 1800 --no-shading    # raw pixels, for comparison
+python3 tools/scan.py --dpi 1800 --reuse         # reuse the cached reference
+python3 tools/scan.py --film positive            # a slide: keeps its colour cast
 ```
 
-Override any backend option directly:
+A whole strip or roll, unattended:
 
 ```sh
-rps7200 scan -o scan.tif --set exposure-time-r=3200 --set gain-adjust='* 1.2'
+python3 tools/scan_roll.py --dry-run --frames 6                 # prescan and advance only
+python3 tools/scan_roll.py --dpi 1800 --ir --frames 6 \
+    --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
+```
+
+Every scan is filed in `library/` by default, with the raw bytes the scanner sent, the
+session's shading reference and that pass's CCD mask. None of those can be recovered from
+a TIFF, and without them a scan can never be re-decoded or re-corrected:
+
+```sh
+python3 tools/library.py list          # what is stored
+python3 tools/library.py verify        # checksums and completeness
+python3 tools/library.py reconstruct   # re-decode every scan with current code
+python3 tools/make_comparison.py       # raw / corrected / inverted, for eyeballing
 ```
 
 From Python:
 
 ```python
-from rps7200 import Scanner
+from rps7200.direct import DirectScanner
+from rps7200.shading import apply_shading
 
-with Scanner() as s:
-    s.prescan()                       # also calibrates the scan below
-    frame = s.scan(resolution=600)
-    rgb, ir = frame.rgb, frame.ir     # (H,W,3) and (H,W), both uint16
+with DirectScanner() as s:
+    s.calibrate_shading()                        # once per power-on
+    image, meta = s.scan(resolution=1800, infrared=True)
+    rgb, ir = image[..., :3], image[..., 3]      # (H,W,3) and (H,W), uint16
 ```
+
+## How scans are corrected
+
+**The scanner returns raw pixels and never corrects them itself.** It measures its own
+per-column sensor response during a calibration pass and hands that measurement back, but
+applying it is the host's job. Run the calibration and discard the result — as this driver
+did for a long time — and nothing changes in the image, which reads like a broken
+calibration rather than a missing step.
+
+The pass returns two phases per channel, unlit then lit: a dark reference averaging ~170
+counts and a light reference averaging ~47,000. Correction is one division per column:
+
+```
+value = (raw - dark[c][j]) * (mean_light[c] - mean_dark[c]) / (light[c][j] - dark[c][j])
+```
+
+`j` is not the output column. The reference spans the whole CCD including pixels a given
+pass never reads, so the **CCD mask** — read fresh on every pass — maps output columns to
+reference columns. At 600 dpi it marks 860 of 5172 pixels used, starting at pixel 5; at
+300 dpi, 428 starting at pixel 11. That per-pass mapping is what keeps the correction
+aligned at any resolution.
+
+Measured on a real frame at 1800 dpi, as how well the top half of the frame predicts the
+bottom — which separates a reproducible sensor pattern from picture content:
+
+| | raw | corrected |
+|---|---|---|
+| red | 0.897 | 0.265 |
+| green | 0.782 | 0.242 |
+| infrared | — | worst column defect 4.67% → 0.89% |
+
+Blue does not improve, and should not: its raw figure is 0.153, so it has no fixed pattern
+to remove. Blue carries the least signal on this scanner, so its column variation is noise.
+
+The reference belongs to the power-on that measured it. `calibrate_shading()` is therefore
+run once per session, exactly as the vendor software does at power-on.
 
 ## Resolution
 
@@ -106,16 +158,18 @@ Some viewers (macOS Preview included) still report `hasAlpha: yes` and may compo
 That is a viewer convention, not a problem with the file; use `--split` when you want
 files that display normally.
 
-Everything that would consume or alter the IR is off by default:
+On the **SANE** interface, everything that would consume or alter the IR is off by
+default. (The direct driver does not use these; it sets the equivalent mode bytes itself
+and applies shading on the host, as described above.)
 
-| Setting | Value | Why |
+| SANE option | Value | Why |
 |---|---|---|
 | `mode` | `RGBI` | the one-pass four-channel mode |
 | `depth` | `16` | |
 | `clean-image` | `no` | otherwise the backend spends the IR on its own dust removal |
 | `correct-infrared` | `no` | no red-crosstalk correction |
 | `fast-infrared` | `no` | repositions the head so IR stays aligned with RGB |
-| `correct-shading` | `yes` | sensor calibration, not image editing |
+| `correct-shading` | `yes` | asks the backend to do the host-side division; the direct driver does its own |
 | `crop` | `None` | the backend default (`Inside`) crops the frame |
 
 ## Checking that the IR is real
@@ -124,6 +178,9 @@ Everything that would consume or alter the IR is off by default:
 rps7200 inspect scan.tif
 ```
 
+*(`inspect` belongs to the SANE interface; for a scan taken with the direct driver, load
+the TIFF and correlate channel 3 against 0-2 yourself.)*
+
 A genuine IR plane sees through the dye layers, so it should **not** track the visible
 channels: dust and scratches show as marks while the picture content is largely absent.
 `inspect` prints the correlation between IR and each of R, G and B — anything above ~0.9
@@ -131,7 +188,7 @@ means the IR is contaminated (usually `correct-infrared` left on, or a channel m
 
 ## Notes and limitations
 
-- **Scans block with no progress.** The backend performs the entire capture and its
+- **Scans block with no progress.** *(SANE interface.)* The backend performs the entire capture and its
   post-processing inside `sane_start`; `sane_read` only drains a finished buffer. The
   process will sit silent for a long time, and cancellation is only honoured between
   scans. This is the backend's design, noted in its own man page.
@@ -168,7 +225,8 @@ fails at varying offsets. Reproducing it needs neither: an independent implement
 this repo, talking straight to the device over libusb, stalls at the same 32768.
 
 The scanner also drives fine under CyberView and VueScan on the same cable and port, so
-hardware, media and link are all good. See "Status: image data read is unsolved" below.
+hardware, media and link are all good. This is solved — see "What the stock backend gets
+wrong" below — and is kept here because the symptom is what you hit first.
 
 Diagnose with:
 
@@ -286,7 +344,16 @@ Read from the device's own INQUIRY response:
 python3 -m pytest tests/ -q
 ```
 
-The tests cover the channel-derivation and TIFF paths, and need no scanner attached.
+103 tests, none of which need a scanner attached: channel derivation and the TIFF paths,
+the shading parse and two-point correction, metering and film types, the scan library
+(including that a stored entry still decodes to the pixels it was saved with), and the
+roll/registration logic.
+
+After any change to how the scanner's bytes become pixels, re-check every stored scan:
+
+```sh
+python3 tools/library.py reconstruct
+```
 
 ## Solved: what the stock backend gets wrong
 
@@ -325,81 +392,22 @@ Also learned from the capture:
 
 A bulk read that times out mid-transfer leaves the scanner unresponsive to
 control transfers. `libusb_clear_halt` sometimes clears it; re-plugging does not,
-as it re-enumerates without recovering. Power-cycle at the unit's own switch. The
-driver attempts STOP SCAN plus a bridge reset on every exit path to avoid this.
+as it re-enumerates without recovering. **Power-cycle at the unit's own switch.**
 
-Do not probe `READ(10)` (`0x28`) -- it times out and wedges the device.
+What provokes it, all learned the hard way:
 
-## Superseded: earlier dead ends
-
-### Original notes
-
-## Status: image data read is unsolved
-
-Everything except retrieving image data works against the real scanner. This is
-recorded here so the next attempt does not repeat it.
-
-### Confirmed working
-
-| Step | Evidence |
-|---|---|
-| USB transport (IEEE1284 + control ports + bulk) | INQUIRY matches SANE byte for byte |
-| Warm-up handling | ~80 s from cold; sense 0x04/0x01 = becoming ready |
-| Exposure, highlight/shadow, shading parms | accepted |
-| Scan frame | index **0x80**, coords 0-based px at max res (`0,0 -> ccd-1`) |
-| Gain/offset read + write | values match SANE's calibration output |
-| Mode select | geometry scales correctly: 150/300/600 dpi -> 212x144 / 428x287 / 860x574 |
-| Start/stop scan | motor and lamp physically run |
-| CCD mask read (SCSI COPY 0x18) | 10344 bytes |
-| Media detection | state byte 0x0D empty -> 0x4D with strip holder loaded |
-
-### The blocker
-
-`SCSI READ (0x08)` for image data is refused with ILLEGAL REQUEST / ASC 0x20
-after `start_scan`, even though the scan physically runs. `available_lines`
-stays at 0-7 and never grows.
-
-Ruled out by experiment:
-
-- read size (many tried, from 1 line to the full block)
-- `skip_shading` both ways -- the scanner *refuses* to skip: sense 0x82/0x00
-  decodes to "calibration disable not granted"
-- TEST UNIT READY before the read (this is what `wait_ready` polls)
-- gain/offset written before reading
-- SANE's exact setup ordering, and SANE's exact mode bytes
-- retries (the refusal is persistent, not a one-shot sense condition)
-- the CCD mask step (`0x18`) that `sane_start` performs in "scan phase 3"
-- slide transport INIT and NEXT (both accepted, no effect)
-- `0x18` as an alternative data path: refused at the needed size, and at small
-  sizes returns identical non-streaming content -- it is the static CCD mask
-
-SANE fails differently but is no better off: its READ *is* accepted during the
-calibration phase, delivers exactly 32768 of 82752 bytes, then stalls for 30 s
-and drops the device off the USB bus.
-
-### What would settle it
-
-A USB capture of a working scan. CyberView and VueScan both drive this scanner
-correctly, so capturing one low-resolution preview and diffing the command bytes
-against this implementation would answer it directly. Only the command bytes are
-needed, not the image payload.
-
-- Windows: USBPcap + Wireshark
-- macOS: Xcode "Additional Tools" adds USB capture to Wireshark (`XHC20`)
-
-Byte-level diffing against SANE's own debug log already found two real bugs here
-(frame index and coordinate space) that hours of reading the backend source had
-missed.
-
-### Recovering a wedged scanner
-
-A bulk read that times out mid-transfer leaves the scanner unresponsive to
-control transfers. `libusb_clear_halt` returns `LIBUSB_ERROR_OTHER` on macOS and
-does not help, and neither does re-plugging: it re-enumerates without
-recovering. Power-cycle at the unit's own switch. The driver now always attempts
-STOP SCAN plus a bridge reset on every exit path to avoid provoking this.
-
-Do not probe `READ(10)` (`0x28`) -- it times out and wedges the device.
+- **Abandoning a read mid-scan.** Infrared holds the device busy for its own
+  ~212 s floor however few lines were asked for, so a low-resolution IR pass can
+  outlast a short timeout. `read_lines` allows 300 s for this reason.
+- **Holding the session open through heavy local work** — gzipping a 140 MB
+  library entry with the device open and idle preceded one wedge.
+- **`STOP SCAN`, and IEEE1284 RESET.** Earlier versions of this driver sent both
+  on every exit path believing it prevented the fault; it causes it. The vendor
+  sends neither, and neither does this driver now.
+- Probing `READ(10)` (`0x28`).
+- **`SET_SCAN_HEAD` (`0xD2`)** — accepted silently at any step count with no
+  error and no state change, but 1000 steps turned the gears audibly and needed a
+  power cycle. Never send it; see CLAUDE.md.
 
 ## Licence
 
