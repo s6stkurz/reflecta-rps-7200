@@ -6,7 +6,20 @@ build-backend = "setuptools.build_meta"
 name = "rps7200"
 version = "0.1.0"
 description = "Console and Python scanning for the Reflecta RPS 7200, with raw RGB + infrared output"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "Stefan Kurzella"}]
+keywords = ["scanner", "film", "negative", "infrared", "usb", "reflecta", "pieusb"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: Capture :: Scanners",
+]
 dependencies = ["numpy>=1.21"]
 
 [project.optional-dependencies]

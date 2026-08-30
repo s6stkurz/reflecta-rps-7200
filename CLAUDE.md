@@ -51,6 +51,22 @@ It needs a power cycle afterwards, so avoid these:
   library entry with the device open and idle preceded one wedge.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both
   leave the device unresponsive.
+- **Never send `SET_SCAN_HEAD` (0xD2).** It drives a mechanism with a step count
+  whose unit is unknown, and it reports *nothing*: no error, no sense condition,
+  and not one byte of `READ_STATE` changes, at any step count. 10 and 100 steps
+  looked like a clean no-op. 1000 turned the gears audibly and needed a power
+  cycle. The silence is the trap — there is no feedback that says stop, so a
+  step count cannot be calibrated by escalating it.
+
+  It is defined in the SANE `pieusb` backend (`sanei_pieusb_cmd_set_scan_head`,
+  modes 4 and 5: `00 00 hi lo` forward, `01 00 hi lo` backward) but that backend
+  never calls those modes, refuses mode 2 as "unreliable, possibly dangerous",
+  and uses mode 1 only beside `STOP SCAN`. CyberView sends it zero times in
+  3,955 commands across all six captures. Nothing has ever driven this command
+  successfully; it is not an untested feature, it is a known hazard.
+
+  The film transport is `SLIDE` (0xD1) and is unrelated to this. Whole-frame
+  `SLIDE_NEXT`/`SLIDE_PREV` are measured and safe.
 
 ## Facts that are easy to get wrong
 

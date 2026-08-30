@@ -176,23 +176,92 @@ Diagnose with:
 SANE_DEBUG_PIEUSB=11 scanimage --mode Gray --preview=yes --format=tiff -o /tmp/control.tif
 ```
 
-## Whole-roll autofeed (not enabled)
+## Whole-roll scanning
 
-Film advance is gated on `FLAG_SLIDE_TRANSPORT`, which the backend reads from the fourth
-field of the `pieusb.conf` line for this device. It is currently `0x00`:
-
+```sh
+python3 tools/scan_roll.py --dry-run --frames 6          # prescan and advance only
+python3 tools/scan_roll.py --dpi 1800 --ir --frames 6 \
+    --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 ```
-usb 0x05e3 0x0144 0x31 0x00
-```
 
-With that at `0x00` the `advance` option is accepted but does nothing — so
-`Scanner.scan_roll()` would rescan the same frame repeatedly. Setting it to `0x01` enables
-`SLIDE_INIT` at scan start and `SLIDE_NEXT` after each non-preview scan.
+The film is already at the first picture when this starts, so the first frame is scanned
+before anything moves and the transport advances between frames. Shading is calibrated
+**once** for the whole roll — which is what the vendor does, and why a 17-pass session in
+the captures contains no calibration at all.
 
-Treat this as **experimental**. Those transport commands were written for the DigitDia
-*slide magazine*, and whether the RPS 7200's motorised film transport answers the same SCSI
-commands is untested. The scanner's INQUIRY does report an `ADF`, which is encouraging but
-not proof.
+Every frame reaches disk the moment it exists: a library entry with the raw bytes, the
+shading reference and the CCD mask beside the pixels, plus a `roll.json` manifest
+rewritten after each one. A roll takes hours; a crash should cost the frame it was on and
+not the roll. `--start-at N` resumes.
+
+Start with `--dry-run`. It prescans and advances only, so it walks a six-frame strip in
+about two and a half minutes and shows where each picture sits before three hours are
+committed to scanning them.
+
+The roll stops on whichever comes first: `--frames`, a prescan with no picture in it, an
+advance that does not move the film, or three consecutive failures. A single failed frame
+is recorded in the manifest and the roll goes on.
+
+### What drives the transport
+
+This does not go through SANE, so nothing here depends on `FLAG_SLIDE_TRANSPORT` in
+`pieusb.conf` — the flag that is `0x00` for this model and stops the stock backend
+advancing film at all. The commands come from `captures/600_ICE_FILM_STRIP_5.pcapng`,
+CyberView walking a 5-frame strip end to end:
+
+| | |
+|---|---|
+| advance | `SLIDE` (`d1 00 00 00 04 00`) with data **`04 01 00 01`** |
+| confirmation | `READ_STATE` **byte 2** is the transport position |
+
+Byte 2 stepped `0 → 1 → 2 → 3 → 4` across that session's four advances and stayed put
+through a session that never advanced, 1.6–6.2 s after the command. The `READ_STATE`
+issued immediately after the advance came back empty every time, so the poll has to
+survive a failed read rather than read it as the end of the film. This driver previously
+sent `04 16 00 00` — a zero where every observed advance carried a 1.
+
+`State.media_loaded` is not usable for any of this: its bit is clear in every state seen
+across six captures, including ones taken with film demonstrably loaded.
+
+### Registration
+
+The transport window is 36.5 mm and a 35 mm frame is 36 mm, so there is half a millimetre
+of slack, and a frame that drifts is a frame with its edge outside the aperture that no
+scan window can recover. It happens: CyberView's own detected windows over its 5-frame
+strip started at `x=96` for four frames and then at `x=1727` for the fifth, losing 6 mm of
+picture.
+
+Each frame's prescan is therefore measured — `registration()` reports a signed offset and
+how far short of a whole frame the film measures, both in millimetres, and both go into the
+manifest and the frame's metadata. A drifted frame cannot be seen directly — the prescan
+only covers the aperture — but film *narrower* than a whole frame can, and that is the same
+thing.
+
+The measurement keys on **level, not variance**, and that distinction is load-bearing.
+Film attenuates and an empty aperture does not, so the film's edge is a step in brightness:
+measured on a C-41 negative, the clear strip read 143/153/153 in R/G/B against the film's
+34/15/7, and every threshold from 60% to 90% of the clear level returned the same edges.
+`detect_frame()` looks for a step in *variance* instead and fails badly here — a dark,
+low-contrast frame varies less than the film's own slightly-skewed edge (std 36–59 against
+the picture's 1–10), so a threshold set at a fraction of the peak keeps four columns of 428
+and discards the photograph. It reduced a frame filling the window edge to edge to a
+0.26 mm sliver and called it 35 mm of drift. `film_bounds()` is what registration uses. **Drift is reported, not corrected.** No capture contains a command that moves
+the film by less than a whole frame, and `SET_SCAN_HEAD` (`0xD2`) is never sent by
+anything. `tools/transport_probe.py` measures whether one exists; until it says otherwise,
+a drifting strip is a thing to be told about, not something the driver quietly papers over.
+
+### Time and space
+
+Scan time barely depends on resolution — the carriage traverse dominates. Measured on the
+vendor: 216 s at 600 dpi, 218 s at 900, 218 s at 1800, 217 s at 3600, all RGBI 16-bit.
+Ours agrees (227 s at 900 and 1800, 334 s at 3600). A 300 dpi RGB prescan is ~16 s, which
+is what makes per-frame metering affordable.
+
+Per frame: ~16 s prescan + up to 48 s metering + 217–334 s scan + ~7 s advance, so **4.7 to
+6.9 minutes**. A 36-frame roll is 3–4 hours, plus one 3–4 minute calibration. `--meter
+once` saves about 30 minutes and keeps the frames comparable to each other; `--meter each`
+is the default and is what CyberView does. At 3600 dpi a library entry is ~250 MB, so a
+roll is about 9 GB.
 
 ## Scanner details
 
@@ -331,3 +400,16 @@ recovering. Power-cycle at the unit's own switch. The driver now always attempts
 STOP SCAN plus a bridge reset on every exit path to avoid provoking this.
 
 Do not probe `READ(10)` (`0x28`) -- it times out and wedges the device.
+
+## Licence
+
+GPL-2.0-or-later — see [LICENSE](LICENSE).
+
+The shading correction in `rps7200/shading.py` follows the algorithm in SANE's
+`pieusb` backend (`pieusb_calculate_shading`, `sanei_pieusb_correct_shading`),
+which is GPL-2.0-or-later, so this project is licensed to match.
+
+The rest was derived from the scanner's own behaviour and from USB captures of
+the vendor software, for interoperability. The captures themselves are not
+distributed: they record traffic from every device on the bus, keyboard HID
+reports included.

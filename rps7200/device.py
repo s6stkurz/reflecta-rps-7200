@@ -668,8 +668,13 @@ class Scanner:
             usb 0x05e3 0x0144 0x31 0x00
 
         With it at ``0x00`` the ``advance`` option is accepted but does nothing,
-        so this would rescan the same frame N times. See the README before
-        enabling it.
+        so this would rescan the same frame N times.
+
+        Use :meth:`rps7200.direct.DirectScanner.scan_roll` instead. It drives
+        the transport over USB, so the config flag does not apply, and it sends
+        the advance the vendor software actually sends -- recovered from a
+        capture of CyberView walking a 5-frame strip. See "Whole-roll scanning"
+        in the README.
         """
         for _ in range(frames):
             if prescan_each:

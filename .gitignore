@@ -24,3 +24,9 @@ previews/
 captures/
 calibration/
 library/
+
+# per-roll scan output
+rolls/
+
+# local Claude config: machine-specific paths and permissions
+.claude/
