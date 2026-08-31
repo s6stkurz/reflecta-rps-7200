@@ -1,161 +1,129 @@
-# Multi-exposure / multi-sampling for the RPS 7200
+# Multi-exposure: capture a bracket, let NegPy merge it
 
 ## Context
 
-SilverFast's Multi-Exposure scans a frame twice at different exposures and merges the
-two, to pull shadow detail out of dense film without clipping the clear areas. The
-question is whether to build the same thing here, and whether it is worth it.
+An earlier version of this plan argued against multi-exposure, and was wrong on
+its central number (it is in the git history of this file). It claimed the long pass was capped at **×1.23** because
+blue "already runs at 81% of full scale". That figure came from the vendor's
+*no-film calibration* exposure and from a post-auto-exposure sidecar — neither
+of which is a floor. The device's actual base is a fixed reference (9604 / 6506
+/ 6506, confirmed across 36 captured READ GAIN/OFFSET responses), so the real
+picture is:
 
-Research says: **not in the classic form, and not for the film you shoot** — but a
-closely related technique is worth building, and one hardware fact decides it.
+| | base | ceiling | metered uses | left for a longer pass |
+|---|---|---|---|---|
+| R | 9604 | 65535 (×6.82) | ×2.88 | ×2.37 |
+| G | 6506 | 65535 (×10.07) | ×6.03 | **×1.67** |
+| B | 6506 | 65535 (×10.07) | ×2.6–×10.07 | varies |
 
-## The finding that settles it
+**Green binds, not blue**, and the honest headroom is ×1.67 — 0.74 stops, not
+the 0.09 density the old plan claimed. Worth doing, and worth being honest that
+it is modest.
 
-Exposure on this scanner is a 16-bit Timer 1 count. `pieusb` measured the overflow
-behaviour directly on this hardware family:
+## What the other drivers do
 
-```
-exp_rel   1086   1500  |  1598  1599  |  2200  3300
-measured  x10.5  x14.7 |   clip x1.00 | x5.79 x1.06
-```
+**pyopticfilm** (Plustek OpticFilm 8200i, via NegPy's `plustek_backend.py`):
+`exposure_long` is a fixed per-model constant and the device has **no
+auto-exposure at all** — `_validate_params` refuses `auto_exposure` outright.
+The pass layout is `_gl128_me_pass_layout`: `n_early = 2 if capture_ir else 1`,
+then one long pass, then "Merging exposures". So: the normal pass(es), one
+longer pass, merged inside the library. Two exposures, both hardcoded.
 
-`timer = exposure_time * exp_rel / 100`, and it **wraps** past 65535 — a scan asked to
-be brighter comes out darker. The ceiling is therefore a fixed 65535 timer counts, no
-matter how the product is split between the absolute and relative fields. Relative
-exposure below 100% is clamped, so it cannot be used to go the other way either.
+**nkscan** does not do multi-exposure. It exposes `Samples` — the scanner
+averaging 1–16 reads per line — which is multi-*sampling*.
 
-Now the actual settings. From CyberView's own `SET GAIN OFFSET` in
-`captures/frist_open.pcapng` (frame 5099), and from this driver's scan sidecars:
+**NegPy itself already merges brackets, and this is the important one.**
+`negpy/features/hdr/logic.py` takes two or more exposures of one frame and:
 
-| channel | vendor exposure | mine | headroom to 65535 |
-|---|---|---|---|
-| R | 8277 | 27569 | ×2.4 |
-| G | 28645 | 39445 | ×1.7 |
-| B | **53160** | 52048 | **×1.23** |
+- **solves the exposure ratios from the pixels**, so our metadata does not have
+  to be accurate
+- **aligns the frames itself** (`estimate_shift`, `cv2.warpAffine`)
+- blends with a rolloff from 0.90 to `SATURATION = 0.995`, so the frame a pixel
+  comes from changes gradually instead of banding
+- picks as reference the longest exposure with under 0.1% clipping, keeping the
+  result in [0, 1] so recovered range arrives as shadow detail
 
-Blue already runs at 81% of full scale — the vendor puts it there itself. So the
-longest possible "long" pass is **×1.23 on blue**, worth `log10(1.23)` = **+0.09
-density**. That is nothing.
+So **do not write a merge.** Ours would be worse, and Stefan already runs NegPy.
+The driver's job is to produce a well-formed bracket.
 
-Meanwhile averaging two passes at the same exposure gives √2 = ×1.41 noise reduction,
-and four gives ×2. **Multi-sampling beats multi-exposure on this scanner from the very
-first pass**, and keeps beating it, because it has no ceiling.
+## What to build
 
-`rps7200/direct.py` already knows this ceiling — `Settings.scaled()` clamps exposure to
-65535 — it was just never connected to a reason.
+A bracket capture in `rps7200/direct.py`, reusing what already exists:
 
-## Is it necessary?
+- `Settings.scaled()` already takes a per-channel factor and clamps at 65535
+- `auto_exposure()` already meters per channel in two RGB rounds
+- `scan(exposure_scale=...)` already applies a scale per pass
+- `rps7200/library.py` already files each pass with its raw bytes and calibration
 
-Independent testing (filmscanner.info) measured a Canon 9000F Mk II going from density
-range 3.17 to 3.98 with Multi-Exposure, so the technique is real. But two things make
-it a poor fit here:
+`scan_bracket(stops, passes, ...)`:
 
-- **The RPS 7200 already out-ranges the film.** Claimed Dmax 3.6, measured "magnitude
-  3". Colour negative — Kodak Gold 200 — has a Dmax around 2.0–2.2. The scanner has
-  roughly a full density of margin over the film. Multi-Exposure targets slides
-  (Velvia and friends, Dmax 3.5+) where the film out-ranges the scanner. It is aimed at
-  a problem you do not have.
-- **The gain is capped at log(2) = 0.3 density per doubling of exposure** even when
-  headroom exists, and we have ×1.23.
+1. Meter once, as now. That is the reference exposure.
+2. Derive the ladder **downward from the ceiling**, not upward from the metered
+   value: the long pass goes as high as the timer allows (green's ×1.67 over
+   metered), and the rest step down by `stops`. Going up from metered would
+   waste the headroom that exists below it.
+3. Refuse, with the numbers, when the requested span does not fit — the ceiling
+   is per channel and green runs out first.
+4. Scan each pass at `FULL_FRAME`, film untouched, calibration reused.
+5. File every pass in the library, tagged `bracket:<id>` with its index and
+   requested ratio, and write the TIFFs NegPy will consume.
 
-Shadow *noise* is a genuine problem worth solving — it just is not a dynamic-range
-problem, and multi-sampling is the right tool for it.
+Expose it as `tools/scan.py --bracket N [--stops 0.7]`.
 
-Users also report ~10% of SilverFast Multi-Exposure scans showing double contours from
-misregistration between passes. That failure mode applies to multi-sampling equally,
-which is why registration is step 1 below and not an afterthought.
+**Do not re-run `calibrate_shading` between passes** — one reference per session
+is what the vendor does, and the passes must share it to stay comparable.
 
-## What NegPy does
+## The honest ceiling
 
-`multi_exposure` exists as a capability flag and a checkbox
-(`negpy/infrastructure/scanners/params.py:16`, `base.py:37`), gated on
-`model.exposure_long`, and passed straight through to `pyopticfilm` — NegPy implements
-no merge of its own, and the flag reaches only Plustek OpticFilm 8200i SE / 8100 V2.
-Their user guide: *"merges short and long colour passes for more highlight and shadow
-detail; it takes longer than a normal scan."*
+The gain over a single metered scan is the exposure ratio: **×1.67 at best, 0.74
+stops.** Averaging two passes gives ×1.41 for the same two passes' time, so
+multi-exposure wins, but not by much. Both beat one pass.
 
-More relevant: their **nkscan** backend exposes `Samples` — *"reads per line the
-scanner averages (1–16). Higher settings cut shadow noise and cost proportionally more
-time."* That is multi-sampling, done in the scanner. It is the feature worth copying,
-and on this hardware it has to be done host-side.
+This should be measured, not assumed, and the plan below measures it. If it
+comes out at ×1.2 in practice the feature is not worth shipping, and that is a
+legitimate outcome.
 
-## Recording the USB channel — probably not worth it
+Two levers that are *not* timer-limited and are worth one experiment each,
+because they would change the answer:
 
-**VueScan** is the practical target if we do record: the trial runs indefinitely,
-unlocks multi-exposure and multi-sampling, and only watermarks *saved output* — USB
-traffic is unaffected. SilverFast is paid with a demo. Nothing open-source implements
-multi-exposure.
+- **Analogue gain** (8-bit, currently 39/33/21) amplifies before the ADC, so it
+  helps if quantisation rather than shot noise dominates the shadows.
+- **Lamp level** (`Settings.light`, vendor sends 6, pieusb default 4).
 
-But unlike the shading calibration, **there is nothing to discover on the wire.**
-Multi-exposure is entirely host-side: the scanner is told a different `exposure_time`
-and scanned again, and the merge happens in software where USB cannot see it. A capture
-would show us two passes and their exposure values, nothing more.
+## Verification
 
-Worth capturing only to answer three specific questions, and only if the implementation
-hits them: what exposure ratio the vendor picks, whether it re-runs calibration between
-passes, and whether it re-feeds the film or re-sweeps in place.
+The failure mode to guard against is shipping a feature that measurably does
+nothing, so every check is a measurement with a number that decides it.
 
-## Implementation
+1. **The exposures are actually what was asked for.** For each pass, measure the
+   median of a mid-tone patch and check the ratios between passes match the
+   requested ones. This is the linearity check, and it is also the one that
+   catches the timer wrapping: past 65535 a pass comes out *darker*, which shows
+   up immediately as a ratio going the wrong way. Do it with **no film loaded**
+   first, where the level is uniform and unambiguous.
+2. **Nothing clips that should not.** The short pass must have zero saturated
+   pixels; the long pass may clip, but only where the short one has data.
+   Report the saturated fraction per channel per pass.
+3. **Shadow noise actually improves.** Take the densest 10% of the frame and
+   report the per-channel standard deviation for the single metered pass and for
+   the long pass. Expect improvement by the exposure ratio if read-noise limited,
+   by its square root if shot-noise limited. **If neither shows, say so and stop**
+   — that is the measurement that decides whether this ships.
+4. **NegPy accepts the bracket and reports the span it sees.** It prints
+   "Merged N exposures spanning X stops", solved from the pixels. If its number
+   disagrees with the requested span, our exposures are not doing what we think.
+5. **Alignment is good enough for NegPy's aligner.** Cross-correlate the passes;
+   `estimate_shift` handles small offsets, but the unexplained pass-to-pass
+   column offset in `TODO.md` is exactly the thing that could defeat it. Measure
+   the shift between bracket passes and report it.
+6. **The library round-trips.** `tools/library.py verify` and `reconstruct` clean
+   over the new entries, and each pass carries its own exposure in its sidecar.
+7. **The three comparison TIFFs**, plus a 100% crop of a dense region from the
+   single pass and from the merge, for Stefan's eye. His read decides, and a
+   downscaled preview cannot show shadow noise.
 
-### Step 1 — registration test (blocking, and shared with the shading work)
+## Cost
 
-Nothing else matters if passes do not align. This is the same open question left over
-from the shading plan (`docs/shading-calibration-plan.md`): two of my 3600 dpi passes
-at an identical frame correlate at **r = +0.936 at lag −16**, not at lag 0.
-
-Scan one frame N times without touching anything. For each pair, cross-correlate column
-profiles at lags ±32 and row profiles at lags ±32. Outcomes:
-
-- **aligned to <1 px** — proceed to step 2
-- **constant integer offset** — correct it, and check `ScanParameters.filter_offset1/2`
-  (read in `get_parameters`, currently unused and unrecorded) as the likely source
-- **varying, sub-pixel, or with y drift** — averaging will soften the image. Stop and
-  report; a resampling registration step is a much bigger piece of work
-
-Add `filter_offset1/2` to the scan metadata regardless, so future scans carry evidence.
-
-### Step 2 — multi-sampling in `rps7200/direct.py`
-
-`scan_averaged(n, ...)`: run `scan()` n times reusing the open session and the cached
-shading reference, register per step 1, accumulate in float64, divide. Return the mean
-plus a per-pixel standard deviation map — the std map is the measurement that proves it
-worked and costs nothing to produce.
-
-Do not re-run `calibrate_shading()` between passes; the vendor reuses one reference for
-a whole session and re-calibrating would cost 3.5 minutes per pass.
-
-### Step 3 — per-channel multi-exposure, only if step 2 shows it is needed
-
-Red has ×2.4 of real headroom and blue has ×1.23, so this is worth at most a red-channel
-improvement. Reuse `Settings.scaled()` with a per-channel factor — it already takes a
-sequence and already clamps. Merge by replacing non-clipped long-pass values, scaled by
-the exposure ratio, keeping short-pass values where the long pass saturates.
-
-Gate it behind a measurement showing red shadow noise actually dominates.
-
-### Other levers worth one experiment each
-
-- **Lamp level.** `Settings.light` — the vendor sends 6, `pieusb`'s default is 4. If the
-  lamp can be driven brighter, that raises signal without touching Timer 1, which is the
-  only way around the ceiling. Test the response curve of light level vs measured level.
-- **Analogue gain.** 8-bit, currently 39/33/21. Raising it amplifies read noise with the
-  signal, so it helps only if quantisation downstream dominates. One bracket answers it.
-
-## Validation
-
-**After each significant step, regenerate and send the three files** —
-`1_nothing_done.tif`, `2_corrected.tif`, `3_corrected_inverted.tif` via
-`tools/make_comparison.py`, plus previews.
-
-1. **Registration numbers from step 1**, before any averaging is built.
-2. **Shadow noise, measured.** Pick the densest patch of a real negative and report the
-   per-channel standard deviation for n = 1, 2, 4, 8. Expect σ ∝ 1/√n. If it does not
-   follow √n, the noise is not read noise and averaging is the wrong tool — say so
-   rather than shipping it.
-3. **Sharpness unchanged.** Compare an edge profile between n = 1 and n = 8. Any
-   softening means registration failed; this is the double-contour failure SilverFast
-   users report.
-4. **Honest cost statement.** n passes cost n × scan time. With IR forcing a ~212 s
-   floor, n = 8 with IR is ~28 minutes per frame. Report it before recommending it.
-5. **The three TIFFs**, for visual judgement — which takes precedence over the metrics
-   above.
+Each pass is a full scan: ~70 s at 1800 dpi RGB, ~230 s with infrared (the
+~212 s infrared floor applies per pass). A three-pass bracket with IR is about
+12 minutes per frame, so this is a per-frame tool, not a roll tool.
