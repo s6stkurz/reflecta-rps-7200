@@ -194,7 +194,8 @@ def save(
             for k in (
                 "resolution_dpi", "frame", "width", "height", "depth",
                 "channels", "channel_order", "bytes_per_line", "film",
-                "exposure_scale", "duration_s", "protocol_revision",
+                "exposure_scale", "exposure_metered", "duration_s",
+                "protocol_revision",
             )
         },
         "device_settings": {
@@ -337,12 +338,32 @@ def signature(record: dict[str, Any]) -> tuple:
     or payload moves, scans taken before and after are different measurements
     of the same film and both are worth keeping.
 
-    Deliberately *not* included: the exposure the metering happened to land on,
-    the shading reference, anything host-side. Those vary run to run without
+    Deliberately *not* included: the exposure the metering *landed on*, the
+    shading reference, anything host-side. Those vary run to run without
     changing what was asked for, and everything host-side is re-runnable from
     the raw bytes.
+
+    A *commanded* exposure is included, and the distinction matters. A bracket
+    is the same frame at the same dpi, depth and channel count, differing only
+    in the exposure each pass was told to use -- so without this, every member
+    of a bracket shares one signature, `duplicates` calls the bracket redundant,
+    and `--delete` keeps one and destroys the rest. That is precisely the data a
+    bracket exists to capture.
+
+    ``scan.exposure_metered`` says which kind it was. Entries written before
+    that field existed are treated as metered, which is what they were: it
+    leaves their signatures exactly as they were.
     """
     scan, film = record.get("scan") or {}, record.get("film") or {}
+
+    commanded = None
+    if not scan.get("exposure_metered", True):
+        scale = scan.get("exposure_scale")
+        if isinstance(scale, (int, float)):
+            commanded = (round(float(scale), 4),)
+        elif scale:
+            commanded = tuple(round(float(v), 4) for v in scale)
+
     return (
         (film.get("stock") or "").strip().lower(),
         (film.get("frame") or "").strip().lower(),
@@ -353,6 +374,7 @@ def signature(record: dict[str, Any]) -> tuple:
         scan.get("depth"),
         scan.get("film"),
         scan.get("protocol_revision"),
+        commanded,
     )
 
 

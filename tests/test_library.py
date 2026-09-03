@@ -154,7 +154,8 @@ def test_the_index_summarises_every_entry(tmp_path):
 # --- duplicates -------------------------------------------------------------
 
 def entry_with(tmp_path, *, stock="Kodak Gold 200", frame="3", dpi=1800,
-               revision=1, raw=True, reference=True, channels=3):
+               revision=1, raw=True, reference=True, channels=3,
+               exposure_scale=None, metered=True):
     stream, image = index_stream(16, 8, channels)
     meta = {
         "resolution_dpi": dpi, "channels": channels,
@@ -163,6 +164,9 @@ def entry_with(tmp_path, *, stock="Kodak Gold 200", frame="3", dpi=1800,
         "bytes_per_line": 32, "film": "negative", "shading": None,
         "protocol_revision": revision,
     }
+    if exposure_scale is not None:
+        meta["exposure_scale"] = exposure_scale
+        meta["exposure_metered"] = metered
     layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": channels}
     ref = ShadingReference(
         ref={c: np.full(16, 30000.0) for c in range(channels)},
@@ -196,6 +200,43 @@ def test_scans_across_a_protocol_change_are_both_kept(tmp_path):
     entry_with(tmp_path, revision=1)
     entry_with(tmp_path, revision=2)
     assert library.prunable(tmp_path) == []
+
+
+def test_a_bracket_is_not_a_pile_of_duplicates(tmp_path):
+    """The failure this guards against would delete the bracket.
+
+    A bracket is the same frame at the same dpi, depth and channel count. The
+    only thing separating its members is the exposure each pass was *told* to
+    use -- and signature() excludes exposure, deliberately, because a metered
+    exposure is an outcome that lands differently every run. Without the
+    commanded/metered distinction all three of these share one signature,
+    `duplicates` calls them copies, and `--delete` keeps one and destroys the
+    two that made it a bracket.
+    """
+    for scale in (0.5, 1.0, 2.0):
+        entry_with(tmp_path, exposure_scale=scale, metered=False)
+    assert library.prunable(tmp_path) == []
+
+
+def test_two_metered_runs_of_one_scan_are_still_duplicates(tmp_path):
+    """The other half: metering never lands on exactly the same number twice.
+
+    If a landed exposure counted towards identity, no two runs of the same scan
+    would ever be recognised as copies and the library would never reduce.
+    """
+    entry_with(tmp_path, exposure_scale=0.7851, metered=True)
+    entry_with(tmp_path, exposure_scale=0.7863, metered=True)
+    doomed = library.prunable(tmp_path)
+    assert len(doomed) == 1
+    assert "same scan of the same picture" in doomed[0][1]
+
+
+def test_entries_written_before_the_field_existed_are_unchanged(tmp_path):
+    """Legacy entries carry no exposure_metered. They were metered; treating
+    them as such leaves their signatures exactly as they were."""
+    entry_with(tmp_path)                      # no exposure keys at all
+    entry_with(tmp_path)
+    assert len(library.prunable(tmp_path)) == 1
 
 
 def test_the_entry_that_can_still_be_used_is_the_one_kept(tmp_path):
