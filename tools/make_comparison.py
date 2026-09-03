@@ -32,21 +32,49 @@ FULL = (0, 0, 10343, 6887)
 SIGMA = float(__import__("os").environ.get("RPS_SIGMA", 3.0))
 
 
-def worst_defect(image: np.ndarray, edge: int = 60) -> float:
-    """Largest column deviation, in percent, ignoring the film edge.
+def worst_defect(image: np.ndarray, edge: int = 60) -> tuple[float, float]:
+    """Largest column deviation, in percent, as ``(interior, edge)``.
 
     Measured over every channel. Looking at green alone understates it badly --
-    this is a trilinear CCD and its worst defects sit in one colour, so a
-    green-only metric read 9.62% where the true figure was 14.43%.
+    this is a trilinear CCD and its worst defects sit in one colour.
+
+    The edge columns are reported, not dropped. Excluding them silently is how a
+    correction that drew a straight line across the film's own border scored an
+    improvement: the damage was entirely inside the first 60 columns, and the
+    number never looked there.
     """
-    worst = 0.0
     k, pad = 25, 12
+    interior = edge_worst = 0.0
     for c in range(image.shape[2]):
         col = np.median(image[..., c].astype(np.float64), axis=0)
         smooth = np.convolve(np.pad(col, pad, mode="reflect"), np.ones(k) / k, "valid")
         dev = np.abs(col - smooth) / np.median(col)
-        worst = max(worst, 100 * dev[edge:-edge].max())
-    return worst
+        interior = max(interior, 100 * dev[edge:-edge].max())
+        edge_worst = max(edge_worst, 100 * np.r_[dev[:edge], dev[-edge:]].max())
+    return interior, edge_worst
+
+
+def worst_colour(image: np.ndarray, window: int = 25) -> tuple[float, int]:
+    """Largest *coloured* column deviation, and where it is.
+
+    Signed and channel-relative, because that is the only form that can express
+    "this channel departs from the others". np.abs hides a violet/green pair --
+    they cancel -- and a per-channel maximum cannot say a column is tinted, only
+    that it is bright.
+    """
+    x = image.astype(np.float64)
+    prof = np.median(x, axis=0)
+    k, pad = window | 1, window // 2
+    smooth = np.stack([
+        np.convolve(np.pad(prof[:, c], pad, mode="reflect"), np.ones(k) / k, "valid")
+        for c in range(prof.shape[1])
+    ], axis=-1)
+    level = float(np.median(prof, axis=0).mean())
+    dev = (prof - smooth) / level
+    colour = dev - dev.mean(axis=1, keepdims=True)
+    strength = np.abs(colour).max(axis=1)
+    j = int(np.argmax(strength))
+    return 100 * float(strength[j]), j
 
 
 def invert(image: np.ndarray) -> np.ndarray:
@@ -90,7 +118,16 @@ def main() -> None:
     tiff.write("2_corrected.tif", corrected, resolution=resolution)
     tiff.write("3_corrected_inverted.tif", invert(corrected), resolution=resolution)
 
-    print(f"worst column defect: {worst_defect(raw):.2f}% -> {worst_defect(corrected):.2f}%")
+    raw_in, raw_edge = worst_defect(raw)
+    fix_in, fix_edge = worst_defect(corrected)
+    print(f"worst column defect: interior {raw_in:.2f}% -> {fix_in:.2f}%, "
+          f"edge {raw_edge:.2f}% -> {fix_edge:.2f}%")
+    raw_c, raw_j = worst_colour(raw)
+    fix_c, fix_j = worst_colour(corrected)
+    print(f"worst coloured column: {raw_c:.2f}% at {raw_j} -> {fix_c:.2f}% at {fix_j}")
+    if fix_c > raw_c * 1.2:
+        print("  WARNING: the correction made the colour fringing worse",
+              file=sys.stderr)
     for name, img in (("cmp_before", raw), ("cmp_after", corrected)):
         v = (invert(img) / 256).astype(np.uint8)
         Image.fromarray(v).resize((v.shape[1] // 2, v.shape[0] // 2)).save(f"previews/{name}.png")

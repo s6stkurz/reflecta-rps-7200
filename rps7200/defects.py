@@ -158,6 +158,7 @@ def destripe(
     max_correction: float = 2.0,
     dilate: int = 3,
     max_run: int = 96,
+    max_step: float = 1.5,
 ) -> np.ndarray:
     """Remove known column defects, measuring their strength in this scan.
 
@@ -177,6 +178,19 @@ def destripe(
     (width, channels) one. Prefer the latter: on this trilinear CCD a defect
     usually belongs to one colour, and scaling all three to fix it tints the
     column instead of repairing it.
+
+    **A run spanning a step in level is refused**, `max_step`. A sensor defect
+    is a small multiplicative error on a locally smooth profile, so the good
+    columns either side of one sit at the same level. The film's own edge does
+    not: it is a step from clear aperture to film, it reads identically in every
+    row, and it is therefore indistinguishable from a defect by consistency
+    alone. Interpolating across it replaces the edge with a straight line.
+
+    Getting this wrong is not symmetric across channels, which is what makes it
+    visible. Whether a run happens to reach column 0 -- and so trip the
+    frame-edge guard below -- differs per channel, so one channel keeps the real
+    edge while the others are flattened, and the frame ends in a coloured
+    fringe rather than a soft one.
     """
     if defects.shape[0] != image.shape[1] or not defects.any():
         return image
@@ -200,6 +214,14 @@ def destripe(
             if left.size < 2 or right.size < 2:
                 continue  # a run against the frame edge is the film border,
                           # not a bad column, and has no good data on one side
+            lo_level = float(np.median(prof[left]))
+            hi_level = float(np.median(prof[right]))
+            span = max(lo_level, hi_level) / max(min(lo_level, hi_level), 1e-9)
+            if span > max_step:
+                continue  # the anchors sit at different levels, so this run
+                          # contains a real edge -- the film's own border, or a
+                          # hard edge in the picture. Either way a straight
+                          # interpolation across it destroys what is there.
             good_x = np.concatenate([left, right])
             expected = np.interp(np.arange(lo, hi), good_x, prof[good_x])
             actual = prof[lo:hi]
