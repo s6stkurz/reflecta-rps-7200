@@ -22,10 +22,9 @@ the target is uniform, flat, or characterised::
 
     d_g = n_g - n_e = s∘g - s
 
-That exactness is the whole point. A flat cannot do this: `scanner_corrections`
-in :mod:`rps7200.direct` measured a "smooth ~22% falloff" from clear film and
-was dropped from the pipeline in 2b790dd because nothing could say whether the
-falloff belonged to the scanner or to the film.
+That exactness is the whole point. A flat cannot do this: a falloff measured
+from clear film cannot be attributed, because nothing in it says whether the
+falloff belongs to the scanner or to the film.
 
 **What rotation cannot see.** The four insertions form the Klein four-group, so
 splitting ``s`` by parity gives four components, and the part that is *even in

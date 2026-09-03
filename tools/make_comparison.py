@@ -9,9 +9,9 @@ Run after any change to the correction pipeline:
 
     python3 tools/make_comparison.py [scan.tif] [flat.tif]
 
-Vignetting correction is off by default: measured on a real negative it made
-the worst column defect worse (4.47% -> 5.28%), because the flat it comes from
-was captured at a very different exposure. Pass --vignette to include it.
+There is no vignette correction here and none should be added. The ~39% falloff
+across the frame is real but lives entirely in x, which shading already takes to
+1.4%; along y it is 1.1% before any correction. See docs/vignette-plan.md.
 """
 import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
@@ -21,8 +21,10 @@ from PIL import Image
 
 from rps7200 import tiff
 from rps7200.direct import (
-    find_column_defects, destripe, flat_defect_sigma, resample_reference,
-    scanner_corrections,
+    destripe,
+    find_column_defects,
+    flat_defect_sigma,
+    resample_reference,
 )
 
 Image.MAX_IMAGE_PIXELS = None
@@ -59,7 +61,6 @@ def invert(image: np.ndarray) -> np.ndarray:
 
 def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
-    use_vignette = "--vignette" in sys.argv
     scan_path = args[0] if args else "scans/negatives/state_1800dpi.tif"
     flat_path = args[1] if len(args) > 1 else "scans/flat/flat_clearfilm_3600dpi.tif"
 
@@ -67,7 +68,6 @@ def main() -> None:
     flat = tiff.read(flat_path)
     print(f"scan {scan_path}  {raw.shape}")
 
-    vignette, _ = scanner_corrections(flat, tolerance=0.015)
     # Both detectors are thresholded against their own noise rather than a fixed
     # percentage: a fixed cutoff flagged 453 mostly-noise columns, which dilation
     # then blew up to 81% of the image for no gain. Both are per-channel, because
@@ -83,15 +83,7 @@ def main() -> None:
           f"{from_scan.any(1).sum()} from scan, {defects.any(1).sum()} combined "
           f"({defects.sum()} column-channels)")
 
-    work = raw
-    if use_vignette:
-        v = resample_reference(vignette, FULL, raw.shape[1], FULL)
-        work = np.clip(
-            raw.astype(np.float64)[..., :3] / np.where(v[None, :, :3] > 0.05, v[None, :, :3], 1),
-            0, 65535,
-        ).astype(np.uint16)
-
-    corrected = destripe(work, defects, margin=12, dilate=5)
+    corrected = destripe(raw, defects, margin=12, dilate=5)
     resolution = int(round(raw.shape[1] * 7200 / (FULL[2] - FULL[0])))
 
     tiff.write("1_nothing_done.tif", raw, resolution=resolution)
