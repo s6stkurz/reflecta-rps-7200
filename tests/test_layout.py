@@ -1,15 +1,17 @@
-"""Tests for the parts that do not need the scanner attached.
+"""Frame layout: how a stream of bytes becomes channels.
 
 The channel-count derivation is the load-bearing piece: the backend reports RGBI
 as ``SANE_FRAME_RGB``, so a frontend that trusts ``format`` reads four channels
 of data as three and shears the image. Everything here checks that the stride
 maths recovers the real layout.
+
+The TIFF tests that used to live here are in ``test_tiff.py``, which runs them
+against both implementations rather than only whichever one is installed.
 """
 
 import numpy as np
 import pytest
 
-from rps7200 import tiff
 from rps7200.device import Frame, Scanner
 from rps7200.sane_ffi import Frame as FrameFormat
 from rps7200.sane_ffi import SANE_Parameters
@@ -120,36 +122,3 @@ class TestFrame:
         assert meta["channel_order"] == ["R", "G", "B", "I"]
         assert (meta["width"], meta["height"]) == (5, 3)
         assert meta["resolution_dpi"] == 600
-
-
-class TestTiff:
-    @pytest.mark.parametrize(
-        "shape,dtype",
-        [
-            ((17, 23, 4), np.uint16),
-            ((17, 23, 3), np.uint16),
-            ((17, 23, 1), np.uint16),
-            ((9, 11, 4), np.uint8),
-            ((300, 200, 4), np.uint16),  # crosses a strip boundary
-        ],
-    )
-    def test_roundtrip(self, tmp_path, shape, dtype):
-        rng = np.random.default_rng(0)
-        high = 65535 if dtype == np.uint16 else 255
-        image = rng.integers(0, high, size=shape, dtype=np.uint32).astype(dtype)
-        path = str(tmp_path / "img.tif")
-        tiff.write(path, image, resolution=600)
-        assert np.array_equal(tiff.read(path), image)
-
-    def test_16bit_values_survive(self, tmp_path):
-        """Guards against a silent 8-bit truncation."""
-        image = np.full((4, 4, 4), 60000, dtype=np.uint16)
-        path = str(tmp_path / "img.tif")
-        tiff.write(path, image, resolution=600)
-        back = tiff.read(path)
-        assert back.dtype == np.uint16
-        assert back.max() == 60000
-
-    def test_rejects_float(self, tmp_path):
-        with pytest.raises(ValueError, match="uint8 or uint16"):
-            tiff.write(str(tmp_path / "x.tif"), np.zeros((4, 4, 4), dtype=np.float32))

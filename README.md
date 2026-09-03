@@ -40,7 +40,14 @@ pip install -e .
 
 numpy and libusb are all that is needed — the driver talks to the scanner directly over
 USB and does **not** require SANE. `tifffile` is optional; it is used automatically when
-present, and the built-in TIFF reader/writer is complete on its own.
+present, and the built-in TIFF reader/writer is complete on its own. The two are held to
+the same behaviour by `tests/test_tiff.py`, which runs every write/read pairing of them
+against each other, and the suite is run both ways:
+
+```sh
+python3 -m pytest tests/ -q                        # tifffile installed
+RPS7200_NO_TIFFFILE=1 python3 -m pytest tests/ -q  # as on a bare install
+```
 
 A second, older interface (`rps7200 …`, `rps7200.device`) drives the scanner through
 SANE's `pieusb` backend. It still works and needs `brew install sane-backends`, but it
