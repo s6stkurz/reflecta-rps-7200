@@ -305,6 +305,76 @@ payloads are decoded: infrared is a *separate exposure field* that is not being 
 all, so there is nothing for the probe to mispredict. `scan(auto_exposure=True)` still
 probes in RGBI and has not been changed.
 
+## Measured: `full_17_strip`, a whole roll driven by CyberView
+
+2171 commands, 17 frames, captured 2026-09-03 against this timeline: scanner power-cycled,
+CyberView opened, strip inserted, **frames aligned by hand with the scanner's own
+Forward/Reverse keys**, one manual prescan, then the automatic whole-roll prescan, then
+close.
+
+### The advance carries two values, and we only ever send one
+
+```
+CyberView, 16 advances:  [1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1]   8 ones, 8 twos
+older 5-frame capture:   [1, 1, 2, 1]                                        3 ones, 1 two
+this driver, every time:  1
+```
+
+`SLIDE 04 01 00 <value>` takes a 1 or a 2 in the last byte. Both step the position counter
+by exactly one frame — that was measured, and it is why an earlier reading dismissed the
+byte as meaningless. What it evidently changes is *how far* the film moves.
+
+Eight and eight over sixteen advances is not noise, and the runs — one, then five twos, then
+six ones, then three twos, then one — are not a fixed alternation either. A fixed dither for
+a fractional pitch would come out regular (1,2,1,2 or 1,1,2,1,1,2). Clumping like this is
+what a **closed loop** looks like: measure where the frame landed in the prescan, pick the
+next advance to correct it, repeat.
+
+`advance()` hardcodes `value=1`. If 1 and 2 are two different step counts, always sending
+the same one applies a constant per-frame error — which is exactly the monotonic ~0.2 mm per
+advance measured on strip3 (gap 1 → 10 → 36 px). **This is the prime suspect for the drift,
+and it is testable with a command already sent thousands of times.**
+
+The experiment, using nothing new: from a known position, advance with `value=1`, prescan,
+measure the frame's position; advance with `value=2`, prescan, measure again. If the two
+displacements differ, the difference is the correction step, and a loop over the gap
+detector can hold registration across a whole roll.
+
+### The buttons are firmware-only — this avenue is closed
+
+Between the strip going in (43 s) and the manual prescan (109 s), Stefan aligned the frames
+with the scanner's Forward and Reverse keys. In that entire window the bus carried **nothing
+but polling**: 117 `READ_STATE`, 5 `TEST_UNIT_READY`, no other command, and the position
+counter never left 0.
+
+The host neither sees the keys nor can trigger them. Every earlier search — the SANE
+backend's 26 commands, six other captures, the published literature — pointed the same way;
+this settles it. Fine positioning is not exposed over USB, and the vernier the keys perform
+has no command behind it.
+
+### Rewind and eject, both first sightings
+
+```
+05 01 00 01  x16   SLIDE_PREV, stepping 16 -> 0 one frame at a time, to return the strip
+03 f6 dd 00  x1    action 0x03, after the rewind -- the eject
+```
+
+`SLIDE_PREV` appears in **no other capture**; this driver had already verified it on hardware
+before the vendor was ever seen using it. Its role is end-of-roll rewind, not correction.
+Action `0x03` is new, seen once, and is the last command of the session.
+
+### Smaller findings
+
+- `SET_SCAN_HEAD` (0xD2) is sent **zero** times across a full automatic 17-frame roll.
+  Nothing has ever driven it. See the hazard note in CLAUDE.md.
+- The position counter read **72** before the strip was inserted and reset to 0 on insertion:
+  it is absolute and survives power cycles, so it says nothing about where a frame is.
+- `SLIDE_INIT` is `10 16 00 00` throughout, the value this driver already sends.
+- The session-start pair is `00 01 00 04` and `00 46 00 00`, with `01 47 00 03` before the
+  first frame — the same shape as the earlier captures, one param byte apart (`47` vs `57`).
+- Every frame gets two full-window 300 dpi RGB prescans, `0,0 -> 10343,6887` and
+  `0,1 -> 10343,6888`, before its advance. Unchanged from the earlier captures.
+
 ## Open — what `tools/transport_probe.py` answers
 
 Run it on a strip you do not mind handling; it sends commands this scanner has never been
