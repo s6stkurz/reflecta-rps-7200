@@ -425,6 +425,47 @@ bound*: knowing that the answer cannot exceed 0.49 mm turns an unbounded number
 into one that can be checked. Bound a measurement by what the hardware allows
 before tuning what it detects.
 
+## Settled: there is no drift, and the roll mechanism works
+
+A full unattended pass over a 17-slide strip: 16 advances, every one clean, stopping
+correctly when the transport would not move. Same length as the roll in
+`full_17_strip.pcapng`. Stefan judged the frames by eye and found the registration
+sound.
+
+That closes the drift investigation, and it closes it against my own repeated
+claims. Four detectors were written for it in one day:
+
+| detector | keyed on | failed by |
+|---|---|---|
+| `detect_frame` | column variance vs peak | firing on the film's own skewed edge |
+| `film_bounds` | level vs empty aperture | blind mid-strip, where film always fills the window |
+| level + flatness | brightness and uniformity | firing on a bright picture region |
+| mask ratio | orange mask, R/B | frames with a cyan subject reading as "no film at all" |
+
+Every one produced confident numbers. Every one was wrong on some frames, and every
+one was caught only by looking at the picture. On the final roll eight of seventeen
+readings were junk, including two claiming the window held no film on frames of
+ordinary contrast.
+
+The common failure is the same each time: keying on something that varies with the
+photograph. A defect at a fixed sensor column can be separated from picture content
+with the library, across different film positions -- that is what CLAUDE.md already
+says. Registration cannot, because it *is* a property of the picture's position, and
+no single frame distinguishes "the film moved" from "this photograph is dark on the
+left".
+
+The strip3 figures that started all of this -- a gap walking 1 -> 10 -> 36 px, read
+as 0.2 mm per advance -- were one of those artefacts. Their steps were 9 then 26,
+not the linear growth a constant per-frame error gives, and three later measurements
+disagree: round trips repeat to +/-0.03 mm, `SLIDE_NEXT` value 1 against value 2
+differ by under 0.05 mm, and seventeen slides came out sound by eye.
+
+**Do not add drift correction.** There is nothing to correct, the vendor sends no
+correction command in 3,955 commands across seven captures, the scanner's own
+Forward/Reverse keys are firmware-only and invisible to the host, and every
+automatic measure of registration built so far has been wrong often enough to do
+more harm than good.
+
 ## Open — what `tools/transport_probe.py` answers
 
 Run it on a strip you do not mind handling; it sends commands this scanner has never been
