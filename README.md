@@ -29,8 +29,12 @@ the per-channel bounds on the scanner handle, and `calibration="from preview"` r
 back. Close the handle and the calibration is gone — so a shell loop cannot prescan and
 then scan.
 
-This package drives `libsane` directly through `ctypes`, holds one session across prescan
-and scan, and writes the 4-channel data itself.
+This package does not use SANE at all. It drives the scanner directly over USB, the way
+the vendor software does, holds one session across prescan and scan, and writes the
+4-channel data itself. The three problems above are why: a SANE frontend cannot get this
+data out, and the backend cannot apply the shading correction either.
+
+An older interface built on `libsane` through `ctypes` is still in the tree -- see below.
 
 ## Install
 
@@ -38,20 +42,21 @@ and scan, and writes the 4-channel data itself.
 pip install -e .
 ```
 
-numpy and libusb are all that is needed — the driver talks to the scanner directly over
-USB and does **not** require SANE. `tifffile` is optional; it is used automatically when
+numpy is the only hard dependency. libusb is needed to talk to the scanner, and is loaded
+the first time something actually does — so decoding a stored scan, merging a bracket or
+writing a TIFF works on a machine with no scanner drivers at all. SANE is not required. `tifffile` is optional; it is used automatically when
 present, and the built-in TIFF reader/writer is complete on its own. The two are held to
 the same behaviour by `tests/test_tiff.py`, which runs every write/read pairing of them
-against each other, and the suite is run both ways:
+against each other. `make test-all` runs the suite both ways:
 
 ```sh
-python3 -m pytest tests/ -q                        # tifffile installed
-RPS7200_NO_TIFFFILE=1 python3 -m pytest tests/ -q  # as on a bare install
+make test-all
 ```
 
-A second, older interface (`rps7200 …`, `rps7200.device`) drives the scanner through
-SANE's `pieusb` backend. It still works and needs `brew install sane-backends`, but it
-cannot apply the shading correction described below. Prefer the direct driver.
+A second, older interface (`rps7200.device`, `rps7200.cli`) drives the scanner through
+SANE's `pieusb` backend. It needs `brew install sane-backends`, and it cannot apply the
+shading correction described below, so scans from it come back striped. It is kept for
+comparison, not for scanning. Everything in this README uses the direct driver.
 
 ## Use
 
@@ -306,11 +311,9 @@ The measurement keys on **level, not variance**, and that distinction is load-be
 Film attenuates and an empty aperture does not, so the film's edge is a step in brightness:
 measured on a C-41 negative, the clear strip read 143/153/153 in R/G/B against the film's
 34/15/7, and every threshold from 60% to 90% of the clear level returned the same edges.
-`detect_frame()` looks for a step in *variance* instead and fails badly here — a dark,
-low-contrast frame varies less than the film's own slightly-skewed edge (std 36–59 against
-the picture's 1–10), so a threshold set at a fraction of the peak keeps four columns of 428
-and discards the photograph. It reduced a frame filling the window edge to edge to a
-0.26 mm sliver and called it 35 mm of drift. `film_bounds()` is what registration uses. **Drift is reported, not corrected.** No capture contains a command that moves
+Keying on *variance* cannot work here: a dark, low-contrast frame varies less than the
+film's own slightly-skewed edge, so any threshold set as a fraction of the peak selects the
+border and discards the photograph. `film_bounds()` is what registration uses. **Drift is reported, not corrected.** No capture contains a command that moves
 the film by less than a whole frame, and `SET_SCAN_HEAD` (`0xD2`) is never sent by
 anything. `tools/transport_probe.py` measures whether one exists; until it says otherwise,
 a drifting strip is a thing to be told about, not something the driver quietly papers over.
