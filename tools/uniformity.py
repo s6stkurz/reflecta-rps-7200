@@ -581,11 +581,10 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
                  expect=orientation) == "abort":
         return None, "abort"
 
-    from rps7200.shading import ShadingReference
     scanner = scanner_factory()
     try:
         scanner.open()
-        scanner._shading = ShadingReference.load(reference_path)
+        scanner.load_shading(reference_path)
         image, meta = scanner.scan(
             resolution=args.dpi,
             infrared=args.ir,
@@ -593,8 +592,9 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
             film="positive",
             keep_raw=True,
         )
-        raw, layout, mask = scanner.last_raw, scanner.last_raw_layout, scanner._ccd_mask
-        shading_ref = scanner._shading
+        record = scanner.capture_record()
+        raw, layout = record["raw"], record["raw_layout"]
+        mask, shading_ref = record["ccd_mask"], record["reference"]
     finally:
         scanner.close()
 

@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rps7200 import library, tiff
 from rps7200.direct import DirectScanner
 from rps7200.library import FilmNotes
-from rps7200.shading import ShadingReference
 
 
 def main() -> int:
@@ -90,26 +88,11 @@ def main() -> int:
         info = s.inquiry()
         print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
-        if args.no_shading:
-            print("shading correction disabled: expect vertical striping")
-        elif args.reuse and ref_path.exists():
-            s._shading = ShadingReference.load(ref_path)
-            print(f"reusing {ref_path} ({s._shading.pixels_per_line} columns, "
-                  f"channels {s._shading.channels})")
-        else:
+        if not args.no_shading and not (args.reuse and ref_path.exists()):
             print("calibrating (about 3-4 minutes; the vendor does this once "
                   "per power-on) ...", flush=True)
-            t0 = time.monotonic()
-            result = s.calibrate_shading()
-            print(f"  {result['bytes_drained']/1e6:.2f} MB in "
-                  f"{time.monotonic()-t0:.0f}s")
-            if result["reference"] is None:
-                print("  no usable shading reference; the scan will be raw",
-                      file=sys.stderr)
-            else:
-                ref_path.parent.mkdir(parents=True, exist_ok=True)
-                result["reference"].save(ref_path)
-                print(f"  saved {ref_path}")
+        print(s.ensure_shading(ref_path, reuse=args.reuse,
+                               skip=args.no_shading)["summary"])
 
         print(f"scanning at {args.dpi} dpi{' with IR' if args.ir else ''} ...",
               flush=True)
@@ -128,10 +111,7 @@ def main() -> int:
         # through that has coincided with it going unresponsive.
         pending = None
         if args.library is not None:
-            pending = dict(
-                reference=s._shading, ccd_mask=s._ccd_mask,
-                raw=s.last_raw, raw_layout=s.last_raw_layout, inquiry=info,
-            )
+            pending = dict(s.capture_record(), inquiry=info)
 
     entry = None
     if pending is not None:

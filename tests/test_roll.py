@@ -156,7 +156,7 @@ class FakeRoll(DirectScanner):
                  echoes=False):
         self.verbose = False
         self.strip = list(strip)
-        self.position = 0
+        self.at = 0
         self.fail_at = set(fail_at)
         # `echoes` is the question this device answers in the negative. Across
         # 17 READ GAIN/OFFSET responses in the strip capture only bytes 66-68 --
@@ -179,19 +179,19 @@ class FakeRoll(DirectScanner):
     def set_gain_offset(self, s, infrared=False):
         self._settings = s
 
-    def _position(self):
-        return self.position
+    def position(self):
+        return self.at
 
     def advance(self, steps=1, timeout=30.0, poll=0.5):
-        if self.position + 1 >= len(self.strip):
+        if self.at + 1 >= len(self.strip):
             return None
-        self.position += 1
+        self.at += 1
         self.advances += 1
-        return self.position
+        return self.at
 
     # -- the passes
     def prescan(self, resolution=300, frame=None):
-        frame_at = self.strip[self.position]
+        frame_at = self.strip[self.at]
         return (blank() if frame_at is None else frame_at), None
 
     def auto_exposure(self, target=0.7, infrared=False, film="negative", **kw):
@@ -206,8 +206,8 @@ class FakeRoll(DirectScanner):
         return scales
 
     def scan(self, resolution=300, infrared=True, exposure_scale=1.0, **kw):
-        if self.position in self.fail_at:
-            raise TimeoutError(f"pretend failure at position {self.position}")
+        if self.at in self.fail_at:
+            raise TimeoutError(f"pretend failure at position {self.at}")
         self.frames_scanned.append(tuple(kw.get("frame") or FULL_FRAME))
         settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings)
