@@ -77,18 +77,17 @@ calibration, so decode and correction changes can be re-run offline.
 - **The 7200 dpi shading guard.** The CCD mask covers 5172 columns and a
   7200 dpi pass is 10344 wide, so the correction refuses and returns raw
   pixels. The code path has never been exercised.
-- **The dependency-free TIFF reader/writer.** `rps7200/tiff.py` has two
-  implementations and nothing in `tests/` ever forces `_has_tifffile()` to
-  False, so half of it is unexercised. Worth fixing regardless of the
-  compression work below.
 
 ## Specced but not built
 
 - **Lossless TIFF compression** — `docs/tiff-compression-plan.md`. Worth 16% on
   every file, lossless. Needs the built-in reader taught deflate + predictor
-  first, or files written with tifffile become unreadable without it. No
-  scanner needed. Note it will *not* make NegPy faster: it shrinks the file on
-  disk, not the array in memory.
+  first, or files written with tifffile become unreadable without it. The
+  harness for that now exists: `tests/test_tiff.py` runs every write/read
+  pairing of the two implementations, so the compression work is adding
+  compressed rows to a matrix rather than writing one. No scanner needed. Note
+  it will *not* make NegPy faster: it shrinks the file on disk, not the array in
+  memory.
 - **The dpi trade-off measurement** — `docs/dpi-tradeoff-plan.md`. Evidence so
   far says real detail runs out around 26 c/mm (~1340 dpi to sample) and that
   1800 dpi aliases, pointing at 2400 dpi as the sweet spot. Needs the scanner
