@@ -5,13 +5,21 @@ Written by hand rather than via Pillow because Pillow will not round-trip a
 ``ExtraSamples``, and the whole point here is that it survives untouched.
 
 ``tifffile`` is used automatically when it is installed; the built-in path is a
-dependency-free equivalent.
+dependency-free equivalent. *Equivalent* is the load-bearing word: which one
+runs is an installation accident, so the two must not disagree about what comes
+back. Both therefore return a **writeable, native-byte-order** array, and both
+treat a one-sample file as a 2D ``(H, W)`` image -- TIFF cannot record the
+difference between ``(H, W)`` and ``(H, W, 1)``, so :func:`read` settles it the
+way every other reader does rather than letting it depend on tifffile's private
+shape metadata. ``tests/test_tiff.py`` runs every write/read pairing of the two
+implementations against each other.
 """
 
 from __future__ import annotations
 
 import struct
-from typing import BinaryIO
+from collections.abc import Sequence
+from typing import BinaryIO, cast
 
 import numpy as np
 
@@ -32,6 +40,10 @@ _RESOLUTION_UNIT = 296
 _SOFTWARE = 305
 _EXTRA_SAMPLES = 338
 _SAMPLE_FORMAT = 339
+# Only named so the reader can refuse a tiled file by name instead of dying on a
+# missing StripOffsets.
+_TILE_WIDTH = 322
+_TILE_OFFSETS = 324
 
 # Field types
 _ASCII = 2
@@ -43,6 +55,9 @@ _TYPE_SIZE = {1: 1, _ASCII: 1, _SHORT: 2, _LONG: 4, _RATIONAL: 8, 6: 1, 7: 1, 8:
 
 _PHOTOMETRIC_MINISBLACK = 1
 _PHOTOMETRIC_RGB = 2
+
+_COMPRESSION_NONE = 1
+_SAMPLE_FORMAT_UINT = 1
 
 _TARGET_STRIP_BYTES = 8 << 20  # ~8 MiB per strip
 
@@ -75,6 +90,10 @@ def write(
         raise ValueError(f"expected a 2D or 3D array, got shape {image.shape}")
     if image.dtype not in (np.uint8, np.uint16):
         raise ValueError(f"expected uint8 or uint16, got {image.dtype}")
+    if image.size == 0:
+        # TIFF has no conformant way to say "no pixels", and tifffile only warns
+        # and then writes a file it cannot read back. Refuse on both paths.
+        raise ValueError(f"cannot write an empty image, shape {image.shape}")
 
     if _has_tifffile():
         import tifffile
@@ -88,6 +107,9 @@ def write(
         if resolution:
             kwargs["resolution"] = (resolution, resolution)
             kwargs["resolutionunit"] = "inch"
+        # Otherwise the Software tag says "tifffile.py" or "rps7200" depending
+        # on what happened to be installed when the scan was written.
+        kwargs["software"] = software
         tifffile.imwrite(path, np.ascontiguousarray(image), **kwargs)
         return
 
@@ -110,9 +132,11 @@ def _write_builtin(
         for i in range(n_strips)
     ]
 
-    data = np.ascontiguousarray(image)
-    if data.dtype.byteorder == ">":
-        data = data.astype(data.dtype.newbyteorder("<"))
+    # The header below says "II", so the samples have to be little-endian too.
+    # Testing for ">" is not enough: a native uint16 reports "=", which is
+    # big-endian on a big-endian host. Asking for "<" is a no-op where it
+    # already holds and a conversion where it does not.
+    data = np.ascontiguousarray(image, dtype=image.dtype.newbyteorder("<"))
 
     # Header, then pixel data, then IFD, then any values too big to inline.
     data_offset = 8
@@ -122,19 +146,26 @@ def _write_builtin(
     # resolved once the entry count is known, since it sets the IFD's size.
     fields: list[tuple[int, int, int, bytes]] = []
 
-    def add(tag: int, ftype: int, values: list[int] | bytes) -> None:
+    # A TIFF value is a string, a list of integers, or -- for RATIONAL -- a list
+    # of numerator/denominator pairs. The three are spelled out rather than
+    # narrowed with a cast, so the reader can see which shape each tag sends.
+    def add(
+        tag: int,
+        ftype: int,
+        values: bytes | Sequence[int] | Sequence[tuple[int, int]],
+    ) -> None:
         if ftype == _ASCII:
-            payload = bytes(values)
-            count = len(payload)
+            assert isinstance(values, bytes)
+            payload, count = values, len(values)
         elif ftype == _RATIONAL:
-            payload = b"".join(
-                struct.pack("<II", num, den) for num, den in values  # type: ignore[misc]
-            )
-            count = len(values)
+            pairs = cast("Sequence[tuple[int, int]]", values)
+            payload = b"".join(struct.pack("<II", num, den) for num, den in pairs)
+            count = len(pairs)
         else:
             fmt = "<H" if ftype == _SHORT else "<I"
-            payload = b"".join(struct.pack(fmt, v) for v in values)  # type: ignore[arg-type]
-            count = len(values)
+            words = cast("Sequence[int]", values)
+            payload = b"".join(struct.pack(fmt, v) for v in words)
+            count = len(words)
         fields.append((tag, ftype, count, payload))
 
     strip_offsets = []
@@ -198,18 +229,47 @@ def _write_builtin(
 
 
 def read(path: str) -> np.ndarray:
-    """Read an uncompressed strip-based TIFF back into an array."""
+    """Read an uncompressed strip-based TIFF back into an array.
+
+    ``(H, W, C)`` for a multi-sample file and ``(H, W)`` for a single-sample
+    one -- so a 2D plane written on its own, as ``--split`` writes the IR,
+    comes back 2D. Always writeable and in the host's byte order, whichever
+    implementation ran.
+    """
     if _has_tifffile():
         import tifffile
 
-        return tifffile.imread(path)
+        image = np.asarray(tifffile.imread(path))
+    else:
+        with open(path, "rb") as fh:
+            image = _read_builtin(fh)
 
-    with open(path, "rb") as fh:
-        return _read_builtin(fh)
+    if image.ndim == 3 and image.shape[2] == 1:
+        # tifffile keeps a trailing 1 when it wrote the file itself, from the
+        # shape it stashes in ImageDescription; no other reader sees that, so
+        # the file's own answer -- one sample, one plane -- wins.
+        image = image[..., 0]
+    return image
+
+
+def _exact(fh: BinaryIO, size: int, what: str) -> bytes:
+    """Read exactly ``size`` bytes or say which part of the file ran out.
+
+    The IFD is written *after* the pixel data, so a file cut short loses its
+    directory first; without this the failure surfaces as a bare
+    ``struct.error`` about a 2-byte buffer, naming nothing.
+    """
+    data = fh.read(size)
+    if len(data) != size:
+        raise ValueError(
+            f"truncated file: {what} wanted {size} bytes, only {len(data)} readable"
+        )
+    return data
 
 
 def _read_builtin(fh: BinaryIO) -> np.ndarray:
-    magic = fh.read(4)
+    """Always ``(H, W, C)``; :func:`read` is what drops a lone channel axis."""
+    magic = _exact(fh, 4, "the header")
     if magic[:2] == b"II":
         end = "<"
     elif magic[:2] == b"MM":
@@ -218,20 +278,20 @@ def _read_builtin(fh: BinaryIO) -> np.ndarray:
         raise ValueError("not a TIFF file")
     if struct.unpack(end + "H", magic[2:4])[0] != 42:
         raise ValueError("not a classic TIFF file")
-    (ifd_offset,) = struct.unpack(end + "I", fh.read(4))
+    (ifd_offset,) = struct.unpack(end + "I", _exact(fh, 4, "the IFD pointer"))
 
     fh.seek(ifd_offset)
-    (n_entries,) = struct.unpack(end + "H", fh.read(2))
+    (n_entries,) = struct.unpack(end + "H", _exact(fh, 2, "the IFD entry count"))
     tags: dict[int, list[int]] = {}
     for _ in range(n_entries):
-        tag, ftype, count = struct.unpack(end + "HHI", fh.read(8))
-        raw = fh.read(4)
+        tag, ftype, count = struct.unpack(end + "HHI", _exact(fh, 8, "an IFD entry"))
+        raw = _exact(fh, 4, "an IFD entry value")
         size = _TYPE_SIZE.get(ftype, 1) * count
         if size > 4:
             (offset,) = struct.unpack(end + "I", raw)
             here = fh.tell()
             fh.seek(offset)
-            raw = fh.read(size)
+            raw = _exact(fh, size, f"the out-of-line value for tag {tag}")
             fh.seek(here)
         if ftype == _SHORT:
             tags[tag] = list(struct.unpack(end + "H" * count, raw[: 2 * count]))
@@ -247,10 +307,22 @@ def _read_builtin(fh: BinaryIO) -> np.ndarray:
             raise ValueError(f"missing required TIFF tag {tag}")
         return default
 
-    if one(_COMPRESSION, 1) != 1:
-        raise ValueError("only uncompressed TIFFs are supported")
-    if one(_PLANAR_CONFIG, 1) != 1:
-        raise ValueError("only interleaved (chunky) TIFFs are supported")
+    # Everything refused here names what it found, because the alternative is a
+    # reader that dies on a KeyError or, worse, returns plausible nonsense.
+    compression = one(_COMPRESSION, _COMPRESSION_NONE)
+    if compression != _COMPRESSION_NONE:
+        raise ValueError(
+            f"unsupported TIFF compression {compression}; only uncompressed (1) is read"
+        )
+    planar = one(_PLANAR_CONFIG, 1)
+    if planar != 1:
+        raise ValueError(
+            f"unsupported planar configuration {planar}; only interleaved (chunky, 1)"
+        )
+    if _TILE_OFFSETS in tags or _TILE_WIDTH in tags:
+        raise ValueError("tiled TIFFs are not supported; only strip-based ones")
+    if _STRIP_OFFSETS not in tags or _STRIP_BYTE_COUNTS not in tags:
+        raise ValueError("missing strip offsets or byte counts: not a strip-based TIFF")
 
     width = one(_IMAGE_WIDTH)
     height = one(_IMAGE_LENGTH)
@@ -258,13 +330,42 @@ def _read_builtin(fh: BinaryIO) -> np.ndarray:
     bits = tags.get(_BITS_PER_SAMPLE, [8])
     if len(set(bits)) != 1 or bits[0] not in (8, 16):
         raise ValueError(f"unsupported bits per sample: {bits}")
+    formats = set(tags.get(_SAMPLE_FORMAT, [_SAMPLE_FORMAT_UINT]))
+    if formats != {_SAMPLE_FORMAT_UINT}:
+        # float16 and int16 are the same width as the uint16 we expect, so
+        # without this they would decode silently into wrong numbers.
+        raise ValueError(
+            f"unsupported sample format {sorted(formats)}; only unsigned integer (1)"
+        )
     dtype = np.dtype(np.uint8) if bits[0] == 8 else np.dtype(end + "u2")
 
     offsets = tags[_STRIP_OFFSETS]
     counts = tags[_STRIP_BYTE_COUNTS]
-    chunks = []
+    # A bytearray rather than joined bytes: np.frombuffer over an immutable
+    # buffer yields a read-only array, and tifffile's does not, so a caller that
+    # writes into the result would break only where tifffile is missing.
+    buffer = bytearray()
     for offset, count in zip(offsets, counts):
         fh.seek(offset)
-        chunks.append(fh.read(count))
-    flat = np.frombuffer(b"".join(chunks), dtype=dtype)
-    return flat.reshape(height, width, channels)
+        chunk = fh.read(count)
+        if len(chunk) != count:
+            raise ValueError(
+                f"truncated file: strip at offset {offset} claims {count} bytes, "
+                f"only {len(chunk)} readable"
+            )
+        buffer += chunk
+
+    expected = height * width * channels * dtype.itemsize
+    if len(buffer) < expected:
+        raise ValueError(
+            f"truncated image data: {len(buffer)} bytes for "
+            f"{height}x{width}x{channels} at {bits[0]} bits, expected {expected}"
+        )
+    # A writer is allowed to pad the final strip out to a whole rows-per-strip.
+    del buffer[expected:]
+
+    image = np.frombuffer(buffer, dtype=dtype).reshape(height, width, channels)
+    native = np.dtype(dtype.kind + str(dtype.itemsize))
+    if dtype != native:
+        image = image.astype(native)  # a big-endian file, read on a little host
+    return image

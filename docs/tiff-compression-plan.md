@@ -45,8 +45,11 @@ installed, and a hand-written dependency-free path. The built-in reader refuses
 anything compressed outright:
 
 ```python
-if one(_COMPRESSION, 1) != 1:
-    raise ValueError("only uncompressed TIFFs are supported")
+compression = one(_COMPRESSION, _COMPRESSION_NONE)
+if compression != _COMPRESSION_NONE:
+    raise ValueError(
+        f"unsupported TIFF compression {compression}; only uncompressed (1) is read"
+    )
 ```
 
 So compressed files must teach that reader to read them. This is not difficult
@@ -60,10 +63,12 @@ the built-in path never runs. Nothing would break here either way. But that
 same pyproject comment says *"the built-in one is complete"*, and writing files
 it cannot read would make that false for anyone installing without tifffile.
 
-A pre-existing gap makes it worth doing carefully: **the dependency-free path
-has no tests at all** — nothing in `tests/` ever sets `_has_tifffile()` to
-False, so both halves of it are currently unexercised. The new tests close that
-whether or not compression lands.
+That gap is now closed ahead of this work: `tests/test_tiff.py` forces
+`_has_tifffile()` both ways and runs **every write/read pairing** of the two
+implementations, which is what turned up the divergences they had already
+accumulated (read-only arrays, a channel axis one kept and the other dropped,
+big-endian dtypes). Compression therefore lands on a harness rather than
+needing one — it adds compressed rows to an existing matrix.
 
 Everything else checks out:
 
@@ -121,24 +126,27 @@ no longer be true.
 The change is only safe if the pixels are provably untouched, so the checks are
 about equality, not size.
 
-1. **Existing suite passes unchanged** — `python3 -m pytest tests/ -q`, all 39.
-   `TestTiff::test_roundtrip` already covers 5 shape/dtype combinations
-   including a strip boundary crossing and the 4-channel RGBI case, and now
-   exercises the compressed path for free.
+1. **Existing suite passes unchanged** — `python3 -m pytest tests/ -q`.
+   `TestCrossImplementation::test_roundtrip` already covers 6 shape/dtype
+   combinations including a strip boundary crossing and the 4-channel RGBI
+   case, and now exercises the compressed path for free. Run it a second time
+   as `RPS7200_NO_TIFFFILE=1 python3 -m pytest tests/ -q`, which makes the
+   import genuinely fail rather than only monkeypatching `_has_tifffile`, so
+   the dependency-free promise is tested as a whole package and not per call.
 
-2. **New tests for the cross-implementation matrix**, in `tests/test_layout.py`,
-   with `monkeypatch.setattr(tiff, "_has_tifffile", lambda: False)` to force the
-   built-in path. Every combination must round-trip identically:
+2. **Compressed rows added to the cross-implementation matrix** in
+   `tests/test_tiff.py`, which already forces the implementation through its
+   `using` fixture. Every combination must round-trip identically:
 
    | written by | read by | why it matters |
    |---|---|---|
    | tifffile (compressed) | built-in | **the regression this prevents** |
    | tifffile (compressed) | tifffile | the normal path |
-   | built-in | built-in | closes the pre-existing gap |
-   | built-in | tifffile | closes the pre-existing gap |
+   | built-in | built-in | already covered, uncompressed |
+   | built-in | tifffile | already covered, uncompressed |
    | tifffile, `compress=False` | both | the escape hatch still works |
 
-   Parametrised over the same shapes and dtypes as `test_roundtrip`, so the
+   Parametrised over the same `SHAPES` as `TestCrossImplementation`, so the
    strip boundary and the 4-channel extrasamples case are covered compressed.
 
 3. **Old files still read.** Assert `tiff.read` returns identical arrays for

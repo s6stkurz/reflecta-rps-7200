@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from rps7200.shading import (
-    ShadingReference,
     apply_shading,
     build_width_to_loc,
     calculate_shading,

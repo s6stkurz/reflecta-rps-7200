@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 from rps7200.bracket import (
-    CHANNEL_SPREAD_TAU,
     DEFAULT_ALPHA,
     DEFAULT_BETA,
     FULL_SCALE,

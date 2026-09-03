@@ -3,6 +3,49 @@
 A from-scratch USB driver for the Reflecta RPS 7200 film scanner. Conventions
 below are load-bearing: each exists because breaking it cost real time.
 
+## Commands
+
+```bash
+make all          # fix + lint + type + tests (run before committing)
+make test         # pytest only, with coverage
+make test-all     # both TIFF paths: tifffile present and absent
+make lint         # ruff check
+make type         # ty check (not mypy)
+make fix          # safe autofixes only
+
+make reconstruct  # re-decode every stored scan with the current code
+make verify       # check the library's checksums and completeness
+
+# Single test
+uv run pytest tests/test_shading.py::test_the_two_phases_are_separated -v
+```
+
+All commands run through `uv run`; never invoke pytest/ruff/ty directly.
+
+`make format` reformats every file and is **not** part of `make all`. This source
+is hand-wrapped with aligned comment blocks; a wholesale reformat rewrites
+thousands of lines, buries the real change and conflicts with any parallel
+branch. Run it only on a file you are already rewriting, and only with Stefan's
+agreement.
+
+## Testing
+
+We use `pytest`. New features should include unit tests in the `tests/`
+directory. `make test` skips tests marked `hardware` by default (see `addopts`
+in `pyproject.toml`), so the suite stays runnable with no scanner on the bus.
+
+**Test the host side against stored bytes, not against the scanner.** Every
+library entry keeps its raw bytes, its shading reference and its CCD mask, so
+decoding, correction and merging are all re-runnable offline. A test that
+genuinely needs the device is marked `@pytest.mark.hardware` and is opt-in:
+
+```bash
+uv run pytest tests/ -m hardware      # only with the scanner attached, and after asking
+```
+
+Fakes shared between test modules live in `tests/conftest.py`; `pythonpath` is
+set so `from conftest import ...` works.
+
 ## Scans
 
 **File every scan in the library, with its raw bytes.** `tools/scan.py` and

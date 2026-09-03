@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import library, tiff, uniformity as un
+from rps7200 import library, uniformity as un
 from rps7200.direct import DirectScanner, ScanParameters
 from rps7200.shading import apply_shading
 from rps7200.uniformity import AS_IS, MIRROR_X, MIRROR_Y, ROT180
@@ -454,7 +454,7 @@ def decompose_and_report(it8, detected, meta, args, flats=None) -> int:
     trailing = max(meta[k]["trailing"] for k in it8)
     grid = it8[base].shape[:2]          # one grid for every difference
 
-    print(f"\nrepeat floors (as-is passes against the first):")
+    print("\nrepeat floors (as-is passes against the first):")
     floors = []
     for other in by_orientation[AS_IS][1:]:
         surface, info = difference(it8[other], it8[base], AS_IS, dpi, trailing, grid)
@@ -581,11 +581,10 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
                  expect=orientation) == "abort":
         return None, "abort"
 
-    from rps7200.shading import ShadingReference
     scanner = scanner_factory()
     try:
         scanner.open()
-        scanner._shading = ShadingReference.load(reference_path)
+        scanner.load_shading(reference_path)
         image, meta = scanner.scan(
             resolution=args.dpi,
             infrared=args.ir,
@@ -593,8 +592,9 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
             film="positive",
             keep_raw=True,
         )
-        raw, layout, mask = scanner.last_raw, scanner.last_raw_layout, scanner._ccd_mask
-        shading_ref = scanner._shading
+        record = scanner.capture_record()
+        raw, layout = record["raw"], record["raw_layout"]
+        mask, shading_ref = record["ccd_mask"], record["reference"]
     finally:
         scanner.close()
 

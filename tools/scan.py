@@ -18,17 +18,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 
 import numpy as np
 
 from rps7200 import library, tiff
 from rps7200.direct import DirectScanner
 from rps7200.library import FilmNotes
-from rps7200.shading import ShadingReference
 
 
 def main() -> int:
@@ -47,7 +46,8 @@ def main() -> int:
     ap.add_argument("--bracket", type=int, default=0, metavar="N",
                     help="scan N exposures of this frame (2-9) and merge them by "
                          "inverse-variance weighting, for lower shadow noise. "
-                         "Infrared is not bracketed: one pass carries it")
+                         "Infrared is not bracketed: one pass carries it. "
+                         "0, the default, takes a single pass")
     ap.add_argument("--stops", type=float, default=2.0,
                     help="how far the bracket spans, in stops (default 2). The "
                          "top is pinned to the exposure timer's ceiling and the "
@@ -86,6 +86,17 @@ def main() -> int:
     args = ap.parse_args()
     if args.no_library:
         args.library = None
+    if args.bracket and not (
+        DirectScanner.MIN_BRACKET_PASSES
+        <= args.bracket
+        <= DirectScanner.MAX_BRACKET_PASSES
+    ):
+        # Before the device is opened, not after: a bracket refused three
+        # minutes into a calibration has already cost the calibration.
+        ap.error(
+            f"--bracket takes {DirectScanner.MIN_BRACKET_PASSES} to "
+            f"{DirectScanner.MAX_BRACKET_PASSES} passes, got {args.bracket}"
+        )
 
     exposure_scale: float | list[float] = 1.0
     if args.exposure_scale:
@@ -99,66 +110,80 @@ def main() -> int:
         info = s.inquiry()
         print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
-        if args.no_shading:
-            print("shading correction disabled: expect vertical striping")
-        elif args.reuse and ref_path.exists():
-            s._shading = ShadingReference.load(ref_path)
-            print(f"reusing {ref_path} ({s._shading.pixels_per_line} columns, "
-                  f"channels {s._shading.channels})")
-        else:
+        if not args.no_shading and not (args.reuse and ref_path.exists()):
             print("calibrating (about 3-4 minutes; the vendor does this once "
                   "per power-on) ...", flush=True)
-            t0 = time.monotonic()
-            result = s.calibrate_shading()
-            print(f"  {result['bytes_drained']/1e6:.2f} MB in "
-                  f"{time.monotonic()-t0:.0f}s")
-            if result["reference"] is None:
-                print("  no usable shading reference; the scan will be raw",
-                      file=sys.stderr)
-            else:
-                ref_path.parent.mkdir(parents=True, exist_ok=True)
-                result["reference"].save(ref_path)
-                print(f"  saved {ref_path}")
+        print(s.ensure_shading(ref_path, reuse=args.reuse,
+                               skip=args.no_shading)["summary"])
 
-        print(f"scanning at {args.dpi} dpi{' with IR' if args.ir else ''} ...",
-              flush=True)
-        image, meta = s.scan(
-            resolution=args.dpi,
-            infrared=args.ir,
-            exposure_scale=exposure_scale,
-            auto_exposure=args.auto_exposure and not args.exposure_scale,
-            film=args.film,
-            shading=not args.no_shading,
-            keep_raw=args.library is not None,
-        )
-        # Everything the library needs, gathered while the session is open.
-        # Writing it happens after the session closes: filing an entry gzips
-        # well over a hundred megabytes, and holding the device open and idle
-        # through that has coincided with it going unresponsive.
-        pending = None
-        if args.library is not None:
-            pending = dict(
-                reference=s._shading, ccd_mask=s._ccd_mask,
-                raw=s.last_raw, raw_layout=s.last_raw_layout, inquiry=info,
+        # Everything the library needs is gathered while the session is open and
+        # written after it closes: filing an entry gzips well over a hundred
+        # megabytes, and holding the device open and idle through that has
+        # preceded it going unresponsive.
+        pending: list[dict] = []
+
+        def hold(image, meta, capture) -> None:
+            if args.library is not None:
+                pending.append(
+                    dict(capture, inquiry=info, image=image, meta=meta)
+                )
+
+        bracket = None
+        if args.bracket:
+            print(f"scanning {args.bracket} exposures over {args.stops:g} stops "
+                  f"at {args.dpi} dpi{' (one with IR)' if args.ir else ''} ...",
+                  flush=True)
+            # Each pass is filed as it lands. Only one pass's raw bytes survive
+            # on the scanner -- last_raw is overwritten by the pass after it --
+            # so waiting for the return value would file the last and lose the
+            # rest, which is the whole point of taking a bracket.
+            bracket = s.scan_bracket(
+                passes=args.bracket,
+                stops=args.stops,
+                resolution=args.dpi,
+                infrared=args.ir,
+                film=args.film,
+                auto_exposure=args.auto_exposure and not args.exposure_scale,
+                exposure_scale=(
+                    list(exposure_scale)
+                    if isinstance(exposure_scale, list) else None
+                ),
+                keep_raw=args.library is not None,
+                shading=not args.no_shading,
+                on_pass=lambda i, image, meta, capture: hold(image, meta, capture),
             )
-        # Only the last pass's raw bytes survive on the scanner object, so a
-        # bracket has to be filed pass by pass as it is captured. That is done
-        # inside scan_bracket's caller below rather than here.
+            image, meta = bracket[0][-1], bracket[2][-1]
+        else:
+            print(f"scanning at {args.dpi} dpi{' with IR' if args.ir else ''} ...",
+                  flush=True)
+            image, meta = s.scan(
+                resolution=args.dpi,
+                infrared=args.ir,
+                exposure_scale=exposure_scale,
+                auto_exposure=args.auto_exposure and not args.exposure_scale,
+                film=args.film,
+                shading=not args.no_shading,
+                keep_raw=args.library is not None,
+            )
+            hold(image, meta, s.capture_record())
 
-    entry = None
-    if pending is not None:
-        entry = library.save(
-            image, meta,
+    entries = []
+    for held in pending:
+        entries.append(library.save(
+            held.pop("image"), held.pop("meta"),
             root=args.library,
             film=FilmNotes(stock=args.stock, frame=args.frame,
                            subject=args.subject, notes=args.notes),
             tags=args.tags,
-            **pending,
-        )
+            **held,
+        ))
 
     if bracket is not None:
         from rps7200.bracket import merge_bracket
+
         frames, ratios, metas = bracket
+        # Merge the visible channels only: with --ir the brightest pass is RGBI
+        # and the rest RGB, so the frames do not share a channel count.
         merged, stats = merge_bracket([f[..., :3] for f in frames], ratios)
         print(f"bracket: {stats.describe()}")
         if args.ir and frames[-1].shape[2] == 4:
@@ -181,12 +206,17 @@ def main() -> int:
         r = meta["shading"]
         print(f"shading: {r['columns']}/{r['width']} columns corrected, "
               f"{r['clipped']} samples clipped")
-    if entry is not None:
-        print(f"filed in the library as {entry}")
-        raw_mb = (entry / "raw.bin.gz").stat().st_size / 1e6 if (
-            entry / "raw.bin.gz").exists() else 0
-        print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- this scan can "
-              f"be re-decoded and re-corrected without the scanner")
+    if entries:
+        raw_mb = sum(
+            (e / "raw.bin.gz").stat().st_size for e in entries
+            if (e / "raw.bin.gz").exists()
+        ) / 1e6
+        noun = "pass" if len(entries) == 1 else "passes"
+        print(f"filed {len(entries)} {noun} in the library:")
+        for e in entries:
+            print(f"  {e}")
+        print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
+              f"re-decoded and re-corrected without the scanner")
     return 0
 
 

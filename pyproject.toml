@@ -31,3 +31,50 @@ rps7200 = "rps7200.cli:main"
 
 [tool.setuptools]
 packages = ["rps7200"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+    "pytest-cov>=7.0",
+    "ruff==0.14.10",
+    "ty>=0.0.26",
+    # Not a runtime dependency -- the built-in TIFF path is complete. It is here
+    # so `make test` can run the cross-implementation matrix, which needs both
+    # implementations present. `make test-no-tifffile` covers the bare install.
+    "tifffile>=2021.7.2",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "hardware: needs the scanner attached, powered and loaded (deselect with '-m not hardware')",
+    "slow: wall-clock tests that read real library entries from disk",
+]
+# The suite must stay runnable with no scanner on the bus: a test that needs one
+# is opt-in, never the default.
+addopts = "-m 'not hardware'"
+# Lets test modules share the fakes via `from conftest import ...`.
+pythonpath = ["tests"]
+
+[tool.ruff]
+line-length = 100
+exclude = [
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".git",
+    ".pytest_cache",
+    "build",
+    "dist",
+    # Scanner output and captures, none of it source.
+    "library",
+    "scans",
+    "previews",
+    "rolls",
+    "rollscan",
+    "walk7",
+    "captures",
+    "calibration",
+]
+
+[tool.coverage.run]
+source = ["rps7200"]
