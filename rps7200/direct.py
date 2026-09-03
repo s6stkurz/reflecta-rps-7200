@@ -952,6 +952,63 @@ _ASC = {
 }
 
 
+#: ASC reported once a scan is exhausted. Indistinguishable by sense alone from
+#: a genuinely invalid command, so it only means end-of-data mid-read.
+ASC_END_OF_DATA = 0x20
+
+#: ASC the scanner reports while it is still becoming ready.
+ASC_NOT_READY = 0x04
+
+
+@dataclass(frozen=True)
+class Sense:
+    """A parsed REQUEST SENSE response.
+
+    Exists so a caller can ask what the scanner said instead of matching
+    substrings in a log line. A read that ran out of scan lines and a read
+    refused for any other reason both arrive as CHECK CONDITION, and only the
+    ASC separates them.
+    """
+
+    key: int
+    code: int
+    qualifier: int
+    #: Why the sense could not be read, when it could not be.
+    problem: str | None = None
+
+    @classmethod
+    def parse(cls, info: bytes) -> "Sense":
+        if len(info) < 14:
+            return cls.unreadable(f"{len(info)} bytes, expected 14")
+        return cls(key=info[2] & 0x0F, code=info[12], qualifier=info[13])
+
+    @classmethod
+    def unreadable(cls, problem: str) -> "Sense":
+        return cls(key=0, code=0, qualifier=0, problem=problem)
+
+    @property
+    def readable(self) -> bool:
+        return self.problem is None
+
+    @property
+    def end_of_data(self) -> bool:
+        """The scan is exhausted -- only meaningful mid-read."""
+        return self.readable and self.code == ASC_END_OF_DATA
+
+    @property
+    def not_ready(self) -> bool:
+        return self.readable and self.code == ASC_NOT_READY
+
+    def __str__(self) -> str:
+        if not self.readable:
+            return f"(sense unavailable: {self.problem})"
+        return (
+            f"key={self.key:#04x} code={self.code:#04x} "
+            f"qual={self.qualifier:#04x} "
+            f"-- {describe_sense(self.key, self.code, self.qualifier)}"
+        )
+
+
 def describe_sense(key: int, code: int, qualifier: int) -> str:
     name = _SENSE_KEYS.get(key, f"key {key:#04x}")
     if key == 0x06:
@@ -1330,15 +1387,12 @@ class DirectScanner:
         comes next, whether or not that command is the one it relates to.
         Reading the sense clears it, so a retry generally succeeds.
         """
-        last = ""
+        last: Sense | str = ""
         for attempt in range(1, retries + 1):
             try:
                 return self.t.command(command, read_size=read_size)
             except CheckCondition:
-                try:
-                    last = self.describe_sense_bytes(self.sense())
-                except UsbError as exc:
-                    last = f"(sense unavailable: {exc})"
+                last = self.read_sense()
                 self._log(f"  {label}: {last}")
                 time.sleep(0.3)
         raise ScanReadError(f"{label} failed after {retries} attempts: {last}")
@@ -1358,24 +1412,26 @@ class DirectScanner:
     def sense(self) -> bytes:
         return self.t.command(_cmd(SCSI_REQUEST_SENSE, 14), read_size=14)
 
-    @staticmethod
-    def describe_sense_bytes(info: bytes) -> str:
-        key, code, qual = info[2] & 0x0F, info[12], info[13]
-        return (
-            f"key={key:#04x} code={code:#04x} qual={qual:#04x} "
-            f"-- {describe_sense(key, code, qual)}"
-        )
+    def read_sense(self) -> Sense:
+        """REQUEST SENSE, parsed. Never raises.
 
-    def _unit_ready_sense(self) -> bytes | None:
-        """TEST UNIT READY; returns None when good, else the sense bytes."""
+        A sense read can itself fail -- the condition it was going to explain is
+        often the reason -- and a caller deciding what a refusal meant still has
+        to decide something. `Sense.unreadable` is that case, and it answers no
+        to every question rather than pretending to be a code.
+        """
+        try:
+            return Sense.parse(self.sense())
+        except (UsbError, IndexError) as exc:
+            return Sense.unreadable(str(exc))
+
+    def _unit_ready_sense(self) -> Sense | None:
+        """TEST UNIT READY; returns None when good, else what it complained of."""
         try:
             self.t.command(_cmd(SCSI_TEST_UNIT_READY, 0))
             return None
         except CheckCondition:
-            try:
-                return self.sense()
-            except UsbError:
-                return b"\x70" + b"\x00" * 13
+            return self.read_sense()
 
     def wait_warm(self, timeout: float = 300.0, poll: float = 5.0) -> None:
         """Wait out the lamp warm-up (about 80 s from cold).
@@ -1390,11 +1446,10 @@ class DirectScanner:
             info = self._unit_ready_sense()
             if info is None:
                 return
-            key, code = info[2] & 0x0F, info[12]
-            warming = key == 0x02 or code == 0x04
+            warming = info.key == 0x02 or info.not_ready
             if not warming:
                 # Some other one-shot condition; reading the sense cleared it.
-                self._log(f"  wait_warm: {self.describe_sense_bytes(info)}")
+                self._log(f"  wait_warm: {info}")
                 if time.monotonic() > deadline:
                     return
                 time.sleep(0.5)
@@ -1420,7 +1475,7 @@ class DirectScanner:
             return True
         except CheckCondition:
             try:
-                self._log(f"  unit not ready: {self.describe_sense_bytes(self.sense())}")
+                self._log(f"  unit not ready: {self.read_sense()}")
             except UsbError:
                 pass
             return False
@@ -1675,7 +1730,7 @@ class DirectScanner:
         """
         deadline = time.monotonic() + ready_timeout
         attempts = 0
-        last: tuple[int, int] | None = None
+        last = Sense.unreadable("the scanner never refused with a sense")
 
         while True:
             try:
@@ -1683,32 +1738,28 @@ class DirectScanner:
                 self._scanning = True
                 return
             except CheckCondition:
-                info = self.sense()
-                key, code, qual = info[2] & 0x0F, info[12], info[13]
-                last = (code, qual)
+                # read_sense rather than sense(): a REQUEST SENSE that itself
+                # fails used to propagate straight out of this handler, leaving
+                # the start abandoned mid-sequence, which is what wedges the
+                # scanner. An unreadable sense is a reason to retry, not to
+                # walk away.
+                last = self.read_sense()
 
-                if code == 0x04:          # still becoming ready
+                if last.not_ready:        # still becoming ready
                     if time.monotonic() > deadline:
                         break
                     time.sleep(ready_poll)
                     continue
 
                 attempts += 1
-                self._log(
-                    f"  start_scan: {describe_sense(key, code, qual)} "
-                    f"(retry {attempts}/{retries})"
-                )
+                self._log(f"  start_scan: {last} (retry {attempts}/{retries})")
                 if attempts >= retries or time.monotonic() > deadline:
                     break
                 time.sleep(0.5)
 
         # Leave the scanner usable; an abandoned start wedges it otherwise.
         self._scanning = False
-        code, qual = last if last else (0, 0)
-        raise CalibrationRequired(
-            f"scanner refused to start: {describe_sense(6, code, qual)} "
-            f"(sense code {code:#04x}/{qual:#04x})"
-        )
+        raise CalibrationRequired(f"scanner refused to start: {last}")
 
     def finish_scan(self, polls: int = 3) -> None:
         """End a completed scan the way the vendor software does.
@@ -1738,7 +1789,7 @@ class DirectScanner:
             self.t.command(_cmd(SCSI_SCAN, 0))
         except CheckCondition:
             try:
-                self._log(f"  stop_scan: {self.describe_sense_bytes(self.sense())}")
+                self._log(f"  stop_scan: {self.read_sense()}")
             except UsbError:
                 pass
         except UsbError as exc:
@@ -1831,7 +1882,7 @@ class DirectScanner:
         60 s default expired first -- and abandoning a read mid-scan is what
         leaves this device needing a power cycle.
         """
-        last = ""
+        last = Sense.unreadable("no attempt was made")
         for _ in range(retries):
             try:
                 return self.t.command(
@@ -1841,13 +1892,10 @@ class DirectScanner:
                     max_wait_s=max_wait_s,
                 )
             except CheckCondition:
-                try:
-                    last = self.describe_sense_bytes(self.sense())
-                except UsbError as exc:
-                    last = f"(sense unavailable: {exc})"
+                last = self.read_sense()
                 self._log(f"  read_lines: {last}")
                 time.sleep(0.3)
-        if "asc=0x20" in last or "code=0x20" in last:
+        if last.end_of_data:
             raise EndOfData(
                 f"scanner has no more lines (asked for {lines}): {last}"
             )
@@ -2092,7 +2140,7 @@ class DirectScanner:
             self._log("0xE7 accepted")
         except CheckCondition:
             try:
-                self._log(f"0xE7: {self.describe_sense_bytes(self.sense())}")
+                self._log(f"0xE7: {self.read_sense()}")
             except UsbError:
                 pass
         except UsbError as exc:
