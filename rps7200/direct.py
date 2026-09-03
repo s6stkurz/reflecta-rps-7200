@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -1135,6 +1136,133 @@ class DirectScanner:
         if self.verbose:
             print(f"[scan] {message}")
 
+    # -- the session's calibration -----------------------------------------
+    #
+    # The scanner hands back its per-column response and never applies it, so
+    # correcting a scan needs the reference, the CCD mask for that pass, and --
+    # to correct it again later, differently -- the raw bytes. All three belong
+    # to the session and vanish with it, which is why they are reachable rather
+    # than private: every tool needs them to file a scan, and reaching into
+    # `_shading` from outside is how that was done before.
+
+    @property
+    def shading(self) -> ShadingReference | None:
+        """The reference this session will correct with, or None."""
+        return self._shading
+
+    @shading.setter
+    def shading(self, reference: ShadingReference | None) -> None:
+        self._shading = reference
+
+    @property
+    def ccd_mask(self) -> bytes | None:
+        """The column mapping for the most recent pass.
+
+        Read per pass, not per session: the mask says which CCD pixels *this*
+        resolution sampled, so a scan saved with the calibration pass's mask
+        cannot be corrected afterwards.
+        """
+        return self._ccd_mask
+
+    def load_shading(self, path: str | Path) -> ShadingReference:
+        """Use a reference saved earlier instead of calibrating.
+
+        Saves the 3-4 minutes a calibration costs, at the price of a reference
+        that describes the sensor at the exposure and gain of the pass that
+        measured it -- prefer a fresh one when the exposure has moved.
+        """
+        self._shading = ShadingReference.load(Path(path))
+        self._log(
+            f"loaded shading from {path}: {self._shading.pixels_per_line} columns, "
+            f"channels {self._shading.channels}"
+        )
+        return self._shading
+
+    def save_shading(self, path: str | Path) -> Path | None:
+        """Write this session's reference. Returns None when there is none."""
+        if self._shading is None:
+            return None
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._shading.save(path)
+        return path
+
+    def ensure_shading(
+        self, path: str | Path, reuse: bool = False, skip: bool = False
+    ) -> dict[str, Any]:
+        """Have a shading reference for this session: load one, or measure one.
+
+        Once per session, as the vendor does once per power-on -- every later
+        scan reuses the result. Returns what happened, so a caller can report it
+        without repeating the decision:
+
+        ``action``     one of ``"skipped"``, ``"loaded"``, ``"calibrated"``
+        ``reference``  the reference now in force, or None
+        ``path``       where it was read from or written to, or None
+        ``duration_s`` what the calibration cost, when one ran
+        ``summary``    one line saying which of those happened, to print
+
+        ``skip`` leaves the session with no reference at all, which returns raw
+        pixels: the scanner never corrects its own output, so scans then come
+        back striped.
+        """
+        path = Path(path)
+        if skip:
+            return {
+                "action": "skipped",
+                "reference": None,
+                "path": None,
+                "summary": "shading correction disabled: expect vertical striping",
+            }
+
+        if reuse and path.exists():
+            reference = self.load_shading(path)
+            return {
+                "action": "loaded",
+                "reference": reference,
+                "path": path,
+                "summary": (
+                    f"reusing {path} ({reference.pixels_per_line} columns, "
+                    f"channels {reference.channels})"
+                ),
+            }
+
+        started = time.monotonic()
+        result = self.calibrate_shading()
+        duration = round(time.monotonic() - started, 1)
+        saved = self.save_shading(path)
+        drained = result["bytes_drained"] / 1e6
+        summary = f"  {drained:.2f} MB in {duration:.0f}s"
+        summary += (
+            f", saved {saved}" if result["reference"] is not None
+            else " -- no usable shading reference; scans will be raw"
+        )
+        return {
+            "action": "calibrated",
+            "reference": result["reference"],
+            "path": saved,
+            "duration_s": duration,
+            "bytes_drained": result["bytes_drained"],
+            "summary": summary,
+        }
+
+    def capture_record(self) -> dict[str, Any]:
+        """Everything `rps7200.library.save` needs beyond the pixels and meta.
+
+        Gathered while the session is open and written after it closes: filing
+        an entry gzips well over a hundred megabytes, and holding the device
+        open and idle through that has preceded it going unresponsive.
+
+        Only the most recent pass is described. A bracket has to call this once
+        per pass, as each is captured, because `last_raw` is overwritten.
+        """
+        return {
+            "reference": self._shading,
+            "ccd_mask": self._ccd_mask,
+            "raw": self.last_raw,
+            "raw_layout": self.last_raw_layout,
+        }
+
     # -- lifecycle ---------------------------------------------------------
 
     def open(self) -> DirectScanner:
@@ -1498,13 +1626,13 @@ class DirectScanner:
         Returns the new position, or None if it never moved -- which is how a
         roll ends.
         """
-        before = self._position()
+        before = self.position()
         self.slide(SLIDE_NEXT, param=0x01, value=steps)
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             time.sleep(poll)
-            now = self._position()
+            now = self.position()
             if now is not None and now != before:
                 self._log(f"advanced to position {now}")
                 return now
@@ -1514,8 +1642,14 @@ class DirectScanner:
         )
         return None
 
-    def _position(self) -> int | None:
-        """Transport position, or None if the scanner would not say."""
+    def position(self) -> int | None:
+        """Where the transport has the film, or None if it would not say.
+
+        The one trustworthy signal that an advance happened -- see
+        :meth:`advance`. Never raises: a READ_STATE issued right after a
+        transport command comes back empty every time, so a caller polling this
+        has to be able to tell "not yet" from "failed".
+        """
         try:
             return self.read_state(retries=1).position
         except (CheckCondition, UsbError, ScanReadError, IndexError):
@@ -2640,7 +2774,7 @@ class DirectScanner:
             started = time.monotonic()
             prescan_image = None
             marks: dict[str, Any] = {}
-            position = self._position()
+            position = self.position()
 
             try:
                 prescan_image, _ = self.prescan(resolution=prescan_resolution)

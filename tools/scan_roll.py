@@ -38,7 +38,6 @@ from rps7200.direct import (
     DirectScanner,
 )
 from rps7200.library import FilmNotes
-from rps7200.shading import ShadingReference
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -93,25 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
 def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
     """Once per roll, as the vendor does once per power-on."""
     ref_path = Path(args.reference)
-    if args.no_shading:
-        print("shading correction disabled: expect vertical striping")
-        return
-    if args.reuse and ref_path.exists():
-        scanner._shading = ShadingReference.load(ref_path)
-        print(f"reusing {ref_path} ({scanner._shading.pixels_per_line} columns, "
-              f"channels {scanner._shading.channels})")
-        return
-
-    print("calibrating (about 3-4 minutes, once for the whole roll) ...", flush=True)
-    t0 = time.monotonic()
-    result = scanner.calibrate_shading()
-    print(f"  {result['bytes_drained']/1e6:.2f} MB in {time.monotonic()-t0:.0f}s")
-    if result["reference"] is None:
-        print("  no usable shading reference; the roll will be raw", file=sys.stderr)
-    else:
-        ref_path.parent.mkdir(parents=True, exist_ok=True)
-        result["reference"].save(ref_path)
-        print(f"  saved {ref_path}")
+    if not args.no_shading and not (args.reuse and ref_path.exists()):
+        print("calibrating (about 3-4 minutes, once for the whole roll) ...",
+              flush=True)
+    print(scanner.ensure_shading(ref_path, reuse=args.reuse,
+                                 skip=args.no_shading)["summary"])
 
 
 def main() -> int:
@@ -213,11 +198,8 @@ def main() -> int:
                             notes=args.notes,
                         ),
                         tags=sorted({*args.tags, "roll", roll_name}),
-                        reference=s._shading,
-                        ccd_mask=s._ccd_mask,
                         prescan=frame.prescan,
-                        raw=s.last_raw,
-                        raw_layout=s.last_raw_layout,
+                        **s.capture_record(),
                         inquiry=info,
                     )
                     record["entry"] = str(entry)
