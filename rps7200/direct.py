@@ -2046,7 +2046,6 @@ class DirectScanner:
             infrared=False,
             depth=DEPTH_8,
             frame=frame or FULL_FRAME,
-            prescan=False,
             shading=False,
         )
         params = ScanParameters(
@@ -2669,7 +2668,6 @@ class DirectScanner:
         frame: tuple[int, int, int, int] | None = None,
         advance: bool = False,
         require_media: bool = True,
-        prescan: bool = False,
         exposure_scale: float | Sequence[float] = 1.0,
         auto_exposure: bool = False,
         exposure_target: float = 0.7,
