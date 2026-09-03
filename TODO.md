@@ -103,10 +103,12 @@ driver for Nikon Coolscans:
   shading correction's per-column gain, which clips edge columns first. That
   reasoning now applies to us. Do it together with a check that nothing clips
   after correction, and do not go to nkscan's 0.97.
-- **Otsu plus morphological opening in `detect_frame`.** It currently uses
-  `0.25 x peak`, the fixed-fraction rule nkscan explicitly rejects because it
-  "lands in the wrong population" when the proportion of film in the pass
+- **Otsu plus morphological opening in `film_bounds`.** It currently cuts at a
+  fixed fraction of the clear level, the rule nkscan explicitly rejects because
+  it "lands in the wrong population" when the proportion of film in the pass
   changes. Self-contained and testable against the prescans already stored.
+  (The variance-based `detect_frame` this item used to name has been deleted;
+  it was documented as unreliable and nothing called it.)
 
 ## Decided against
 

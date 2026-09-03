@@ -704,6 +704,9 @@ Out of scope by your choice. Noted so the measurement lands in a usable shape: t
 saved field is per-channel polynomial coefficients in frame-normalised coordinates,
 which is directly what a later `apply` step would consume — applied after
 `apply_shading`, normalised to mean 1 so it does not shift metering, behind a
-default-off flag until the rotation differences and both flats collapse. The old
-`scanner_corrections()` vignette path and `tools/make_comparison.py --vignette` stay
-exactly as they are for now.
+default-off flag until the rotation differences and both flats collapse.
+
+**Superseded.** The study below found no vignette to correct, so the old
+`scanner_corrections()` path and `tools/make_comparison.py --vignette` have both
+been deleted rather than kept. Nothing in the pipeline corrects a vignette, and
+per CLAUDE.md nothing should.
