@@ -110,3 +110,22 @@ class FakeTransport:
 def frame_of(value=0, shape=(4, 4, 3), dtype=np.uint16) -> np.ndarray:
     """A constant frame, for tests that only care about shape and dtype."""
     return np.full(shape, value, dtype=dtype)
+
+
+def load_tool(name: str):
+    """Import a script from ``tools/`` as a module.
+
+    ``tools/`` is a directory of scripts, not a package -- each one puts the
+    repo root on ``sys.path`` and runs. Tests still have to reach the functions
+    inside them, and this is the only way in that does not turn the scripts into
+    something they are not.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "tools" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"tools_{name}", path)
+    assert spec and spec.loader, f"cannot load {path}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
