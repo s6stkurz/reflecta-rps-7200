@@ -92,8 +92,14 @@ frames that come out vertically mirrored. Observed pairings, all seven captures:
 | `0x80` RGB | 16-bit | `0x20` | 1 |
 | `0x90` RGBI | 16-bit | `0x21` | 9 |
 
-In the 17-frame roll, bit 0 alternates on **every** pass and does so in lockstep
-with a one-line shift in the scan frame's `y0`, 35 times without exception:
+Across all seven captures the upper nibble is `0x2x` for 300 dpi and 3600 dpi work
+and for every RGBI scan, and `0x1x` for the 600 dpi startup previews and for
+`Scan.pcapng`'s lone 300 dpi pass. That does not resolve cleanly against resolution,
+channels or depth, and is listed as unknown in §11.
+
+Bit 0 is unambiguous. In the 17-frame roll it alternates on **every** pass and does so
+in lockstep with a one-line shift in the scan frame's `y0`, 35 times without
+exception:
 
 ```
 frame 0,0 -> 10343,6887    byte 14 = 0x21     bit 0 set
@@ -130,9 +136,17 @@ Actions `0x00` and `0x01` occupy the mechanism for 1.5–3 s without changing th
 position counter. They are the only remaining candidates for sub-frame movement,
 and they are unidentified.
 
-The scanner's physical **Forward/Reverse keys produce no USB traffic at all** — 117
-`READ_STATE` polls and nothing else across the window in which they were pressed,
-with the position counter unmoved. Fine positioning is not exposed to the host.
+The scanner's physical **Forward/Reverse keys produce no USB traffic at all**. In
+`full_17_strip` the window in which they were pressed carries 117 `READ_STATE` polls
+and nothing else; in `frist_open` five separate key operations — two long forward
+passes, a long reverse, and two rounds of small corrections — appear as **zero**
+transport commands in the whole session.
+
+They are not, however, invisible in their *effect*: the scanner updates its own
+position counter, and `frist_open` reads position 2 throughout, which is the third
+picture the keys had been used to reach. So the host can see **where** the film ended
+up, but can neither observe nor command the movement. Fine positioning is not exposed
+to the host.
 
 ## 6. Gain and offset (`0xD7` read, `0xDC` write)
 
@@ -218,7 +232,68 @@ Measured on the 17-frame roll: **two passes per frame, ~42 s per frame**, and th
 advance value alternates in runs — one, then five `2`s, then six `1`s, then three
 `2`s, then one `1`.
 
-## 9. What is still unknown
+## 9. The captures, and what each one is
+
+Every capture was made deliberately, with Stefan writing down what he did. Those
+notes are reproduced here and each is checked against what the file actually
+contains, because a capture whose contents are only remembered is a capture that
+can be misread later.
+
+| capture | cmds | what he said he did | what the file contains | agrees |
+|---|---|---|---|---|
+| `Scan.pcapng` | 43 | *(no note)* | one 300 dpi RGB 8-bit pass | — |
+| `scan2.pcapng` | 312 | "so i have made a scan2" | one 300 dpi **RGBI** 16-bit pass | — |
+| `300_900_1800_ICE` | 877 | "300 prescan, 900 scan and 1800 scan, this time ICE enabled" | 300 RGB x2, then 900 RGBI, then 1800 RGBI | yes |
+| `300_3600 - Kopie` | 331 | "a 3600 dpi scan. But i dont know if its IR or not" | 300 RGB x2, then 3600 **RGB** 16-bit | **not infrared** |
+| `600_ICE_FILM_STRIP_5` | 1828 | five-picture strip, 600 dpi with ICE | 600 RGB x2 at start, then per frame 300 RGB x2 + 600 RGBI; positions 0-4 | yes |
+| `frist_open` | 596 | 14-step startup list, below | 3600 RGB, 600 RGB x2, 300 RGB x2, 600 RGBI; position 2 throughout | yes |
+| `full_17_strip` | 2171 | 11-step timeline, below | 3600 RGB, 600 RGB x2, then 300 RGB x2 per frame x17; positions 0-16 | yes |
+
+### `frist_open` — the startup, and what the buttons do
+
+> 1. Scanner is on. 2. Scanner is shut off. 3. Scanner is shut on. 4. Film strip is
+> inserted. 5. Waiting for scanner to be ready. 6. Long forward pass to picture
+> number 2. 7. Long forward pass to picture number 3. 8. Long backwards pass to
+> picture number 2. 9. Small correction forwards. 10. Some backward corrections.
+> 11. As I seen most things above are not given to the pc. 12. Open cyber view.
+> 13. Make a prescan at 300 dpi, **it also knows that I am on dia 3 not 2 or 1**.
+> 14. Make a real scan at 600 dpi with ice.
+
+Steps 6-10 are all done with the scanner's own keys, and the capture contains **no
+transport command whatsoever** — zero `SLIDE` moves in 596 commands. His step 11 was
+right.
+
+But step 13 is the important one, and it refines §5. `READ STATE` byte 2 reads **2**
+for the entire session, and 2 zero-indexed is the third picture — exactly the "dia 3"
+CyberView displayed. So although the keys send nothing over USB, **the scanner
+updates its own position counter when they are used, and the host can read it.**
+The keys are invisible; their effect is not.
+
+### `full_17_strip` — the automatic roll
+
+> Scanner was on / put out / put on again / wait a bit / open cyberview / put strip
+> in / **changed the position of the strip with the buttons so that they overfine
+> perfectly** / made a prescan / started the automatic prescan of the whole roll /
+> it does everything automatically / close cyberview
+
+Confirmed: the alignment window carries only polling (117 `READ STATE`, 5
+`TEST UNIT READY`), the position counter reset from a stale 72 to 0 when the strip
+went in, and the roll then ran 17 frames unattended.
+
+## 10. Two behaviours worth stating outright
+
+**CyberView never makes an infrared prescan.** Across all seven captures, every
+prescan is RGB 8-bit; infrared appears only in the final scan. A four-channel pass
+carries a ~212 s floor whatever the resolution, so probing in it would cost a full
+scan's time per round. This is why metering here stays in RGB.
+
+**The 3600 dpi pass at session start is CyberView's own, not the user's.** It appears
+in `frist_open` and `full_17_strip`, both taken right after a power cycle, at 8-bit,
+followed by two 600 dpi RGB previews. The 3600 dpi pass in `300_3600 - Kopie` is a
+different thing — 16-bit, and the scan that was actually asked for. Depth tells them
+apart.
+
+## 11. What is still unknown
 
 - The upper nibble of MODE SELECT byte 14 (`0x1x` vs `0x2x`).
 - SLIDE actions `0x00` and `0x01`, five payloads, sent at session start.
