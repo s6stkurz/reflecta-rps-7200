@@ -29,41 +29,16 @@ from rps7200.direct import (
     SLIDE_NEXT,
     NOMINAL_FRAME_WIDTH,
     DirectScanner,
-    Settings,
     film_bounds,
     frame_contrast,
     registration,
 )
-from rps7200.usb_transport import CheckCondition
+from conftest import FakeTransport, settings
 
 
 # --------------------------------------------------------------------------
 # the transport commands
 # --------------------------------------------------------------------------
-
-
-class FakeTransport:
-    """Records commands, and answers READ_STATE from a scripted position."""
-
-    def __init__(self, positions):
-        # One entry per READ_STATE; None means the read fails, which is what
-        # the scanner does on the reading right after an advance.
-        self.positions = list(positions)
-        self.sent = []
-        self.states = 0
-
-    def command(self, command, data=None, read_size=0, timeout_ms=0):
-        self.sent.append((command[0], bytes(data) if data else b""))
-        if command[0] == 0xDD:                      # READ_STATE
-            i = min(self.states, len(self.positions) - 1)
-            self.states += 1
-            position = self.positions[i]
-            if position is None:
-                raise CheckCondition(0xDD)
-            blob = bytearray(13)
-            blob[2] = position
-            return bytes(blob)
-        return b""
 
 
 def scanner_on(positions):
@@ -181,7 +156,7 @@ class FakeRoll(DirectScanner):
                  echoes=False):
         self.verbose = False
         self.strip = list(strip)
-        self.position = 0
+        self.at = 0
         self.fail_at = set(fail_at)
         # `echoes` is the question this device answers in the negative. Across
         # 17 READ GAIN/OFFSET responses in the strip capture only bytes 66-68 --
@@ -189,9 +164,7 @@ class FakeRoll(DirectScanner):
         # same reference however different the value just written. The roll has
         # to be right either way, so both models are exercised.
         self.echoes = echoes
-        self.reference = Settings(
-            exposure=list(base), gain=[40, 33, 21, 25], offset=[12, 10, 28, 10]
-        )
+        self.reference = settings(*base)
         self._settings = self.reference
         self.exposures = []
         self.metered_channels = []
@@ -206,19 +179,19 @@ class FakeRoll(DirectScanner):
     def set_gain_offset(self, s, infrared=False):
         self._settings = s
 
-    def _position(self):
-        return self.position
+    def position(self):
+        return self.at
 
     def advance(self, steps=1, timeout=30.0, poll=0.5):
-        if self.position + 1 >= len(self.strip):
+        if self.at + 1 >= len(self.strip):
             return None
-        self.position += 1
+        self.at += 1
         self.advances += 1
-        return self.position
+        return self.at
 
     # -- the passes
     def prescan(self, resolution=300, frame=None):
-        frame_at = self.strip[self.position]
+        frame_at = self.strip[self.at]
         return (blank() if frame_at is None else frame_at), None
 
     def auto_exposure(self, target=0.7, infrared=False, film="negative", **kw):
@@ -233,8 +206,8 @@ class FakeRoll(DirectScanner):
         return scales
 
     def scan(self, resolution=300, infrared=True, exposure_scale=1.0, **kw):
-        if self.position in self.fail_at:
-            raise TimeoutError(f"pretend failure at position {self.position}")
+        if self.at in self.fail_at:
+            raise TimeoutError(f"pretend failure at position {self.at}")
         self.frames_scanned.append(tuple(kw.get("frame") or FULL_FRAME))
         settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings)

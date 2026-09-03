@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +40,6 @@ from rps7200.direct import (
     DirectScanner,
 )
 from rps7200.library import FilmNotes
-from rps7200.shading import ShadingReference
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -93,25 +94,73 @@ def build_parser() -> argparse.ArgumentParser:
 def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
     """Once per roll, as the vendor does once per power-on."""
     ref_path = Path(args.reference)
-    if args.no_shading:
-        print("shading correction disabled: expect vertical striping")
-        return
-    if args.reuse and ref_path.exists():
-        scanner._shading = ShadingReference.load(ref_path)
-        print(f"reusing {ref_path} ({scanner._shading.pixels_per_line} columns, "
-              f"channels {scanner._shading.channels})")
-        return
+    if not args.no_shading and not (args.reuse and ref_path.exists()):
+        print("calibrating (about 3-4 minutes, once for the whole roll) ...",
+              flush=True)
+    print(scanner.ensure_shading(ref_path, reuse=args.reuse,
+                                 skip=args.no_shading)["summary"])
 
-    print("calibrating (about 3-4 minutes, once for the whole roll) ...", flush=True)
-    t0 = time.monotonic()
-    result = scanner.calibrate_shading()
-    print(f"  {result['bytes_drained']/1e6:.2f} MB in {time.monotonic()-t0:.0f}s")
-    if result["reference"] is None:
-        print("  no usable shading reference; the roll will be raw", file=sys.stderr)
-    else:
-        ref_path.parent.mkdir(parents=True, exist_ok=True)
-        result["reference"].save(ref_path)
-        print(f"  saved {ref_path}")
+
+class FrameWriter:
+    """Writes finished frames to disk on a thread, off the scanning loop.
+
+    Filing a frame gzips its raw bytes -- seconds at 1800 dpi and several times
+    that at 3600 -- and doing it inline leaves the scanner **open and idle** for
+    exactly that long, once per frame. That is the state that preceded a wedge
+    (see CLAUDE.md). On this thread the write instead overlaps the next frame's
+    scan, so the device is busy rather than idle throughout.
+
+    The queue is bounded. A scan costs far longer than a write, so the writer is
+    normally idle waiting; a bound only matters if that stops being true, and
+    then blocking is right -- an unbounded queue would hold whole frames in
+    memory, and at 3600 dpi one frame is over a hundred megabytes.
+
+    Failures are collected, not raised: a roll runs for hours, and a frame that
+    cannot be filed should cost that frame, not the thirty after it. `errors`
+    is drained by the caller once the roll ends.
+    """
+
+    def __init__(self, depth: int = 2):
+        self.queue: queue.Queue = queue.Queue(maxsize=depth)
+        self.errors: list[str] = []
+        self.done: list[tuple[int, Path | None]] = []
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            job = self.queue.get()
+            try:
+                if job is None:
+                    return
+                self._write(job)
+            except Exception as exc:                     # noqa: BLE001
+                self.errors.append(f"picture {job['number']}: {exc}")
+            finally:
+                self.queue.task_done()
+
+    def _write(self, job: dict) -> None:
+        tiff.write(str(job["path"]), job["image"], resolution=job["dpi"])
+        entry = None
+        if job["library"]:
+            entry = library.save(
+                job["image"], job["meta"],
+                root=job["library"],
+                film=job["film"],
+                tags=job["tags"],
+                prescan=job["prescan"],
+                inquiry=job["inquiry"],
+                **job["capture"],
+            )
+        self.done.append((job["number"], entry))
+
+    def submit(self, **job) -> None:
+        self.queue.put(job)
+
+    def finish(self) -> None:
+        """Wait for every queued frame. Call after the session has closed."""
+        self.queue.put(None)
+        self._thread.join()
 
 
 def main() -> int:
@@ -141,6 +190,7 @@ def main() -> int:
     started = time.monotonic()
     scanned = failed = 0
 
+    writer = FrameWriter()
     with DirectScanner(verbose=args.verbose) as s:
         info = s.inquiry()
         print(f"{info.vendor} {info.product}, firmware {info.firmware}")
@@ -192,42 +242,54 @@ def main() -> int:
             else:
                 scanned += 1
                 path = out / f"frame{number:02d}.tif"
-                tiff.write(str(path), frame.image, resolution=args.dpi)
                 record["file"] = path.name
                 record["shape"] = list(frame.image.shape)
                 record["duration_s"] = frame.meta.get("duration_s")
                 record["exposure"] = frame.meta.get("exposure")
 
-                if args.library:
-                    entry = library.save(
-                        frame.image, frame.meta,
-                        root=args.library,
-                        film=FilmNotes(
-                            stock=args.stock,
-                            process=args.process,
-                            # Distinct per frame, and it has to be:
-                            # library.signature() includes film.frame, so
-                            # without it every picture of a roll would register
-                            # as a duplicate of every other.
-                            frame=f"{roll_name}/{number:02d}",
-                            notes=args.notes,
-                        ),
-                        tags=sorted({*args.tags, "roll", roll_name}),
-                        reference=s._shading,
-                        ccd_mask=s._ccd_mask,
-                        prescan=frame.prescan,
-                        raw=s.last_raw,
-                        raw_layout=s.last_raw_layout,
-                        inquiry=info,
-                    )
-                    record["entry"] = str(entry)
-
+                # capture_record() is read here, on this thread, before the next
+                # scan overwrites last_raw. Everything after it belongs to the
+                # writer and happens while the scanner is busy again.
+                writer.submit(
+                    number=number,
+                    path=path,
+                    dpi=args.dpi,
+                    image=frame.image,
+                    meta=frame.meta,
+                    prescan=frame.prescan,
+                    library=args.library,
+                    inquiry=info,
+                    capture=s.capture_record(),
+                    tags=sorted({*args.tags, "roll", roll_name}),
+                    film=FilmNotes(
+                        stock=args.stock,
+                        process=args.process,
+                        # Distinct per frame, and it has to be:
+                        # library.signature() includes film.frame, so without it
+                        # every picture of a roll would register as a duplicate
+                        # of every other.
+                        frame=f"{roll_name}/{number:02d}",
+                        notes=args.notes,
+                    ),
+                )
                 print(f"picture {number}: {path} {frame.image.shape} "
-                      f"in {frame.meta.get('duration_s')}s"
-                      + (f", filed as {record['entry']}" if record["entry"] else ""))
+                      f"in {frame.meta.get('duration_s')}s")
 
             manifest["frames"].append(record)
             checkpoint()
+
+    # Only now, with the device closed: the last frame or two may still be
+    # gzipping, and that is exactly the work that must not happen with an open
+    # session.
+    writer.finish()
+    filed = dict(writer.done)
+    for record in manifest["frames"]:
+        entry = filed.get(record["number"])
+        if entry is not None:
+            record["entry"] = str(entry)
+    for problem in writer.errors:
+        failed += 1
+        print(f"could not file {problem}", file=sys.stderr)
 
     manifest["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     manifest["duration_s"] = round(time.monotonic() - started, 1)
@@ -237,7 +299,7 @@ def main() -> int:
           f"{manifest['duration_s']/60:.1f} min")
     print(f"manifest: {manifest_path}")
     if failed:
-        print(f"resume a failed picture with --start-at N", file=sys.stderr)
+        print("resume a failed picture with --start-at N", file=sys.stderr)
     return 1 if failed and not scanned else 0
 
 

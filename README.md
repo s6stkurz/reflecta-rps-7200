@@ -40,7 +40,14 @@ pip install -e .
 
 numpy and libusb are all that is needed — the driver talks to the scanner directly over
 USB and does **not** require SANE. `tifffile` is optional; it is used automatically when
-present, and the built-in TIFF reader/writer is complete on its own.
+present, and the built-in TIFF reader/writer is complete on its own. The two are held to
+the same behaviour by `tests/test_tiff.py`, which runs every write/read pairing of them
+against each other, and the suite is run both ways:
+
+```sh
+python3 -m pytest tests/ -q                        # tifffile installed
+RPS7200_NO_TIFFFILE=1 python3 -m pytest tests/ -q  # as on a bare install
+```
 
 A second, older interface (`rps7200 …`, `rps7200.device`) drives the scanner through
 SANE's `pieusb` backend. It still works and needs `brew install sane-backends`, but it
@@ -341,18 +348,31 @@ Read from the device's own INQUIRY response:
 ## Development
 
 ```sh
-python3 -m pytest tests/ -q
+make install      # sync the dev tools with uv
+make all          # fix + lint + type + tests -- run this before committing
 ```
 
-103 tests, none of which need a scanner attached: channel derivation and the TIFF paths,
-the shading parse and two-point correction, metering and film types, the scan library
-(including that a stored entry still decodes to the pixels it was saved with), and the
-roll/registration logic.
+Individual steps are `make lint`, `make type` and `make test`; everything runs through
+`uv run`, so the pinned tools in `pyproject.toml` are what execute.
+
+No test needs a scanner attached. The suite covers channel derivation and both TIFF
+paths, the shading parse and two-point correction, metering and film types, the scan
+library (including that a stored entry still decodes to the pixels it was saved with),
+and the roll/registration logic. A test that genuinely needs the device is marked
+`hardware` and is skipped by default.
+
+`tifffile` is optional and the built-in TIFF path is complete, so both have to behave
+identically. `make test-all` runs the suite twice, once with it installed and once with
+the import blocked:
+
+```sh
+make test-all
+```
 
 After any change to how the scanner's bytes become pixels, re-check every stored scan:
 
 ```sh
-python3 tools/library.py reconstruct
+make reconstruct          # python3 tools/library.py reconstruct
 ```
 
 ## Solved: what the stock backend gets wrong

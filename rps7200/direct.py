@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -951,6 +952,63 @@ _ASC = {
 }
 
 
+#: ASC reported once a scan is exhausted. Indistinguishable by sense alone from
+#: a genuinely invalid command, so it only means end-of-data mid-read.
+ASC_END_OF_DATA = 0x20
+
+#: ASC the scanner reports while it is still becoming ready.
+ASC_NOT_READY = 0x04
+
+
+@dataclass(frozen=True)
+class Sense:
+    """A parsed REQUEST SENSE response.
+
+    Exists so a caller can ask what the scanner said instead of matching
+    substrings in a log line. A read that ran out of scan lines and a read
+    refused for any other reason both arrive as CHECK CONDITION, and only the
+    ASC separates them.
+    """
+
+    key: int
+    code: int
+    qualifier: int
+    #: Why the sense could not be read, when it could not be.
+    problem: str | None = None
+
+    @classmethod
+    def parse(cls, info: bytes) -> "Sense":
+        if len(info) < 14:
+            return cls.unreadable(f"{len(info)} bytes, expected 14")
+        return cls(key=info[2] & 0x0F, code=info[12], qualifier=info[13])
+
+    @classmethod
+    def unreadable(cls, problem: str) -> "Sense":
+        return cls(key=0, code=0, qualifier=0, problem=problem)
+
+    @property
+    def readable(self) -> bool:
+        return self.problem is None
+
+    @property
+    def end_of_data(self) -> bool:
+        """The scan is exhausted -- only meaningful mid-read."""
+        return self.readable and self.code == ASC_END_OF_DATA
+
+    @property
+    def not_ready(self) -> bool:
+        return self.readable and self.code == ASC_NOT_READY
+
+    def __str__(self) -> str:
+        if not self.readable:
+            return f"(sense unavailable: {self.problem})"
+        return (
+            f"key={self.key:#04x} code={self.code:#04x} "
+            f"qual={self.qualifier:#04x} "
+            f"-- {describe_sense(self.key, self.code, self.qualifier)}"
+        )
+
+
 def describe_sense(key: int, code: int, qualifier: int) -> str:
     name = _SENSE_KEYS.get(key, f"key {key:#04x}")
     if key == 0x06:
@@ -1135,6 +1193,133 @@ class DirectScanner:
         if self.verbose:
             print(f"[scan] {message}")
 
+    # -- the session's calibration -----------------------------------------
+    #
+    # The scanner hands back its per-column response and never applies it, so
+    # correcting a scan needs the reference, the CCD mask for that pass, and --
+    # to correct it again later, differently -- the raw bytes. All three belong
+    # to the session and vanish with it, which is why they are reachable rather
+    # than private: every tool needs them to file a scan, and reaching into
+    # `_shading` from outside is how that was done before.
+
+    @property
+    def shading(self) -> ShadingReference | None:
+        """The reference this session will correct with, or None."""
+        return self._shading
+
+    @shading.setter
+    def shading(self, reference: ShadingReference | None) -> None:
+        self._shading = reference
+
+    @property
+    def ccd_mask(self) -> bytes | None:
+        """The column mapping for the most recent pass.
+
+        Read per pass, not per session: the mask says which CCD pixels *this*
+        resolution sampled, so a scan saved with the calibration pass's mask
+        cannot be corrected afterwards.
+        """
+        return self._ccd_mask
+
+    def load_shading(self, path: str | Path) -> ShadingReference:
+        """Use a reference saved earlier instead of calibrating.
+
+        Saves the 3-4 minutes a calibration costs, at the price of a reference
+        that describes the sensor at the exposure and gain of the pass that
+        measured it -- prefer a fresh one when the exposure has moved.
+        """
+        self._shading = ShadingReference.load(Path(path))
+        self._log(
+            f"loaded shading from {path}: {self._shading.pixels_per_line} columns, "
+            f"channels {self._shading.channels}"
+        )
+        return self._shading
+
+    def save_shading(self, path: str | Path) -> Path | None:
+        """Write this session's reference. Returns None when there is none."""
+        if self._shading is None:
+            return None
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._shading.save(path)
+        return path
+
+    def ensure_shading(
+        self, path: str | Path, reuse: bool = False, skip: bool = False
+    ) -> dict[str, Any]:
+        """Have a shading reference for this session: load one, or measure one.
+
+        Once per session, as the vendor does once per power-on -- every later
+        scan reuses the result. Returns what happened, so a caller can report it
+        without repeating the decision:
+
+        ``action``     one of ``"skipped"``, ``"loaded"``, ``"calibrated"``
+        ``reference``  the reference now in force, or None
+        ``path``       where it was read from or written to, or None
+        ``duration_s`` what the calibration cost, when one ran
+        ``summary``    one line saying which of those happened, to print
+
+        ``skip`` leaves the session with no reference at all, which returns raw
+        pixels: the scanner never corrects its own output, so scans then come
+        back striped.
+        """
+        path = Path(path)
+        if skip:
+            return {
+                "action": "skipped",
+                "reference": None,
+                "path": None,
+                "summary": "shading correction disabled: expect vertical striping",
+            }
+
+        if reuse and path.exists():
+            reference = self.load_shading(path)
+            return {
+                "action": "loaded",
+                "reference": reference,
+                "path": path,
+                "summary": (
+                    f"reusing {path} ({reference.pixels_per_line} columns, "
+                    f"channels {reference.channels})"
+                ),
+            }
+
+        started = time.monotonic()
+        result = self.calibrate_shading()
+        duration = round(time.monotonic() - started, 1)
+        saved = self.save_shading(path)
+        drained = result["bytes_drained"] / 1e6
+        summary = f"  {drained:.2f} MB in {duration:.0f}s"
+        summary += (
+            f", saved {saved}" if result["reference"] is not None
+            else " -- no usable shading reference; scans will be raw"
+        )
+        return {
+            "action": "calibrated",
+            "reference": result["reference"],
+            "path": saved,
+            "duration_s": duration,
+            "bytes_drained": result["bytes_drained"],
+            "summary": summary,
+        }
+
+    def capture_record(self) -> dict[str, Any]:
+        """Everything `rps7200.library.save` needs beyond the pixels and meta.
+
+        Gathered while the session is open and written after it closes: filing
+        an entry gzips well over a hundred megabytes, and holding the device
+        open and idle through that has preceded it going unresponsive.
+
+        Only the most recent pass is described. A bracket has to call this once
+        per pass, as each is captured, because `last_raw` is overwritten.
+        """
+        return {
+            "reference": self._shading,
+            "ccd_mask": self._ccd_mask,
+            "raw": self.last_raw,
+            "raw_layout": self.last_raw_layout,
+        }
+
     # -- lifecycle ---------------------------------------------------------
 
     def open(self) -> DirectScanner:
@@ -1202,15 +1387,12 @@ class DirectScanner:
         comes next, whether or not that command is the one it relates to.
         Reading the sense clears it, so a retry generally succeeds.
         """
-        last = ""
+        last: Sense | str = ""
         for attempt in range(1, retries + 1):
             try:
                 return self.t.command(command, read_size=read_size)
             except CheckCondition:
-                try:
-                    last = self.describe_sense_bytes(self.sense())
-                except UsbError as exc:
-                    last = f"(sense unavailable: {exc})"
+                last = self.read_sense()
                 self._log(f"  {label}: {last}")
                 time.sleep(0.3)
         raise ScanReadError(f"{label} failed after {retries} attempts: {last}")
@@ -1230,24 +1412,26 @@ class DirectScanner:
     def sense(self) -> bytes:
         return self.t.command(_cmd(SCSI_REQUEST_SENSE, 14), read_size=14)
 
-    @staticmethod
-    def describe_sense_bytes(info: bytes) -> str:
-        key, code, qual = info[2] & 0x0F, info[12], info[13]
-        return (
-            f"key={key:#04x} code={code:#04x} qual={qual:#04x} "
-            f"-- {describe_sense(key, code, qual)}"
-        )
+    def read_sense(self) -> Sense:
+        """REQUEST SENSE, parsed. Never raises.
 
-    def _unit_ready_sense(self) -> bytes | None:
-        """TEST UNIT READY; returns None when good, else the sense bytes."""
+        A sense read can itself fail -- the condition it was going to explain is
+        often the reason -- and a caller deciding what a refusal meant still has
+        to decide something. `Sense.unreadable` is that case, and it answers no
+        to every question rather than pretending to be a code.
+        """
+        try:
+            return Sense.parse(self.sense())
+        except (UsbError, IndexError) as exc:
+            return Sense.unreadable(str(exc))
+
+    def _unit_ready_sense(self) -> Sense | None:
+        """TEST UNIT READY; returns None when good, else what it complained of."""
         try:
             self.t.command(_cmd(SCSI_TEST_UNIT_READY, 0))
             return None
         except CheckCondition:
-            try:
-                return self.sense()
-            except UsbError:
-                return b"\x70" + b"\x00" * 13
+            return self.read_sense()
 
     def wait_warm(self, timeout: float = 300.0, poll: float = 5.0) -> None:
         """Wait out the lamp warm-up (about 80 s from cold).
@@ -1262,11 +1446,10 @@ class DirectScanner:
             info = self._unit_ready_sense()
             if info is None:
                 return
-            key, code = info[2] & 0x0F, info[12]
-            warming = key == 0x02 or code == 0x04
+            warming = info.key == 0x02 or info.not_ready
             if not warming:
                 # Some other one-shot condition; reading the sense cleared it.
-                self._log(f"  wait_warm: {self.describe_sense_bytes(info)}")
+                self._log(f"  wait_warm: {info}")
                 if time.monotonic() > deadline:
                     return
                 time.sleep(0.5)
@@ -1292,7 +1475,7 @@ class DirectScanner:
             return True
         except CheckCondition:
             try:
-                self._log(f"  unit not ready: {self.describe_sense_bytes(self.sense())}")
+                self._log(f"  unit not ready: {self.read_sense()}")
             except UsbError:
                 pass
             return False
@@ -1498,13 +1681,13 @@ class DirectScanner:
         Returns the new position, or None if it never moved -- which is how a
         roll ends.
         """
-        before = self._position()
+        before = self.position()
         self.slide(SLIDE_NEXT, param=0x01, value=steps)
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             time.sleep(poll)
-            now = self._position()
+            now = self.position()
             if now is not None and now != before:
                 self._log(f"advanced to position {now}")
                 return now
@@ -1514,8 +1697,14 @@ class DirectScanner:
         )
         return None
 
-    def _position(self) -> int | None:
-        """Transport position, or None if the scanner would not say."""
+    def position(self) -> int | None:
+        """Where the transport has the film, or None if it would not say.
+
+        The one trustworthy signal that an advance happened -- see
+        :meth:`advance`. Never raises: a READ_STATE issued right after a
+        transport command comes back empty every time, so a caller polling this
+        has to be able to tell "not yet" from "failed".
+        """
         try:
             return self.read_state(retries=1).position
         except (CheckCondition, UsbError, ScanReadError, IndexError):
@@ -1541,7 +1730,7 @@ class DirectScanner:
         """
         deadline = time.monotonic() + ready_timeout
         attempts = 0
-        last: tuple[int, int] | None = None
+        last = Sense.unreadable("the scanner never refused with a sense")
 
         while True:
             try:
@@ -1549,32 +1738,28 @@ class DirectScanner:
                 self._scanning = True
                 return
             except CheckCondition:
-                info = self.sense()
-                key, code, qual = info[2] & 0x0F, info[12], info[13]
-                last = (code, qual)
+                # read_sense rather than sense(): a REQUEST SENSE that itself
+                # fails used to propagate straight out of this handler, leaving
+                # the start abandoned mid-sequence, which is what wedges the
+                # scanner. An unreadable sense is a reason to retry, not to
+                # walk away.
+                last = self.read_sense()
 
-                if code == 0x04:          # still becoming ready
+                if last.not_ready:        # still becoming ready
                     if time.monotonic() > deadline:
                         break
                     time.sleep(ready_poll)
                     continue
 
                 attempts += 1
-                self._log(
-                    f"  start_scan: {describe_sense(key, code, qual)} "
-                    f"(retry {attempts}/{retries})"
-                )
+                self._log(f"  start_scan: {last} (retry {attempts}/{retries})")
                 if attempts >= retries or time.monotonic() > deadline:
                     break
                 time.sleep(0.5)
 
         # Leave the scanner usable; an abandoned start wedges it otherwise.
         self._scanning = False
-        code, qual = last if last else (0, 0)
-        raise CalibrationRequired(
-            f"scanner refused to start: {describe_sense(6, code, qual)} "
-            f"(sense code {code:#04x}/{qual:#04x})"
-        )
+        raise CalibrationRequired(f"scanner refused to start: {last}")
 
     def finish_scan(self, polls: int = 3) -> None:
         """End a completed scan the way the vendor software does.
@@ -1604,7 +1789,7 @@ class DirectScanner:
             self.t.command(_cmd(SCSI_SCAN, 0))
         except CheckCondition:
             try:
-                self._log(f"  stop_scan: {self.describe_sense_bytes(self.sense())}")
+                self._log(f"  stop_scan: {self.read_sense()}")
             except UsbError:
                 pass
         except UsbError as exc:
@@ -1697,7 +1882,7 @@ class DirectScanner:
         60 s default expired first -- and abandoning a read mid-scan is what
         leaves this device needing a power cycle.
         """
-        last = ""
+        last = Sense.unreadable("no attempt was made")
         for _ in range(retries):
             try:
                 return self.t.command(
@@ -1707,13 +1892,10 @@ class DirectScanner:
                     max_wait_s=max_wait_s,
                 )
             except CheckCondition:
-                try:
-                    last = self.describe_sense_bytes(self.sense())
-                except UsbError as exc:
-                    last = f"(sense unavailable: {exc})"
+                last = self.read_sense()
                 self._log(f"  read_lines: {last}")
                 time.sleep(0.3)
-        if "asc=0x20" in last or "code=0x20" in last:
+        if last.end_of_data:
             raise EndOfData(
                 f"scanner has no more lines (asked for {lines}): {last}"
             )
@@ -1958,7 +2140,7 @@ class DirectScanner:
             self._log("0xE7 accepted")
         except CheckCondition:
             try:
-                self._log(f"0xE7: {self.describe_sense_bytes(self.sense())}")
+                self._log(f"0xE7: {self.read_sense()}")
             except UsbError:
                 pass
         except UsbError as exc:
@@ -2290,10 +2472,22 @@ class DirectScanner:
         # could not be applied reads as a metering failure later.
         for c, was_limited in enumerate(limited):
             if was_limited and c < len(base.exposure):
+                # The same guard the ceiling above carries. Without it this
+                # message -- which exists only to explain the ceiling -- was the
+                # one thing that could not survive the case it describes: the
+                # scanner reported a zero exposure just after re-enumerating and
+                # metering died here, inside the branch that reports the
+                # problem, rather than in the arithmetic that handles it.
+                room = (
+                    f"{65535 / base.exposure[c]:.2f}x of exposure "
+                    f"{base.exposure[c]}"
+                    if base.exposure[c]
+                    else "the device reported an exposure of 0, so the fallback "
+                    "ceiling of 8x"
+                )
                 self._log(
                     f"  note: {'RGBI'[c]} is held at the timer ceiling "
-                    f"({65535 / base.exposure[c]:.2f}x of exposure "
-                    f"{base.exposure[c]} is all there is); this channel could "
+                    f"({room} is all there is); this channel could "
                     f"not reach the target"
                 )
         return scales
@@ -2765,7 +2959,7 @@ class DirectScanner:
             started = time.monotonic()
             prescan_image = None
             marks: dict[str, Any] = {}
-            position = self._position()
+            position = self.position()
 
             try:
                 prescan_image, _ = self.prescan(resolution=prescan_resolution)

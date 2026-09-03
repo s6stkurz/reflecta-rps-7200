@@ -9,13 +9,13 @@ channels apart removes it.
 import numpy as np
 import pytest
 
+from conftest import settings
 from rps7200.direct import (
     FILM_BW,
     FILM_KODACHROME,
     FILM_NEGATIVE,
     FILM_POSITIVE,
     DirectScanner,
-    Settings,
     locks_white_balance,
 )
 
@@ -29,9 +29,7 @@ class FakeScanner(DirectScanner):
 
     def __init__(self, transmission, base=(8000, 20000, 50000, 8000)):
         self.verbose = False
-        self._settings = Settings(
-            exposure=list(base), gain=[40, 33, 21, 25], offset=[12, 10, 28, 10]
-        )
+        self._settings = settings(*base)
         self.transmission = transmission
         self.passes = []
 
@@ -175,7 +173,9 @@ def test_blue_is_metered_lower_when_an_ir_scan_follows():
     # Compare the level blue actually reaches, not the scale: in RGB the scale
     # runs into the 16-bit timer ceiling, so the scales are not proportional
     # even though the aim is.
-    level = lambda scale: min(1.0, 9000 * scale / 65535.0 * t[2])
+    def level(scale):
+        return min(1.0, 9000 * scale / 65535.0 * t[2])
+
     assert level(ir[2]) == pytest.approx(0.6 / 4.0, abs=0.03), (
         f"blue aimed at {level(ir[2]):.3f}, wanted {0.6/4:.3f}"
     )
@@ -199,3 +199,18 @@ def test_two_rounds_by_default():
     s = FakeScanner((0.9, 0.7, 0.5), base=(10000, 10000, 10000, 8000))
     s.auto_exposure(target=0.4, film=FILM_NEGATIVE)
     assert len(s.passes) <= 2, f"took {len(s.passes)} prescans"
+
+
+def test_a_zero_exposure_does_not_kill_metering():
+    """The scanner reported exposure 0 just after re-enumerating, and metering
+    died -- not in the arithmetic, which already guarded the division, but in the
+    log line that exists to explain the guard.
+
+    A channel has to be *limited* for that message to be reached, which is why a
+    zero exposure is the case that triggers it: the fallback ceiling is 8x, and
+    anything wanting more than that is held.
+    """
+    s = FakeScanner([0.5, 0.5, 0.5], base=(0, 0, 0, 0))
+    scales = s.auto_exposure(target=0.7, infrared=False)
+    assert len(scales) == 3
+    assert all(v <= 8.0 for v in scales), scales

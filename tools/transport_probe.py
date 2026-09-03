@@ -56,7 +56,7 @@ def look(scanner: DirectScanner, dpi: int) -> dict:
     image, _ = scanner.prescan(resolution=dpi)
     marks = dict(registration(image))
     marks["contrast"] = round(frame_contrast(image), 4)
-    marks["position"] = scanner._position()
+    marks["position"] = scanner.position()
     return marks
 
 
@@ -90,7 +90,7 @@ def main() -> int:
                 deadline = time.monotonic() + args.timeout
                 while time.monotonic() < deadline:
                     time.sleep(0.5)
-                    now = s._position()
+                    now = s.position()
                     if now is not None and now != before["position"]:
                         moved = now
                         break
