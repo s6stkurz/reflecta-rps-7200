@@ -132,10 +132,19 @@ Not a subtlety: the dark reference has **12–15%** column-to-column variation a
 the light reference's 0.8%. `pieusb`'s `calculate_shading` averages every line sharing
 a tag, which blends the two — do not copy that.
 
-**Light path was empty during calibration.** Line-to-line spread 0.13–0.31%, and no
-sample reaches full scale (max 82%, mean 72%). Film cannot produce that uniformity
-across `y=3431..6888`. Matches the manual: power on with nothing loaded, wait for
-solid green, then the software connects.
+**The light path is clear across the calibration frame** -- line-to-line spread
+0.13–0.31%, no sample reaching full scale (max 82%, mean 72%), which film cannot
+produce across `y=3431..6888`.
+
+That is a statement about `y=3431..6888`, the lower part of the transport, and **not**
+about the transport as a whole. The two were conflated once and the README turned it
+into an instruction to power on with nothing loaded; CyberView does the opposite,
+keeping film in the transport throughout, and calibrating an empty one preceded a
+wedge. The film does not cover the calibration frame, so both facts hold at once.
+
+The capture cannot settle film presence on its own: `READ_STATE` byte 6 reads `0x1d`
+before and during the calibration and `0x9d` while scanning, and the `0x40` bit that
+would mean "media present" is never set in any of the 155 responses.
 
 **The CCD mask carries the column mapping, and it is per-pass.** Read via
 `SCSI_COPY` on all 6 passes, 5172 bytes, `0x00` = used, `0x70` = unused:

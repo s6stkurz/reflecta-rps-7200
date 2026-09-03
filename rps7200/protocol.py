@@ -332,9 +332,11 @@ class ScanParameters:
     available_lines: int  # lines ready to read right now
 
 
-#: Bit seen set in the state byte when a strip holder was inserted (0x0D empty,
-#: 0x4D loaded). Its exact meaning is unconfirmed -- it has since read 0x0D with
-#: film demonstrably loaded -- so it is reported but never used to block a scan.
+#: Bit that would mean "media present", if it meant anything. It is never set:
+#: not in any of the 155 READ_STATE responses in the power-on capture, which read
+#: 0x1d idle and 0x9d scanning, and not on this scanner with film loaded. There is
+#: no way to ask the device whether film is in the transport -- only the person at
+#: the scanner can see that. Reported, never used to block a scan.
 MEDIA_PRESENT = 0x40
 
 
@@ -351,15 +353,13 @@ class State:
 
     @property
     def media_loaded(self) -> bool:
-        """Whether film is in the transport.
+        """Always False. Kept so the bit is visible, not so it can be believed.
 
-        The scanner ejects the strip at the end of every scan, so this is False
-        again after each frame until the film is re-inserted.
-
-        Unreliable, and only reported. The bit is clear in every state seen in
-        six captures of the vendor software, including ones taken with film
-        demonstrably loaded. :attr:`position` is what to trust about the
-        transport.
+        The bit is clear in every state seen across six captures of the vendor
+        software, including ones taken with film demonstrably loaded, and clear
+        on this scanner with film loaded. Nothing the device reports says whether
+        the transport holds film: only the person at the scanner can see that.
+        :attr:`position` is what to trust about where the transport is.
         """
         return bool(self.scanning & MEDIA_PRESENT)
 

@@ -83,6 +83,21 @@ content: the same metric read 96-169% on a frame with hard vertical edges and
 sensor defect sits at a fixed sensor column across *different film positions*;
 picture content does not. Two entries from different frames settle it.
 
+## Calibrate with the film loaded
+
+**CyberView does everything with the film in the transport**, calibration included.
+The README used to say to power on with nothing loaded; that came from reading "the
+light path is clear across the calibration frame" as "the transport is empty". The
+calibration frame is `(0, 3431, 10343, 6888)`, the lower part of the transport, which
+the film does not cover -- so the sensor is measured, not the film, with the strip
+still in. Calibrating an empty transport is a state the vendor never creates, and
+doing it once preceded a wedge.
+
+`READ_STATE` cannot be used to check. Byte 6 reads `0x1d` idle and `0x9d` scanning in
+the power-on capture, and the `0x40` "media present" bit is never set in any of its 155
+responses. There is no way to ask the scanner whether film is loaded: only Stefan can
+see the transport, so ask him.
+
 ## Ask before driving the scanner
 
 **Presence is not permission.** Finding the device on the bus says only that it
