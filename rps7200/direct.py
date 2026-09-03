@@ -2431,16 +2431,17 @@ class DirectScanner:
                     f"{'RGBI'[c]}={levels[c]:.0%}" for c in range(len(levels))
                 )
             )
-            aims = [target] * len(levels)
-            if infrared and len(aims) > 2:
-                aims[2] = target / max(1.0, infrared_blue_headroom)
-            if all(abs(v - a) <= tolerance for v, a in zip(levels, aims)):
-                break
-
-            visible = levels[:3]
+            # Blue's target is the one that moves: it comes back 2-3.7x
+            # brighter in an RGBI pass than in the RGB probe at the same
+            # exposure, so a blue metered to fill the range here clips there.
             targets = [target] * len(levels)
             if infrared and len(targets) > 2:
                 targets[2] = target / max(1.0, infrared_blue_headroom)
+
+            if all(abs(v - t) <= tolerance for v, t in zip(levels, targets)):
+                break
+
+            visible = levels[:3]
             for c, level in enumerate(levels):
                 if c >= len(scales):
                     break
