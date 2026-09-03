@@ -143,19 +143,28 @@ def fit_noise_params(flats: list[np.ndarray], patch: int = 32) -> tuple[float, f
     them robustly. The slope is the shot-noise term and the intercept the read
     noise, both in DN. Falls back to the defaults when there is too little to
     fit -- which is worth knowing about, so the caller should say which it used.
+
+    **Each channel is tiled separately.** The channels of a flat sit at
+    different levels -- blue returns several times brighter than red at the same
+    exposure -- so a tile spanning all three measures the spread between them,
+    not the sensor's noise. Flattening ``(H, W, C)`` to ``(H, W*C)`` does
+    exactly that: it interleaves the channels along the width, and a 32-wide
+    tile then covers ten pixels of three channels rather than 32 pixels of one.
+    The variance comes out inflated by the channel offsets and the fit is
+    biased, which reaches every pixel of every merge through the weighting.
     """
     means: list[float] = []
     variances: list[float] = []
     for flat in flats:
         a = np.asarray(flat, dtype=np.float64)
-        if a.ndim == 3:
-            a = a.reshape(a.shape[0], -1)
-        h, w = a.shape[:2]
-        for y in range(0, h - patch + 1, patch):
-            for x in range(0, w - patch + 1, patch):
-                tile = a[y : y + patch, x : x + patch]
-                means.append(float(tile.mean()))
-                variances.append(float(tile.var()))
+        planes = [a] if a.ndim == 2 else [a[..., c] for c in range(a.shape[2])]
+        for plane in planes:
+            h, w = plane.shape
+            for y in range(0, h - patch + 1, patch):
+                for x in range(0, w - patch + 1, patch):
+                    tile = plane[y : y + patch, x : x + patch]
+                    means.append(float(tile.mean()))
+                    variances.append(float(tile.var()))
     if len(means) < 8:
         return DEFAULT_ALPHA, DEFAULT_BETA
 
@@ -170,7 +179,7 @@ def fit_noise_params(flats: list[np.ndarray], patch: int = 32) -> tuple[float, f
     bv = np.array([np.median(v[b]) for b in bins if b.size])
     if bm.size < 2 or np.ptp(bm) <= 0:
         return DEFAULT_ALPHA, DEFAULT_BETA
-    alpha, beta = np.polyfit(bm, bv, 1)
+    beta, alpha = np.polynomial.polynomial.polyfit(bm, bv, 1)
     if not np.isfinite(alpha) or not np.isfinite(beta) or alpha <= 0:
         return DEFAULT_ALPHA, DEFAULT_BETA
     return float(alpha), float(max(beta, 1.0))

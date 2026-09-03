@@ -273,3 +273,38 @@ def test_a_metered_exposure_already_at_the_rail_still_gives_a_ladder():
     assert ladder[-1] == pytest.approx(1.0, abs=0.01)
     assert ladder[0] == pytest.approx(0.5, abs=0.01)
     assert ladder[-1] / ladder[0] == pytest.approx(2.0, rel=1e-6)
+
+
+def test_the_fit_is_not_thrown_by_channels_at_different_levels():
+    """Blue returns several times brighter than red at the same exposure.
+
+    Tiling across the interleaved channels measures that gap rather than the
+    sensor's noise, and the shot-noise slope comes out inflated. Each channel
+    carries the same noise model here, so the fit must return that model
+    whatever the channels' levels are.
+    """
+    rng = np.random.default_rng(4)
+    alpha, beta = 1.6, 2500.0
+
+    def flat_with_offsets(levels):
+        planes = []
+        for level in levels:
+            var = alpha * level + beta
+            planes.append(
+                rng.normal(level, np.sqrt(var), (256, 256))
+            )
+        return np.clip(np.stack(planes, axis=-1), 0, 65535)
+
+    level_matched = [flat_with_offsets([lo, lo, lo]) for lo in (3000, 12000, 30000)]
+    level_split = [
+        flat_with_offsets([lo, lo * 2.5, lo * 5.0]) for lo in (3000, 6000, 11000)
+    ]
+
+    a_matched, b_matched = fit_noise_params(level_matched)
+    a_split, b_split = fit_noise_params(level_split)
+
+    assert a_matched == pytest.approx(alpha, rel=0.25)
+    # The channels carry the same model, so splitting their levels must not
+    # change the answer.
+    assert a_split == pytest.approx(alpha, rel=0.25)
+    assert b_split == pytest.approx(beta, rel=1.0)
