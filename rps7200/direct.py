@@ -2290,10 +2290,22 @@ class DirectScanner:
         # could not be applied reads as a metering failure later.
         for c, was_limited in enumerate(limited):
             if was_limited and c < len(base.exposure):
+                # The same guard the ceiling above carries. Without it this
+                # message -- which exists only to explain the ceiling -- was the
+                # one thing that could not survive the case it describes: the
+                # scanner reported a zero exposure just after re-enumerating and
+                # metering died here, inside the branch that reports the
+                # problem, rather than in the arithmetic that handles it.
+                room = (
+                    f"{65535 / base.exposure[c]:.2f}x of exposure "
+                    f"{base.exposure[c]}"
+                    if base.exposure[c]
+                    else "the device reported an exposure of 0, so the fallback "
+                    "ceiling of 8x"
+                )
                 self._log(
                     f"  note: {'RGBI'[c]} is held at the timer ceiling "
-                    f"({65535 / base.exposure[c]:.2f}x of exposure "
-                    f"{base.exposure[c]} is all there is); this channel could "
+                    f"({room} is all there is); this channel could "
                     f"not reach the target"
                 )
         return scales

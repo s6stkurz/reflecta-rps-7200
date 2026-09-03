@@ -305,6 +305,167 @@ payloads are decoded: infrared is a *separate exposure field* that is not being 
 all, so there is nothing for the probe to mispredict. `scan(auto_exposure=True)` still
 probes in RGBI and has not been changed.
 
+## Measured: `full_17_strip`, a whole roll driven by CyberView
+
+2171 commands, 17 frames, captured 2026-09-03 against this timeline: scanner power-cycled,
+CyberView opened, strip inserted, **frames aligned by hand with the scanner's own
+Forward/Reverse keys**, one manual prescan, then the automatic whole-roll prescan, then
+close.
+
+### The advance carries two values, and we only ever send one
+
+```
+CyberView, 16 advances:  [1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1]   8 ones, 8 twos
+older 5-frame capture:   [1, 1, 2, 1]                                        3 ones, 1 two
+this driver, every time:  1
+```
+
+`SLIDE 04 01 00 <value>` takes a 1 or a 2 in the last byte. Both step the position counter
+by exactly one frame — that was measured, and it is why an earlier reading dismissed the
+byte as meaningless. What it evidently changes is *how far* the film moves.
+
+Eight and eight over sixteen advances is not noise, and the runs — one, then five twos, then
+six ones, then three twos, then one — are not a fixed alternation either. A fixed dither for
+a fractional pitch would come out regular (1,2,1,2 or 1,1,2,1,1,2). Clumping like this is
+what a **closed loop** looks like: measure where the frame landed in the prescan, pick the
+next advance to correct it, repeat.
+
+`advance()` hardcodes `value=1`. If 1 and 2 are two different step counts, always sending
+the same one applies a constant per-frame error — which is exactly the monotonic ~0.2 mm per
+advance measured on strip3 (gap 1 → 10 → 36 px). **This is the prime suspect for the drift,
+and it is testable with a command already sent thousands of times.**
+
+The experiment, using nothing new: from a known position, advance with `value=1`, prescan,
+measure the frame's position; advance with `value=2`, prescan, measure again. If the two
+displacements differ, the difference is the correction step, and a loop over the gap
+detector can hold registration across a whole roll.
+
+### The buttons are firmware-only — this avenue is closed
+
+Between the strip going in (43 s) and the manual prescan (109 s), Stefan aligned the frames
+with the scanner's Forward and Reverse keys. In that entire window the bus carried **nothing
+but polling**: 117 `READ_STATE`, 5 `TEST_UNIT_READY`, no other command, and the position
+counter never left 0.
+
+The host neither sees the keys nor can trigger them. Every earlier search — the SANE
+backend's 26 commands, six other captures, the published literature — pointed the same way;
+this settles it. Fine positioning is not exposed over USB, and the vernier the keys perform
+has no command behind it.
+
+### Rewind and eject, both first sightings
+
+```
+05 01 00 01  x16   SLIDE_PREV, stepping 16 -> 0 one frame at a time, to return the strip
+03 f6 dd 00  x1    action 0x03, after the rewind -- the eject
+```
+
+`SLIDE_PREV` appears in **no other capture**; this driver had already verified it on hardware
+before the vendor was ever seen using it. Its role is end-of-roll rewind, not correction.
+Action `0x03` is new, seen once, and is the last command of the session.
+
+### Smaller findings
+
+- `SET_SCAN_HEAD` (0xD2) is sent **zero** times across a full automatic 17-frame roll.
+  Nothing has ever driven it. See the hazard note in CLAUDE.md.
+- The position counter read **72** before the strip was inserted and reset to 0 on insertion:
+  it is absolute and survives power cycles, so it says nothing about where a frame is.
+- `SLIDE_INIT` is `10 16 00 00` throughout, the value this driver already sends.
+- The session-start pair is `00 01 00 04` and `00 46 00 00`, with `01 47 00 03` before the
+  first frame — the same shape as the earlier captures, one param byte apart (`47` vs `57`).
+- Every frame gets two full-window 300 dpi RGB prescans, `0,0 -> 10343,6887` and
+  `0,1 -> 10343,6888`, before its advance. Unchanged from the earlier captures.
+
+## Measured: seven slides, and the bound that makes the measure honest
+
+A metered 300 dpi pass over slides 1-7, film edge located by the **orange mask**
+rather than by brightness: the mask lives in the base, so film reads R/B ~ 1.2-1.3
+while an empty aperture reads ~1.0. That is content-independent, unlike every
+brightness threshold tried before it, all of which mistook a bright picture region
+for a gap at least once.
+
+The bound is arithmetic, not taste. The aperture is 10344 units = **36.49 mm** and
+a 35 mm frame is **36.00 mm**, so the film has **0.49 mm** of room. Drift is the
+film creeping through that slack. A reading larger than it would mean a visible
+slice of the picture was missing, so a detector reporting several millimetres is
+reporting picture content and must be rejected rather than believed.
+
+| slide | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| edge (mm) | 0.00 | 0.51 | *5.63* | *6.57* | 0.17 | 0.26 | 0.43 |
+| | ok | ok | **rejected** | **rejected** | ok | ok | ok |
+
+Accepted readings span 0.00-0.51 mm -- the whole slack -- and move `+0.51, -0.34,
++0.09, +0.17` between frames. **Bouncing, not accumulating. Over seven slides there
+is no drift.**
+
+### What this overturns
+
+The strip3 figures that started this -- an inter-frame gap walking 1 -> 10 -> 36 px,
+read as ~0.2 mm per advance -- do not survive. Those steps are 9 then 26, which is
+not the linear growth a constant per-frame error produces, and they were taken with
+a brightness detector of the kind since shown to fire on picture content. Three
+independent measurements now say the transport holds registration:
+
+- round trips repeat to **±0.03 mm** (`NEXT` then `PREV`, n=6), so backlash is
+  negligible
+- `SLIDE_NEXT` value 1 vs value 2 differ by **less than 0.05 mm**, so the byte the
+  vendor alternates is not a vernier and this driver hardcoding 1 costs nothing
+- seven slides stay inside **0.49 mm** with no trend
+
+CyberView running 17 frames unattended, sending no correction command of any kind,
+fits the same picture.
+
+### The lesson worth keeping
+
+Every detector written for this in one afternoon -- variance-thresholded, level
+thresholded, level-and-flatness, mask-ratio -- reported a confident number that was
+wrong at least once, and each was corrected only by looking at the frame. What
+finally made the measure trustworthy was not a better threshold but a *physical
+bound*: knowing that the answer cannot exceed 0.49 mm turns an unbounded number
+into one that can be checked. Bound a measurement by what the hardware allows
+before tuning what it detects.
+
+## Settled: there is no drift, and the roll mechanism works
+
+A full unattended pass over a 17-slide strip: 16 advances, every one clean, stopping
+correctly when the transport would not move. Same length as the roll in
+`full_17_strip.pcapng`. Stefan judged the frames by eye and found the registration
+sound.
+
+That closes the drift investigation, and it closes it against my own repeated
+claims. Four detectors were written for it in one day:
+
+| detector | keyed on | failed by |
+|---|---|---|
+| `detect_frame` | column variance vs peak | firing on the film's own skewed edge |
+| `film_bounds` | level vs empty aperture | blind mid-strip, where film always fills the window |
+| level + flatness | brightness and uniformity | firing on a bright picture region |
+| mask ratio | orange mask, R/B | frames with a cyan subject reading as "no film at all" |
+
+Every one produced confident numbers. Every one was wrong on some frames, and every
+one was caught only by looking at the picture. On the final roll eight of seventeen
+readings were junk, including two claiming the window held no film on frames of
+ordinary contrast.
+
+The common failure is the same each time: keying on something that varies with the
+photograph. A defect at a fixed sensor column can be separated from picture content
+with the library, across different film positions -- that is what CLAUDE.md already
+says. Registration cannot, because it *is* a property of the picture's position, and
+no single frame distinguishes "the film moved" from "this photograph is dark on the
+left".
+
+The strip3 figures that started all of this -- a gap walking 1 -> 10 -> 36 px, read
+as 0.2 mm per advance -- were one of those artefacts. Their steps were 9 then 26,
+not the linear growth a constant per-frame error gives, and three later measurements
+disagree: round trips repeat to +/-0.03 mm, `SLIDE_NEXT` value 1 against value 2
+differ by under 0.05 mm, and seventeen slides came out sound by eye.
+
+**Do not add drift correction.** There is nothing to correct, the vendor sends no
+correction command in 3,955 commands across seven captures, the scanner's own
+Forward/Reverse keys are firmware-only and invisible to the host, and every
+automatic measure of registration built so far has been wrong often enough to do
+more harm than good.
+
 ## Open — what `tools/transport_probe.py` answers
 
 Run it on a strip you do not mind handling; it sends commands this scanner has never been

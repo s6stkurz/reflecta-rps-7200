@@ -199,3 +199,18 @@ def test_two_rounds_by_default():
     s = FakeScanner((0.9, 0.7, 0.5), base=(10000, 10000, 10000, 8000))
     s.auto_exposure(target=0.4, film=FILM_NEGATIVE)
     assert len(s.passes) <= 2, f"took {len(s.passes)} prescans"
+
+
+def test_a_zero_exposure_does_not_kill_metering():
+    """The scanner reported exposure 0 just after re-enumerating, and metering
+    died -- not in the arithmetic, which already guarded the division, but in the
+    log line that exists to explain the guard.
+
+    A channel has to be *limited* for that message to be reached, which is why a
+    zero exposure is the case that triggers it: the fallback ceiling is 8x, and
+    anything wanting more than that is held.
+    """
+    s = FakeScanner([0.5, 0.5, 0.5], base=(0, 0, 0, 0))
+    scales = s.auto_exposure(target=0.7, infrared=False)
+    assert len(scales) == 3
+    assert all(v <= 8.0 for v in scales), scales
