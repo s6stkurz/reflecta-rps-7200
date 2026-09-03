@@ -127,6 +127,15 @@ driver for Nikon Coolscans:
 
 ## Measured and left alone
 
+- **Column defects in the frame interior are corrected as far as they can be.**
+  Signed channel-relative deviation on the delivered file, interior columns
+  only: 9.32% peak before, 2.43% after, and seven columns of 2464 still above
+  2%. None of the seven is a sensor defect -- checked across nine 1800 dpi
+  library entries at different film positions, the strongest reads high in four
+  of them and a sensor defect would read high in all nine. What is left is film.
+  Chasing it further would be correcting the picture.
+
+
 - **`library.save()` reindexes the whole library on every write.** Genuinely
   quadratic across a roll, and not worth fixing: at 400 entries the rebuild is
   34 ms against a real save's 1.7 s at 1800 dpi and several times that at 3600,
