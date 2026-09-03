@@ -34,8 +34,6 @@ the vendor software does, holds one session across prescan and scan, and writes 
 4-channel data itself. The three problems above are why: a SANE frontend cannot get this
 data out, and the backend cannot apply the shading correction either.
 
-An older interface built on `libsane` through `ctypes` is still in the tree -- see below.
-
 ## Install
 
 ```sh
@@ -52,11 +50,6 @@ against each other. `make test-all` runs the suite both ways:
 ```sh
 make test-all
 ```
-
-A second, older interface (`rps7200.device`, `rps7200.cli`) drives the scanner through
-SANE's `pieusb` backend. It needs `brew install sane-backends`, and it cannot apply the
-shading correction described below, so scans from it come back striped. It is kept for
-comparison, not for scanning. Everything in this README uses the direct driver.
 
 ## Use
 
@@ -170,47 +163,38 @@ Some viewers (macOS Preview included) still report `hasAlpha: yes` and may compo
 That is a viewer convention, not a problem with the file; use `--split` when you want
 files that display normally.
 
-On the **SANE** interface, everything that would consume or alter the IR is off by
-default. (The direct driver does not use these; it sets the equivalent mode bytes itself
-and applies shading on the host, as described above.)
-
-| SANE option | Value | Why |
-|---|---|---|
-| `mode` | `RGBI` | the one-pass four-channel mode |
-| `depth` | `16` | |
-| `clean-image` | `no` | otherwise the backend spends the IR on its own dust removal |
-| `correct-infrared` | `no` | no red-crosstalk correction |
-| `fast-infrared` | `no` | repositions the head so IR stays aligned with RGB |
-| `correct-shading` | `yes` | asks the backend to do the host-side division; the direct driver does its own |
-| `crop` | `None` | the backend default (`Inside`) crops the frame |
+The driver sets the mode bytes for a one-pass four-channel capture itself and applies
+shading on the host, as described above. Nothing consumes or alters the IR plane on the
+way out.
 
 ## Checking that the IR is real
 
-```sh
-rps7200 inspect scan.tif
-```
-
-*(`inspect` belongs to the SANE interface; for a scan taken with the direct driver, load
-the TIFF and correlate channel 3 against 0-2 yourself.)*
-
 A genuine IR plane sees through the dye layers, so it should **not** track the visible
 channels: dust and scratches show as marks while the picture content is largely absent.
-`inspect` prints the correlation between IR and each of R, G and B — anything above ~0.9
-means the IR is contaminated (usually `correct-infrared` left on, or a channel mix-up).
+Correlate channel 3 against 0–2 — anything above ~0.9 means the IR is contaminated,
+usually a channel mix-up:
+
+```python
+import numpy as np
+from rps7200 import tiff
+
+image = tiff.read("scan.tif").astype(float)
+for i, name in enumerate("RGB"):
+    print(name, np.corrcoef(image[..., i].ravel(), image[..., 3].ravel())[0, 1])
+```
 
 ## Notes and limitations
 
-- **Scans block with no progress.** *(SANE interface.)* The backend performs the entire capture and its
-  post-processing inside `sane_start`; `sane_read` only drains a finished buffer. The
-  process will sit silent for a long time, and cancellation is only honoured between
-  scans. This is the backend's design, noted in its own man page.
-- **The lamp needs to warm up after a power cycle** — about 80 seconds, measured. Until it
-  does, the scanner reports `warmingUp` and the backend turns that into
-  `SANE_STATUS_DEVICE_BUSY` from `sane_start` instead of waiting. This package retries
-  automatically (`Scanner(warmup_timeout=...)`, 300 s by default); stock `scanimage` just
-  fails with "Device busy", so retry it by hand.
+- **A scan reports nothing until a batch of lines is ready.** Reads are paced against how
+  far the scanner has physically scanned, so the driver spends most of a pass waiting.
+  Run with `-v` to see the line counter move.
+- **The lamp needs to warm up after a power cycle** — about 80 seconds. Until it does, the
+  scanner answers `NOT READY` to every command, `READ STATE` included, so it cannot even
+  be asked for its state. `DirectScanner.wait_warm()` polls through it and every scan
+  calls it, up to 300 s.
 - **The scanner can drop off the USB bus** after a failed scan and then needs a power
-  cycle before it reappears. If `rps7200 list` finds nothing, power-cycle it and retry.
+  cycle before it reappears. `DirectScanner().inquiry()` is the cheap way to check whether
+  it is there at all.
 - **`sane-find-scanner` reports "could not fetch string descriptor: Pipe error".** This
   device exposes no USB string descriptors (`iProduct = 0`), so the message is expected —
   but see below, because a flaky USB link produces similar symptoms.

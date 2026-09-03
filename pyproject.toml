@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [{name = "Stefan Kurzella"}]
-keywords = ["scanner", "film", "negative", "infrared", "usb", "reflecta", "pieusb"]
+keywords = ["scanner", "film", "negative", "infrared", "usb", "reflecta"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: End Users/Desktop",
@@ -25,9 +25,6 @@ dependencies = ["numpy>=1.21"]
 [project.optional-dependencies]
 # Only changes which TIFF implementation is used; the built-in one is complete.
 tifffile = ["tifffile>=2021.7.2"]
-
-[project.scripts]
-rps7200 = "rps7200.cli:main"
 
 [tool.setuptools]
 packages = ["rps7200"]

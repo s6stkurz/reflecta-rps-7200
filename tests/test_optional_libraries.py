@@ -1,13 +1,12 @@
-"""Host-side work must not need the device's libraries.
+"""Host-side work must not need libusb.
 
 Decoding a stored scan, merging a bracket, writing a TIFF and reading the
 library all touch no hardware, and the library keeps every scan's raw bytes so
 that work can be re-run anywhere. None of it was possible on a machine without
-libusb and libsane: both were loaded at import, and `import rps7200` reaches
-libsane through `device`, so the whole package was unimportable.
+libusb, because the module loaded it at import.
 
-These run with the loaders forced to fail, which is what an absent install
-looks like.
+These run with the loader forced to fail, which is what an absent install looks
+like.
 """
 
 import subprocess
@@ -24,13 +23,12 @@ PRELUDE = textwrap.dedent(
     sys.path.insert(0, {root!r})
 
     # Simulate an absent install, and do it BEFORE rps7200 is imported: the
-    # loaders run at import on the old code, so patching afterwards would let
-    # the real libraries load and prove nothing.
+    # loader ran at import on the old code, so patching afterwards would let the
+    # real library load and prove nothing.
     _exists = os.path.exists
 
     def exists(path):
-        name = os.path.basename(str(path))
-        if name.startswith(("libusb-1.0", "libsane")):
+        if os.path.basename(str(path)).startswith("libusb-1.0"):
             return False
         return _exists(path)
 
@@ -53,7 +51,7 @@ def root(pytestconfig):
     return str(pytestconfig.rootpath)
 
 
-def test_the_package_imports_with_neither_library_present(root):
+def test_the_package_imports_without_libusb(root):
     out = run("import rps7200; print('ok', rps7200.__version__)", root)
     assert out.returncode == 0, out.stderr
     assert "ok" in out.stdout
@@ -69,7 +67,7 @@ def test_every_host_side_module_imports(root, module):
     assert out.returncode == 0, out.stderr
 
 
-def test_a_tiff_round_trips_without_either_library(root):
+def test_a_tiff_round_trips_without_libusb(root):
     out = run(
         """
         import numpy as np, tempfile, os
@@ -85,7 +83,7 @@ def test_a_tiff_round_trips_without_either_library(root):
     assert out.returncode == 0, out.stderr
 
 
-def test_a_bracket_merges_without_either_library(root):
+def test_a_bracket_merges_without_libusb(root):
     out = run(
         """
         import numpy as np
@@ -117,20 +115,3 @@ def test_opening_a_transport_still_says_what_to_install(root):
     )
     assert out.returncode == 0, out.stderr
     assert "libusb" in out.stdout and "LIBUSB_PATH" in out.stdout
-
-
-def test_using_sane_still_says_what_to_install(root):
-    out = run(
-        """
-        from rps7200 import sane_ffi
-        try:
-            sane_ffi.strstatus(0)
-        except OSError as exc:
-            print("raised:", exc)
-        else:
-            raise AssertionError("expected an OSError")
-        """,
-        root,
-    )
-    assert out.returncode == 0, out.stderr
-    assert "libsane" in out.stdout and "LIBSANE_PATH" in out.stdout
