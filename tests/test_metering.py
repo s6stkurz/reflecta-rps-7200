@@ -214,3 +214,20 @@ def test_a_zero_exposure_does_not_kill_metering():
     scales = s.auto_exposure(target=0.7, infrared=False)
     assert len(scales) == 3
     assert all(v <= 8.0 for v in scales), scales
+
+
+def test_scaling_by_one_still_returns_a_separate_object():
+    """Returning self aliases the caller's settings to the device's."""
+    base = settings(8000, 20000, 50000, 8000)
+    same = base.scaled(1.0)
+    assert same is not base
+    assert same.exposure == base.exposure
+    same.exposure[0] = 1
+    assert base.exposure[0] == 8000, "editing the copy moved the original"
+
+
+def test_scaling_by_one_does_not_share_the_gain_and_offset_lists():
+    base = settings(8000, 20000, 50000, 8000)
+    same = base.scaled(1.0)
+    same.gain[0] = 99
+    assert base.gain[0] != 99

@@ -1120,10 +1120,12 @@ class Settings:
         R, G, B, I order -- the channels need very different exposures, most
         obviously blue, which saturates far sooner than the rest with no film
         in the transport.
+
+        Always a new object, including at a factor of 1.0. Returning self there
+        aliases the caller's settings to the device's, so a later edit to one
+        silently moves the other.
         """
         if isinstance(factor, (int, float)):
-            if factor == 1.0:
-                return self
             factors = [float(factor)] * len(self.exposure)
         else:
             factors = list(factor)
