@@ -175,7 +175,9 @@ def test_blue_is_metered_lower_when_an_ir_scan_follows():
     # Compare the level blue actually reaches, not the scale: in RGB the scale
     # runs into the 16-bit timer ceiling, so the scales are not proportional
     # even though the aim is.
-    level = lambda scale: min(1.0, 9000 * scale / 65535.0 * t[2])
+    def level(scale):
+        return min(1.0, 9000 * scale / 65535.0 * t[2])
+
     assert level(ir[2]) == pytest.approx(0.6 / 4.0, abs=0.03), (
         f"blue aimed at {level(ir[2]):.3f}, wanted {0.6/4:.3f}"
     )

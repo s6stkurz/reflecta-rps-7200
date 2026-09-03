@@ -237,7 +237,7 @@ def main() -> int:
           f"{manifest['duration_s']/60:.1f} min")
     print(f"manifest: {manifest_path}")
     if failed:
-        print(f"resume a failed picture with --start-at N", file=sys.stderr)
+        print("resume a failed picture with --start-at N", file=sys.stderr)
     return 1 if failed and not scanned else 0
 
 

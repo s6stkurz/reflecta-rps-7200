@@ -10,7 +10,6 @@ import gzip
 import json
 
 import numpy as np
-import pytest
 
 from rps7200 import library
 from rps7200.direct import CHANNEL_ORDER, INDEX_HEADER

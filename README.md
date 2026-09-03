@@ -348,18 +348,31 @@ Read from the device's own INQUIRY response:
 ## Development
 
 ```sh
-python3 -m pytest tests/ -q
+make install      # sync the dev tools with uv
+make all          # fix + lint + type + tests -- run this before committing
 ```
 
-103 tests, none of which need a scanner attached: channel derivation and the TIFF paths,
-the shading parse and two-point correction, metering and film types, the scan library
-(including that a stored entry still decodes to the pixels it was saved with), and the
-roll/registration logic.
+Individual steps are `make lint`, `make type` and `make test`; everything runs through
+`uv run`, so the pinned tools in `pyproject.toml` are what execute.
+
+No test needs a scanner attached. The suite covers channel derivation and both TIFF
+paths, the shading parse and two-point correction, metering and film types, the scan
+library (including that a stored entry still decodes to the pixels it was saved with),
+and the roll/registration logic. A test that genuinely needs the device is marked
+`hardware` and is skipped by default.
+
+`tifffile` is optional and the built-in TIFF path is complete, so both have to behave
+identically. `make test-all` runs the suite twice, once with it installed and once with
+the import blocked:
+
+```sh
+make test-all
+```
 
 After any change to how the scanner's bytes become pixels, re-check every stored scan:
 
 ```sh
-python3 tools/library.py reconstruct
+make reconstruct          # python3 tools/library.py reconstruct
 ```
 
 ## Solved: what the stock backend gets wrong
