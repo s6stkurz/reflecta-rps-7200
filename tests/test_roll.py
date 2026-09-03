@@ -352,14 +352,16 @@ def test_a_drifted_frame_shows_up_as_a_narrower_picture():
 def test_a_full_window_frame_is_not_reported_as_drift():
     """The failure this replaced, reproduced.
 
-    Locating the frame by column *variance* broke on a real negative: a dark,
-    low-contrast picture varies less than the hard border at the film's edge, so
-    a threshold set at 25% of the peak selected the four border columns and threw
-    the picture away. Measured on the scanner, a frame filling the window edge to
-    edge came back as a 0.26 mm sliver and was reported as 35.30 mm of drift.
+    The shape below is the one that catches a frame-finder out: a bright empty
+    strip, a violent step at the film's edge, then a whole frame that is dark
+    and nearly flat. Anything keying on how much a column *varies* picks the
+    border, because the border varies far more than the picture does -- the film
+    edge is not square to the sensor, so its columns hold clear on some rows and
+    film on others.
 
-    The profile below is that prescan's shape: a bright empty strip, a violent
-    step at the film edge, then a whole frame that is dark and nearly flat.
+    film_bounds keys on level instead, which does not depend on picture content,
+    and has to report this frame as covering the window rather than as a sliver
+    of drift.
     """
     height, width, edge = 40, 428, 9
     frame = picture(height=height, width=width, seed=3)
@@ -373,12 +375,13 @@ def test_a_full_window_frame_is_not_reported_as_drift():
         frame[row, :cut] = clear[row, :cut]
 
 
-    variance = DirectScanner.detect_frame(frame)
-    level = registration(frame)
+    # The border columns are the highest-variance thing in the frame, which is
+    # exactly the trap: they must not be mistaken for where the picture stops.
+    grey = frame.astype(float).mean(axis=2)
+    assert grey.std(axis=0)[:edge + 4].max() > 3 * grey.std(axis=0)[edge + 8:].max()
 
-    # What went wrong: the variance rule keeps only the border.
-    assert variance[2] - variance[0] < 0.1 * NOMINAL_FRAME_WIDTH
-    # What is true: the film covers all but the strip, so nothing is missing.
+    # The film covers all but the strip, so nothing is missing.
+    level = registration(frame)
     assert level["shortfall"] < 0.05 * NOMINAL_FRAME_WIDTH
 
 
