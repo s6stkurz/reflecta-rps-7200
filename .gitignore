@@ -28,5 +28,11 @@ library/
 # per-roll scan output
 rolls/
 
+# registration walks: metered 300 dpi passes, their inverted copies and the
+# contact sheets built from them. The TIFFs are already covered by *.tif, but
+# the sheets are PNGs and would otherwise be committed.
+rollscan/
+walk7/
+
 # local Claude config: machine-specific paths and permissions
 .claude/
