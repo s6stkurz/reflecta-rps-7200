@@ -68,6 +68,12 @@ MAX_WINDOW = int(os.environ.get("RPS7200_MAX_WINDOW", 0x8000))
 #: Bytes per individual bulk transfer inside a window.
 BULK_CHUNK = 0x4000
 
+#: How long to wait for a payload the scanner has already begun delivering.
+#: Generous: the alternative to waiting is abandoning a read mid-scan, which
+#: costs a power cycle, so it is worth being slow to conclude that.
+PARTIAL_READ_TIMEOUT_S = 120.0
+PARTIAL_READ_POLL_S = 0.02
+
 #: Control transfers can be slow to answer while the scanner is busy: at 1800
 #: dpi a status read took longer than a 5s timeout allowed, aborting the scan.
 _CONTROL_TIMEOUT_MS = 30_000
@@ -517,6 +523,22 @@ class Transport:
         This is the whole point of the module: the stock backend announces the
         full length once and then reads until it has everything. This scanner
         stops after 32 KB, so the announce/read cycle is repeated per window.
+
+        An empty bulk read means one of two different things, and they are told
+        apart by whether anything has arrived yet:
+
+        * **Nothing at all.** The scanner has not scanned this far. Its normal
+          way of saying "wait" -- the vendor software sees it on most of its
+          reads -- so :class:`NoDataYet` is raised and the caller re-issues the
+          READ. Nothing has been delivered, so nothing is lost.
+        * **Part of the payload already delivered.** The scanner is mid-answer
+          and paused. Raising here would drop the bytes already read while the
+          device still believes it is answering, so the retried READ would
+          resume into the middle of the previous one and every line after it
+          would be misaligned. It is also abandoning a read mid-scan, which is
+          what leaves this device needing a power cycle. So this waits the pause
+          out and only gives up -- as a hard error, never as "no data yet" --
+          if the payload never completes.
         """
         out = bytearray(size)
         view = memoryview(out)
@@ -525,21 +547,26 @@ class Transport:
             window = min(self.max_window, size - got)
             self._announce_length(window)
             window_got = 0
+            stalled_since: float | None = None
             while window_got < window:
                 chunk = min(BULK_CHUNK, window - window_got)
                 n = self._bulk_read_into(
                     view[got + window_got : got + window_got + chunk], timeout_ms
                 )
                 if n == 0:
-                    # Normal: the scanner answers a READ with zero bytes while
-                    # it has nothing scanned yet. Captures of the vendor
-                    # software show 82% of its reads returning empty at 1800
-                    # dpi, retried every ~20ms. Report it so the caller can
-                    # retry rather than treating it as an error.
-                    raise NoDataYet(
-                        f"scanner has no data ready ({got + window_got} of "
-                        f"{size} bytes so far)"
-                    )
+                    if got + window_got == 0:
+                        raise NoDataYet(f"scanner has no data ready (of {size} bytes)")
+                    now = time.monotonic()
+                    stalled_since = stalled_since or now
+                    if now - stalled_since > PARTIAL_READ_TIMEOUT_S:
+                        raise UsbError(
+                            f"scanner stopped mid-payload: {got + window_got} of "
+                            f"{size} bytes, then nothing for "
+                            f"{PARTIAL_READ_TIMEOUT_S:.0f}s"
+                        )
+                    time.sleep(PARTIAL_READ_POLL_S)
+                    continue
+                stalled_since = None
                 window_got += n
             got += window_got
             self._log(f"read {got}/{size} bytes")
