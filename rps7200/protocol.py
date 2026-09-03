@@ -332,11 +332,15 @@ class ScanParameters:
     available_lines: int  # lines ready to read right now
 
 
-#: Bit that would mean "media present", if it meant anything. It is never set:
-#: not in any of the 155 READ_STATE responses in the power-on capture, which read
-#: 0x1d idle and 0x9d scanning, and not on this scanner with film loaded. There is
-#: no way to ask the device whether film is in the transport -- only the person at
-#: the scanner can see that. Reported, never used to block a scan.
+#: "Media present" in the state byte. On this scanner it does track the film:
+#: measured 2026-09-04, one variable changed, 0x0d with the transport empty and
+#: 0x4d with a strip loaded.
+#:
+#: It is still never used to block a scan, because it is not dependable. The bit
+#: is clear in all 155 READ_STATE responses of the vendor power-on capture, whose
+#: state byte reads 0x1d idle and 0x9d scanning, and it has previously read clear
+#: with film demonstrably loaded. A set bit is evidence; a clear one is not.
+#: Only the person at the scanner can actually see the transport -- ask them.
 MEDIA_PRESENT = 0x40
 
 
@@ -353,13 +357,13 @@ class State:
 
     @property
     def media_loaded(self) -> bool:
-        """Always False. Kept so the bit is visible, not so it can be believed.
+        """Whether the state byte says film is loaded. Believe a True, not a False.
 
-        The bit is clear in every state seen across six captures of the vendor
-        software, including ones taken with film demonstrably loaded, and clear
-        on this scanner with film loaded. Nothing the device reports says whether
-        the transport holds film: only the person at the scanner can see that.
-        :attr:`position` is what to trust about where the transport is.
+        Measured on this scanner with one variable changed: 0x0d empty, 0x4d
+        loaded. But the bit is clear throughout the vendor's power-on capture,
+        and has read clear here with film demonstrably loaded, so a False proves
+        nothing. Never used to block a scan. :attr:`position` is what to trust
+        about where the transport is.
         """
         return bool(self.scanning & MEDIA_PRESENT)
 
