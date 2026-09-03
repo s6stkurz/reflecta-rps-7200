@@ -1,129 +1,205 @@
-# Multi-exposure: capture a bracket, let NegPy merge it
+# Multi-exposure: N-bracket capture and merge, in this driver
+
+## Status
+
+**Phase 1 offline: done.** `rps7200/bracket.py` merges a bracket by
+inverse-variance weighting; `scan_bracket()` and `bracket_ladder()` capture one.
+`tools/scan.py --bracket N --stops X`. 129 tests.
+
+Measured on a synthetic bracket, RMS error against the noise-free scene:
+
+```
+config                      RMS all   RMS shadows
+single pass                    61.4          43.7
+bracket N=2                    37.8          11.6   -73%
+bracket N=5                    33.9           8.6   -80%
+bracket N=9                    32.9           6.6   -85%
+5 averaged at one exposure     24.7          10.2   -77%
+```
+
+Bracketing beats averaging in the shadows, which is the point. Averaging still
+wins across the whole frame. Both belong in the decision.
+
+**Verification 5 (the ladder is real): PASSED**, 300 dpi RGB, 5 passes over
+2 stops, on a slide:
+
+```
+pass   wanted    exposure R/G/B    median G  achieved   error   p99.9    sat
+   0    1.000  16384/11099/11099      8856     1.000   +0.0%   46.6%   0.00%
+   1    1.414  23170/15696/15696     12577     1.420   +0.4%   64.8%   0.00%
+   2    2.000  32768/22198/22198     17972     2.029   +1.5%   90.8%   0.00%
+   3    2.828  46340/31392/31392     25370     2.865   +1.3%  100.0%   7.07%
+   4    4.000  65535/44395/44395     35654     4.026   +0.7%  100.0%  10.78%
+```
+
+Every pass within 1.5% of its requested ratio, monotonic, no timer wrap, all
+five exposures distinct, red exactly on the 65535 ceiling at the top. The two
+brightest passes clip by design; the merge is what recovers them.
+
+Metering returned `[2.627, 2.627, 2.627]` — equal across channels, because
+`film=positive` locks the white balance and leaves the slide's cast
+(R 68%, G 32%, B 18%) rather than equalising it.
+
+**Next: verification 6**, the deciding measurement — shadow noise on a real
+frame, single pass against N=2/5/9 and against N averaged passes. Then 1800 dpi.
+Phase 2 (infrared) does not start until 6 passes.
 
 ## Context
 
-An earlier version of this plan argued against multi-exposure, and was wrong on
-its central number (it is in the git history of this file). It claimed the long pass was capped at **×1.23** because
-blue "already runs at 81% of full scale". That figure came from the vendor's
-*no-film calibration* exposure and from a post-auto-exposure sidecar — neither
-of which is a floor. The device's actual base is a fixed reference (9604 / 6506
-/ 6506, confirmed across 36 captured READ GAIN/OFFSET responses), so the real
-picture is:
+Two earlier versions of this plan were wrong: the first argued against
+multi-exposure on a mis-derived exposure ceiling, the second proposed handing
+the merge to NegPy. Both are superseded. The merge belongs here, where the
+linear sensor data and the per-pass calibration live.
 
-| | base | ceiling | metered uses | left for a longer pass |
-|---|---|---|---|---|
-| R | 9604 | 65535 (×6.82) | ×2.88 | ×2.37 |
-| G | 6506 | 65535 (×10.07) | ×6.03 | **×1.67** |
-| B | 6506 | 65535 (×10.07) | ×2.6–×10.07 | varies |
+The reference implementation is **pyopticfilm's `feat/me-n-brackets`**
+([PR #47](https://github.com/jboneng/pyopticfilm/pull/47)), not its `main`.
+`main` has only the fixed 2-bracket version; the branch generalises it to 2–9.
+NegPy [PR #1041](https://github.com/marcinz606/NegPy/pull/1041) is the consumer,
+still a draft pending that release.
 
-**Green binds, not blue**, and the honest headroom is ×1.67 — 0.74 stops, not
-the 0.09 density the old plan claimed. Worth doing, and worth being honest that
-it is modest.
+**It is measured to work.** TobbyTravel reports 5 exposures against 2 on an
+OpticFilm 8100 V2: **−26% relative chroma noise, −28% relative luma noise.**
+That is the evidence that N > 2 is worth building, and it is the number this
+plan has to reproduce in spirit before shipping.
 
-## What the other drivers do
+Goal: capture **2–9 exposures** of one frame, merge them here, without an
+infrared pass per exposure.
 
-**pyopticfilm** (Plustek OpticFilm 8200i, via NegPy's `plustek_backend.py`):
-`exposure_long` is a fixed per-model constant and the device has **no
-auto-exposure at all** — `_validate_params` refuses `auto_exposure` outright.
-The pass layout is `_gl128_me_pass_layout`: `n_early = 2 if capture_ir else 1`,
-then one long pass, then "Merging exposures". So: the normal pass(es), one
-longer pass, merged inside the library. Two exposures, both hardcoded.
+## What the ecosystem does
 
-**nkscan** does not do multi-exposure. It exposes `Samples` — the scanner
-averaging 1–16 reads per line — which is multi-*sampling*.
+| project | multi-exposure | how |
+|---|---|---|
+| **pyopticfilm `feat/me-n-brackets`** | **yes, 2–9** | geometric spacing between a short floor and an adaptive, safety-clamped ceiling; N-way IVW merge |
+| pyopticfilm `main` | yes, 2 | short + adaptively chosen long; pairwise IVW |
+| **NegPy** | yes, N | host-side HDR bracket merge; solves ratios from pixels |
+| **nkscan** | **no** | multi-*sampling* only — up to 16 reads per line (`MAX_SAMPLES`) |
+| SANE `pieusb` | no | per-channel exposure only |
+| SilverFast / VueScan | yes | proprietary; SilverFast originated the feature |
 
-**NegPy itself already merges brackets, and this is the important one.**
-`negpy/features/hdr/logic.py` takes two or more exposures of one frame and:
+pyopticfilm is **GPL-3.0-or-later, the same licence as this project**, so
+adapting its approach is legally clean. Credit it in the source.
 
-- **solves the exposure ratios from the pixels**, so our metadata does not have
-  to be accurate
-- **aligns the frames itself** (`estimate_shift`, `cv2.warpAffine`)
-- blends with a rolloff from 0.90 to `SATURATION = 0.995`, so the frame a pixel
-  comes from changes gradually instead of banding
-- picks as reference the longest exposure with under 0.1% clipping, keeping the
-  result in [0, 1] so recovered range arrives as shadow detail
+## What to take from it, precisely
 
-So **do not write a merge.** Ours would be worse, and Stefan already runs NegPy.
-The driver's job is to produce a well-formed bracket.
+- **Geometric spacing** between a short floor and an adaptively chosen,
+  safety-clamped top exposure. Not linear, not "from the ceiling down".
+- **`merge_n_exposures`** — an N-way generalisation of pairwise inverse-variance
+  weighting: `w_i = c_i / v_i`, `merged = Σ(w_i·x_i) / Σ w_i`, every pass scaled
+  into the reference's units.
+- **Variance from a Poisson–Gaussian model**, `var ≈ α·mean + β`. Do not
+  hardcode their constants (β ≈ 4096 DN², measured on a different sensor) — fit
+  α and β from the flats already in our library.
+- **Soft confidence**, rolling off from 0.80 of full scale to 0.95 rather than
+  cutting at the rail, so the CCD knee never bleeds into the weighting.
+- **Reference is `frames[0]`, the shortest exposure.**
+- **The disagreement gate, which is the part that matters most here.** A
+  per-bracket residual z-score against `frames[0]` gives a confidence, and the
+  pixel's confidence is the **worst (min) across all brackets**; where it is low,
+  blend toward the single highest-individually-weighted bracket rather than the
+  IVW blend. This is what stops per-channel IVW turning a misaligned edge into
+  coloured fringes — the exact artefact this project has already chased once.
 
-## What to build
+## The two things that differ on our hardware
 
-A bracket capture in `rps7200/direct.py`, reusing what already exists:
+**1. Our exposure ceiling is a hard 16-bit rail.** Their per-model ceilings are
+42,000 and 85,000 — the latter above 65535, so their exposure register is wider
+than ours. Ours wraps: past 65535 a pass comes back *darker*, not brighter. The
+device base is a fixed reference (9604 / 6506 / 6506), so:
 
-- `Settings.scaled()` already takes a per-channel factor and clamps at 65535
-- `auto_exposure()` already meters per channel in two RGB rounds
-- `scan(exposure_scale=...)` already applies a scale per pass
-- `rps7200/library.py` already files each pass with its raw bytes and calibration
+| | base | ceiling | span |
+|---|---|---|---|
+| R | 9604 | 65535 | ×6.82 (2.77 stops) |
+| G | 6506 | 65535 | ×10.07 |
+| B | 6506 | 65535 | ×10.07 |
 
-`scan_bracket(stops, passes, ...)`:
+**Red binds the bracket at 2.77 stops.** Nine passes across it sit 0.35 stops
+apart. The ladder must clamp explicitly rather than relying on
+`Settings.scaled()`'s clamp, because a clamped pass silently duplicates its
+neighbour and adds nothing but time.
 
-1. Meter once, as now. That is the reference exposure.
-2. Derive the ladder **downward from the ceiling**, not upward from the metered
-   value: the long pass goes as high as the timer allows (green's ×1.67 over
-   metered), and the rest step down by `stops`. Going up from metered would
-   waste the headroom that exists below it.
-3. Refuse, with the numbers, when the requested span does not fit — the ceiling
-   is per channel and green runs out first.
-4. Scan each pass at `FULL_FRAME`, film untouched, calibration reused.
-5. File every pass in the library, tagged `bracket:<id>` with its index and
-   requested ratio, and write the TIFFs NegPy will consume.
+**2. Infrared must not be bracketed.** pyopticfilm captures IR once, at the
+short exposure, and the N-bracket PR leaves that alone. Here it matters far
+more: an infrared pass costs its own ~212 s floor regardless of resolution, so
+bracketing it would dominate everything. Our infrared exposure is a device
+constant (7745 across all 36 captured gain/offset responses; the vendor never
+meters it), so it is unaffected by the visible ladder anyway.
 
-Expose it as `tools/scan.py --bracket N [--stops 0.7]`.
+Our modes are RGB (`0x80`) or RGBI (`0x90`) with no infrared-only mode, so
+**one pass of the bracket is taken as RGBI and the rest as RGB** — that pass
+yields the infrared plane *and* serves as a bracket member.
 
-**Do not re-run `calibrate_shading` between passes** — one reference per session
-is what the vendor does, and the passes must share it to stay comparable.
+```
+at 1800 dpi        RGB only     one pass RGBI
+  N = 2             ~2.5 min       ~5 min
+  N = 5             ~6 min         ~8.5 min
+  N = 9            ~10.5 min      ~13 min
+```
 
-## The honest ceiling
+## Build it in two phases, RGB first
 
-The gain over a single metered scan is the exposure ratio: **×1.67 at best, 0.74
-stops.** Averaging two passes gives ×1.41 for the same two passes' time, so
-multi-exposure wins, but not by much. Both beat one pass.
+### Phase 1 — RGB only, proven before anything infrared
 
-This should be measured, not assumed, and the plan below measures it. If it
-comes out at ×1.2 in practice the feature is not worth shipping, and that is a
-legitimate outcome.
+- **`rps7200/bracket.py`** — the merge, adapted from pyopticfilm's
+  `exposure_merge.py` and credited. Soft confidence, Poisson–Gaussian variance,
+  N-way IVW, the min-across-brackets disagreement gate, row-banded so a 3600 dpi
+  merge does not need several full-frame float planes.
+- **`fit_noise_params(flats)`** — fit `var ≈ α·mean + β` from library flats
+  rather than importing constants measured on someone else's sensor.
+- **`DirectScanner.scan_bracket(passes=3, ...)`**, `passes` 2–9, refusing
+  anything else with the reason. Meter once; take the first pass at the short
+  floor; choose the top from that pass's content (the densest percentile lifted
+  to a target DN, as pyopticfilm does); clamp to the red-limited ×6.82; space the
+  rest geometrically. **One shading calibration for the whole bracket.**
+- **`tools/scan.py --bracket N`**.
+- Every pass files in the library with its own raw bytes, mask and exposure, so
+  a bracket can be re-merged offline later without rescanning.
 
-Two levers that are *not* timer-limited and are worth one experiment each,
-because they would change the answer:
+### Phase 2 — infrared, only after Phase 1 passes
 
-- **Analogue gain** (8-bit, currently 39/33/21) amplifies before the ADC, so it
-  helps if quantisation rather than shot noise dominates the shadows.
-- **Lamp level** (`Settings.light`, vendor sends 6, pieusb default 4).
+One pass taken as RGBI; align the infrared plane to the reference; emit
+`(H, W, 4)` as now, merged RGB plus the single infrared plane.
 
 ## Verification
 
-The failure mode to guard against is shipping a feature that measurably does
-nothing, so every check is a measurement with a number that decides it.
+Each stage has a number that stops it. **Phase 2 does not begin until 1–6 pass.**
 
-1. **The exposures are actually what was asked for.** For each pass, measure the
-   median of a mid-tone patch and check the ratios between passes match the
-   requested ones. This is the linearity check, and it is also the one that
-   catches the timer wrapping: past 65535 a pass comes out *darker*, which shows
-   up immediately as a ratio going the wrong way. Do it with **no film loaded**
-   first, where the level is uniform and unambiguous.
-2. **Nothing clips that should not.** The short pass must have zero saturated
-   pixels; the long pass may clip, but only where the short one has data.
-   Report the saturated fraction per channel per pass.
-3. **Shadow noise actually improves.** Take the densest 10% of the frame and
-   report the per-channel standard deviation for the single metered pass and for
-   the long pass. Expect improvement by the exposure ratio if read-noise limited,
-   by its square root if shot-noise limited. **If neither shows, say so and stop**
-   — that is the measurement that decides whether this ships.
-4. **NegPy accepts the bracket and reports the span it sees.** It prints
-   "Merged N exposures spanning X stops", solved from the pixels. If its number
-   disagrees with the requested span, our exposures are not doing what we think.
-5. **Alignment is good enough for NegPy's aligner.** Cross-correlate the passes;
-   `estimate_shift` handles small offsets, but the unexplained pass-to-pass
-   column offset in `TODO.md` is exactly the thing that could defeat it. Measure
-   the shift between bracket passes and report it.
-6. **The library round-trips.** `tools/library.py verify` and `reconstruct` clean
-   over the new entries, and each pass carries its own exposure in its sidecar.
-7. **The three comparison TIFFs**, plus a 100% crop of a dense region from the
-   single pass and from the merge, for Stefan's eye. His read decides, and a
-   downscaled preview cannot show shadow noise.
+**Offline, no scanner:**
 
-## Cost
+1. **N = 2 reduces exactly to the pairwise form.** pyopticfilm verified this
+   algebraically and by test, and it is the cheapest possible check that the
+   N-way generalisation is right. Assert bit-identical output.
+2. **Synthetic bracket beats every individual pass.** Known scene, simulated
+   exposures with clipping and Poisson–Gaussian noise; the merge must beat the
+   best single pass on RMS error against the noise-free truth, and beat it by
+   more as N rises — reproducing the direction of the −28% at N=5.
+3. **Degenerate cases**, each a test: all passes identical (merge equals input,
+   noise not amplified); one pass fully clipped (ignored, not averaged in); one
+   pass all zeros; N=2 at the limits.
+4. **Deliberate misregistration.** Shift one pass by 1, 4 and 16 columns and
+   confirm the gate suppresses IVW there rather than producing colour fringes.
+   16 columns is the real pass-to-pass offset recorded in `TODO.md`.
 
-Each pass is a full scan: ~70 s at 1800 dpi RGB, ~230 s with infrared (the
-~212 s infrared floor applies per pass). A three-pass bracket with IR is about
-12 minutes per frame, so this is a per-frame tool, not a roll tool.
+**On the scanner, RGB only:**
+
+5. **The ladder is real.** With **no film loaded**, where the level is uniform,
+   check each pass's median tracks its requested ratio. A timer wrap shows up at
+   once as a pass coming back darker than the one below it. Report requested
+   versus achieved for all N, and assert no two passes landed on the same
+   exposure.
+6. **The deciding measurement.** Densest 10% of a real negative, per-channel
+   standard deviation: single metered pass, N=2, N=5, N=9. Expect the direction
+   TobbyTravel measured — meaningfully better at 5 than at 2. **Also report
+   against N averaged passes at one exposure**, so the honest comparison against
+   plain multi-sampling is on the record. If the merge does not beat both, the
+   feature does not ship, and that is a legitimate outcome.
+
+**Then Phase 2:**
+
+7. **Infrared is unaffected.** The merged RGB is unchanged whether or not one
+   pass carried infrared, and the infrared plane still correlates weakly with the
+   visible channels.
+8. **Time matches the table above**, measured.
+
+**Throughout:** `tools/library.py verify` and `reconstruct` clean; the three
+comparison TIFFs plus a 100% crop of a dense region, single pass beside merge —
+a downscaled preview cannot show shadow noise, and Stefan's read decides.
