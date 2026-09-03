@@ -238,3 +238,92 @@ def test_columns_are_matched_by_position_not_by_width_ratio():
 def test_every_channel_is_mapped():
     ref = np.stack([np.linspace(0, 1, 50)] * 3, axis=-1)
     assert resample_reference(ref, FULL, 25, FULL).shape == (25, 3)
+
+
+# --- the film's own edge is not a defect ------------------------------------
+
+
+def frame_with_film_edge(edge=30, clear=40000, film=16000, height=HEIGHT, width=WIDTH):
+    """A prescan's shape: clear aperture, a step, then film.
+
+    The step reads identically in every row, which is exactly the signature a
+    column defect has -- so consistency down the frame cannot tell them apart.
+    """
+    rng = np.random.default_rng(7)
+    out = np.empty((height, width, 3), np.float64)
+    for c, tint in enumerate((1.00, 0.99, 0.75)):     # the film's own cast
+        col = np.where(np.arange(width) < edge, clear, film) * tint
+        out[..., c] = col[None, :] + rng.normal(0, 60, (height, width))
+    return np.clip(out, 0, 65535).astype(np.uint16)
+
+
+def test_a_run_spanning_the_film_edge_is_refused():
+    """Interpolating across it replaces the edge with a straight line."""
+    image = frame_with_film_edge()
+    mask = np.zeros((WIDTH, 3), bool)
+    mask[11:44, :] = True                              # a run straddling the edge
+    assert np.array_equal(destripe(image, mask, dilate=0), image)
+
+
+def test_the_refusal_does_not_depend_on_reaching_column_zero():
+    """The bug this guards: whether a run happened to touch column 0 decided
+    whether that channel was flattened, so one channel kept the real edge and
+    the others did not -- and the frame ended in a coloured fringe."""
+    image = frame_with_film_edge()
+    mask = np.zeros((WIDTH, 3), bool)
+    mask[0:44, 1] = True       # reaches column 0: the old frame-edge guard fired
+    mask[11:44, 0] = True      # does not reach it: the old code flattened this
+    mask[6:51, 2] = True       # nor this
+    fixed = destripe(image, mask, dilate=0)
+    assert np.array_equal(fixed, image), "every channel must be left alone alike"
+
+
+def test_the_edge_stays_a_step_rather_than_becoming_a_ramp():
+    image = frame_with_film_edge(edge=30)
+    mask = np.zeros((WIDTH, 3), bool)
+    mask[11:44, 0] = True
+    prof = np.median(destripe(image, mask, dilate=0)[..., 0], axis=0)
+    # A straight interpolation would make consecutive differences equal; a step
+    # keeps almost all of the change in one place.
+    steps = np.abs(np.diff(prof[11:44]))
+    assert steps.max() > 20 * np.median(steps)
+
+
+def test_no_coloured_fringe_survives_at_the_edge():
+    """The property the eye actually sees: no channel departs from the others."""
+    image = frame_with_film_edge()
+    mask = np.zeros((WIDTH, 3), bool)
+    mask[0:44, 1] = True
+    mask[11:44, 0] = True
+    mask[6:51, 2] = True
+    fixed = destripe(image, mask, dilate=0).astype(np.float64)
+
+    # each channel's departure from the mean of the three, signed and relative
+    prof = np.median(fixed, axis=0)
+    ratio = prof / np.maximum(np.median(image.astype(np.float64), axis=0), 1)
+    spread = (ratio - ratio.mean(axis=1, keepdims=True))[:60]
+    assert np.abs(spread).max() < 0.01, (
+        f"channels were rescaled differently across the edge by up to "
+        f"{100 * np.abs(spread).max():.1f}%"
+    )
+
+
+def test_a_real_defect_on_a_smooth_profile_is_still_corrected():
+    """The guard must refuse edges without refusing the defects it exists for."""
+    clean = picture()
+    striped = with_stripe(clean, 150, 1, strength=0.90)
+    mask = np.zeros((WIDTH, 3), bool)
+    mask[150, 1] = True
+    fixed = destripe(striped, mask)
+    before = abs(float(striped[:, 150, 1].mean()) - float(clean[:, 150, 1].mean()))
+    after = abs(float(fixed[:, 150, 1].mean()) - float(clean[:, 150, 1].mean()))
+    assert after < 0.25 * before
+
+
+def test_a_defect_beside_the_edge_but_not_spanning_it_is_still_corrected():
+    image = frame_with_film_edge(edge=30)
+    image[:, 60, 1] = (image[:, 60, 1] * 0.9).astype(np.uint16)
+    mask = np.zeros((WIDTH, 3), bool)
+    mask[60, 1] = True
+    fixed = destripe(image, mask, dilate=0)
+    assert float(fixed[:, 60, 1].mean()) > float(image[:, 60, 1].mean()) * 1.05
