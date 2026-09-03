@@ -128,7 +128,33 @@ def _load_libusb() -> ctypes.CDLL:
     )
 
 
-_lib = _load_libusb()
+class _LazyLib:
+    """Loads the shared library on first use, not on import.
+
+    Host-side work -- decoding a stored scan, merging a bracket, writing a
+    TIFF -- touches no device, and used to be impossible on a machine
+    without libusb because importing this module loaded it.
+
+    Every call site keeps its plain ``_lib.name(...)`` form: the proxy forwards
+    once the library is open, and raises the loader's own OSError -- naming what
+    to install -- at the moment something actually needs the device.
+    """
+
+    def __init__(self, load):
+        self._load = load
+        self._lib = None
+
+    def _resolve(self):
+        if self._lib is None:
+            self._lib = self._load()
+            _declare(self._lib)
+        return self._lib
+
+    def __getattr__(self, name):
+        return getattr(self._resolve(), name)
+
+
+_lib = _LazyLib(_load_libusb)
 
 
 class _EndpointDescriptor(ctypes.Structure):
@@ -190,54 +216,56 @@ _ctx_p = ctypes.c_void_p
 _dev_p = ctypes.c_void_p
 _handle_p = ctypes.c_void_p
 
-_lib.libusb_init.argtypes = [ctypes.POINTER(_ctx_p)]
-_lib.libusb_init.restype = ctypes.c_int
-_lib.libusb_exit.argtypes = [_ctx_p]
-_lib.libusb_exit.restype = None
-_lib.libusb_open_device_with_vid_pid.argtypes = [
-    _ctx_p, ctypes.c_uint16, ctypes.c_uint16
-]
-_lib.libusb_open_device_with_vid_pid.restype = _handle_p
-_lib.libusb_close.argtypes = [_handle_p]
-_lib.libusb_close.restype = None
-_lib.libusb_claim_interface.argtypes = [_handle_p, ctypes.c_int]
-_lib.libusb_claim_interface.restype = ctypes.c_int
-_lib.libusb_release_interface.argtypes = [_handle_p, ctypes.c_int]
-_lib.libusb_release_interface.restype = ctypes.c_int
-_lib.libusb_reset_device.argtypes = [_handle_p]
-_lib.libusb_reset_device.restype = ctypes.c_int
-_lib.libusb_clear_halt.argtypes = [_handle_p, ctypes.c_ubyte]
-_lib.libusb_clear_halt.restype = ctypes.c_int
-_lib.libusb_get_device.argtypes = [_handle_p]
-_lib.libusb_get_device.restype = _dev_p
-_lib.libusb_get_active_config_descriptor.argtypes = [
-    _dev_p, ctypes.POINTER(ctypes.POINTER(_ConfigDescriptor))
-]
-_lib.libusb_get_active_config_descriptor.restype = ctypes.c_int
-_lib.libusb_free_config_descriptor.argtypes = [ctypes.POINTER(_ConfigDescriptor)]
-_lib.libusb_free_config_descriptor.restype = None
-_lib.libusb_control_transfer.argtypes = [
-    _handle_p,
-    ctypes.c_uint8,
-    ctypes.c_uint8,
-    ctypes.c_uint16,
-    ctypes.c_uint16,
-    ctypes.POINTER(ctypes.c_ubyte),
-    ctypes.c_uint16,
-    ctypes.c_uint,
-]
-_lib.libusb_control_transfer.restype = ctypes.c_int
-_lib.libusb_bulk_transfer.argtypes = [
-    _handle_p,
-    ctypes.c_ubyte,
-    ctypes.POINTER(ctypes.c_ubyte),
-    ctypes.c_int,
-    ctypes.POINTER(ctypes.c_int),
-    ctypes.c_uint,
-]
-_lib.libusb_bulk_transfer.restype = ctypes.c_int
-_lib.libusb_error_name.argtypes = [ctypes.c_int]
-_lib.libusb_error_name.restype = ctypes.c_char_p
+def _declare(lib: ctypes.CDLL) -> None:
+    """Argument and return types, applied once the library is open."""
+    lib.libusb_init.argtypes = [ctypes.POINTER(_ctx_p)]
+    lib.libusb_init.restype = ctypes.c_int
+    lib.libusb_exit.argtypes = [_ctx_p]
+    lib.libusb_exit.restype = None
+    lib.libusb_open_device_with_vid_pid.argtypes = [
+        _ctx_p, ctypes.c_uint16, ctypes.c_uint16
+    ]
+    lib.libusb_open_device_with_vid_pid.restype = _handle_p
+    lib.libusb_close.argtypes = [_handle_p]
+    lib.libusb_close.restype = None
+    lib.libusb_claim_interface.argtypes = [_handle_p, ctypes.c_int]
+    lib.libusb_claim_interface.restype = ctypes.c_int
+    lib.libusb_release_interface.argtypes = [_handle_p, ctypes.c_int]
+    lib.libusb_release_interface.restype = ctypes.c_int
+    lib.libusb_reset_device.argtypes = [_handle_p]
+    lib.libusb_reset_device.restype = ctypes.c_int
+    lib.libusb_clear_halt.argtypes = [_handle_p, ctypes.c_ubyte]
+    lib.libusb_clear_halt.restype = ctypes.c_int
+    lib.libusb_get_device.argtypes = [_handle_p]
+    lib.libusb_get_device.restype = _dev_p
+    lib.libusb_get_active_config_descriptor.argtypes = [
+        _dev_p, ctypes.POINTER(ctypes.POINTER(_ConfigDescriptor))
+    ]
+    lib.libusb_get_active_config_descriptor.restype = ctypes.c_int
+    lib.libusb_free_config_descriptor.argtypes = [ctypes.POINTER(_ConfigDescriptor)]
+    lib.libusb_free_config_descriptor.restype = None
+    lib.libusb_control_transfer.argtypes = [
+        _handle_p,
+        ctypes.c_uint8,
+        ctypes.c_uint8,
+        ctypes.c_uint16,
+        ctypes.c_uint16,
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_uint16,
+        ctypes.c_uint,
+    ]
+    lib.libusb_control_transfer.restype = ctypes.c_int
+    lib.libusb_bulk_transfer.argtypes = [
+        _handle_p,
+        ctypes.c_ubyte,
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_uint,
+    ]
+    lib.libusb_bulk_transfer.restype = ctypes.c_int
+    lib.libusb_error_name.argtypes = [ctypes.c_int]
+    lib.libusb_error_name.restype = ctypes.c_char_p
 
 
 def _err(code: int) -> str:
