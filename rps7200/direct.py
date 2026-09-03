@@ -796,7 +796,6 @@ def film_bounds(
 def registration(
     image: np.ndarray,
     full_frame: tuple[int, int, int, int] = FULL_FRAME,
-    threshold: float = 0.25,
 ) -> dict[str, float | int]:
     """Where the picture sits in the transport window, from a prescan.
 
@@ -888,6 +887,18 @@ SLIDE_RELOAD = 0x40
 #: Scanner coordinates are in units of 1/7200 inch.
 COORD_PER_INCH = 7200
 MM_PER_INCH = 25.4
+
+
+def _is_unity(scale: float | Sequence[float]) -> bool:
+    """Whether an exposure scale asks for no change at all.
+
+    A per-channel scale is a list, and ``[1.0, 1.0, 1.0] != 1.0`` is always
+    True, so comparing against the number alone reported every metered scan as
+    rescaled.
+    """
+    if isinstance(scale, (int, float)):
+        return float(scale) == 1.0
+    return all(float(v) == 1.0 for v in scale)
 
 
 def _cmd(opcode: int, size: int) -> bytes:
@@ -2229,7 +2240,7 @@ class DirectScanner:
         # scanning exposures, not the power-on defaults.
         settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings)
-        if exposure_scale != 1.0:
+        if not _is_unity(exposure_scale):
             self._log(f"calibrating at {settings.describe()}")
 
         self.set_mode(
@@ -2754,7 +2765,7 @@ class DirectScanner:
 
         settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings, infrared=infrared)
-        if exposure_scale != 1.0:
+        if not _is_unity(exposure_scale):
             shown = (
                 f"x{exposure_scale:g}"
                 if isinstance(exposure_scale, (int, float))
@@ -2847,9 +2858,7 @@ class DirectScanner:
             "film": film,
             "protocol_revision": PROTOCOL_REVISION,
             "shading": shading_report,
-            "channel_order": [c for c in CHANNEL_ORDER][:channels]
-            if not infrared
-            else list(CHANNEL_ORDER),
+            "channel_order": list(CHANNEL_ORDER[:channels]),
             "depth": 16 if depth == DEPTH_16 else 8,
             "frame": list(frame),
             "width": int(params.width),

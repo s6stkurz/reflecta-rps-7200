@@ -231,3 +231,23 @@ def test_scaling_by_one_does_not_share_the_gain_and_offset_lists():
     same = base.scaled(1.0)
     same.gain[0] = 99
     assert base.gain[0] != 99
+
+
+@pytest.mark.parametrize(
+    "scale, unity",
+    [
+        (1.0, True),
+        (1, True),
+        (2.0, False),
+        ([1.0, 1.0, 1.0], True),
+        ([1.0, 1.0, 1.0, 1.0], True),
+        ([1.0, 2.0, 1.0], False),
+        ([0.5, 0.5, 0.5], False),
+    ],
+)
+def test_a_per_channel_scale_of_ones_asks_for_no_change(scale, unity):
+    """`[1.0, 1.0, 1.0] != 1.0` is always True, so every metered scan reported
+    itself as rescaled."""
+    from rps7200.direct import _is_unity
+
+    assert _is_unity(scale) is unity
