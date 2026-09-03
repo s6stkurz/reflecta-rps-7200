@@ -4,6 +4,21 @@ State at 0.1.0. Grouped by what it needs, because most of the remaining work
 does **not** need the scanner — the library keeps every scan's raw bytes and
 calibration, so decode and correction changes can be re-run offline.
 
+## Waiting on the scanner
+
+Everything here is finished, tested and merged; only a run on the hardware is
+outstanding. None of it blocks anything. One session of about twenty minutes
+covers the lot, and it has to be one session because a shading reference belongs
+to the power-on that measured it.
+
+- `tools/scan.py --dpi 600 --bracket 3` — the bracket path end to end. Film
+  loaded. ~4 min calibration plus ~3 min.
+- `tools/scan_roll.py --frames 3 --dpi 600` — the frame writer, which now files
+  each frame on its own thread rather than with the session open and idle. Strip
+  loaded, ~6 min.
+- `tools/scan_roll.py --dry-run --frames 6` — the advance path alone, ~2.5 min.
+- `tools/scan.py --dpi 600 --reuse` — that a cached reference is restored.
+
 ## Known problems
 
 - **Drift in roll scans — the blocker for unattended rolls.** The inter-frame
@@ -110,12 +125,16 @@ driver for Nikon Coolscans:
   (The variance-based `detect_frame` this item used to name has been deleted;
   it was documented as unreliable and nothing called it.)
 
+## Measured and left alone
+
+- **`library.save()` reindexes the whole library on every write.** Genuinely
+  quadratic across a roll, and not worth fixing: at 400 entries the rebuild is
+  34 ms against a real save's 1.7 s at 1800 dpi and several times that at 3600,
+  so it is under 2% of the cost. An append path that can drift out of step with
+  the rebuild would buy nothing.
+
 ## Decided against
 
-- **Multi-exposure** — `docs/multi-exposure-plan.md`. The 16-bit exposure timer
-  caps the long pass at ~1.23x on blue, worth +0.09 density, while averaging
-  two passes gives 1.41x. Multi-sampling beats it from the first pass. And this
-  scanner already out-ranges colour negative film by about a full density.
 - **IR dust removal** — NegPy does it, and does it well. The point of this
   driver is handing the infrared plane over untouched.
 
