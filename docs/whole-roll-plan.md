@@ -375,6 +375,56 @@ Action `0x03` is new, seen once, and is the last command of the session.
 - Every frame gets two full-window 300 dpi RGB prescans, `0,0 -> 10343,6887` and
   `0,1 -> 10343,6888`, before its advance. Unchanged from the earlier captures.
 
+## Measured: seven slides, and the bound that makes the measure honest
+
+A metered 300 dpi pass over slides 1-7, film edge located by the **orange mask**
+rather than by brightness: the mask lives in the base, so film reads R/B ~ 1.2-1.3
+while an empty aperture reads ~1.0. That is content-independent, unlike every
+brightness threshold tried before it, all of which mistook a bright picture region
+for a gap at least once.
+
+The bound is arithmetic, not taste. The aperture is 10344 units = **36.49 mm** and
+a 35 mm frame is **36.00 mm**, so the film has **0.49 mm** of room. Drift is the
+film creeping through that slack. A reading larger than it would mean a visible
+slice of the picture was missing, so a detector reporting several millimetres is
+reporting picture content and must be rejected rather than believed.
+
+| slide | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| edge (mm) | 0.00 | 0.51 | *5.63* | *6.57* | 0.17 | 0.26 | 0.43 |
+| | ok | ok | **rejected** | **rejected** | ok | ok | ok |
+
+Accepted readings span 0.00-0.51 mm -- the whole slack -- and move `+0.51, -0.34,
++0.09, +0.17` between frames. **Bouncing, not accumulating. Over seven slides there
+is no drift.**
+
+### What this overturns
+
+The strip3 figures that started this -- an inter-frame gap walking 1 -> 10 -> 36 px,
+read as ~0.2 mm per advance -- do not survive. Those steps are 9 then 26, which is
+not the linear growth a constant per-frame error produces, and they were taken with
+a brightness detector of the kind since shown to fire on picture content. Three
+independent measurements now say the transport holds registration:
+
+- round trips repeat to **±0.03 mm** (`NEXT` then `PREV`, n=6), so backlash is
+  negligible
+- `SLIDE_NEXT` value 1 vs value 2 differ by **less than 0.05 mm**, so the byte the
+  vendor alternates is not a vernier and this driver hardcoding 1 costs nothing
+- seven slides stay inside **0.49 mm** with no trend
+
+CyberView running 17 frames unattended, sending no correction command of any kind,
+fits the same picture.
+
+### The lesson worth keeping
+
+Every detector written for this in one afternoon -- variance-thresholded, level
+thresholded, level-and-flatness, mask-ratio -- reported a confident number that was
+wrong at least once, and each was corrected only by looking at the frame. What
+finally made the measure trustworthy was not a better threshold but a *physical
+bound*: knowing that the answer cannot exceed 0.49 mm turns an unbounded number
+into one that can be checked. Bound a measurement by what the hardware allows
+before tuning what it detects.
+
 ## Open — what `tools/transport_probe.py` answers
 
 Run it on a strip you do not mind handling; it sends commands this scanner has never been
