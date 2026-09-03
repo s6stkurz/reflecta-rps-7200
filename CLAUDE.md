@@ -93,10 +93,11 @@ the film does not cover -- so the sensor is measured, not the film, with the str
 still in. Calibrating an empty transport is a state the vendor never creates, and
 doing it once preceded a wedge.
 
-`READ_STATE` cannot be used to check. Byte 6 reads `0x1d` idle and `0x9d` scanning in
-the power-on capture, and the `0x40` "media present" bit is never set in any of its 155
-responses. There is no way to ask the scanner whether film is loaded: only Stefan can
-see the transport, so ask him.
+`READ_STATE` is not a substitute for asking. Its `0x40` "media present" bit did track
+the film here -- `0x0d` empty, `0x4d` loaded, one variable changed -- but it is clear
+throughout the vendor's power-on capture and has read clear with film demonstrably
+loaded, so a set bit is evidence and a clear one is not. Only Stefan can see the
+transport. Ask him.
 
 ## Ask before driving the scanner
 
