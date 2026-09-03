@@ -796,7 +796,6 @@ def film_bounds(
 def registration(
     image: np.ndarray,
     full_frame: tuple[int, int, int, int] = FULL_FRAME,
-    threshold: float = 0.25,
 ) -> dict[str, float | int]:
     """Where the picture sits in the transport window, from a prescan.
 
@@ -888,6 +887,18 @@ SLIDE_RELOAD = 0x40
 #: Scanner coordinates are in units of 1/7200 inch.
 COORD_PER_INCH = 7200
 MM_PER_INCH = 25.4
+
+
+def _is_unity(scale: float | Sequence[float]) -> bool:
+    """Whether an exposure scale asks for no change at all.
+
+    A per-channel scale is a list, and ``[1.0, 1.0, 1.0] != 1.0`` is always
+    True, so comparing against the number alone reported every metered scan as
+    rescaled.
+    """
+    if isinstance(scale, (int, float)):
+        return float(scale) == 1.0
+    return all(float(v) == 1.0 for v in scale)
 
 
 def _cmd(opcode: int, size: int) -> bytes:
@@ -1120,10 +1131,12 @@ class Settings:
         R, G, B, I order -- the channels need very different exposures, most
         obviously blue, which saturates far sooner than the rest with no film
         in the transport.
+
+        Always a new object, including at a factor of 1.0. Returning self there
+        aliases the caller's settings to the device's, so a later edit to one
+        silently moves the other.
         """
         if isinstance(factor, (int, float)):
-            if factor == 1.0:
-                return self
             factors = [float(factor)] * len(self.exposure)
         else:
             factors = list(factor)
@@ -2046,7 +2059,6 @@ class DirectScanner:
             infrared=False,
             depth=DEPTH_8,
             frame=frame or FULL_FRAME,
-            prescan=False,
             shading=False,
         )
         params = ScanParameters(
@@ -2228,7 +2240,7 @@ class DirectScanner:
         # scanning exposures, not the power-on defaults.
         settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings)
-        if exposure_scale != 1.0:
+        if not _is_unity(exposure_scale):
             self._log(f"calibrating at {settings.describe()}")
 
         self.set_mode(
@@ -2430,16 +2442,17 @@ class DirectScanner:
                     f"{'RGBI'[c]}={levels[c]:.0%}" for c in range(len(levels))
                 )
             )
-            aims = [target] * len(levels)
-            if infrared and len(aims) > 2:
-                aims[2] = target / max(1.0, infrared_blue_headroom)
-            if all(abs(v - a) <= tolerance for v, a in zip(levels, aims)):
-                break
-
-            visible = levels[:3]
+            # Blue's target is the one that moves: it comes back 2-3.7x
+            # brighter in an RGBI pass than in the RGB probe at the same
+            # exposure, so a blue metered to fill the range here clips there.
             targets = [target] * len(levels)
             if infrared and len(targets) > 2:
                 targets[2] = target / max(1.0, infrared_blue_headroom)
+
+            if all(abs(v - t) <= tolerance for v, t in zip(levels, targets)):
+                break
+
+            visible = levels[:3]
             for c, level in enumerate(levels):
                 if c >= len(scales):
                     break
@@ -2669,7 +2682,6 @@ class DirectScanner:
         frame: tuple[int, int, int, int] | None = None,
         advance: bool = False,
         require_media: bool = True,
-        prescan: bool = False,
         exposure_scale: float | Sequence[float] = 1.0,
         auto_exposure: bool = False,
         exposure_target: float = 0.7,
@@ -2753,7 +2765,7 @@ class DirectScanner:
 
         settings = self.get_gain_offset().scaled(exposure_scale)
         self.set_gain_offset(settings, infrared=infrared)
-        if exposure_scale != 1.0:
+        if not _is_unity(exposure_scale):
             shown = (
                 f"x{exposure_scale:g}"
                 if isinstance(exposure_scale, (int, float))
@@ -2846,9 +2858,7 @@ class DirectScanner:
             "film": film,
             "protocol_revision": PROTOCOL_REVISION,
             "shading": shading_report,
-            "channel_order": [c for c in CHANNEL_ORDER][:channels]
-            if not infrared
-            else list(CHANNEL_ORDER),
+            "channel_order": list(CHANNEL_ORDER[:channels]),
             "depth": 16 if depth == DEPTH_16 else 8,
             "frame": list(frame),
             "width": int(params.width),
