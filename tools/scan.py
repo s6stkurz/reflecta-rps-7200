@@ -44,6 +44,14 @@ def main() -> int:
     ap.add_argument("--no-shading", action="store_true",
                     help="return raw pixels, for comparison")
     ap.add_argument("--auto-exposure", action="store_true")
+    ap.add_argument("--bracket", type=int, default=0, metavar="N",
+                    help="scan N exposures of this frame (2-9) and merge them by "
+                         "inverse-variance weighting, for lower shadow noise. "
+                         "Infrared is not bracketed: one pass carries it")
+    ap.add_argument("--stops", type=float, default=2.0,
+                    help="how far the bracket spans, in stops (default 2). The "
+                         "top is pinned to the exposure timer's ceiling and the "
+                         "rest step down from it")
     ap.add_argument("--exposure-scale", default=None, metavar="X|R,G,B[,I]",
                     help="hold exposure at this multiple of the scanner's own "
                          "settings instead of metering. One value, or one per "
@@ -133,6 +141,9 @@ def main() -> int:
                 reference=s._shading, ccd_mask=s._ccd_mask,
                 raw=s.last_raw, raw_layout=s.last_raw_layout, inquiry=info,
             )
+        # Only the last pass's raw bytes survive on the scanner object, so a
+        # bracket has to be filed pass by pass as it is captured. That is done
+        # inside scan_bracket's caller below rather than here.
 
     entry = None
     if pending is not None:
@@ -144,6 +155,22 @@ def main() -> int:
             tags=args.tags,
             **pending,
         )
+
+    if bracket is not None:
+        from rps7200.bracket import merge_bracket
+        frames, ratios, metas = bracket
+        merged, stats = merge_bracket([f[..., :3] for f in frames], ratios)
+        print(f"bracket: {stats.describe()}")
+        if args.ir and frames[-1].shape[2] == 4:
+            # The infrared pass is the brightest; carry its plane through.
+            image = np.dstack([merged, frames[-1][..., 3]])
+        else:
+            image = merged
+        meta = dict(metas[-1])
+        meta["bracket"] = {
+            "passes": len(frames), "ratios": ratios,
+            "stops": args.stops, "stats": stats.describe(),
+        }
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

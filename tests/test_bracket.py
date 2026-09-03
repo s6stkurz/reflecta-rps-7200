@@ -202,3 +202,75 @@ def test_noise_params_are_recovered_from_flats():
 
 def test_too_few_flats_falls_back_to_the_defaults():
     assert fit_noise_params([]) == (DEFAULT_ALPHA, DEFAULT_BETA)
+
+
+# --- the ladder -------------------------------------------------------------
+
+class FakeLadder:
+    """Just enough DirectScanner to exercise bracket_ladder."""
+    from rps7200.direct import DirectScanner
+    bracket_ladder = DirectScanner.bracket_ladder
+    MIN_BRACKET_PASSES = DirectScanner.MIN_BRACKET_PASSES
+    MAX_BRACKET_PASSES = DirectScanner.MAX_BRACKET_PASSES
+
+    def __init__(self, exposure=(9604, 6506, 6506, 7745)):
+        from rps7200.direct import Settings
+        self.verbose = False
+        self._settings = Settings(exposure=list(exposure), gain=[39, 33, 21, 21],
+                                  offset=[12, 11, 30, 11])
+
+    def _log(self, msg): pass
+    def get_gain_offset(self): return self._settings
+
+
+def test_the_ladder_never_exceeds_the_16_bit_timer():
+    """Past 65535 the timer wraps and the pass comes back darker, not brighter."""
+    s = FakeLadder()
+    metered = [2.88, 6.03, 2.60]
+    ladder = s.bracket_ladder(metered, passes=9, stops=2.0)
+    base = s.get_gain_offset().exposure
+    for k in ladder:
+        for c in range(3):
+            assert base[c] * metered[c] * k <= 65535 + 1e-6, (
+                f"x{k:.3f} would put channel {'RGB'[c]} at "
+                f"{base[c] * metered[c] * k:.0f}"
+            )
+
+
+def test_the_ladder_is_geometric_and_ascending():
+    s = FakeLadder()
+    ladder = s.bracket_ladder([2.88, 6.03, 2.60], passes=5, stops=2.0)
+    assert len(ladder) == 5
+    assert all(b > a for a, b in zip(ladder, ladder[1:])), ladder
+    steps = [b / a for a, b in zip(ladder, ladder[1:])]
+    assert max(steps) - min(steps) < 1e-6, f"not geometric: {steps}"
+    assert ladder[-1] / ladder[0] == pytest.approx(4.0), "2 stops is a factor of 4"
+
+
+def test_no_two_passes_land_on_the_same_exposure():
+    s = FakeLadder()
+    base = s.get_gain_offset().exposure
+    metered = [2.88, 6.03, 2.60]
+    ladder = s.bracket_ladder(metered, passes=9, stops=2.0)
+    applied = [
+        tuple(int(max(100, min(65535, round(base[c] * metered[c] * k)))) for c in range(3))
+        for k in ladder
+    ]
+    assert len(set(applied)) == len(applied), f"duplicate exposures: {applied}"
+
+
+@pytest.mark.parametrize("n", [0, 1, 10, 20])
+def test_bracket_size_is_refused_outside_2_to_9(n):
+    s = FakeLadder()
+    with pytest.raises(ValueError, match="2 to 9 passes"):
+        s.bracket_ladder([1.0, 1.0, 1.0], passes=n)
+
+
+def test_a_metered_exposure_already_at_the_rail_still_gives_a_ladder():
+    """Blue reaches the ceiling on some negatives; the bracket must go down."""
+    s = FakeLadder()
+    ladder = s.bracket_ladder([2.88, 10.07, 10.07], passes=3, stops=1.0)
+    # green sits at 65515 of 65535, so there is essentially nowhere up to go
+    assert ladder[-1] == pytest.approx(1.0, abs=0.01)
+    assert ladder[0] == pytest.approx(0.5, abs=0.01)
+    assert ladder[-1] / ladder[0] == pytest.approx(2.0, rel=1e-6)

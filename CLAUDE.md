@@ -40,6 +40,22 @@ content: the same metric read 96-169% on a frame with hard vertical edges and
 sensor defect sits at a fixed sensor column across *different film positions*;
 picture content does not. Two entries from different frames settle it.
 
+## Ask before driving the scanner
+
+**Presence is not permission.** Finding the device on the bus says only that it
+is plugged in — not that it is warm, not that the transport holds what you
+think, and not that now is a good moment. Confirm with Stefan before a scan,
+a calibration or anything else that moves the mechanism, especially after a
+gap. A scan costs minutes of his hardware; a wedge costs a power cycle.
+
+Checking `inquiry()` or `read_state()` to answer "is it there" is fine. Going
+straight from that into a capture is not.
+
+Say what the run will cost in time and what it is for, then wait. If the
+transport's contents matter to the result — an empty transport for a ladder
+check, film loaded for a real scan — ask rather than assume, because only he
+can see it.
+
 ## The scanner wedges
 
 It needs a power cycle afterwards, so avoid these:
