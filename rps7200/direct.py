@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import numpy as np
@@ -2593,6 +2593,8 @@ class DirectScanner:
         exposure_scale: Sequence[float] | None = None,
         keep_raw: bool = True,
         shading: bool = True,
+        on_pass: Callable[[int, np.ndarray, dict[str, Any], dict[str, Any]], None]
+        | None = None,
     ) -> tuple[list[np.ndarray], list[float], list[dict[str, Any]]]:
         """Scan one frame several times at different exposures.
 
@@ -2606,6 +2608,13 @@ class DirectScanner:
         constant the vendor never meters, so bracketing it would multiply the
         scan time for nothing. With ``infrared`` set, one pass -- the brightest,
         which carries the most signal -- is taken as RGBI and the rest as RGB.
+
+        ``on_pass(index, image, meta, capture)`` is called as each pass lands,
+        with that pass's :meth:`capture_record`. It exists because only one
+        pass's raw bytes survive on the scanner: ``last_raw`` is overwritten by
+        the pass after it, so a caller that waits for the return value can file
+        the last pass and no other. Do no heavy work in it -- the session is
+        open and the next pass is about to start.
         """
         if not self.MIN_BRACKET_PASSES <= passes <= self.MAX_BRACKET_PASSES:
             raise ValueError(
@@ -2648,6 +2657,8 @@ class DirectScanner:
             frames.append(image)
             ratios.append(float(k))
             metas.append(meta)
+            if on_pass is not None:
+                on_pass(i, image, meta, self.capture_record())
         return frames, ratios, metas
 
     def scan(
