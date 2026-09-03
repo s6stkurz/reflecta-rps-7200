@@ -53,8 +53,12 @@ make test-all
 
 ## Use
 
-One calibration per power-on, then scan. Power the scanner on with **no film loaded**,
-wait for the lamp (about 80 s), then:
+One calibration per power-on, then scan. **Load the film first**, wait for the lamp
+(about 80 s), then calibrate and scan without unloading it -- CyberView does everything
+with the film in the transport, and calibrating an empty one is a state the vendor
+software never puts the scanner in. The calibration still measures the sensor rather
+than the film: its frame is `(0, 3431, 10343, 6888)`, the lower part of the transport,
+which the film does not cover.
 
 ```sh
 # calibrate, scan, correct, and file the result with its raw bytes
