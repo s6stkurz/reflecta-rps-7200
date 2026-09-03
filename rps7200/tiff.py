@@ -18,7 +18,8 @@ implementations against each other.
 from __future__ import annotations
 
 import struct
-from typing import BinaryIO
+from collections.abc import Sequence
+from typing import BinaryIO, cast
 
 import numpy as np
 
@@ -145,19 +146,26 @@ def _write_builtin(
     # resolved once the entry count is known, since it sets the IFD's size.
     fields: list[tuple[int, int, int, bytes]] = []
 
-    def add(tag: int, ftype: int, values: list[int] | bytes) -> None:
+    # A TIFF value is a string, a list of integers, or -- for RATIONAL -- a list
+    # of numerator/denominator pairs. The three are spelled out rather than
+    # narrowed with a cast, so the reader can see which shape each tag sends.
+    def add(
+        tag: int,
+        ftype: int,
+        values: bytes | Sequence[int] | Sequence[tuple[int, int]],
+    ) -> None:
         if ftype == _ASCII:
-            payload = bytes(values)
-            count = len(payload)
+            assert isinstance(values, bytes)
+            payload, count = values, len(values)
         elif ftype == _RATIONAL:
-            payload = b"".join(
-                struct.pack("<II", num, den) for num, den in values  # type: ignore[misc]
-            )
-            count = len(values)
+            pairs = cast("Sequence[tuple[int, int]]", values)
+            payload = b"".join(struct.pack("<II", num, den) for num, den in pairs)
+            count = len(pairs)
         else:
             fmt = "<H" if ftype == _SHORT else "<I"
-            payload = b"".join(struct.pack(fmt, v) for v in values)  # type: ignore[arg-type]
-            count = len(values)
+            words = cast("Sequence[int]", values)
+            payload = b"".join(struct.pack(fmt, v) for v in words)
+            count = len(words)
         fields.append((tag, ftype, count, payload))
 
     strip_offsets = []
