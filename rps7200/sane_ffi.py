@@ -209,7 +209,33 @@ def _load() -> ctypes.CDLL:
     )
 
 
-lib = _load()
+class _LazyLib:
+    """Loads the shared library on first use, not on import.
+
+    `import rps7200` reaches this module through `device`, so without this
+    the whole package was unimportable on a machine with no libsane --
+    including the parts that never touch SANE at all.
+
+    Every call site keeps its plain ``lib.name(...)`` form: the proxy forwards
+    once the library is open, and raises the loader's own OSError -- naming what
+    to install -- at the moment something actually needs the device.
+    """
+
+    def __init__(self, load):
+        self._load = load
+        self._lib = None
+
+    def _resolve(self):
+        if self._lib is None:
+            self._lib = self._load()
+            _declare(self._lib)
+        return self._lib
+
+    def __getattr__(self, name):
+        return getattr(self._resolve(), name)
+
+
+lib = _LazyLib(_load)
 
 # ---------------------------------------------------------------------------
 # Prototypes
@@ -219,55 +245,57 @@ _AuthCallback = ctypes.CFUNCTYPE(
     None, SANE_String_Const, ctypes.c_char_p, ctypes.c_char_p
 )
 
-lib.sane_init.argtypes = [ctypes.POINTER(SANE_Int), ctypes.c_void_p]
-lib.sane_init.restype = ctypes.c_int
+def _declare(_l: ctypes.CDLL) -> None:
+    """Argument and return types, applied once the library is open."""
+    _l.sane_init.argtypes = [ctypes.POINTER(SANE_Int), ctypes.c_void_p]
+    _l.sane_init.restype = ctypes.c_int
 
-lib.sane_exit.argtypes = []
-lib.sane_exit.restype = None
+    _l.sane_exit.argtypes = []
+    _l.sane_exit.restype = None
 
-lib.sane_get_devices.argtypes = [
-    ctypes.POINTER(ctypes.POINTER(ctypes.POINTER(SANE_Device))),
-    SANE_Bool,
-]
-lib.sane_get_devices.restype = ctypes.c_int
+    _l.sane_get_devices.argtypes = [
+        ctypes.POINTER(ctypes.POINTER(ctypes.POINTER(SANE_Device))),
+        SANE_Bool,
+    ]
+    _l.sane_get_devices.restype = ctypes.c_int
 
-lib.sane_open.argtypes = [SANE_String_Const, ctypes.POINTER(SANE_Handle)]
-lib.sane_open.restype = ctypes.c_int
+    _l.sane_open.argtypes = [SANE_String_Const, ctypes.POINTER(SANE_Handle)]
+    _l.sane_open.restype = ctypes.c_int
 
-lib.sane_close.argtypes = [SANE_Handle]
-lib.sane_close.restype = None
+    _l.sane_close.argtypes = [SANE_Handle]
+    _l.sane_close.restype = None
 
-lib.sane_get_option_descriptor.argtypes = [SANE_Handle, SANE_Int]
-lib.sane_get_option_descriptor.restype = ctypes.POINTER(SANE_Option_Descriptor)
+    _l.sane_get_option_descriptor.argtypes = [SANE_Handle, SANE_Int]
+    _l.sane_get_option_descriptor.restype = ctypes.POINTER(SANE_Option_Descriptor)
 
-lib.sane_control_option.argtypes = [
-    SANE_Handle,
-    SANE_Int,
-    ctypes.c_int,
-    ctypes.c_void_p,
-    ctypes.POINTER(SANE_Int),
-]
-lib.sane_control_option.restype = ctypes.c_int
+    _l.sane_control_option.argtypes = [
+        SANE_Handle,
+        SANE_Int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.POINTER(SANE_Int),
+    ]
+    _l.sane_control_option.restype = ctypes.c_int
 
-lib.sane_get_parameters.argtypes = [SANE_Handle, ctypes.POINTER(SANE_Parameters)]
-lib.sane_get_parameters.restype = ctypes.c_int
+    _l.sane_get_parameters.argtypes = [SANE_Handle, ctypes.POINTER(SANE_Parameters)]
+    _l.sane_get_parameters.restype = ctypes.c_int
 
-lib.sane_start.argtypes = [SANE_Handle]
-lib.sane_start.restype = ctypes.c_int
+    _l.sane_start.argtypes = [SANE_Handle]
+    _l.sane_start.restype = ctypes.c_int
 
-lib.sane_read.argtypes = [
-    SANE_Handle,
-    ctypes.POINTER(SANE_Byte),
-    SANE_Int,
-    ctypes.POINTER(SANE_Int),
-]
-lib.sane_read.restype = ctypes.c_int
+    _l.sane_read.argtypes = [
+        SANE_Handle,
+        ctypes.POINTER(SANE_Byte),
+        SANE_Int,
+        ctypes.POINTER(SANE_Int),
+    ]
+    _l.sane_read.restype = ctypes.c_int
 
-lib.sane_cancel.argtypes = [SANE_Handle]
-lib.sane_cancel.restype = None
+    _l.sane_cancel.argtypes = [SANE_Handle]
+    _l.sane_cancel.restype = None
 
-lib.sane_strstatus.argtypes = [ctypes.c_int]
-lib.sane_strstatus.restype = ctypes.c_char_p
+    _l.sane_strstatus.argtypes = [ctypes.c_int]
+    _l.sane_strstatus.restype = ctypes.c_char_p
 
 
 def strstatus(status: int) -> str:
