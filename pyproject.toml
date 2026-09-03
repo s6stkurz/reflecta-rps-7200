@@ -42,6 +42,9 @@ dev = [
     # so `make test` can run the cross-implementation matrix, which needs both
     # implementations present. `make test-no-tifffile` covers the bare install.
     "tifffile>=2021.7.2",
+    # tools/make_comparison.py writes the preview PNGs Stefan judges by eye.
+    # A tool dependency, not a runtime one: the driver itself never imports it.
+    "pillow>=9",
 ]
 
 [tool.pytest.ini_options]
