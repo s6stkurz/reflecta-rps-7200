@@ -9,13 +9,13 @@ channels apart removes it.
 import numpy as np
 import pytest
 
+from conftest import settings
 from rps7200.direct import (
     FILM_BW,
     FILM_KODACHROME,
     FILM_NEGATIVE,
     FILM_POSITIVE,
     DirectScanner,
-    Settings,
     locks_white_balance,
 )
 
@@ -29,9 +29,7 @@ class FakeScanner(DirectScanner):
 
     def __init__(self, transmission, base=(8000, 20000, 50000, 8000)):
         self.verbose = False
-        self._settings = Settings(
-            exposure=list(base), gain=[40, 33, 21, 25], offset=[12, 10, 28, 10]
-        )
+        self._settings = settings(*base)
         self.transmission = transmission
         self.passes = []
 

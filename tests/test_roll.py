@@ -29,41 +29,16 @@ from rps7200.direct import (
     SLIDE_NEXT,
     NOMINAL_FRAME_WIDTH,
     DirectScanner,
-    Settings,
     film_bounds,
     frame_contrast,
     registration,
 )
-from rps7200.usb_transport import CheckCondition
+from conftest import FakeTransport, settings
 
 
 # --------------------------------------------------------------------------
 # the transport commands
 # --------------------------------------------------------------------------
-
-
-class FakeTransport:
-    """Records commands, and answers READ_STATE from a scripted position."""
-
-    def __init__(self, positions):
-        # One entry per READ_STATE; None means the read fails, which is what
-        # the scanner does on the reading right after an advance.
-        self.positions = list(positions)
-        self.sent = []
-        self.states = 0
-
-    def command(self, command, data=None, read_size=0, timeout_ms=0):
-        self.sent.append((command[0], bytes(data) if data else b""))
-        if command[0] == 0xDD:                      # READ_STATE
-            i = min(self.states, len(self.positions) - 1)
-            self.states += 1
-            position = self.positions[i]
-            if position is None:
-                raise CheckCondition(0xDD)
-            blob = bytearray(13)
-            blob[2] = position
-            return bytes(blob)
-        return b""
 
 
 def scanner_on(positions):
@@ -189,9 +164,7 @@ class FakeRoll(DirectScanner):
         # same reference however different the value just written. The roll has
         # to be right either way, so both models are exercised.
         self.echoes = echoes
-        self.reference = Settings(
-            exposure=list(base), gain=[40, 33, 21, 25], offset=[12, 10, 28, 10]
-        )
+        self.reference = settings(*base)
         self._settings = self.reference
         self.exposures = []
         self.metered_channels = []
