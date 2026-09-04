@@ -30,19 +30,28 @@ and 5.76% at 3600 -- more resolution resolves grain rather than adding noise.
 Scaled onto each other, two passes should differ only by noise. Two repeats at
 one exposure set the baseline at |z| = 1.03. Bracket passes do not hold it:
 
+The nine-pass bracket at 3600 dpi gives the curve in full:
+
 ```
-                    fitted ratio   median |z|
-1800 dpi  pass 0-2        x1.40         0.99   agrees like a repeat
-          pass 0-4        x1.97         1.19
-          pass 0-8        x3.80         1.72
-3600 dpi  pass 0-1        x1.97         1.00
-          pass 0-2        x3.83         1.41
+   pair   fitted ratio   median |z|
+  0 - 1          x1.18         0.96   agrees like a repeat
+  0 - 2          x1.40         1.03   exactly the control
+  0 - 3          x1.66         1.08
+  0 - 4          x1.97         1.20
+  0 - 5          x2.33         1.48
+  0 - 6          x2.74         1.99
+  0 - 7          x3.22         2.63
+  0 - 8          x3.66         5.60
+  repeat control                1.03
 ```
 
-Confirmed independently at both resolutions. **No transfer function removes it**
--- linear, quadratic and cubic fits leave 1.73 / 1.51 / 1.48 at x3.8, against
-the 1.03 baseline -- so the passes differ per pixel in a way that grows with the
-ratio and cannot be modelled away.
+**Agreement holds to about x1.7, degrades to x2.7, and collapses beyond.** The
+1800 dpi bracket shows the same shape (0.99 at x1.40, 1.19 at x1.97, 1.72 at
+x3.80), so this is the scanner rather than one frame or one resolution.
+
+**No transfer function removes it** -- linear, quadratic and cubic fits leave
+1.73 / 1.51 / 1.48 at x3.8 against the 1.03 baseline -- so the passes differ per
+pixel in a way that grows with the ratio and cannot be modelled away.
 
 ### The trap
 
@@ -52,10 +61,26 @@ ratio and cannot be modelled away.
   the disagreement exceeds the gain, so the merge injects more error than it
   removes.
 
-There is no span where both hold. Measured outcome: the merge lands **+3.2%**
-at 1800 dpi and **+9.8%** at 3600 where the ceiling was -3.5%. That is not a
-blending bug; it is the blend faithfully carrying a disagreement the hardware
-put there.
+There is no span where both hold. Measured outcome at 3600 dpi, nine passes:
+
+```
+candidate                 noise   vs single
+single pass (middle)      5.49%          --
+bracket N=2               9.23%      +68.2%
+bracket N=9               9.63%      +75.4%
+narrow N=3 (x1.4 span)    5.54%       +0.9%
+```
+
+The last row is the one that acquits the merge. Restricted to the three passes
+that actually agree, fusing them is **neutral** rather than harmful -- the
+blending is correct and degrades exactly as its input agreement degrades. The
++68% is not a blending bug; it is the blend faithfully carrying a disagreement
+the hardware put there. (At 1800 dpi the same comparison gives +3.2%, and the
+3-pass at 3600 gives +9.8% -- the wider the ladder reaches past x1.7, the worse
+it gets.)
+
+And neutral is still not worth having: a x1.4 bracket costs three passes and
+half a stop to break even against one, while grain caps the best case at -3.5%.
 
 ### Recommendation
 
