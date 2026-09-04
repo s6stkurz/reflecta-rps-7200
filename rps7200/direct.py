@@ -649,11 +649,16 @@ class DirectScanner:
         fast_infrared: bool = False,
         halftone_pattern: int = 0,
         line_threshold: int = 0x80,
+        byte14: int | None = None,
     ) -> None:
         """Configure the scan.
 
         ``skip_shading`` defaults to True deliberately: leaving it off is what
         sends the backend into the shading read this scanner cannot complete.
+
+        ``byte14`` overrides the last meaningful byte, whose default below is
+        known to be wrong -- see the comment there. It exists so the byte can be
+        driven directly and measured; nothing in normal operation passes it.
         """
         quality = 0
         if sharpen:
@@ -675,11 +680,18 @@ class DirectScanner:
         data[9:11] = int(quality).to_bytes(2, "little")
         data[12] = halftone_pattern if halftone_pattern else 0x02
         data[13] = line_threshold
-        # Byte 14 is 0x21 for a four-channel RGBI pass and 0x10 for RGB,
-        # from captures of the vendor software with and without infrared
-        # cleaning enabled. pieusb hardcodes 0x10 (its comment reads "?"),
-        # which is why it never yields an infrared plane.
-        data[14] = 0x21 if passes == ONE_PASS_RGBI else 0x10
+        # Byte 14 was read as "0x21 for RGBI, 0x10 for RGB" from two captures.
+        # The full set of seven refutes that: RGB passes carry 0x21 twenty-six
+        # times. What holds across all 71 MODE SELECTs is that *bit 0* tracks
+        # the scan frame's y0 shifting by one line, which is bidirectional
+        # scanning -- the carriage images going down, then coming back. The
+        # upper nibble is not explained. See docs/protocol.md section 4.
+        #
+        # The default is left alone until the hardware says what it should be;
+        # `byte14` is how that gets asked.
+        data[14] = byte14 if byte14 is not None else (
+            0x21 if passes == ONE_PASS_RGBI else 0x10
+        )
 
         self._log(
             f"mode res={resolution} passes={passes:#04x} depth={depth:#04x} "
@@ -1134,7 +1146,6 @@ class DirectScanner:
         )
         return image, params
 
-    @staticmethod
     def session_start(self) -> None:
         """Open a session the way the vendor software does after power-on.
 
@@ -1673,6 +1684,8 @@ class DirectScanner:
         shading: bool = True,
         film: str = FILM_NEGATIVE,
         keep_raw: bool = False,
+        byte14: int | None = None,
+        slide_init_param: int = 0x16,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -1765,10 +1778,11 @@ class DirectScanner:
             depth=depth,
             color_format=FORMAT_INDEX,
             skip_shading=skip_shading,
+            byte14=byte14,
         )
         self.test_unit_ready()
 
-        self.slide(SLIDE_INIT)
+        self.slide(SLIDE_INIT, param=slide_init_param)
         self.wait_ready()
 
         started = time.monotonic()

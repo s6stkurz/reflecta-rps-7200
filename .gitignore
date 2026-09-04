@@ -36,6 +36,7 @@ rolls/
 # the sheets are PNGs and would otherwise be committed.
 rollscan/
 walk7/
+probe/
 
 # local Claude config: machine-specific paths and permissions
 .claude/

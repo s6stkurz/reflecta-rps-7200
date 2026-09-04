@@ -42,7 +42,7 @@ Every opcode the vendor ever sends. Nothing outside this list appears in any cap
 | `0xD7` | READ GAIN/OFFSET | 79 | see §6 — it is a *reference*, not a readback |
 | `0xDC` | WRITE GAIN/OFFSET | 79 | exposure, gain, offset, light |
 | `0xDD` | READ STATE | 1435 | 13 bytes; byte 2 is the transport position |
-| `0xE7` | vendor | 2 | once at session start, purpose unknown |
+| `0xE7` | vendor | 2 | **not supported by this model** — see §11 |
 
 **`0xD2` SET SCAN HEAD is never sent. Not once.** It exists in the SANE `pieusb`
 backend and is a documented hazard here — see CLAUDE.md.
@@ -190,6 +190,10 @@ Thirteen bytes. Across 737 responses only these vary:
 | 11 | 1, 2, 8, 115 | |
 | 12 | 0, 2, 32 | |
 
+Byte 8 is listed as constant above because it is 0 in all 737 capture responses —
+but every capture had film loaded. **Measured on an empty transport it reads 1**,
+which the captures could not have shown. See §11.
+
 **Nothing reports position within a frame.** There is no field a host loop could
 read to close a registration loop, which is consistent with the vendor not
 attempting one.
@@ -293,11 +297,54 @@ followed by two 600 dpi RGB previews. The 3600 dpi pass in `300_3600 - Kopie` is
 different thing — 16-bit, and the scan that was actually asked for. Depth tells them
 apart.
 
-## 11. What is still unknown
+## 11. Driven on the hardware
+
+Claims here were produced by sending the command, not by reading a capture.
+`tools/verify_protocol.py` runs these; raw output lands in `probe/`.
+
+### `0xE7` is an invalid opcode on this scanner — *measured*
+
+Sent as the vendor sends it, size 4, it is refused:
+
+```
+70 00 05 00 00 00 00 06 00 00 00 00 20 00
+      ^^                            ^^
+   key 0x05 ILLEGAL REQUEST      ASC 0x20 INVALID COMMAND OPERATION CODE
+```
+
+The vendor gets the same answer. In both captures containing it, `0xE7` is followed
+immediately by `0x03` REQUEST SENSE — the thing you do after a CHECK CONDITION.
+CyberView issues it, is told the opcode does not exist, reads the sense and
+continues. It is presumably valid on another model in the family.
+
+This closes it as a lead: it is not what enables calibration, because the device
+never executes it.
+
+### `READ STATE` byte 8 is a media flag — *measured, half confirmed*
+
+With an **empty transport** it reads **1**. Across all 737 capture responses, every
+one with film loaded, it reads **0**. The captures could not have revealed this
+because the transport was never empty in one.
+
+This matters because `State.media_loaded` currently reads **byte 6** and its own
+docstring concedes the result is untrustworthy — "the bit is clear throughout the
+vendor's power-on capture, and has read clear here with film demonstrably loaded, so
+a False proves nothing". If byte 8 goes to 0 with film in, it is the flag that was
+wanted, and `require_media` could stop being advisory.
+
+*Still to confirm:* one `READ STATE` with film loaded. Until then this is one
+observation, not a rule.
+
+### Sense is one-shot — *measured, and a trap*
+
+Reading it clears the condition. `s.sense()` followed by `s.read_sense()` returns
+`key=0x00 code=0x00` for the second call, which decodes as "no sense" and looks like
+a device that reported nothing. Parse the bytes from the first read; never ask twice.
+
+## 12. What is still unknown
 
 - The upper nibble of MODE SELECT byte 14 (`0x1x` vs `0x2x`).
 - SLIDE actions `0x00` and `0x01`, five payloads, sent at session start.
 - SLIDE INIT's `param` byte, which takes `0x01, 0x13, 0x14, 0x15, 0x16` with no
   observed difference.
-- READ STATE bytes 3, 4, 7, 11, 12.
-- The vendor command `0xE7`, which carries no data.
+- READ STATE bytes 3, 4, 7, 11, 12. (Byte 8 is answered in §11.)
