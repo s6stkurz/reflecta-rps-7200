@@ -1,42 +1,73 @@
 # Multi-exposure: N-bracket capture and merge, in this driver
 
-## Status: measured, and it does not earn its time on this scanner
+## Status: measured on real film, and the hardware will not support it
 
-**Verification 6 answered no, twice, on real film.** The merge is built and
-tested; the capture works; the exposure ladder is accurate to 1.5%. What is
-missing is anything for it to remove.
+The merge is built and tested, the capture works, and the exposure ladder is
+accurate to 1.5%. Multi-exposure still does not work on this scanner, for two
+measured reasons that compound.
 
-Two scans at one exposure differ only by what is random per pass. Everything
-else -- grain, detail, fixed pattern -- cancels. On a slide:
+### 1. There is very little to win
+
+Two scans at one exposure differ only by what is random per pass; grain, detail
+and fixed pattern all cancel. In the darkest tenth of a slide:
 
 ```
-                    random   total high-freq   random share   ceiling on 5 averaged
-300 dpi, green    123.2 DN          584.3 DN            21%                   -1.8%
-1800 dpi, green   154.9 DN          577.2 DN            27%                   -2.9%
+                    random   total high-freq   random share   ceiling on 9 passes
+300 dpi, green    123.2 DN          584.3 DN            21%                 -1.8%
+1800 dpi, green   154.9 DN          577.2 DN            27%                 -3.5%
 ```
 
-Three quarters of the high-frequency content in the shadows is film grain and
-real detail, identical in every pass. Bracketing and averaging can only touch
-the other quarter, so the ceiling on *any* multi-pass noise reduction here is
-about **-3%**. Measured against prediction at 300 dpi: -1.8% predicted, -1.6%
+Three quarters of what looks like shadow noise is film grain, identical in every
+pass. **No multi-pass method can beat about -3.5% here**, bracketing or
+averaging. Predicted -1.8% from averaging five at 300 dpi against -1.6%
 achieved, which is how we know the model is right rather than the merge broken.
 
-Going to 1800 dpi was expected to change this -- each pixel collects a
-thirty-sixth of the light -- and it did not, because the grain is better
-resolved at the same time.
+Higher resolution does not change this. Shadow noise measures 12.63% at 1800 dpi
+and 5.76% at 3600 -- more resolution resolves grain rather than adding noise.
 
-Nor is there dynamic range to recover: the darkest tenth of the frame sits at
-4833 DN against a 131 DN noise floor, and the metered pass clips 0.00% of
-pixels. One properly metered pass already captures this film end to end.
+### 2. Passes stop agreeing as the bracket widens
 
-**Recommendation: do not ship it as a shadow-noise feature.** What would change
-the answer is a frame whose shadows actually approach the noise floor -- a dense
-underexposed slide, or a scanner run at an exposure it cannot reach. Neither
-describes this one.
+Scaled onto each other, two passes should differ only by noise. Two repeats at
+one exposure set the baseline at |z| = 1.03. Bracket passes do not hold it:
 
-The code stays: `rps7200/bracket.py` and `scan_bracket()` are tested and cost
-nothing when unused, and the measurement is re-runnable from the library on any
-future frame.
+```
+                    fitted ratio   median |z|
+1800 dpi  pass 0-2        x1.40         0.99   agrees like a repeat
+          pass 0-4        x1.97         1.19
+          pass 0-8        x3.80         1.72
+3600 dpi  pass 0-1        x1.97         1.00
+          pass 0-2        x3.83         1.41
+```
+
+Confirmed independently at both resolutions. **No transfer function removes it**
+-- linear, quadratic and cubic fits leave 1.73 / 1.51 / 1.48 at x3.8, against
+the 1.03 baseline -- so the passes differ per pixel in a way that grows with the
+ratio and cannot be modelled away.
+
+### The trap
+
+- At **x1.4** the passes agree well enough to merge cleanly, but that bracket
+  spans half a stop and the ceiling is still -3.5%.
+- At **x3.8** the bracket is finally wide enough to be worth taking, and there
+  the disagreement exceeds the gain, so the merge injects more error than it
+  removes.
+
+There is no span where both hold. Measured outcome: the merge lands **+3.2%**
+at 1800 dpi and **+9.8%** at 3600 where the ceiling was -3.5%. That is not a
+blending bug; it is the blend faithfully carrying a disagreement the hardware
+put there.
+
+### Recommendation
+
+**Do not ship it.** What would change the answer is a frame whose shadows
+approach the noise floor -- a dense, underexposed slide -- where the random
+share would be far higher than 25%. Neither frame measured here is close: the
+darkest tenth sits at 4833 DN against a 131 DN floor, with zero saturation at
+the metered exposure, so one pass already captures the film end to end.
+
+The code stays. `rps7200/bracket.py` and `scan_bracket()` are tested and cost
+nothing unused, the brackets are in the library with their raw bytes, and the
+whole measurement re-runs offline on any future frame in minutes.
 
 ## Status of the build
 

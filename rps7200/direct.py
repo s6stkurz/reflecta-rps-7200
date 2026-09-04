@@ -1579,6 +1579,7 @@ class DirectScanner:
         exposure_scale: Sequence[float] | None = None,
         keep_raw: bool = True,
         shading: bool = True,
+        retain: bool = True,
         on_pass: Callable[[int, np.ndarray, dict[str, Any], dict[str, Any]], None]
         | None = None,
     ) -> tuple[list[np.ndarray], list[float], list[dict[str, Any]]]:
@@ -1640,11 +1641,21 @@ class DirectScanner:
             meta["bracket_ratio"] = float(k)
             meta["bracket_passes"] = passes
             meta["bracket_stops"] = float(stops)
-            frames.append(image)
             ratios.append(float(k))
             metas.append(meta)
             if on_pass is not None:
                 on_pass(i, image, meta, self.capture_record())
+            # `retain` off keeps only one pass alive at a time. Nine passes at
+            # 3600 dpi are 960 MB of pixels and as much again in raw bytes, and
+            # a caller that has already written each one to disk in `on_pass`
+            # has no use for the list. Writing there is safe as long as it stays
+            # quick -- an uncompressed dump is well under a second, where
+            # gzipping a whole library entry with the device open and idle is
+            # what preceded a wedge.
+            if retain:
+                frames.append(image)
+            else:
+                del image
         return frames, ratios, metas
 
     def scan(

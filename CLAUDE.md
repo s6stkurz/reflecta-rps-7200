@@ -119,6 +119,13 @@ can see it.
 
 It needs a power cycle afterwards, so avoid these:
 
+- **Background any scan sequence over ~8 minutes.** The harness kills a
+  foreground command at 10 minutes, and a killed read is an abandoned read --
+  the hazard below. Asking for a longer timeout does not help: the value is
+  clamped silently, so a 14-minute run dies at 10 with no warning. That is how
+  one wedge here happened, and it cost the whole run as well as a power cycle.
+  Estimate first: roughly 23 s per pass at 300 dpi, 55 s at 1800, 110 s at 3600
+  for RGB, and add the ~212 s infrared floor per pass when infrared is on.
 - **Never abandon a read mid-scan.** Infrared holds the device busy for its own
   ~212 s floor however few lines were asked for, which is why a low-resolution
   IR pass once expired a 60 s timeout and wedged it.
