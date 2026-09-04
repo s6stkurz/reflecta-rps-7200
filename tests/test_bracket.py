@@ -44,7 +44,7 @@ def rms_vs_truth(frame, truth, exposure):
 
 # --- 1. the N-way form must reduce to the pairwise one ----------------------
 
-def pairwise_merge(short, long, r, alpha=DEFAULT_ALPHA, beta=DEFAULT_BETA):
+def pairwise_merge(short, long, r, offset=0.0, alpha=DEFAULT_ALPHA, beta=DEFAULT_BETA):
     """The two-frame formula, written out independently of the N-way code.
 
     Includes the same no-confidence fallback the N-way merge applies, since that
@@ -52,10 +52,13 @@ def pairwise_merge(short, long, r, alpha=DEFAULT_ALPHA, beta=DEFAULT_BETA):
     applied identically at every N. Without it this compares two different
     algorithms in the deep shadows, where neither pass carries signal.
     """
-    a = short.astype(np.float32)
-    b = long.astype(np.float32)
-    xa, xb = a, b / r
+    a = np.asarray(short, dtype=np.float32)
+    b = np.asarray(long, dtype=np.float32)
+    # confidence reads the raw sample -- saturation is a property of what the
+    # sensor returned -- and the offset is removed only for the arithmetic
     ca, cb = confidence(a), confidence(b)
+    b = b - np.float32(offset)
+    xa, xb = a, b / r
     va = alpha * np.maximum(xa, 0.0) + beta
     vb = (alpha * np.maximum(b, 0.0) + beta) / (r * r)
     wa, wb = ca / np.maximum(va, 1e-12), cb / np.maximum(vb, 1e-12)
@@ -69,7 +72,12 @@ def test_two_frames_reduce_to_the_pairwise_formula():
     short, long = expose(truth, 1.0), expose(truth, 2.5)
     merged, stats = merge_bracket([short, long], [1.0, 2.5])
 
-    expected = pairwise_merge(short, long, 2.5)
+    # The merge solves the relation between the passes rather than trusting the
+    # commanded ratio, so the reference formula must use the same solved one --
+    # otherwise this compares two different exposure models, not two mergers.
+    from rps7200.bracket import solve_relation
+    slope, intercept = solve_relation(short[..., 1], long[..., 1])
+    expected = pairwise_merge(short, long, slope, intercept)
     # Where the residual gate and the misalignment guard are inactive -- which
     # is everywhere for two well-registered frames -- the merge IS the IVW blend.
     assert stats.reference_fallback_fraction < 1e-6

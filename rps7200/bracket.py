@@ -55,11 +55,19 @@ Z_HI = 5.0
 DEFAULT_ALPHA = 1.0
 DEFAULT_BETA = 4096.0
 
-#: Where passes disagree by more than this in luma AND the fused result shows
+#: Where passes disagree by more than this many sigma AND the fused result shows
 #: more than `CHANNEL_SPREAD_TAU` of cross-channel spread, the pixel is taken
 #: from the reference alone. Per-channel weighting across a misregistered edge
 #: is what turns a shift into a coloured fringe.
-LUMA_DISAGREE_TAU = 300.0
+#:
+#: Measured in **sigma of the expected noise**, not in DN. pyopticfilm uses an
+#: absolute 300 DN, which does not survive being moved to another scanner:
+#: across a two-stop bracket here the reference is the darkest and so the
+#: noisiest pass, and its own noise puts the median disagreement at 970 DN. An
+#: absolute threshold then fires on 60% of the frame, each of those pixels falls
+#: back to the single noisiest pass, and the merge degenerates into it. In sigma
+#: the threshold means the same thing at every exposure.
+MISALIGN_SIGMA = 8.0
 CHANNEL_SPREAD_TAU = 150.0
 
 #: Rows per band. A 3600 dpi bracket would otherwise need several full-frame
@@ -185,6 +193,39 @@ def fit_noise_params(flats: list[np.ndarray], patch: int = 32) -> tuple[float, f
     return float(alpha), float(max(beta, 1.0))
 
 
+def solve_relation(ref: np.ndarray, other: np.ndarray) -> tuple[float, float]:
+    """Fit ``other = slope * ref + intercept`` on the pixels both resolve.
+
+    The commanded exposure ratio is not the relationship between two passes.
+    Measured on a real 2-stop bracket: at a requested x4.000 the slope is 3.828
+    and the intercept 1279 DN, and the intercept grows as ``425 * (r - 1)``,
+    which rearranges to ``(raw + 425) = r * (raw_0 + 425)`` -- a constant the
+    correction has over-subtracted, left behind by ``raw / r`` differently in
+    every pass.
+
+    Trusting the commanded ratio instead made the passes disagree by 1.78 sigma
+    where the fitted relation gives 1.27, which was enough to fire the
+    disagreement guard on 62% of the frame and collapse the merge into its
+    single noisiest pass.
+
+    Only pixels well clear of both the noise floor and saturation are fitted,
+    since neither end carries a usable relationship.
+    """
+    a = np.asarray(ref, dtype=np.float64).reshape(-1)
+    b = np.asarray(other, dtype=np.float64).reshape(-1)
+    usable = (a > SNR_FLOOR) & (a < CLIP_START) & (b > SNR_FLOOR) & (b < CLIP_START)
+    if usable.sum() < 64:
+        return float("nan"), 0.0
+    a, b = a[usable], b[usable]
+    if a.size > 200_000:
+        step = a.size // 200_000 + 1
+        a, b = a[::step], b[::step]
+    slope, intercept = np.polyfit(a, b, 1)
+    if not np.isfinite(slope) or slope <= 0:
+        return float("nan"), 0.0
+    return float(slope), float(intercept)
+
+
 def _subsample(frames: list[np.ndarray]) -> list[np.ndarray]:
     h, w = frames[0].shape[:2]
     sy = max(1, h // STATS_MAX_SIDE)
@@ -247,10 +288,23 @@ def merge_bracket(
                 f"frame {i} is {np.asarray(f).shape}, frame 0 is {ref.shape}"
             )
 
-    ratios = [float(e) / float(exposures[0]) for e in exposures]
+    commanded = [float(e) / float(exposures[0]) for e in exposures]
+    # Solve each pass against the reference rather than trusting what the
+    # scanner was told; see :func:`solve_relation`.
+    ratios = [1.0]
+    offsets = [0.0]
+    for frame, want in zip(frames[1:], commanded[1:]):
+        slope, intercept = solve_relation(ref[..., 1], np.asarray(frame)[..., 1])
+        if not np.isfinite(slope):
+            slope, intercept = want, 0.0
+        ratios.append(slope)
+        offsets.append(intercept)
     h, w = ref.shape[:2]
     out = np.empty((h, w, 3), dtype=np.uint16)
-    medians = _z_medians([np.asarray(f) for f in frames], ratios, alpha, beta)
+    medians = _z_medians(
+        [np.asarray(f).astype(np.float64) - o for f, o in zip(frames, offsets)],
+        ratios, alpha, beta,
+    )
 
     w_first = w_last = conf_sum = 0.0
     n_samples = zero_pixels = fallback_pixels = 0
@@ -258,9 +312,10 @@ def merge_bracket(
     for y0 in range(0, h, CHUNK_ROWS):
         y1 = min(h, y0 + CHUNK_ROWS)
         raws, scaled, confs, weights = [], [], [], []
-        for frame, r in zip(frames, ratios):
+        for frame, r, off in zip(frames, ratios, offsets):
             raw = np.asarray(frame[y0:y1], dtype=np.float32)
             c = confidence(raw)
+            raw = raw - np.float32(off)
             # Variance transforms with the square of the scale, so a long pass
             # divided down carries proportionally less variance -- which is the
             # whole reason a longer exposure is worth taking.
@@ -285,7 +340,7 @@ def merge_bracket(
         lum_ref = scaled[0].mean(axis=2)
         v_ref = alpha * np.maximum(lum_ref, 0.0) + beta
         c_res = np.ones_like(lum_ref, dtype=np.float32)
-        worst_disagreement = np.zeros_like(lum_ref, dtype=np.float32)
+        worst_z = np.zeros_like(lum_ref, dtype=np.float32)
         for raw, x, c, r, median in zip(
             raws[1:], scaled[1:], confs[1:], ratios[1:], medians
         ):
@@ -295,7 +350,7 @@ def merge_bracket(
             z = (lum_ref - lum_x) / np.sqrt(np.maximum(v_ref + v, 1e-12))
             gate = np.minimum(confs[0], c).mean(axis=2)
             c_res = np.minimum(c_res, 1.0 - gate * (1.0 - _residual_confidence(z - median)))
-            worst_disagreement = np.maximum(worst_disagreement, np.abs(lum_ref - lum_x))
+            worst_z = np.maximum(worst_z, np.abs(z - median))
 
         # Where the passes disagree, fall back on whichever single pass is most
         # trusted at that pixel rather than on a blend of ones that conflict.
@@ -306,7 +361,7 @@ def merge_bracket(
         merged = c_res[..., None] * ivw + (1.0 - c_res[..., None]) * prefer
 
         spread = np.max(ivw, axis=2) - np.min(ivw, axis=2)
-        misaligned = (worst_disagreement > LUMA_DISAGREE_TAU) & (spread > CHANNEL_SPREAD_TAU)
+        misaligned = (worst_z > MISALIGN_SIGMA) & (spread > CHANNEL_SPREAD_TAU)
         chunk = np.where(misaligned[..., None], scaled[0], merged)
         # Where no pass has any confidence -- every one either in the noise or
         # saturated -- keep the reference's own measurement rather than writing
