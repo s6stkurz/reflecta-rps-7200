@@ -466,6 +466,30 @@ Forward/Reverse keys are firmware-only and invisible to the host, and every
 automatic measure of registration built so far has been wrong often enough to do
 more harm than good.
 
+## Overturned: the film CAN be positioned from the host
+
+Everything above concludes that fine positioning is not exposed over USB — the SANE
+backend has no such command, the front-panel keys send nothing, `SET_SCAN_HEAD` is a
+hazard, and CyberView appears to correct nothing. The first three are still true. The
+conclusion drawn from them was wrong.
+
+Driven on the hardware, the five `SLIDE` payloads this file lists as "unidentified"
+**all move the film along the strip without touching the frame counter**. Two are
+characterised:
+
+| payload | movement | repeatability |
+|---|---|---|
+| `00 01 00 04` | **+0.32 mm** forward | ±0.03 mm, n=3 after backlash |
+| `01 47 00 03` | **−7.47 mm** backward | ±0.05 mm, n=4 |
+
+The aperture's slack is 0.49 mm, so a 0.32 mm step is the right size to correct
+registration with. See `docs/protocol.md` §11 for the measurements.
+
+This does not resurrect the drift: seventeen slides still came out sound by eye, and
+the transport still holds registration on its own. What it changes is that a roll
+which *does* drift is now correctable, by a command the vendor sends in every session
+and that this driver had catalogued as unknown.
+
 ## Open — what `tools/transport_probe.py` answers
 
 Run it on a strip you do not mind handling; it sends commands this scanner has never been

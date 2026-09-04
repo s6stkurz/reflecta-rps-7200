@@ -196,8 +196,84 @@ def stage5(s: DirectScanner) -> dict:
     return res
 
 
-STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5}
-NEEDS_FILM = {1, 3, 4, 5}
+def stage6(s: DirectScanner) -> dict:
+    """The five SLIDE payloads nobody has identified.
+
+    Sent exactly as the vendor sends them -- no invented values, no escalation.
+    In the captures each occupies the mechanism 1.5-3 s without moving the frame
+    counter, which is what a sub-frame movement would look like and is the last
+    remaining candidate for the vernier the front-panel keys perform.
+
+    A prescan before and after every one, measuring both axes, so a movement too
+    small for the counter still shows.
+    """
+    print("\n=== stage 6: the unidentified SLIDE actions")
+    print("  five payloads CyberView sends; none moves the frame counter there\n")
+
+    prev, _ = shot(s, "stage6_before")
+    start_pos = s.read_state().position
+    print(f"  starting at position {start_pos}\n")
+
+    res = {}
+    for action, param, value in (
+        (0x00, 0x46, 0x00), (0x00, 0x4C, 0x01), (0x00, 0x01, 0x04),
+        (0x01, 0x46, 0x00), (0x01, 0x47, 0x03),
+    ):
+        tag = f"{action:02x}{param:02x}00{value:02x}"
+        payload = f"{action:02x} {param:02x} 00 {value:02x}"
+        t0 = time.monotonic()
+        note = "accepted"
+        try:
+            s.slide(action, param=param, value=value)
+        except CheckCondition:
+            note = f"REFUSED {Sense.parse(s.sense())}"
+        except UsbError as e:
+            note = f"{type(e).__name__}: {e}"
+        # how long it stays busy, which is the signature in the captures
+        busy = 0.0
+        deadline = time.monotonic() + 12.0
+        while time.monotonic() < deadline:
+            if s.test_unit_ready():
+                busy = time.monotonic() - t0
+                break
+            time.sleep(0.25)
+
+        img, _ = shot(s, f"stage6_{tag}")
+        pos = s.read_state().position
+        dx, dy = _shift(prev, img)
+        moved = abs(dx) > 0.5 or abs(dy) > 0.5
+        print(f"  SLIDE {payload}  {note}")
+        print(f"    busy {busy:4.1f}s  position {pos}"
+              f"{' (CHANGED)' if pos != start_pos else ''}"
+              f"  shift x{dx:+.2f}px y{dy:+.2f}px"
+              f"{'  <- MOVED' if moved else ''}")
+        res[payload] = {"note": note, "busy_s": round(busy, 1), "position": pos,
+                        "dx_px": round(dx, 2), "dy_px": round(dy, 2)}
+        prev = img
+        if pos != start_pos:
+            print("    frame counter moved -- stopping, this is not sub-frame")
+            break
+    return res
+
+
+def _shift(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
+    """Sub-pixel shift of b relative to a, per axis, by cross-correlation."""
+    def one(pa, pb):
+        pa = (pa - pa.mean()) / (pa.std() or 1.0)
+        pb = (pb - pb.mean()) / (pb.std() or 1.0)
+        c = np.correlate(pb, pa, mode="full")
+        k = int(np.argmax(c))
+        if 0 < k < len(c) - 1:
+            y0, y1, y2 = c[k-1], c[k], c[k+1]
+            d = y0 - 2*y1 + y2
+            k = k + (0.5*(y0-y2)/d if d else 0.0)
+        return k - (len(pa) - 1)
+    ga, gb = grey(a), grey(b)
+    return one(ga.mean(axis=0), gb.mean(axis=0)), one(ga.mean(axis=1), gb.mean(axis=1))
+
+
+STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6}
+NEEDS_FILM = {1, 3, 4, 5, 6}
 
 
 def main() -> int:

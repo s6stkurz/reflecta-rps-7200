@@ -117,8 +117,8 @@ Four bytes: `action param 00 value`. Every payload ever observed:
 | `04 01 00 02` | 9 | advance one frame — the value differs, the movement does not exceed 0.05 mm |
 | `05 01 00 01` | 16 | **reverse** one frame; used only to rewind a finished roll |
 | `03 f6 dd 00` | 1 | eject, the last command of a session |
-| `00 46 00 00`, `00 4c 00 01`, `00 01 00 04` | 4 | unidentified; session start; do not move the frame counter |
-| `01 46 00 00`, `01 47 00 03` | 2 | unidentified; session start; do not move the frame counter |
+| `00 46 00 00`, `00 4c 00 01`, `00 01 00 04` | 4 | **sub-frame movement**; `00 01 00 04` = +0.32 mm, §11 |
+| `01 46 00 00`, `01 47 00 03` | 2 | **sub-frame movement**; `01 47 00 03` = −7.47 mm, §11 |
 
 Actions `0x00` and `0x01` occupy the mechanism for 1.5–3 s without changing the
 position counter. They are the only remaining candidates for sub-frame movement,
@@ -362,13 +362,101 @@ The practical consequence: **a scan's orientation cannot be relied upon**. Anyth
 that cares has to detect it from the image or let the operator correct it. It cannot
 be fixed by asking for it.
 
+### `SLIDE` actions `0x00` and `0x01` move the film sub-frame — *measured*
+
+**This is the fine positioning that every other source said did not exist.** The SANE
+`pieusb` backend's `slide_action` enum has only `NEXT`, `PREV`, `INIT` and `RELOAD`;
+its `sane-pieusb(5)` page exposes two options, neither positional; the scanner's own
+Forward/Reverse keys send nothing over USB. All of that is still true. What is also
+true is that CyberView sends five further `SLIDE` payloads at session start, and
+**all five move the film along the strip**.
+
+Driven on the hardware, each preceded and followed by a 300 dpi prescan:
+
+| payload | busy | frame counter | x | y |
+|---|---|---|---|---|
+| `00 46 00 00` | 1.1 s | unchanged | −246.80 px | −0.01 px |
+| `00 4c 00 01` | 1.1 s | unchanged | +92.86 px | +0.06 px |
+| `00 01 00 04` | 1.1 s | unchanged | +3.94 px | +0.01 px |
+| `01 46 00 00` | 1.1 s | unchanged | −84.98 px | −0.06 px |
+| `01 47 00 03` | 1.1 s | unchanged | −82.04 px | −0.02 px |
+
+Movement is **purely along x**, the axis of the strip — `y` never exceeds 0.06 px in
+any of the five. The **frame counter never changes**, which is what makes these
+sub-frame: `SLIDE_NEXT` and `SLIDE_PREV` always move it, these never do. Each holds
+the mechanism for 1.1 s, matching the 1.5-3 s the captures show.
+
+#### The two that were characterised
+
+Single-shot numbers in a 428-column window cannot be trusted once a shift is a large
+fraction of the width — the correlation peak wraps. So the two most useful payloads
+were sent five times each, every shift measured against the prescan immediately
+before it, keeping each measurement small.
+
+**`00 01 00 04` — fine forward, +0.32 mm**
+
+```
+n   busy  pos    dx px    dx mm
+1    1.1    4    +0.47   +0.040
+2    1.1    4    +2.18   +0.186
+3    1.1    4    +4.01   +0.342
+4    1.1    4    +3.83   +0.326
+5    1.1    4    +3.32   +0.283
+```
+
+Always forward, `y` exactly 0.00 throughout. The first two steps falling short and
+then settling is **backlash**: the preceding command had moved the film the other
+way, so the first steps take up the slack before the film follows. Steps 3-5 are the
+figure — **~0.32 mm, repeatable to ±0.03 mm**.
+
+**`01 47 00 03` — coarse backward, −7.47 mm**
+
+```
+n   busy  pos    dx px    dx mm
+1    1.1    4  +359.78  +30.674   <- aliased, see below
+2    1.1    4   -87.97   -7.500
+3    1.1    4   -87.75   -7.482
+4    1.1    4   -86.92   -7.411
+5    1.1    4   -88.15   -7.515
+```
+
+Steps 2-5 agree to within 0.6 px: **−7.47 mm, repeatable to ±0.05 mm**. The first
+reading is the aliasing this method was designed around — a true −88 px read as +360
+by a peak wrapping in a 428-column window. It is left in the table because a
+measurement that can fail this way should show what the failure looks like.
+
+#### Why this matters
+
+The aperture has **0.49 mm** of slack (§11, the registration work). A 0.32 mm forward
+step moves within it. So registration *is* correctable from the host, in increments
+of the right size, using a command the vendor sends in every session.
+
+#### What is not established
+
+- **A fine step backward.** `01 01 00 04` is the obvious candidate — action `0x01`
+  for reverse with the `01 00 04` that steps finely forward — and every individual
+  byte is one the vendor sends. But **that combination appears in no capture**, and
+  the rule after the `SET_SCAN_HEAD` incident is that invented payloads are not sent.
+  Coarse-back-then-fine-forward reaches anywhere without it, clumsily.
+- **What the bytes mean.** `param` is `0x01` for the fine step and `0x46`/`0x47`/`0x4c`
+  for the coarse ones, which looks like a magnitude, but the ratio does not follow:
+  0.32 mm against 7.47 mm is 23x, while `0x01` against `0x47` is 71x. Action `0x00`
+  is not simply "forward" either — `00 46 00 00` measured negative, though that
+  reading is in the untrustworthy range.
+- **The three large single-shot figures** in the first table. Direction is probably
+  right; magnitude is not, until each is repeated the way the two above were.
+
 ## 12. What is still unknown
 
 - MODE SELECT byte 14 entirely. Bit 0 was thought to be scan direction; §11
   refutes that, and nothing has replaced the explanation.
 - What makes a scan come back mirrored. It is real and reproducible as a pair of
   groups, but not driven by any byte tried. See §11.
-- SLIDE actions `0x00` and `0x01`, five payloads, sent at session start.
+- What the `param` and `value` bytes of the sub-frame SLIDE actions encode. Two of
+  the five payloads are characterised (§11); the other three have direction but not
+  a trustworthy magnitude, and no rule relates the bytes to the distance.
+- Whether a fine step *backward* exists. `01 01 00 04` is the candidate and is not
+  sent, being a combination no capture contains.
 - SLIDE INIT's `param` byte. `0x13`-`0x16` are interchangeable when measured;
   `0x01` produced a differently oriented image once, in a run where orientation
   was varying for other reasons too, so it is not cleared either way.
