@@ -82,6 +82,103 @@ it gets.)
 And neutral is still not worth having: a x1.4 bracket costs three passes and
 half a stop to break even against one, while grain caps the best case at -3.5%.
 
+### How every number above was computed
+
+So the figures can be checked, disputed or re-derived rather than taken on
+trust. All of it runs offline from the library.
+
+**The region.** "Shadows" is the darkest tenth of the frame, chosen from the
+*brightest* pass because it resolves that end best, and then the same pixel mask
+is used for every candidate so they are compared on identical ground:
+
+    lum  = mean(brightest[..., :3], axis=2)
+    dark = lum < percentile(lum, 10)
+
+**Noise model.** Poisson-Gaussian, shot noise proportional to signal plus
+constant read noise, in DN squared:
+
+    var(x) = alpha * x + beta          alpha = 1.0, beta = 4096  (64 DN read)
+
+`fit_noise_params()` (`rps7200/bracket.py`) fits these from flats by tiling each
+channel *separately* at 32x32 and regressing tile variance on tile mean. Tiling
+across channels instead measures the gap between their levels and returned
+alpha = 13769 on flats carrying a true 1.6.
+
+**Random versus fixed.** Two scans at one exposure differ only by what is random
+per pass; grain, detail and fixed pattern cancel. So the random component is the
+difference of two repeats, and the total is what a local high-pass leaves:
+
+    sigma_random = std(A - B)[dark] / sqrt(2)
+    sigma_total  = std(A - boxcar(A, 5))[dark]        # 5-tap, horizontal
+    share        = sigma_random / sigma_total
+    sigma_fixed  = sqrt(sigma_total^2 - sigma_random^2)
+
+**The ceiling.** Averaging N passes divides only the random part, so the best
+any multi-pass method can reach, and the number the merge must beat:
+
+    sigma_N  = sqrt((sigma_random / sqrt(N))^2 + sigma_fixed^2)
+    ceiling  = sigma_N / sigma_total - 1
+
+At 1800 dpi green: sigma_random 154.9, sigma_total 577.2, share 27%, and for
+N = 9 that gives -3.5%.
+
+**The noise figure quoted for each candidate.** Relative, so exposures of
+different scales compare, per channel then averaged over R, G, B:
+
+    noise(img) = mean_over_channels(
+        std(img_c - boxcar(img_c, 5))[dark] / mean(img_c)[dark]
+    )
+
+**Pass agreement.** Two passes should differ only by noise once put on a common
+scale. `solve_relation()` fits the scale on pixels both resolve -- above the
+noise floor, below `CLIP_START` -- rather than trusting the commanded exposure,
+which is not the relationship between them (at a requested x4.000 the fit gives
+slope 3.828, intercept 1279):
+
+    b ~ slope * a + intercept                        # least squares, unsaturated only
+    x = (b - intercept) / slope                      # b on a's scale
+    v = var(a) + var(b) / slope^2                    # variance of the difference
+    z = (a - x) / sqrt(v)
+
+`median(|z|)` over the dark mask is what the tables report. Two repeats at one
+exposure give 1.03, which is the baseline any pair must beat to be called
+consistent. (It exceeds the ideal ~0.67 because the noise model slightly
+understates the true noise; that bias applies equally to every row, so the
+comparison between them stands.)
+
+**The merge itself** (`merge_bracket()`), for each pass i with fitted scale r_i
+and offset o_i:
+
+    x_i = (raw_i - o_i) / r_i                        # on the reference's scale
+    c_i = confidence(raw_i)                          # 0 in the noise, 0 at saturation
+    v_i = (alpha * raw_i + beta) / r_i^2             # variance transforms with r^2
+    w_i = c_i / v_i
+    merged = sum(w_i * x_i) / sum(w_i)
+
+Variance carrying `1 / r^2` is the whole mechanism: a longer pass divided down
+brings proportionally less variance with it, so it earns more weight -- which is
+why this should have worked, and why it does not is the disagreement measured
+above rather than anything in this formula.
+
+`confidence()` is a ramp up from the noise floor times a smoothstep down into
+saturation, so no pixel switches abruptly between passes:
+
+    floor_w = clip((raw - SNR_FLOOR) / SNR_FLOOR, 0, 1)
+    clip_w  = 1 - smoothstep((raw - CLIP_START) / (CLIP_END - CLIP_START))
+    c       = floor_w * clip_w
+
+with `SNR_FLOOR = 0.002`, `CLIP_START = 0.80`, `CLIP_END = 0.95` of full scale.
+
+**Scan time.** Measured per pass, and it scales with *exposure*, not only line
+count -- the sensor integrates longer per line, so the bright end of a bracket
+runs several times slower than the dark end:
+
+    1800 dpi, 9 passes:  40.2  46.2  53.4  61.9  72.1  85.2  99.5 116.6 137.9 s
+    3600 dpi, 9 passes:  73.5  85.5  99.9 117.4 137.2 162.7 191.2 225.1 266.7 s
+
+Totals 791 s and 1476 s including one calibration and metering. Estimating from
+the first passes alone underestimates a bracket by nearly half.
+
 ### Recommendation
 
 **Do not ship it.** What would change the answer is a frame whose shadows
