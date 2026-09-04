@@ -349,6 +349,9 @@ class State:
     button: bool
     warming_up: bool
     scanning: int
+    #: Byte 8. Named for what it was first taken to be; measured, it is the
+    #: media flag -- 1 with an empty transport, 0 with film. See
+    #: :attr:`media_loaded`.
     busy: int
     #: Where the transport has the film, counting from 0. This is the one
     #: trustworthy signal that an advance has happened -- see
@@ -357,15 +360,25 @@ class State:
 
     @property
     def media_loaded(self) -> bool:
-        """Whether the state byte says film is loaded. Believe a True, not a False.
+        """Whether film is in the transport. Byte 8, and it is inverted.
 
-        Measured on this scanner with one variable changed: 0x0d empty, 0x4d
-        loaded. But the bit is clear throughout the vendor's power-on capture,
-        and has read clear here with film demonstrably loaded, so a False proves
-        nothing. Never used to block a scan. :attr:`position` is what to trust
-        about where the transport is.
+        Measured with one variable changed -- a strip going in -- byte 8 read 1
+        empty and 0 loaded. The captures cannot corroborate that, and that is the
+        point: all 737 of their READ STATE responses hold 0, because every
+        capture was taken with film loaded. An empty transport is the condition
+        they never contained.
+
+        This used to read ``scanning & MEDIA_PRESENT``, byte 6, and could not be
+        believed: in the same reading that byte said 0x1d, i.e. no film, with a
+        strip demonstrably in the transport. Byte 6 is left alone as
+        :attr:`scanning` because other bits in it are meaningful.
         """
-        return bool(self.scanning & MEDIA_PRESENT)
+        return not self.no_media
+
+    @property
+    def no_media(self) -> bool:
+        """Byte 8 raised: the transport is empty."""
+        return bool(self.busy)
 
 
 @dataclass

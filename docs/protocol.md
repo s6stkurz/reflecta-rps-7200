@@ -80,8 +80,14 @@ byte  13    line threshold
 byte  14    see below
 ```
 
-**Byte 14 carries the scan direction in bit 0**, and this is the explanation for
-frames that come out vertically mirrored. Observed pairings, all seven captures:
+**Byte 14 does not control the scan direction.** It was read that way here, from a
+correlation, and driving the byte on the hardware refutes it — see §11 for the
+measurements. What the captures show is real: across the 17-frame roll bit 0
+alternates on every pass in lockstep with the scan frame's `y0` shifting by one
+line, 35 times without exception. But that pairing is something CyberView *does*,
+not something the byte *causes*.
+
+Observed pairings across all seven captures:
 
 | passes | depth | byte 14 | count |
 |---|---|---|---|
@@ -92,29 +98,11 @@ frames that come out vertically mirrored. Observed pairings, all seven captures:
 | `0x80` RGB | 16-bit | `0x20` | 1 |
 | `0x90` RGBI | 16-bit | `0x21` | 9 |
 
-Across all seven captures the upper nibble is `0x2x` for 300 dpi and 3600 dpi work
-and for every RGBI scan, and `0x1x` for the 600 dpi startup previews and for
-`Scan.pcapng`'s lone 300 dpi pass. That does not resolve cleanly against resolution,
-channels or depth, and is listed as unknown in §11.
-
-Bit 0 is unambiguous. In the 17-frame roll it alternates on **every** pass and does so
-in lockstep with a one-line shift in the scan frame's `y0`, 35 times without
-exception:
-
-```
-frame 0,0 -> 10343,6887    byte 14 = 0x21     bit 0 set
-frame 0,1 -> 10343,6888    byte 14 = 0x20     bit 0 clear
-```
-
-That is bidirectional scanning: the carriage images on the way down, then on the way
-back, and the `y0 ± 1` compensates for reversing. Alternate passes are therefore
-mirrored vertically, and the host is expected to know which way it asked for.
-
-**This driver hardcodes `data[14] = 0x21 if passes == ONE_PASS_RGBI else 0x10`**, on
-the belief that the byte selects the channel count. The table above refutes that:
-RGB passes use `0x21` twenty-six times. The upper nibble (`0x1x` versus `0x2x`) is
-*not* explained — it does not track resolution, channels or depth cleanly — but bit
-0 is unambiguous.
+The whole byte is unexplained. This driver sets it as
+`0x21 if passes == ONE_PASS_RGBI else 0x10`, on the belief that it selects the
+channel count, which the table refutes — RGB passes carry `0x21` twenty-six times.
+`set_mode` takes a `byte14` override so it can be driven directly; the default is
+left alone because nothing measured yet says what it should be.
 
 ## 5. SLIDE (`0xD1`) — the film transport
 
@@ -320,7 +308,7 @@ continues. It is presumably valid on another model in the family.
 This closes it as a lead: it is not what enables calibration, because the device
 never executes it.
 
-### `READ STATE` byte 8 is a media flag — *measured, half confirmed*
+### `READ STATE` byte 8 is the media flag — *measured, confirmed*
 
 With an **empty transport** it reads **1**. Across all 737 capture responses, every
 one with film loaded, it reads **0**. The captures could not have revealed this
@@ -332,8 +320,13 @@ vendor's power-on capture, and has read clear here with film demonstrably loaded
 a False proves nothing". If byte 8 goes to 0 with film in, it is the flag that was
 wanted, and `require_media` could stop being advisory.
 
-*Still to confirm:* one `READ STATE` with film loaded. Until then this is one
-observation, not a rule.
+**Confirmed with film loaded: byte 8 reads 0.** One variable changed, a strip going
+in, and the byte went 1 → 0. In the same reading byte 6 held `0x1d`, which the old
+test calls "no film", with a strip demonstrably in the transport — that is the
+unreliability its docstring described, in a single measurement.
+
+`State.media_loaded` now reads byte 8, inverted, and `State.no_media` exposes it
+directly.
 
 ### Sense is one-shot — *measured, and a trap*
 
@@ -341,10 +334,42 @@ Reading it clears the condition. `s.sense()` followed by `s.read_sense()` return
 `key=0x00 code=0x00` for the second call, which decodes as "no sense" and looks like
 a device that reported nothing. Parse the bytes from the first read; never ask twice.
 
+### The vertical flip is real, and nothing I can send controls it — *measured*
+
+Scans come back in one of **two orientations, mirrored from each other**: matched
+as-is they correlate about **-0.63**, mirrored about **+0.95**. There is no
+ambiguity about the two groups existing.
+
+What does *not* determine which one you get:
+
+| tried | result |
+|---|---|
+| byte 14 bit 0 — `0x20` vs `0x21`, same frame | **identical**, +0.9985 as-is |
+| byte 14 all four values `0x10 0x11 0x20 0x21` | split B,A,B,A — but see below |
+| `SLIDE INIT` param `0x01, 0x13, 0x14, 0x15, 0x16` | `0x01` differed, the rest agreed |
+| six consecutive scans, every parameter identical | **all six the same orientation** |
+
+The last row is what rules the others out. Those six passes used `byte14=0x10` with
+`slide_init_param=0x16` — the exact combination that produced the *opposite*
+orientation in the byte-14 stage minutes earlier. Same bytes, same frame, same
+session length, different answer.
+
+So the flip is **stateful, not commanded**. It varies between runs with identical
+parameters, which is also why it appears sporadically in real scans rather than on
+alternate frames. The cause is not identified.
+
+The practical consequence: **a scan's orientation cannot be relied upon**. Anything
+that cares has to detect it from the image or let the operator correct it. It cannot
+be fixed by asking for it.
+
 ## 12. What is still unknown
 
-- The upper nibble of MODE SELECT byte 14 (`0x1x` vs `0x2x`).
+- MODE SELECT byte 14 entirely. Bit 0 was thought to be scan direction; §11
+  refutes that, and nothing has replaced the explanation.
+- What makes a scan come back mirrored. It is real and reproducible as a pair of
+  groups, but not driven by any byte tried. See §11.
 - SLIDE actions `0x00` and `0x01`, five payloads, sent at session start.
-- SLIDE INIT's `param` byte, which takes `0x01, 0x13, 0x14, 0x15, 0x16` with no
-  observed difference.
+- SLIDE INIT's `param` byte. `0x13`-`0x16` are interchangeable when measured;
+  `0x01` produced a differently oriented image once, in a run where orientation
+  was varying for other reasons too, so it is not cleared either way.
 - READ STATE bytes 3, 4, 7, 11, 12. (Byte 8 is answered in §11.)

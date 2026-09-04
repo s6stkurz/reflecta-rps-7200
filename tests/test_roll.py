@@ -407,3 +407,26 @@ def test_the_roll_never_crops():
     assert s.frames_scanned, "no frames recorded"
     for got in s.frames_scanned:
         assert got == FULL_FRAME, f"scanned {got}, not the full window"
+
+
+def test_media_is_read_from_byte_8_not_byte_6():
+    """Measured with one variable changed: a strip going into the transport.
+
+    Byte 8 read 1 empty and 0 loaded. Byte 6 said 0x1d -- no film by the old
+    test -- in the very same reading that had a strip demonstrably loaded, which
+    is why that reading could never be believed and was never allowed to block a
+    scan.
+
+    The captures cannot corroborate byte 8 and that is the point: all 737 of
+    their READ STATE responses hold 0 there, because every one was taken with
+    film in. An empty transport is the state they never contained.
+    """
+    from rps7200.protocol import State
+
+    empty = State(button=False, warming_up=False, scanning=0x1D, busy=1, position=2)
+    loaded = State(button=False, warming_up=False, scanning=0x1D, busy=0, position=4)
+
+    assert empty.no_media and not empty.media_loaded
+    assert loaded.media_loaded and not loaded.no_media
+    # Byte 6 is identical in both, which is exactly why it cannot decide this.
+    assert empty.scanning == loaded.scanning
