@@ -1,6 +1,44 @@
 # Multi-exposure: N-bracket capture and merge, in this driver
 
-## Status
+## Status: measured, and it does not earn its time on this scanner
+
+**Verification 6 answered no, twice, on real film.** The merge is built and
+tested; the capture works; the exposure ladder is accurate to 1.5%. What is
+missing is anything for it to remove.
+
+Two scans at one exposure differ only by what is random per pass. Everything
+else -- grain, detail, fixed pattern -- cancels. On a slide:
+
+```
+                    random   total high-freq   random share   ceiling on 5 averaged
+300 dpi, green    123.2 DN          584.3 DN            21%                   -1.8%
+1800 dpi, green   154.9 DN          577.2 DN            27%                   -2.9%
+```
+
+Three quarters of the high-frequency content in the shadows is film grain and
+real detail, identical in every pass. Bracketing and averaging can only touch
+the other quarter, so the ceiling on *any* multi-pass noise reduction here is
+about **-3%**. Measured against prediction at 300 dpi: -1.8% predicted, -1.6%
+achieved, which is how we know the model is right rather than the merge broken.
+
+Going to 1800 dpi was expected to change this -- each pixel collects a
+thirty-sixth of the light -- and it did not, because the grain is better
+resolved at the same time.
+
+Nor is there dynamic range to recover: the darkest tenth of the frame sits at
+4833 DN against a 131 DN noise floor, and the metered pass clips 0.00% of
+pixels. One properly metered pass already captures this film end to end.
+
+**Recommendation: do not ship it as a shadow-noise feature.** What would change
+the answer is a frame whose shadows actually approach the noise floor -- a dense
+underexposed slide, or a scanner run at an exposure it cannot reach. Neither
+describes this one.
+
+The code stays: `rps7200/bracket.py` and `scan_bracket()` are tested and cost
+nothing when unused, and the measurement is re-runnable from the library on any
+future frame.
+
+## Status of the build
 
 **Phase 1 offline: done.** `rps7200/bracket.py` merges a bracket by
 inverse-variance weighting; `scan_bracket()` and `bracket_ladder()` capture one.
