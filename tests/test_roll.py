@@ -167,6 +167,8 @@ class FakeRoll(DirectScanner):
         self.reference = settings(*base)
         self._settings = self.reference
         self.exposures = []
+        self.prescans = []
+        self.slid = []
         self.metered_channels = []
         self.frames_scanned = []
         self.metered_for_infrared = []
@@ -191,8 +193,15 @@ class FakeRoll(DirectScanner):
 
     # -- the passes
     def prescan(self, resolution=300, frame=None):
+        # `prescans` lets a test script what successive looks return, which is
+        # how a correction's before/after pair gets simulated.
+        if self.prescans:
+            return self.prescans.pop(0), None
         frame_at = self.strip[self.at]
         return (blank() if frame_at is None else frame_at), None
+
+    def slide(self, action=SLIDE_INIT, param=0x16, value=0):
+        self.slid.append((action, param, value))
 
     def auto_exposure(self, target=0.7, infrared=False, film="negative", **kw):
         # The real one ALWAYS probes in RGB. `infrared` does not change the
@@ -430,3 +439,112 @@ def test_media_is_read_from_byte_8_not_byte_6():
     assert loaded.media_loaded and not loaded.no_media
     # Byte 6 is identical in both, which is exactly why it cannot decide this.
     assert empty.scanning == loaded.scanning
+
+
+# --- registration correction ------------------------------------------------
+
+def framed(gap_left=0, gap_right=0, height=40, width=428, seed=0):
+    """A frame with a gap of the given width at one or both edges.
+
+    The gap is unexposed base: brighter than the picture and flat down the
+    column. Both properties are needed -- the detector requires both, because
+    every earlier one keyed on a single property and was wrong somewhere.
+    """
+    rng = np.random.default_rng(seed)
+    a = np.clip(np.array(FILM_LEVELS) * (1 + rng.normal(0, 0.55, (height, width, 3))),
+                0, 255)
+    if gap_left:
+        a[:, :gap_left] = 200.0
+    if gap_right:
+        a[:, -gap_right:] = 200.0
+    return a.astype(np.uint8)
+
+
+def test_gap_needs_to_be_bright_and_flat():
+    """Either property alone is what made four earlier detectors wrong."""
+    from rps7200.framing import gap_edges
+
+    assert gap_edges(framed(gap_left=5)) == (5, 0)
+    assert gap_edges(framed(gap_right=5)) == (0, 5)
+    assert gap_edges(framed()) == (0, 0)
+
+    # bright but not flat -- a sunlit area, not a gap
+    rng = np.random.default_rng(1)
+    noisy = framed()
+    noisy[:, :6] = np.clip(rng.normal(200, 60, (40, 6, 3)), 0, 255).astype(np.uint8)
+    assert gap_edges(noisy)[0] == 0
+
+
+def test_a_reading_beyond_the_aperture_is_refused():
+    """The bound is arithmetic: 36.49 mm of aperture, ~36 mm of frame.
+
+    A larger reading is the detector failing, and acting on it would drive the
+    transport on the strength of a number known to be impossible.
+    """
+    from rps7200.framing import MAX_REGISTRATION_MM, registration_error_mm
+
+    mm, why = registration_error_mm(framed(gap_left=4))
+    assert mm is not None and 0 < mm <= MAX_REGISTRATION_MM
+
+    mm, why = registration_error_mm(framed(gap_left=20))
+    assert mm is None and "exceeds" in why
+
+
+def test_gaps_at_both_edges_are_not_drift():
+    from rps7200.framing import registration_error_mm
+
+    mm, why = registration_error_mm(framed(gap_left=4, gap_right=4))
+    assert mm is None and "both edges" in why
+
+
+def test_correction_is_off_unless_asked():
+    s = FakeRoll([framed(gap_left=4) for _ in range(3)])
+    list(s.scan_roll(frames=3, meter=METER_NONE))
+    assert s.slid == [] or all(a == SLIDE_INIT for a, _, _ in s.slid), s.slid
+
+
+def test_a_dry_run_measures_but_never_moves():
+    s = FakeRoll([framed(gap_left=4) for _ in range(2)])
+    frames = list(s.scan_roll(frames=2, meter=METER_NONE, correct_dry_run=True))
+    sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
+    assert sub == [], sub
+    fix = frames[0].registration["correction"]
+    assert fix["moved"] is False
+    assert fix["would_send"]["action"] == 0x01      # gap left -> move back
+    assert fix["would_send"]["param"] >= 1
+
+
+def test_an_error_inside_the_deadband_is_left_alone():
+    """Smallest possible move is 0.27 mm, so correcting 0.1 mm cannot help."""
+    s = FakeRoll([framed(gap_left=1) for _ in range(1)])
+    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+    assert frames[0].registration["correction"]["moved"] is False
+
+
+def test_a_real_error_is_corrected_the_other_way():
+    """A gap on the left means the frame sits too far +x, so it must come back."""
+    s = FakeRoll([framed(gap_left=4)])
+    # before, then the after-prescan the loop takes to check its own work
+    s.prescans = [framed(gap_left=4),      # the roll's own look
+                  framed(gap_left=1)]      # the check after nudging
+    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
+    assert len(sub) == 1, sub
+    action, param, value = sub[0]
+    assert action == 0x01                      # backward
+    assert 1 <= param <= 8
+    assert value == 0x04
+    fix = frames[0].registration["correction"]
+    assert fix["moved"] and fix["improved"]
+
+
+def test_a_correction_that_does_not_land_is_reported():
+    """Backlash swallows a move. Saying so is the whole point of re-measuring."""
+    s = FakeRoll([framed(gap_left=4)])
+    s.prescans = [framed(gap_left=4),      # the roll's own look
+                  framed(gap_left=4)]      # unchanged: the move did not land
+    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    fix = frames[0].registration["correction"]
+    assert fix["moved"] is True
+    assert fix["improved"] is False

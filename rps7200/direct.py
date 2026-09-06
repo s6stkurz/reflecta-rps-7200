@@ -44,7 +44,9 @@ from .framing import (
     NOMINAL_FRAME_WIDTH,
     film_bounds,
     frame_contrast,
+    gap_edges,
     registration,
+    registration_error_mm,
 )
 from .protocol import (
     ASC_END_OF_DATA,
@@ -215,11 +217,13 @@ __all__ = [
     "destripe",
     "dilate_defects",
     "film_bounds",
+    "gap_edges",
     "find_column_defects",
     "flat_defect_sigma",
     "frame_contrast",
     "locks_white_balance",
     "registration",
+    "registration_error_mm",
     "resample_reference",
 ]
 
@@ -1885,6 +1889,116 @@ class DirectScanner:
         }
         return image, meta
 
+    def _correct_registration(
+        self, index: int, image: np.ndarray, prescan_resolution: int, dry_run: bool
+    ) -> dict[str, Any]:
+        """Measure the frame's registration and nudge it back, once.
+
+        Returns what it did. A re-prescan follows any real move, because that is
+        the only way to tell a correction that landed from one that backlash
+        swallowed -- the failure that would otherwise look identical to success.
+        It is also what the vendor does: in setup CyberView moves, scans, moves,
+        scans, each scan checking the last move.
+        """
+        # The caller has already looked at this frame; measuring its prescan
+        # again would cost 12 s to learn nothing.
+        before, why = registration_error_mm(image)
+        out: dict[str, Any] = {"before_mm": before, "reason": why,
+                               "moved": False, "prescan": None}
+
+        if before is None:
+            self._log(f"frame {index}: not correcting -- {why}")
+            return out
+        if abs(before) < self.CORRECTION_DEADBAND_MM:
+            self._log(
+                f"frame {index}: registration {before:+.3f} mm, inside the "
+                f"{self.CORRECTION_DEADBAND_MM} mm deadband -- leaving it"
+            )
+            return out
+
+        # A gap on the left means the frame sits too far towards +x, so it has
+        # to come back: the opposite sign to the error.
+        want = -before
+        if dry_run:
+            param = self.param_for_mm(want)
+            out["would_send"] = {
+                "action": 0x00 if want >= 0 else 0x01, "param": param,
+                "asked_mm": round(
+                    (self.STEP_MM * param + self.OVERHEAD_MM)
+                    * (1 if want >= 0 else -1), 3),
+            }
+            self._log(
+                f"frame {index}: registration {before:+.3f} mm; would send "
+                f"{out['would_send']['action']:#04x} {param:#04x} 00 04 "
+                f"({out['would_send']['asked_mm']:+.3f} mm) -- dry run"
+            )
+            return out
+
+        out.update(self.nudge(want))
+        out["moved"] = True
+        time.sleep(0.4)
+
+        image, _ = self.prescan(resolution=prescan_resolution)
+        after, why_after = registration_error_mm(image)
+        out["after_mm"] = after
+        out["after_reason"] = why_after
+        out["prescan"] = image
+        if after is None:
+            self._log(f"frame {index}: after nudging, {why_after}")
+        else:
+            improved = abs(after) < abs(before)
+            out["improved"] = bool(improved)
+            self._log(
+                f"frame {index}: registration {before:+.3f} -> {after:+.3f} mm "
+                f"({'better' if improved else 'NO BETTER -- backlash?'})"
+            )
+        return out
+
+    # -- sub-frame positioning ---------------------------------------------
+
+    #: The calibrated law for SLIDE actions 0x00 / 0x01, fitted over both
+    #: directions: distance = STEP_MM x param + OVERHEAD_MM. Worst residual
+    #: 0.0185 mm across ten points; see docs/protocol.md section 11.
+    STEP_MM = 0.1057
+    OVERHEAD_MM = 0.1662
+
+    #: Below this the loop leaves the frame alone. Roughly half the smallest
+    #: move the hardware can make (param 1 = 0.27 mm), so it never asks for a
+    #: correction it cannot deliver, and never chatters at measurement noise.
+    CORRECTION_DEADBAND_MM = 0.15
+
+    #: A correction larger than this is refused. The aperture allows 0.49 mm of
+    #: registration error, so anything beyond about a millimetre means the
+    #: measurement is wrong rather than the film being far out.
+    MAX_CORRECTION_PARAM = 8
+
+    def param_for_mm(self, millimetres: float) -> int:
+        """The `param` byte that moves the film this far. See :meth:`nudge`."""
+        n = round((abs(millimetres) - self.OVERHEAD_MM) / self.STEP_MM)
+        return max(1, min(self.MAX_CORRECTION_PARAM, n))
+
+    def nudge(self, millimetres: float) -> dict[str, Any]:
+        """Move the film a sub-frame distance, without touching the frame count.
+
+        `SLIDE 00 <param> 00 04` forward, `01 <param> 00 04` back. Calibrated in
+        docs/protocol.md section 11; `value` has no measurable effect and is left
+        at the 0x04 the vendor pairs with small params.
+
+        **Backlash matters.** Two to three steps are swallowed after a direction
+        change, so a small correction that reverses direction may not move the
+        film at all. The caller is expected to re-measure rather than assume.
+        """
+        param = self.param_for_mm(millimetres)
+        forward = millimetres >= 0
+        asked = self.STEP_MM * param + self.OVERHEAD_MM
+        self._log(
+            f"nudge {'+' if forward else '-'}{asked:.3f} mm "
+            f"(param {param}) for a {millimetres:+.3f} mm error"
+        )
+        self.slide(0x00 if forward else 0x01, param=param, value=0x04)
+        return {"param": param, "forward": forward,
+                "asked_mm": round(asked if forward else -asked, 3)}
+
     # -- rolls -------------------------------------------------------------
 
     def scan_roll(
@@ -1903,6 +2017,8 @@ class DirectScanner:
         max_failures: int = 3,
         scan_frame: tuple[int, int, int, int] | None = None,
         dry_run: bool = False,
+        correct: bool = False,
+        correct_dry_run: bool = False,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -2000,13 +2116,26 @@ class DirectScanner:
                     )
                     return
 
+                if correct or correct_dry_run:
+                    fix = self._correct_registration(
+                        index, prescan_image, prescan_resolution, correct_dry_run
+                    )
+                    marks["correction"] = fix
+                    if fix.get("prescan") is not None:
+                        prescan_image = fix.pop("prescan")
+                        marks.update(
+                            {k: v for k, v in registration(
+                                prescan_image, window).items()}
+                        )
+                        marks["contrast"] = round(
+                            frame_contrast(prescan_image), 4)
+
                 if marks["shortfall"] > drift_warning:
-                    # Reported, never corrected here. Nothing in six captures
-                    # moves the film by less than a whole frame, and
-                    # SET_SCAN_HEAD is never sent by anything, so there is no
-                    # verified way to nudge it back -- see
-                    # tools/transport_probe.py. Saying so is better than a
-                    # correction invented on the spot.
+                    # Reported, not corrected by this branch. Sub-frame movement
+                    # exists and is calibrated -- see `correct` above and
+                    # docs/protocol.md section 11 -- but a shortfall this large
+                    # is picture hanging outside the aperture, which no amount
+                    # of nudging brings back.
                     self._log(
                         f"frame {index}: picture is {marks['shortfall_mm']:.2f} mm "
                         "narrower than a whole frame -- the film has drifted and "

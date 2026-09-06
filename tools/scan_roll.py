@@ -55,6 +55,14 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--start-at", type=int, default=1, metavar="N",
                     help="resume at picture N, advancing to it without scanning "
                          "(1 = the picture the film is on now)")
+    ap.add_argument("--correct", action="store_true",
+                    help="nudge the film back into registration between frames, "
+                         "using the calibrated sub-frame move. Off by default: "
+                         "the vendor does not do this during a roll either, and "
+                         "a strip that does not drift gains nothing from it")
+    ap.add_argument("--correct-dry-run", action="store_true",
+                    help="measure registration and log the correction that "
+                         "would be sent, without moving the film")
     ap.add_argument("--dry-run", action="store_true",
                     help="prescan and advance only -- no full scans. Walks a "
                          "6-frame strip in about 2.5 minutes")
@@ -209,6 +217,8 @@ def main() -> int:
             keep_raw=bool(args.library),
             max_failures=args.max_failures,
             dry_run=args.dry_run,
+            correct=args.correct,
+            correct_dry_run=args.correct_dry_run,
         ):
             number = frame.index + 1
             record = {

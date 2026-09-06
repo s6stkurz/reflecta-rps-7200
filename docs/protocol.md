@@ -63,7 +63,7 @@ Exposure and highlight/shadow are written once per channel (masks `0x02`, `0x04`
 `0x08`) before every pass, always with the value 100. They are never used to adjust
 anything.
 
-## 4. MODE SELECT (`0x15`) — including scan direction
+## 4. MODE SELECT (`0x15`)
 
 Sixteen bytes:
 
@@ -117,12 +117,38 @@ Four bytes: `action param 00 value`. Every payload ever observed:
 | `04 01 00 02` | 9 | advance one frame — the value differs, the movement does not exceed 0.05 mm |
 | `05 01 00 01` | 16 | **reverse** one frame; used only to rewind a finished roll |
 | `03 f6 dd 00` | 1 | eject, the last command of a session |
-| `00 46 00 00`, `00 4c 00 01`, `00 01 00 04` | 4 | **sub-frame movement**; `00 01 00 04` = +0.32 mm, §11 |
-| `01 46 00 00`, `01 47 00 03` | 2 | **sub-frame movement**; `01 47 00 03` = −7.47 mm, §11 |
+| `00 <param> 00 <value>` | 4 | **sub-frame movement, forward** — calibrated, below |
+| `01 <param> 00 <value>` | 2 | **sub-frame movement, backward** — calibrated, below |
 
-Actions `0x00` and `0x01` occupy the mechanism for 1.5–3 s without changing the
-position counter. They are the only remaining candidates for sub-frame movement,
-and they are unidentified.
+### Sub-frame movement — the operational answer
+
+Actions `0x00` and `0x01` move the film **without changing the frame counter**, which
+is what makes them sub-frame where `NEXT` and `PREV` are not. Calibrated on the
+hardware (§11 has the measurements):
+
+```
+distance = 0.1057 mm x param + 0.1662 mm      good to ~0.02 mm for param <= 12
+sign     = action        0x00 forward, 0x01 backward
+value    = no measurable effect; use 0x04, which the vendor pairs with small params
+
+param    = round((millimetres - 0.1662) / 0.1057)
+
+0.40 mm  ->  00 02 00 04 forward,  01 02 00 04 back
+1.00 mm  ->  00 08 00 04 forward,  01 08 00 04 back
+```
+
+Three things a caller will otherwise get wrong:
+
+- **Backlash swallows two to three steps after a direction change.** A small
+  correction that reverses direction may not move the film at all. Re-measure; do not
+  assume.
+- **The smallest single move is 0.27 mm** (`param 1`). Asking for less is not possible.
+- **The frame counter does not move**, so `READ STATE` position cannot confirm any of
+  this. Only a prescan can.
+
+The law bends slightly above `param` ~20 and repeatability collapses at the vendor's
+largest, 87 — see §11. None of that matters for registration, which works in the
+0.27-1.0 mm range where the law is accurate.
 
 The scanner's physical **Forward/Reverse keys produce no USB traffic at all**. In
 `full_17_strip` the window in which they were pressed carries 117 `READ_STATE` polls
@@ -133,8 +159,10 @@ transport commands in the whole session.
 They are not, however, invisible in their *effect*: the scanner updates its own
 position counter, and `frist_open` reads position 2 throughout, which is the third
 picture the keys had been used to reach. So the host can see **where** the film ended
-up, but can neither observe nor command the movement. Fine positioning is not exposed
-to the host.
+up, but can neither observe nor command **the keys**. That is a narrower claim than it
+first appears, and the difference cost two days: the *keys* are not exposed, but fine
+positioning is — through the `SLIDE` actions above, which were sitting in the captures
+the whole time marked "unidentified".
 
 ## 6. Gain and offset (`0xD7` read, `0xDC` write)
 
@@ -193,13 +221,13 @@ What CyberView does, in order.
 ```
 INQUIRY
 vendor 0xE7
-SLIDE 00 01 00 04          unidentified
+SLIDE 00 01 00 04          sub-frame move, +0.27 mm
 READ STATE                 position resets to 0 when a strip is inserted
   [operator aligns the film with the scanner's own keys -- no USB traffic]
 SET SCAN FRAME + MODE 3600 dpi + SCAN        one overview pass
-SLIDE 00 46 00 00          unidentified
+SLIDE 00 46 00 00          sub-frame move, ~+7.5 mm
 SET SCAN FRAME + MODE 600 dpi + SCAN         two preview passes
-SLIDE 01 47 00 03          unidentified
+SLIDE 01 47 00 03          sub-frame move, ~-7.5 mm
 ```
 
 then, per frame, twice:
@@ -606,11 +634,6 @@ of the right size, using a command the vendor sends in every session.
   refutes that, and nothing has replaced the explanation.
 - What makes a scan come back mirrored. It is real and reproducible as a pair of
   groups, but not driven by any byte tried. See §11.
-- What the `param` and `value` bytes of the sub-frame SLIDE actions encode. Two of
-  the five payloads are characterised (§11); the other three have direction but not
-  a trustworthy magnitude, and no rule relates the bytes to the distance.
-- Whether a fine step *backward* exists. `01 01 00 04` is the candidate and is not
-  sent, being a combination no capture contains.
 - SLIDE INIT's `param` byte. `0x13`-`0x16` are interchangeable when measured;
   `0x01` produced a differently oriented image once, in a run where orientation
   was varying for other reasons too, so it is not cleared either way.

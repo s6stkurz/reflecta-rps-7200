@@ -180,3 +180,87 @@ def registration(
         "margin": int(min(x0 - fx0, fx1 - x1)),
         "margin_mm": mm(min(x0 - fx0, fx1 - x1)),
     }
+
+
+# --- registration from the inter-frame gap -------------------------------
+
+#: A column counts as gap when it is this many MADs above the median level.
+GAP_LEVEL_SIGMA = 2.0
+#: ...and varies less than this fraction of the picture's own variation.
+GAP_FLATNESS = 0.35
+#: Shorter runs than this at an edge are noise, not a gap.
+GAP_MIN_RUN = 3
+
+#: All the room the film has. The aperture is 10344 units = 36.49 mm and a 35 mm
+#: frame is ~36 mm, so registration cannot be off by more than about half a
+#: millimetre. A larger reading is the detector failing, not the film moving --
+#: which is the single assumption that made this measurable at all, after four
+#: successive detectors each reported confident nonsense.
+MAX_REGISTRATION_MM = 0.49
+
+
+def gap_edges(image: np.ndarray) -> tuple[int, int]:
+    """Columns of inter-frame gap visible at each edge, as ``(left, right)``.
+
+    The gap is unexposed film base, so it is **both brighter than the picture and
+    flatter down the column**. Neither test alone works, and that is not a
+    guess -- four detectors were built for this and every one keyed on a single
+    property and was confidently wrong on some frames. Brightness alone fires on
+    a sunlit sky; flatness alone fires on any smooth dark area.
+
+    Zero is the normal answer. The picture overfills the aperture, so a
+    well-registered frame shows no gap at all, and only once the film creeps does
+    a sliver appear at one edge. Zero therefore means "nothing to correct", not
+    "could not measure".
+    """
+    grey = image.astype(np.float64)
+    if grey.ndim == 3:
+        grey = grey.mean(axis=2)
+    if grey.size == 0:
+        return 0, 0
+
+    level = grey.mean(axis=0)
+    spread = grey.std(axis=0)
+    med = float(np.median(level))
+    mad = 1.4826 * float(np.median(np.abs(level - med))) or 1e-9
+    typical = float(np.median(spread)) or 1e-9
+
+    gap = (level > med + GAP_LEVEL_SIGMA * mad) & (spread < GAP_FLATNESS * typical)
+
+    def run(flags: np.ndarray) -> int:
+        n = 0
+        while n < len(flags) and flags[n]:
+            n += 1
+        return n if n >= GAP_MIN_RUN else 0
+
+    return run(gap), run(gap[::-1])
+
+
+def registration_error_mm(
+    image: np.ndarray, full_frame: tuple[int, int, int, int] = FULL_FRAME
+) -> tuple[float | None, str]:
+    """How far the frame sits from centred, in mm, or ``None`` with a reason.
+
+    Positive means the frame is too far towards +x, so a gap has appeared on the
+    left. Returns ``None`` when the reading cannot be trusted, which is more
+    often than not and is the point: acting on a bad measurement drives the
+    transport for nothing.
+    """
+    if frame_contrast(image) < BLANK_CONTRAST:
+        return None, "no picture in the window"
+
+    left, right = gap_edges(image)
+    if left and right:
+        return None, f"gap at both edges ({left}, {right} px) -- not drift"
+    if not left and not right:
+        return 0.0, "no gap in view -- registered"
+
+    width = image.shape[1] or 1
+    px = left or -right
+    mm = px * (full_frame[2] - full_frame[0] + 1) / width * MM_PER_INCH / COORD_PER_INCH
+    if abs(mm) > MAX_REGISTRATION_MM:
+        return None, (
+            f"{abs(mm):.2f} mm exceeds the {MAX_REGISTRATION_MM} mm the aperture "
+            "allows -- detector error, not film movement"
+        )
+    return mm, f"{px:+d} px of gap"

@@ -479,11 +479,12 @@ characterised:
 
 | payload | movement | repeatability |
 |---|---|---|
-| `00 01 00 04` | **+0.32 mm** forward | ±0.03 mm, n=3 after backlash |
-| `01 47 00 03` | **−7.47 mm** backward | ±0.05 mm, n=4 |
+| `00 <param> 00 04` | **forward**, `0.1057 x param + 0.1662` mm | ±0.02 mm |
+| `01 <param> 00 04` | **backward**, same law | ±0.02 mm |
 
-The aperture's slack is 0.49 mm, so a 0.32 mm step is the right size to correct
-registration with. See `docs/protocol.md` §11 for the measurements.
+The aperture's slack is 0.49 mm and the smallest move is 0.27 mm, so registration is
+correctable to a chosen distance. `scan_roll(correct=True)` does it; see
+`docs/protocol.md` §5 for the law and §11 for the measurements.
 
 This does not resurrect the drift: seventeen slides still came out sound by eye, and
 the transport still holds registration on its own. What it changes is that a roll
