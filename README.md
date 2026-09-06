@@ -171,6 +171,31 @@ The driver sets the mode bytes for a one-pass four-channel capture itself and ap
 shading on the host, as described above. Nothing consumes or alters the IR plane on the
 way out.
 
+### Filing every scan automatically
+
+`tools/scan.py` and `tools/scan_roll.py` file each scan in the library with its raw
+bytes. Anything calling `DirectScanner` directly used to file nothing — which is how a
+week of diagnostic scans left no record at all, and why some evidence that was wanted
+later no longer existed.
+
+`DirectScanner` can now do it itself:
+
+    RPS7200_DEBUG=1 python3 my_script.py          # or DirectScanner(debug=True)
+
+Every `scan()` is then filed, tagged `debug`, with raw bytes, shading reference and
+CCD mask — everything needed to re-decode it later.
+
+**Off by default**, because an 1800 dpi RGBI entry is ~35 MB and routine use should not
+pay for that. Turn it on for anything exploratory, where the scan you did not think
+mattered is exactly the one you will want.
+
+It costs no scanning time: entries are queued during the session and written after the
+device is closed, since gzipping one with the device open and idle has preceded a
+wedge. A filing failure is logged and swallowed — losing the record beats losing the
+session that produced it.
+
+Set `RPS7200_DEBUG_ROOT` to file somewhere other than `library/`.
+
 ## Checking that the IR is real
 
 A genuine IR plane sees through the dye layers, so it should **not** track the visible

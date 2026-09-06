@@ -58,6 +58,32 @@ After any change to how bytes become pixels, run `tools/library.py reconstruct`:
 it re-decodes every stored pass with current code and reports what no longer
 matches.
 
+### Claude: always scan with debug filing on. Always.
+
+**`DirectScanner` files every scan in the library automatically when debug mode is
+on, and debug mode is OFF by default. You must always turn it on. This is not
+optional and it is not a preference.**
+
+    RPS7200_DEBUG=1 python3 your_script.py        # the way to do it
+
+or `DirectScanner(debug=True)` in code. Either works; the environment variable is
+better because a script inherits it without having to remember.
+
+Why this rule exists, in one sentence: a week of probe scans left no library entries
+at all, because filing lived only in `tools/scan.py` and `tools/scan_roll.py` and
+every ad-hoc script bypassed them -- and when six prescans were needed as evidence
+they were simply gone. The convention above says *file every scan*; it was true of
+the tools and quietly false of everything else.
+
+Off by default is deliberate: ordinary use should not be burdened, and a 1800 dpi
+RGBI entry is ~35 MB. But **you are not ordinary use**. You write throwaway scripts
+that turn out to matter, and you cannot tell in advance which scan will be the one
+somebody asks for later.
+
+Nothing is written while the device is open. Scans are queued during the session and
+filed after it closes, because gzipping an entry with the device open and idle
+preceded a wedge once. So it costs no scanning time at all.
+
 **Regenerate the three comparison files after any significant change** to the
 scan or correction path, in the repo root, and send them:
 

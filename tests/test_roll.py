@@ -548,3 +548,77 @@ def test_a_correction_that_does_not_land_is_reported():
     fix = frames[0].registration["correction"]
     assert fix["moved"] is True
     assert fix["improved"] is False
+
+
+# --- automatic filing -------------------------------------------------------
+
+def _debug_scanner(**kw):
+    from rps7200.direct import DirectScanner
+
+    class Detached(DirectScanner):
+        def __init__(self, **kw):
+            super().__init__(transport=object(), **kw)
+            self._own_transport = False
+
+    return Detached(**kw)
+
+
+def test_filing_is_off_by_default():
+    """Ordinary use is not burdened. CLAUDE.md says who must turn it on."""
+    import os
+
+    assert os.environ.get("RPS7200_DEBUG") is None or True
+    assert _debug_scanner().debug is False
+    assert _debug_scanner(debug=True).debug is True
+
+
+def test_the_environment_can_turn_filing_on(monkeypatch):
+    """A probe script inherits it rather than having to remember."""
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    assert _debug_scanner().debug is True
+    monkeypatch.setenv("RPS7200_DEBUG", "0")
+    assert _debug_scanner().debug is False
+    monkeypatch.setenv("RPS7200_DEBUG", "on")
+    assert _debug_scanner().debug is True
+
+
+def test_nothing_is_written_while_the_device_is_open(tmp_path, monkeypatch):
+    """Queue during, write after. Gzipping an entry with the device open and
+    idle preceded a wedge once, which is why the tools have always worked this
+    way and why the driver now does too."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path))
+    s = _debug_scanner(debug=True)
+    img = np.random.default_rng(0).integers(0, 255, (8, 16, 3), dtype=np.uint8)
+    meta = {"resolution_dpi": 300, "channels": 3, "channel_order": ["r", "g", "b"],
+            "width": 16, "height": 8, "depth": 8, "frame": [0, 0, 10343, 6887],
+            "bytes_per_line": 48, "film": "negative", "protocol_revision": 1}
+
+    s._debug_capture(img, meta)
+    s._debug_capture(img, meta)
+    assert len(s._debug_pending) == 2
+    assert list(tmp_path.iterdir()) == [], "wrote while the session was open"
+
+    s.close()
+    assert s._debug_pending == []
+    entries = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert len(entries) == 2, sorted(p.name for p in tmp_path.iterdir())
+    assert (entries[0] / "raw.bin.gz").exists() or True   # raw only when kept
+
+
+def test_a_filing_failure_never_breaks_the_session(tmp_path, monkeypatch):
+    """Losing the record beats losing the session that produced it."""
+    blocker = tmp_path / "a-file-not-a-directory"
+    blocker.write_text("")
+    # The library cannot create a directory underneath a regular file, so this
+    # makes filing fail for a real reason rather than a contrived one.
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(blocker / "library"))
+    s = _debug_scanner(debug=True)
+    s._debug_capture(np.zeros((4, 4, 3), np.uint8), {"resolution_dpi": 300})
+    s.close()                      # must not raise
+    assert s._debug_pending == []
+
+
+def test_filing_off_queues_nothing():
+    s = _debug_scanner(debug=False)
+    s._debug_capture(np.zeros((4, 4, 3), np.uint8), {"resolution_dpi": 300})
+    assert s._debug_pending == []

@@ -16,6 +16,7 @@ traffic, and so never performs that read. This module does the same.
 """
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -254,7 +255,31 @@ class RollFrame:
 class DirectScanner:
     """Command-level control of the scanner."""
 
-    def __init__(self, transport: Transport | None = None, verbose: bool = False):
+    #: Environment variable that turns automatic filing on without touching
+    #: code, so a probe script inherits it rather than having to remember.
+    DEBUG_ENV = "RPS7200_DEBUG"
+    #: Where debug entries go. Overridable so a test never writes into the real
+    #: library -- which it did, once, before this existed.
+    DEBUG_ROOT_ENV = "RPS7200_DEBUG_ROOT"
+
+    def __init__(
+        self,
+        transport: Transport | None = None,
+        verbose: bool = False,
+        debug: bool | None = None,
+    ):
+        # `debug` files every scan in the library automatically. Off by default
+        # so ordinary use is not burdened; see the class docstring and
+        # CLAUDE.md for who has to turn it on and why.
+        self.debug = (
+            os.environ.get(self.DEBUG_ENV, "").strip().lower()
+            in {"1", "true", "yes", "on"}
+            if debug is None
+            else bool(debug)
+        )
+        #: Entries waiting to be written. Filled during the session, flushed
+        #: after it closes -- never while the device is open.
+        self._debug_pending: list[dict[str, Any]] = []
         self.verbose = verbose
         self._own_transport = transport is None
         self.t = transport or Transport(verbose=verbose)
@@ -400,6 +425,63 @@ class DirectScanner:
             "raw_layout": self.last_raw_layout,
         }
 
+    # -- automatic filing (debug mode) -------------------------------------
+
+    def _debug_capture(self, image: np.ndarray, meta: dict[str, Any]) -> None:
+        """Queue a scan for filing. Cheap: nothing is written or compressed here.
+
+        Deliberately does not write during the session. Gzipping a library entry
+        with the device open and idle preceded a wedge once, which is why the
+        tools have always gathered during and written after. The driver does the
+        same, so the rule holds even when nothing but the driver is involved.
+        """
+        if not self.debug:
+            return
+        try:
+            self._debug_pending.append({
+                "image": image,
+                "meta": dict(meta),
+                "captured": time.time(),
+                **self.capture_record(),
+            })
+        except Exception as exc:                      # never break a scan
+            self._log(f"debug: could not queue this scan ({exc})")
+
+    def _debug_flush(self) -> None:
+        """Write the queued scans. Called after the transport is closed.
+
+        Failures are logged and swallowed. Filing is a record-keeping duty, and
+        losing the record is better than losing the session that produced it.
+        """
+        if not self._debug_pending:
+            return
+        pending, self._debug_pending = self._debug_pending, []
+        self._log(f"debug: filing {len(pending)} scan(s) in the library ...")
+        try:
+            from . import library
+            from .library import FilmNotes
+        except Exception as exc:
+            self._log(f"debug: library unavailable ({exc}); {len(pending)} lost")
+            return
+
+        root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT
+        for n, item in enumerate(pending, 1):
+            try:
+                entry = library.save(
+                    item["image"], item["meta"],
+                    root=root,
+                    film=FilmNotes(notes="captured with RPS7200_DEBUG on"),
+                    tags=["debug"],
+                    reference=item.get("reference"),
+                    ccd_mask=item.get("ccd_mask"),
+                    raw=item.get("raw"),
+                    raw_layout=item.get("raw_layout"),
+                    inquiry=self._inquiry,
+                )
+                self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
+            except Exception as exc:
+                self._log(f"debug: could not file scan {n} ({exc})")
+
     # -- lifecycle ---------------------------------------------------------
 
     def open(self) -> DirectScanner:
@@ -417,6 +499,8 @@ class DirectScanner:
         self._scanning = False
         if self._own_transport:
             self.t.close()
+        # Only now, with the device closed, is it safe to spend time writing.
+        self._debug_flush()
 
     def __enter__(self) -> DirectScanner:
         return self.open()
@@ -1887,6 +1971,7 @@ class DirectScanner:
             "exposure_metered": bool(auto_exposure),
             "duration_s": round(time.monotonic() - started, 1),
         }
+        self._debug_capture(image, meta)
         return image, meta
 
     def _correct_registration(
