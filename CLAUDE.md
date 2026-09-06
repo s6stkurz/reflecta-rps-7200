@@ -80,9 +80,15 @@ RGBI entry is ~35 MB. But **you are not ordinary use**. You write throwaway scri
 that turn out to matter, and you cannot tell in advance which scan will be the one
 somebody asks for later.
 
-Nothing is written while the device is open. Scans are queued during the session and
-filed after it closes, because gzipping an entry with the device open and idle
-preceded a wedge once. So it costs no scanning time at all.
+Nothing is compressed while the device is open. Each scan is spooled to a temporary
+file as it is taken -- a plain sequential write, a second or two -- and the entries
+are assembled and gzipped after `close()`, because gzipping one with the scanner open
+and idle preceded a wedge once.
+
+It is spooled rather than held in memory for a reason worth knowing: a 7200 dpi RGBI
+frame is 570 MB of pixels and about as much again of raw bytes, so keeping a
+seventeen-frame roll in RAM would want **19 GB**. Only paths and small metadata stay
+resident.
 
 **Regenerate the three comparison files after any significant change** to the
 scan or correction path, in the repo root, and send them:

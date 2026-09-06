@@ -17,6 +17,8 @@ traffic, and so never performs that read. This module does the same.
 from __future__ import annotations
 
 import os
+import tempfile
+import shutil
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -277,9 +279,11 @@ class DirectScanner:
             if debug is None
             else bool(debug)
         )
-        #: Entries waiting to be written. Filled during the session, flushed
-        #: after it closes -- never while the device is open.
+        #: Scans waiting to be filed. Only paths and metadata live here; the
+        #: pixels are spooled to disk, because a 7200 dpi roll would otherwise
+        #: want 19 GB of RAM.
         self._debug_pending: list[dict[str, Any]] = []
+        self._debug_spool: Path | None = None
         self.verbose = verbose
         self._own_transport = transport is None
         self.t = transport or Transport(verbose=verbose)
@@ -428,24 +432,48 @@ class DirectScanner:
     # -- automatic filing (debug mode) -------------------------------------
 
     def _debug_capture(self, image: np.ndarray, meta: dict[str, Any]) -> None:
-        """Queue a scan for filing. Cheap: nothing is written or compressed here.
+        """Spool a scan to disk for filing after the session.
 
-        Deliberately does not write during the session. Gzipping a library entry
-        with the device open and idle preceded a wedge once, which is why the
-        tools have always gathered during and written after. The driver does the
-        same, so the rule holds even when nothing but the driver is involved.
+        **Held on disk, not in memory.** A 7200 dpi RGBI frame is 570 MB of
+        pixels and about as much again of raw bytes, so queueing seventeen of
+        them would want 19 GB of RAM. Only paths and metadata stay resident.
+
+        Written uncompressed and sequentially, which is a memcpy and a disk
+        write. The thing to keep away from an open device is *compression* --
+        gzipping an entry with the scanner open and idle preceded a wedge -- and
+        that is deferred to the flush, after close(). A plain write of a few
+        hundred megabytes costs a second or two against a scan measured in
+        minutes.
         """
         if not self.debug:
             return
         try:
-            self._debug_pending.append({
-                "image": image,
-                "meta": dict(meta),
-                "captured": time.time(),
-                **self.capture_record(),
-            })
+            if self._debug_spool is None:
+                self._debug_spool = Path(
+                    tempfile.mkdtemp(prefix="rps7200-debug-")
+                )
+            n = len(self._debug_pending)
+            item: dict[str, Any] = {"meta": dict(meta), "captured": time.time()}
+            record = self.capture_record()
+
+            image_path = self._debug_spool / f"{n:03d}-image.npy"
+            np.save(image_path, image)
+            item["image_path"] = image_path
+
+            raw = record.get("raw")
+            if raw is not None:
+                raw_path = self._debug_spool / f"{n:03d}-raw.bin"
+                raw_path.write_bytes(raw)
+                item["raw_path"] = raw_path
+            item["raw_layout"] = record.get("raw_layout")
+            # Small enough to keep: a shading reference is a few hundred kB and
+            # the CCD mask is 5172 bytes.
+            item["reference"] = record.get("reference")
+            item["ccd_mask"] = record.get("ccd_mask")
+
+            self._debug_pending.append(item)
         except Exception as exc:                      # never break a scan
-            self._log(f"debug: could not queue this scan ({exc})")
+            self._log(f"debug: could not spool this scan ({exc})")
 
     def _debug_flush(self) -> None:
         """Write the queued scans. Called after the transport is closed.
@@ -467,20 +495,29 @@ class DirectScanner:
         root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT
         for n, item in enumerate(pending, 1):
             try:
+                image = np.load(item["image_path"])
+                raw_path = item.get("raw_path")
                 entry = library.save(
-                    item["image"], item["meta"],
+                    image, item["meta"],
                     root=root,
                     film=FilmNotes(notes="captured with RPS7200_DEBUG on"),
                     tags=["debug"],
                     reference=item.get("reference"),
                     ccd_mask=item.get("ccd_mask"),
-                    raw=item.get("raw"),
+                    raw=raw_path.read_bytes() if raw_path else None,
                     raw_layout=item.get("raw_layout"),
                     inquiry=self._inquiry,
                 )
                 self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
             except Exception as exc:
                 self._log(f"debug: could not file scan {n} ({exc})")
+        # One frame is resident at a time, and the spool goes when it is done.
+        try:
+            if self._debug_spool is not None:
+                shutil.rmtree(self._debug_spool, ignore_errors=True)
+                self._debug_spool = None
+        except Exception:
+            pass
 
     # -- lifecycle ---------------------------------------------------------
 

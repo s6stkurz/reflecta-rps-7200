@@ -622,3 +622,43 @@ def test_filing_off_queues_nothing():
     s = _debug_scanner(debug=False)
     s._debug_capture(np.zeros((4, 4, 3), np.uint8), {"resolution_dpi": 300})
     assert s._debug_pending == []
+
+
+def test_scans_are_spooled_to_disk_not_held_in_ram(tmp_path, monkeypatch):
+    """A 7200 dpi RGBI frame is 570 MB of pixels and as much again of raw bytes.
+
+    Queueing seventeen of those in memory would want 19 GB, which is why only
+    paths and small metadata stay resident. The shading reference (a few hundred
+    kB) and the CCD mask (5172 bytes) are small enough to keep.
+    """
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    big = np.zeros((300, 400, 4), np.uint16)
+    s.last_raw = b"\x00" * 100_000
+    s.last_raw_layout = {"width": 400, "lines": 300, "channels": 4,
+                         "bytes_per_line": 3200}
+    s._debug_capture(big, {"resolution_dpi": 300})
+
+    held = s._debug_pending[0]
+    assert "image" not in held, "the array is being kept in memory"
+    assert "raw" not in held, "the raw bytes are being kept in memory"
+    assert held["image_path"].exists()
+    assert held["raw_path"].exists()
+    # and the spool is somewhere temporary, not in the library
+    assert str(tmp_path) not in str(held["image_path"])
+
+
+def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channels": 3,
+                      "channel_order": ["r", "g", "b"], "width": 16, "height": 8,
+                      "depth": 8, "frame": [0, 0, 10343, 6887],
+                      "bytes_per_line": 48, "film": "negative",
+                      "protocol_revision": 1})
+    spool = s._debug_spool
+    assert spool.exists()
+    s.close()
+    assert not spool.exists(), "the spool outlived the session"
+    assert s._debug_spool is None

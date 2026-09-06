@@ -189,10 +189,15 @@ CCD mask — everything needed to re-decode it later.
 pay for that. Turn it on for anything exploratory, where the scan you did not think
 mattered is exactly the one you will want.
 
-It costs no scanning time: entries are queued during the session and written after the
-device is closed, since gzipping one with the device open and idle has preceded a
-wedge. A filing failure is logged and swallowed — losing the record beats losing the
-session that produced it.
+Each scan is spooled to a temporary file as it is taken, and the entries are assembled
+and compressed after the device is closed — gzipping one with the device open and idle
+has preceded a wedge. Spooled rather than kept in memory because a 7200 dpi RGBI frame
+is 570 MB of pixels plus as much again of raw bytes, so a seventeen-frame roll would
+otherwise want 19 GB of RAM; only paths stay resident, and the spool is deleted once
+filing is done.
+
+A filing failure is logged and swallowed — losing the record beats losing the session
+that produced it.
 
 Set `RPS7200_DEBUG_ROOT` to file somewhere other than `library/`.
 
