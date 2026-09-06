@@ -256,24 +256,122 @@ def stage6(s: DirectScanner) -> dict:
     return res
 
 
-def _shift(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
-    """Sub-pixel shift of b relative to a, per axis, by cross-correlation."""
+def _shift(a: np.ndarray, b: np.ndarray, limit: int = 60) -> tuple[float, float]:
+    """Sub-pixel shift of b relative to a, per axis, by cross-correlation.
+
+    ``limit`` bounds the search. Unbounded, the peak can wrap: in stage 6 a true
+    -88 px came back as +359.78 px, which is a shift larger than most of the
+    428-column window and cannot be real. A movement predicted well inside the
+    limit that reports outside it is an artefact by construction, so the bound
+    is not a fudge -- it is the prior that the film did not teleport.
+    """
     def one(pa, pb):
         pa = (pa - pa.mean()) / (pa.std() or 1.0)
         pb = (pb - pb.mean()) / (pb.std() or 1.0)
         c = np.correlate(pb, pa, mode="full")
-        k = int(np.argmax(c))
+        zero = len(pa) - 1                       # index meaning "no shift"
+        lo, hi = max(0, zero - limit), min(len(c), zero + limit + 1)
+        k = lo + int(np.argmax(c[lo:hi]))
         if 0 < k < len(c) - 1:
             y0, y1, y2 = c[k-1], c[k], c[k+1]
             d = y0 - 2*y1 + y2
             k = k + (0.5*(y0-y2)/d if d else 0.0)
-        return k - (len(pa) - 1)
+        return k - zero
     ga, gb = grey(a), grey(b)
     return one(ga.mean(axis=0), gb.mean(axis=0)), one(ga.mean(axis=1), gb.mean(axis=1))
 
 
-STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6}
-NEEDS_FILM = {1, 3, 4, 5, 6}
+#: mm per prescan column, at 300 dpi across the full 10344-unit window
+MM_PER_PX = 36.49 / 428
+
+#: The ladder. Only `param` varies; action and value stay at the combination the
+#: vendor pairs with param 1. Every value is far inside the observed 1..87.
+LADDER = [1, 2, 3, 4, 6, 8, 12]
+REPEATS = 3
+
+
+def stage7(s: DirectScanner) -> dict:
+    """Is `param` a step count, and what is one step worth?
+
+    Three coarse payloads agree on ~0.104 mm per unit; `00 01 00 04` measured
+    0.32 mm at param 1, three times off that line. Either the `value` byte
+    contributes or a 4-pixel measurement was poor. Which is true decides whether
+    a distance can be asked for -- 0.40 mm is param 4 under one model and
+    nowhere under the other.
+
+    Only `param` varies, never above the vendor's largest. Direction is never
+    reversed inside the ladder, because the first steps after a reversal fall
+    short while backlash takes up.
+    """
+    print("\n=== stage 7: is param a step count?")
+    print(f"  action 0x00, value 0x04, param {LADDER}, x{REPEATS} each")
+    print("  0.104 mm/unit predicts param 4 = 0.42 mm; 0.32 mm/unit predicts 1.28\n")
+
+    print("  taking up backlash with three throwaway forward steps ...")
+    for _ in range(3):
+        s.slide(0x00, param=0x01, value=0x04)
+        time.sleep(1.4)
+
+    prev, _ = shot(s, "stage7_start")
+    start_pos = s.read_state().position
+    res, travel = {}, 0.0
+    print(f"\n  {'param':>6} {'n':>2} {'dx px':>8} {'mm':>8} {'mm/unit':>9} {'dy px':>7}")
+    for param in LADDER:
+        got = []
+        for n in range(1, REPEATS + 1):
+            s.slide(0x00, param=param, value=0x04)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 12 and not s.test_unit_ready():
+                time.sleep(0.25)
+            img, _ = shot(s, f"stage7_p{param:02d}_{n}")
+            dx, dy = _shift(prev, img)
+            got.append(dx)
+            travel += dx * MM_PER_PX
+            print(f"  {param:6d} {n:2d} {dx:+8.2f} {dx*MM_PER_PX:+8.3f} "
+                  f"{abs(dx*MM_PER_PX)/param:9.4f} {dy:+7.2f}")
+            prev = img
+        mean = float(np.mean(got))
+        res[param] = {"px": [round(v, 2) for v in got],
+                      "mean_px": round(mean, 2),
+                      "mean_mm": round(mean * MM_PER_PX, 4),
+                      "mm_per_unit": round(abs(mean * MM_PER_PX) / param, 4)}
+        if s.read_state().position != start_pos:
+            print("    frame counter moved -- stopping")
+            break
+
+    print(f"\n  {'param':>6} {'mean mm':>9} {'mm/unit':>9}")
+    for p, r in res.items():
+        print(f"  {p:6d} {r['mean_mm']:+9.3f} {r['mm_per_unit']:9.4f}")
+
+    # A step count means distance is linear in param and passes through zero.
+    ps = np.array(list(res), dtype=float)
+    ms = np.array([res[p]["mean_mm"] for p in res], dtype=float)
+    if len(ps) >= 3:
+        slope, intercept = np.polyfit(ps, ms, 1)
+        pred = slope * ps + intercept
+        resid = float(np.max(np.abs(ms - pred)))
+        print(f"\n  fit: {slope:+.4f} mm per unit, intercept {intercept:+.4f} mm")
+        print(f"  worst residual {resid:.4f} mm")
+        linear = resid < 0.05 and abs(intercept) < 0.15
+        print(f"  -> {'param IS a step count' if linear else 'NOT a clean step count'}")
+        res["fit"] = {"mm_per_unit": round(float(slope), 4),
+                      "intercept_mm": round(float(intercept), 4),
+                      "worst_residual_mm": round(resid, 4),
+                      "linear": bool(linear)}
+        if linear:
+            for want in (0.30, 0.40, 0.50):
+                print(f"     {want:.2f} mm -> param {round((want-intercept)/slope):d}")
+
+    print(f"\n  film moved {travel:+.2f} mm; returning with 01 47 00 03")
+    for _ in range(max(0, round(travel / 7.47))):
+        s.slide(0x01, param=0x47, value=0x03)
+        time.sleep(1.4)
+    return res
+
+
+STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6,
+          7: stage7}
+NEEDS_FILM = {1, 3, 4, 5, 6, 7}
 
 
 def main() -> int:

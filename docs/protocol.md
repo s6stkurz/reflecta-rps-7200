@@ -425,6 +425,64 @@ reading is the aliasing this method was designed around — a true −88 px read
 by a peak wrapping in a 428-column window. It is left in the table because a
 measurement that can fail this way should show what the failure looks like.
 
+#### `param` is a step count, and the distance can be chosen — *measured*
+
+A ladder of `param` values, `action=0x00` and `value=0x04` fixed, three repeats each,
+every shift measured against the prescan immediately before it:
+
+| param | measured | predicted | residual |
+|---|---|---|---|
+| 3 | +0.480 mm | +0.486 | −0.006 |
+| 4 | +0.594 mm | +0.591 | +0.003 |
+| 6 | +0.816 mm | +0.801 | +0.015 |
+| 8 | +0.997 mm | +1.011 | −0.014 |
+| 12 | +1.433 mm | +1.430 | +0.002 |
+
+```
+distance = 0.1049 mm x param + 0.171 mm
+```
+
+Worst residual **0.015 mm**. The relationship is affine, not proportional: there is a
+fixed **0.171 mm overhead per command** on top of a **0.105 mm step**. That offset is
+why `00 01 00 04` measures 0.32 mm at `param 1` rather than the 0.10 mm a pure step
+count would give — the anomaly that made this worth measuring.
+
+**It extrapolates.** The three coarse payloads were characterised separately, at
+`param` 70-76, a 70x extrapolation from the ladder:
+
+| payload | param | predicted | measured | error |
+|---|---|---|---|---|
+| `01 47 00 03` | 71 | 7.62 mm | 7.47 mm | +0.15 |
+| `00 4c 00 01` | 76 | 8.15 mm | 7.92 mm | +0.23 |
+| `01 46 00 00` | 70 | 7.52 mm | 7.25 mm | +0.27 |
+| `00 01 00 04` | 1 | 0.28 mm | 0.32 mm | −0.04 |
+
+**And it predicts.** Asked for 0.40 mm, the model says `param 2` = 0.381 mm. Sent four
+times, never having been fitted to that value: **0.371 mm mean, error 0.009 mm.**
+
+#### Requesting a distance
+
+```
+param = round((millimetres - 0.171) / 0.1049)
+
+0.30 mm -> param 1   (0.276 mm)
+0.40 mm -> param 2   (0.381 mm)
+0.50 mm -> param 3   (0.486 mm)
+1.00 mm -> param 8   (1.011 mm)
+```
+
+Limits: the smallest single move is **0.28 mm** (`param 1`), granularity is **0.105
+mm**, and the largest `param` the vendor sends is 87 — about 9.3 mm. Nothing above
+that has been tried.
+
+**Backlash matters and must be handled.** The first moves after a direction change
+fall short while the slack takes up. In the ladder, three throwaway steps were not
+enough: `param 1` read 3.51, 3.56, 1.31 px and `param 2` read 0.25, 0.37, 4.27 px —
+two near-zero moves — before the transport followed properly from `param 3` onward.
+Those two points are excluded from the fit for that reason. Anything positioning the
+film should either approach from a consistent direction or spend several steps taking
+up slack first.
+
 #### Why this matters
 
 The aperture has **0.49 mm** of slack (§11, the registration work). A 0.32 mm forward
@@ -438,11 +496,12 @@ of the right size, using a command the vendor sends in every session.
   byte is one the vendor sends. But **that combination appears in no capture**, and
   the rule after the `SET_SCAN_HEAD` incident is that invented payloads are not sent.
   Coarse-back-then-fine-forward reaches anywhere without it, clumsily.
-- **What the bytes mean.** `param` is `0x01` for the fine step and `0x46`/`0x47`/`0x4c`
-  for the coarse ones, which looks like a magnitude, but the ratio does not follow:
-  0.32 mm against 7.47 mm is 23x, while `0x01` against `0x47` is 71x. Action `0x00`
-  is not simply "forward" either — `00 46 00 00` measured negative, though that
-  reading is in the untrustworthy range.
+- **What `value` means.** `param` is now calibrated, but `value` was held at `0x04`
+  throughout and the vendor varies it (`0x00`, `0x01`, `0x03`, `0x04`). It may be
+  what the 0.171 mm overhead reflects.
+- **Whether `action` is direction.** `0x00` moved forward throughout the ladder, but
+  `00 46 00 00` measured negative in stage 6, in the range where that reading cannot
+  be trusted. Not settled.
 - **The three large single-shot figures** in the first table. Direction is probably
   right; magnitude is not, until each is repeated the way the two above were.
 
