@@ -460,15 +460,62 @@ count would give — the anomaly that made this worth measuring.
 **And it predicts.** Asked for 0.40 mm, the model says `param 2` = 0.381 mm. Sent four
 times, never having been fitted to that value: **0.371 mm mean, error 0.009 mm.**
 
+#### Direction is `action`, and `value` does nothing — *measured*
+
+The same ladder run with `action=0x01`, and the two directions are mirrors:
+
+```
+forward (action 0x00)   +0.1049 mm/unit   intercept +0.1710 mm
+reverse (action 0x01)   -0.1065 mm/unit   intercept -0.1611 mm
+```
+
+Slopes agree to 1.5%, intercepts to 6%. Per-param magnitudes agree to within
+0.023 mm:
+
+| param | forward | reverse | difference |
+|---|---|---|---|
+| 3 | +0.480 | −0.488 | −0.009 |
+| 4 | +0.594 | −0.570 | +0.023 |
+| 6 | +0.816 | −0.806 | +0.010 |
+| 8 | +0.997 | −1.019 | −0.022 |
+| 12 | +1.433 | −1.435 | −0.002 |
+
+So **`action 0x00` is forward and `0x01` is backward**, with one magnitude law for
+both. This also settles the stage 6 oddity where `00 46 00 00` — an `action 0x00`
+command — measured *negative*: that was one of the unreliable large-shift readings,
+not a counter-example.
+
+`value` was swept across all four the vendor sends, `param` fixed at 8:
+
+```
+0x00 -> +1.035 mm    0x01 -> +1.020 mm    0x03 -> +1.002 mm    0x04 -> +0.998 mm
+```
+
+Spread 0.037 mm against a within-group scatter of ~0.08 mm — **no measurable
+effect**. The ordering happens to be monotone, which is worth noting but is below the
+noise and should not be relied on. The 0.171 mm intercept is therefore a genuine
+per-command overhead, not the `value` term.
+
+#### The complete law
+
+Fitted over both directions, ten points:
+
+```
+distance = 0.1057 mm x param + 0.1662 mm       worst residual 0.0185 mm
+sign     = action    (0x00 forward, 0x01 backward)
+value    = no effect
+```
+
 #### Requesting a distance
 
 ```
-param = round((millimetres - 0.171) / 0.1049)
+param = round((millimetres - 0.1662) / 0.1057)
 
-0.30 mm -> param 1   (0.276 mm)
-0.40 mm -> param 2   (0.381 mm)
-0.50 mm -> param 3   (0.486 mm)
-1.00 mm -> param 8   (1.011 mm)
+0.30 mm -> param  1   0.272 mm      00 01 00 04  /  01 01 00 04
+0.40 mm -> param  2   0.378 mm      00 02 00 04  /  01 02 00 04
+0.50 mm -> param  3   0.483 mm      00 03 00 04  /  01 03 00 04
+1.00 mm -> param  8   1.012 mm      00 08 00 04  /  01 08 00 04
+2.00 mm -> param 17   1.963 mm      00 11 00 04  /  01 11 00 04
 ```
 
 Limits: the smallest single move is **0.28 mm** (`param 1`), granularity is **0.105
@@ -496,12 +543,11 @@ of the right size, using a command the vendor sends in every session.
   byte is one the vendor sends. But **that combination appears in no capture**, and
   the rule after the `SET_SCAN_HEAD` incident is that invented payloads are not sent.
   Coarse-back-then-fine-forward reaches anywhere without it, clumsily.
-- **What `value` means.** `param` is now calibrated, but `value` was held at `0x04`
-  throughout and the vendor varies it (`0x00`, `0x01`, `0x03`, `0x04`). It may be
-  what the 0.171 mm overhead reflects.
-- **Whether `action` is direction.** `0x00` moved forward throughout the ladder, but
-  `00 46 00 00` measured negative in stage 6, in the range where that reading cannot
-  be trusted. Not settled.
+- **Whether the law holds above `param 12`.** The extrapolation to 70-76 lands within
+  0.15-0.27 mm, but all three errors share a sign, which hints the relationship bends
+  slightly at the top. Nothing above the vendor's largest (87) has been tried.
+- **Whether error accumulates** over long runs of steps, and whether the step is the
+  same near the ends of a strip.
 - **The three large single-shot figures** in the first table. Direction is probably
   right; magnitude is not, until each is repeated the way the two above were.
 

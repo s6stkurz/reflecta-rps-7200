@@ -369,9 +369,90 @@ def stage7(s: DirectScanner) -> dict:
     return res
 
 
+def _ladder(s: DirectScanner, action: int, value: int, params, repeats,
+            tag: str, warmup_param: int = 4, warmup: int = 5) -> dict:
+    """Measure a run of moves that never reverses direction.
+
+    `warmup` throwaway steps first: after a direction change the transport takes
+    up slack for two or three steps before it follows, which in stage 7 wrecked
+    the two smallest params. Five is deliberately more than the three that
+    proved insufficient.
+    """
+    print(f"  taking up backlash: {warmup} x param {warmup_param} ...")
+    for _ in range(warmup):
+        s.slide(action, param=warmup_param, value=value)
+        time.sleep(1.4)
+
+    prev, _ = shot(s, f"{tag}_start")
+    res, travel = {}, 0.0
+    print(f"  {'param':>6} {'n':>2} {'dx px':>8} {'mm':>8} {'dy px':>7}")
+    for param in params:
+        got = []
+        for n in range(1, repeats + 1):
+            s.slide(action, param=param, value=value)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 12 and not s.test_unit_ready():
+                time.sleep(0.25)
+            img, _ = shot(s, f"{tag}_p{param:02d}_{n}")
+            dx, dy = _shift(prev, img)
+            got.append(dx)
+            travel += dx * MM_PER_PX
+            print(f"  {param:6d} {n:2d} {dx:+8.2f} {dx*MM_PER_PX:+8.3f} {dy:+7.2f}")
+            prev = img
+        res[param] = {"px": [round(v, 2) for v in got],
+                      "mean_mm": round(float(np.mean(got)) * MM_PER_PX, 4)}
+    return {"rows": res, "travel_mm": round(travel, 2)}
+
+
+def stage8(s: DirectScanner) -> dict:
+    """Two gaps: is there a fine step backward, and what does `value` do?
+
+    Everything calibrated so far used action 0x00 and value 0x04, so the model
+    `0.105 x param + 0.171 mm` is fitted on one slice of a two-parameter space.
+    The 0.171 mm offset may simply be the `value` term.
+    """
+    out = {}
+
+    print("\n=== stage 8a: is action 0x01 a fine step backward?")
+    print("  same ladder, action 0x01, value 0x04\n")
+    back = _ladder(s, 0x01, 0x04, [3, 4, 6, 8, 12], 3, "stage8a")
+    out["reverse"] = back
+    ps = np.array(list(back["rows"]), dtype=float)
+    ms = np.array([back["rows"][int(p)]["mean_mm"] for p in ps])
+    if len(ps) >= 3:
+        slope, inter = np.polyfit(ps, ms, 1)
+        resid = float(np.max(np.abs(ms - (slope*ps + inter))))
+        print(f"\n  reverse fit: {slope:+.4f} mm/unit, intercept {inter:+.4f} mm,"
+              f" worst residual {resid:.4f}")
+        print(f"  forward was: +0.1049 mm/unit, intercept +0.1710 mm")
+        out["reverse_fit"] = {"mm_per_unit": round(float(slope), 4),
+                              "intercept_mm": round(float(inter), 4),
+                              "worst_residual_mm": round(resid, 4)}
+
+    print(f"\n  returning {back['travel_mm']:+.2f} mm before the next test")
+    for _ in range(max(0, round(abs(back["travel_mm"]) / 0.591))):
+        s.slide(0x00, param=0x04, value=0x04)
+        time.sleep(1.4)
+
+    print("\n=== stage 8b: what does `value` do?")
+    print("  param fixed at 8, action 0x00, value over the four the vendor sends\n")
+    vals = {}
+    for value in (0x00, 0x01, 0x03, 0x04):
+        r = _ladder(s, 0x00, value, [8], 3, f"stage8b_v{value:02x}",
+                    warmup_param=8, warmup=3)
+        mm = r["rows"][8]["mean_mm"]
+        vals[f"{value:#04x}"] = mm
+        print(f"    value {value:#04x}: param 8 -> {mm:+.3f} mm")
+    out["value_sweep"] = vals
+    spread = max(vals.values()) - min(vals.values())
+    print(f"\n  spread across value: {spread:.3f} mm")
+    print(f"  -> {'value CHANGES the distance' if spread > 0.08 else 'value does not measurably change the distance'}")
+    return out
+
+
 STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6,
-          7: stage7}
-NEEDS_FILM = {1, 3, 4, 5, 6, 7}
+          7: stage7, 8: stage8}
+NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8}
 
 
 def main() -> int:
