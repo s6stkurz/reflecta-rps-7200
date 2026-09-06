@@ -506,6 +506,55 @@ sign     = action    (0x00 forward, 0x01 backward)
 value    = no effect
 ```
 
+#### Where the law holds, and where it bends — *measured*
+
+Taken out to the vendor's largest `param`, the prediction runs increasingly long:
+
+| param | predicted | measured | error |
+|---|---|---|---|
+| 20 | 2.280 mm | 2.261 mm | −0.02 |
+| 30 | 3.337 mm | 3.253 mm | −0.084 |
+| 50 | 5.451 mm | 5.265 mm | −0.186 |
+| 70 | 7.565 mm | 7.335 mm | −0.23 |
+| 87 | 9.362 mm | 8.597 mm | −0.765 |
+
+Every error is the same sign and grows with `param`, so the relationship is
+**slightly sub-linear**, not straight. The effective step, with the 0.166 mm
+overhead removed, decays gently:
+
+```
+param   3-12   0.104 - 0.108 mm/unit
+param  20-70   0.102 - 0.105 mm/unit
+param     87   0.097 mm/unit
+```
+
+A fit over 20-70 gives `0.1015 mm/unit, intercept +0.216` against the small-param
+`0.1057, +0.166`.
+
+**The `param 87` point is the least trustworthy in the whole set.** Its two readings
+were 8.175 and 9.018 mm — a spread of 0.84 mm, far worse than anywhere else. So the
+−0.765 mm error there is itself uncertain; the monotone trend across 20-70 is the
+solid part.
+
+**None of this affects registration work.** Correcting drift uses `param 1` to about
+`8` — 0.27 to 1.0 mm, against 0.49 mm of aperture slack — and the law is accurate to
+~0.02 mm through that whole range. The bend costs 2-3% around `param 50` and only
+becomes serious at the very top, where nothing needs to go.
+
+#### Error does not accumulate — *measured*
+
+Twenty consecutive `param 4` steps in one direction:
+
+```
+measured  +11.755 mm      expected  +11.780 mm
+error      -0.025 mm total  =  -0.0013 mm per step
+```
+
+The running error wanders (+0.103, −0.085, −0.169, −0.025 at 5, 10, 15 and 20 steps)
+and comes back to zero, which is measurement scatter rather than bias. **There is no
+per-step drift to compensate**, so a correction loop can issue steps without
+recalibrating between them.
+
 #### Requesting a distance
 
 ```
@@ -543,11 +592,11 @@ of the right size, using a command the vendor sends in every session.
   byte is one the vendor sends. But **that combination appears in no capture**, and
   the rule after the `SET_SCAN_HEAD` incident is that invented payloads are not sent.
   Coarse-back-then-fine-forward reaches anywhere without it, clumsily.
-- **Whether the law holds above `param 12`.** The extrapolation to 70-76 lands within
-  0.15-0.27 mm, but all three errors share a sign, which hints the relationship bends
-  slightly at the top. Nothing above the vendor's largest (87) has been tried.
-- **Whether error accumulates** over long runs of steps, and whether the step is the
-  same near the ends of a strip.
+- Why the relationship is sub-linear at large `param`, and why repeatability
+  collapses at `param 87` (two readings 0.84 mm apart). Both are recorded in §11;
+  neither is explained.
+- Whether the step is the same near the ends of a strip, where the transport's grip
+  may differ. Everything so far was measured mid-strip.
 - **The three large single-shot figures** in the first table. Direction is probably
   right; magnitude is not, until each is repeated the way the two above were.
 

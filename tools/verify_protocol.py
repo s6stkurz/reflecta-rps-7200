@@ -256,6 +256,35 @@ def stage6(s: DirectScanner) -> dict:
     return res
 
 
+def _shift_near(a: np.ndarray, b: np.ndarray, expect: float,
+                window: int = 30) -> tuple[float, float]:
+    """Shift, searched around a *predicted* value rather than around zero.
+
+    Bounding at +/-60 px of zero works while movements are small, but the law is
+    now calibrated, so a large move can be predicted and the search centred on
+    it. That keeps the window narrow at any distance, which is what stops the
+    peak wrapping -- the failure that produced +359.78 px in stage 6.
+    """
+    def one(pa, pb, centre):
+        pa = (pa - pa.mean()) / (pa.std() or 1.0)
+        pb = (pb - pb.mean()) / (pb.std() or 1.0)
+        c = np.correlate(pb, pa, mode="full")
+        zero = len(pa) - 1
+        lo = max(0, zero + int(centre) - window)
+        hi = min(len(c), zero + int(centre) + window + 1)
+        if hi <= lo:
+            return float("nan")
+        k = lo + int(np.argmax(c[lo:hi]))
+        if 0 < k < len(c) - 1:
+            y0, y1, y2 = c[k-1], c[k], c[k+1]
+            d = y0 - 2*y1 + y2
+            k = k + (0.5*(y0-y2)/d if d else 0.0)
+        return k - zero
+    ga, gb = grey(a), grey(b)
+    return (one(ga.mean(axis=0), gb.mean(axis=0), expect),
+            one(ga.mean(axis=1), gb.mean(axis=1), 0))
+
+
 def _shift(a: np.ndarray, b: np.ndarray, limit: int = 60) -> tuple[float, float]:
     """Sub-pixel shift of b relative to a, per axis, by cross-correlation.
 
@@ -450,9 +479,96 @@ def stage8(s: DirectScanner) -> dict:
     return out
 
 
+#: The law, fitted over both directions in stage 8.
+MM_PER_UNIT, OVERHEAD_MM = 0.1057, 0.1662
+
+
+def predict_mm(param: int) -> float:
+    return MM_PER_UNIT * param + OVERHEAD_MM
+
+
+def stage9(s: DirectScanner) -> dict:
+    """Does the law hold at large param, and does error accumulate?
+
+    Both were left open after stage 8. The extrapolation to param 70-76 landed
+    within 0.15-0.27 mm but all three errors shared a sign, which hints the
+    relationship bends slightly at the top; and nothing has tested whether a long
+    run of steps drifts away from prediction.
+    """
+    out = {}
+
+    print("\n=== stage 9a: does the law hold at large param?")
+    print("  param up to the vendor's largest (87); search centred on prediction\n")
+    print("  warming up backlash ...")
+    for _ in range(5):
+        s.slide(0x00, param=0x08, value=0x04)
+        time.sleep(1.4)
+
+    prev, _ = shot(s, "stage9a_start")
+    rows, travel = {}, 0.0
+    print(f"  {'param':>6} {'predicted':>10} {'measured':>9} {'error':>8} {'dy':>6}")
+    for param in (20, 30, 50, 70, 87):
+        pred_mm = predict_mm(param)
+        got = []
+        for _ in range(2):
+            s.slide(0x00, param=param, value=0x04)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 15 and not s.test_unit_ready():
+                time.sleep(0.25)
+            img, _ = shot(s, f"stage9a_p{param:02d}_{len(got)}")
+            dx, dy = _shift_near(prev, img, pred_mm / MM_PER_PX)
+            got.append(dx * MM_PER_PX)
+            travel += dx * MM_PER_PX
+            prev = img
+            print(f"  {param:6d} {pred_mm:10.3f} {got[-1]:9.3f} "
+                  f"{got[-1]-pred_mm:+8.3f} {dy:+6.2f}")
+        rows[param] = {"predicted_mm": round(pred_mm, 3),
+                       "measured_mm": round(float(np.mean(got)), 3),
+                       "error_mm": round(float(np.mean(got)) - pred_mm, 3)}
+    out["large_param"] = rows
+    errs = [r["error_mm"] for r in rows.values()]
+    print(f"\n  errors: {errs}")
+    print(f"  {'all one sign -- the law bends' if all(e>0 for e in errs) or all(e<0 for e in errs) else 'errors change sign -- the law holds'}")
+
+    print(f"\n  returning {travel:+.1f} mm")
+    back = max(0, round(travel / predict_mm(87)))
+    for _ in range(back):
+        s.slide(0x01, param=87, value=0x04)
+        time.sleep(1.6)
+
+    print("\n=== stage 9b: does error accumulate over a long run?")
+    print("  twenty consecutive param 4 steps, one direction\n")
+    for _ in range(5):
+        s.slide(0x00, param=0x04, value=0x04)
+        time.sleep(1.4)
+    first, _ = shot(s, "stage9b_start")
+    prev, cum = first, 0.0
+    step = predict_mm(4)
+    for i in range(1, 21):
+        s.slide(0x00, param=0x04, value=0x04)
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 12 and not s.test_unit_ready():
+            time.sleep(0.25)
+        img, _ = shot(s, f"stage9b_{i:02d}")
+        dx, _ = _shift_near(prev, img, step / MM_PER_PX)
+        cum += dx * MM_PER_PX
+        prev = img
+        if i % 5 == 0:
+            print(f"    after {i:2d} steps: {cum:+7.3f} mm, "
+                  f"expected {i*step:+7.3f}, error {cum-i*step:+6.3f}")
+    total_err = cum - 20 * step
+    out["accumulation"] = {"steps": 20, "measured_mm": round(cum, 3),
+                           "expected_mm": round(20 * step, 3),
+                           "error_mm": round(total_err, 3),
+                           "per_step_mm": round(total_err / 20, 4)}
+    print(f"\n  20 steps: {cum:+.3f} mm measured, {20*step:+.3f} expected")
+    print(f"  error {total_err:+.3f} mm total = {total_err/20:+.4f} mm per step")
+    return out
+
+
 STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6,
-          7: stage7, 8: stage8}
-NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8}
+          7: stage7, 8: stage8, 9: stage9}
+NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9}
 
 
 def main() -> int:
