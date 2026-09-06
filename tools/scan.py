@@ -106,7 +106,10 @@ def main() -> int:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
 
     ref_path = Path(args.reference)
-    with DirectScanner(verbose=args.verbose) as s:
+    # debug=False deliberately: this tool files its own library entries,
+    # and letting the driver file as well writes every frame twice --
+    # 43 GB of duplicate on a 38-frame roll at 7200 dpi.
+    with DirectScanner(verbose=args.verbose, debug=False) as s:
         info = s.inquiry()
         print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 

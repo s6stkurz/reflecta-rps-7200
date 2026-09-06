@@ -511,7 +511,19 @@ class DirectScanner:
                 self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
             except Exception as exc:
                 self._log(f"debug: could not file scan {n} ({exc})")
-        # One frame is resident at a time, and the spool goes when it is done.
+            finally:
+                # Free each frame's spool as soon as it is filed, not at the
+                # end. At 7200 dpi a frame spools 1.1 GB, so holding all 38 of
+                # a roll through the flush would want 43 GB of disk on top of
+                # the library being written -- the peak is what runs a machine
+                # out of space, not the total.
+                for key in ("image_path", "raw_path"):
+                    path = item.get(key)
+                    if path is not None:
+                        try:
+                            Path(path).unlink(missing_ok=True)
+                        except Exception:
+                            pass
         try:
             if self._debug_spool is not None:
                 shutil.rmtree(self._debug_spool, ignore_errors=True)

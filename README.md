@@ -201,6 +201,24 @@ that produced it.
 
 Set `RPS7200_DEBUG_ROOT` to file somewhere other than `library/`.
 
+`tools/scan.py` and `tools/scan_roll.py` pass `debug=False` explicitly, because they
+file their own entries and letting the driver file as well writes every frame twice.
+
+### What a roll costs on disk
+
+Film grain barely compresses — a real `raw.bin.gz` is 96.7% of the raw size — so
+plan for close to the uncompressed figures. A 38-frame roll:
+
+| dpi | `rolls/` TIFFs | library | total |
+|---|---|---|---|
+| 1800 | 1.4 GB | 2.7 GB | **4.0 GB** |
+| 3600 | 5.4 GB | 10.7 GB | **16.1 GB** |
+| 7200 | 21.7 GB | 42.6 GB | **64.3 GB** |
+
+With `RPS7200_DEBUG=1` on an ad-hoc script, add one frame of spool on top —
+1.1 GB at 7200 dpi — not the whole roll, because each frame's spool is freed as soon
+as its entry is written.
+
 ## Checking that the IR is real
 
 A genuine IR plane sees through the dye layers, so it should **not** track the visible

@@ -199,7 +199,10 @@ def main() -> int:
     scanned = failed = 0
 
     writer = FrameWriter()
-    with DirectScanner(verbose=args.verbose) as s:
+    # debug=False deliberately: this tool files its own library entries,
+    # and letting the driver file as well writes every frame twice --
+    # 43 GB of duplicate on a 38-frame roll at 7200 dpi.
+    with DirectScanner(verbose=args.verbose, debug=False) as s:
         info = s.inquiry()
         print(f"{info.vendor} {info.product}, firmware {info.firmware}")
         print(f"roll {roll_name} -> {out}\n")
