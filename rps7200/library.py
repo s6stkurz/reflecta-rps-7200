@@ -134,6 +134,7 @@ def save(
     prescan: np.ndarray | None = None,
     inquiry: Any = None,
     raw: bytes | None = None,
+    raw_path: Path | str | None = None,
     raw_layout: dict[str, Any] | None = None,
 ) -> Path:
     """Write one scan and everything needed to use it again. Returns its path.
@@ -164,11 +165,29 @@ def save(
         reference.save(path / "shading.npz")
     if ccd_mask is not None:
         (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
-    if raw is not None:
-        # Compressed, but byte-exact: gzip so a 26 MB pass does not cost 26 MB
-        # twice, and the decompressed bytes are identical to what arrived.
+    raw_bytes = raw_sha = None
+    if raw is not None or raw_path is not None:
+        # Compressed, but byte-exact: measured on a real pass, gzip takes it to
+        # 72% of its size, and the decompressed bytes are identical to what
+        # arrived.
+        digest = hashlib.sha256()
         with gzip.open(path / "raw.bin.gz", "wb", compresslevel=6) as fh:
-            fh.write(raw)
+            if raw is not None:
+                digest.update(raw)
+                fh.write(raw)
+                raw_bytes = len(raw)
+            else:
+                # Streamed in chunks. A 7200 dpi frame is 570 MB, and reading it
+                # whole to hand over as `raw` would spike memory by that much for
+                # no reason -- the point of spooling it was to keep it off the
+                # heap in the first place.
+                raw_bytes = 0
+                with open(raw_path, "rb") as src:
+                    while chunk := src.read(8 << 20):
+                        digest.update(chunk)
+                        fh.write(chunk)
+                        raw_bytes += len(chunk)
+        raw_sha = digest.hexdigest()
 
     record: dict[str, Any] = {
         "id": path.name,
@@ -184,9 +203,9 @@ def save(
             "sha256": _sha256(path / "scan.tif"),
         },
         "raw": {
-            "file": "raw.bin.gz" if raw is not None else None,
-            "bytes": len(raw) if raw is not None else None,
-            "sha256": hashlib.sha256(raw).hexdigest() if raw is not None else None,
+            "file": "raw.bin.gz" if raw_bytes is not None else None,
+            "bytes": raw_bytes,
+            "sha256": raw_sha,
             "layout": raw_layout,
         },
         "scan": {

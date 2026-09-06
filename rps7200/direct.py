@@ -495,8 +495,9 @@ class DirectScanner:
         root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT
         for n, item in enumerate(pending, 1):
             try:
-                image = np.load(item["image_path"])
-                raw_path = item.get("raw_path")
+                # mmap the image rather than loading it: tiff.write walks it
+                # once, so a 570 MB frame need not be resident.
+                image = np.load(item["image_path"], mmap_mode="r")
                 entry = library.save(
                     image, item["meta"],
                     root=root,
@@ -504,7 +505,7 @@ class DirectScanner:
                     tags=["debug"],
                     reference=item.get("reference"),
                     ccd_mask=item.get("ccd_mask"),
-                    raw=raw_path.read_bytes() if raw_path else None,
+                    raw_path=item.get("raw_path"),
                     raw_layout=item.get("raw_layout"),
                     inquiry=self._inquiry,
                 )

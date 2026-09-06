@@ -295,3 +295,28 @@ def test_a_corrected_entry_without_its_reference_says_so(tmp_path):
                         reference=None, raw=stream, raw_layout=layout)
     _, verdict = library.reconstruct(path)
     assert "reference is missing" in verdict, verdict
+
+
+def test_raw_can_be_streamed_from_a_file(tmp_path):
+    """A 7200 dpi frame is 570 MB. Handing it over as bytes would put it back on
+    the heap, which is exactly what spooling it to disk was meant to avoid."""
+    stream, image = index_stream(16, 8, 3)
+    meta = {"resolution_dpi": 1800, "channels": 3,
+            "channel_order": list(CHANNEL_ORDER[:3]), "width": 16, "height": 8,
+            "depth": 16, "frame": [0, 0, 10343, 6887], "bytes_per_line": 32,
+            "film": "negative", "shading": None, "protocol_revision": 1}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+
+    spool = tmp_path / "spooled.bin"
+    spool.write_bytes(stream)
+
+    from_bytes = library.save(image, meta, root=tmp_path / "a", raw=stream,
+                              raw_layout=layout)
+    from_file = library.save(image, meta, root=tmp_path / "b", raw_path=spool,
+                             raw_layout=layout)
+
+    a = json.loads((from_bytes / "scan.json").read_text())["raw"]
+    b = json.loads((from_file / "scan.json").read_text())["raw"]
+    assert a["sha256"] == b["sha256"], "streaming changed the bytes"
+    assert a["bytes"] == b["bytes"] == len(stream)
+    assert library.read_raw(from_file) == stream
