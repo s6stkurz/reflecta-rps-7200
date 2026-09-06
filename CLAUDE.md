@@ -46,6 +46,30 @@ uv run pytest tests/ -m hardware      # only with the scanner attached, and afte
 Fakes shared between test modules live in `tests/conftest.py`; `pythonpath` is
 set so `from conftest import ...` works.
 
+## Branches
+
+**`main` must always work.** It is the branch that gets used, so a scan started from
+it has to run. Nothing experimental lands there.
+
+Every feature, fix or investigation goes on its own branch and is merged only once it
+runs and its tests pass:
+
+    feat/...     something new              fix/...    something broken
+    docs/...     writing it down            experiment/...  might not work at all
+
+**Claude: check which branch you are on before you touch anything.**
+
+    git rev-parse --abbrev-ref HEAD
+
+This is a first action, not a formality. An entire session's work went onto `main`
+directly -- the protocol investigation, a registration-correction loop, automatic
+library filing -- including designs that turned out to be wrong twice and had to be
+corrected in place. None of that belonged on the branch people run from.
+
+If you are on `main` and about to make a change, branch first. If you are already on
+a feature branch, check it is the *right* one: this repo often has parallel work, and
+a fix committed onto someone else's feature branch is hard to disentangle later.
+
 ## Scans
 
 **File every scan in the library, with its raw bytes.** `tools/scan.py` and
