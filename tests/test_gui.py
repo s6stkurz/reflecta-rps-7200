@@ -181,3 +181,46 @@ def test_the_fine_step_bounds_are_the_calibrated_ones():
 def test_the_prescan_ladder_starts_at_the_scanners_own_preview_resolution():
     assert gui.PRESCAN_LADDER[0] == 300
     assert all(d <= 1200 for d in gui.PRESCAN_LADDER), "a prescan is meant to be cheap"
+
+
+# -- the wheel, which means different numbers on every platform -------------
+
+
+class _Wheel:
+    def __init__(self, delta=0, num=0, state=0):
+        self.delta, self.num, self.state = delta, num, state
+
+
+def test_a_mac_trackpad_scrolls_by_what_it_reports():
+    """Single digits, not multiples of 120. Treating a 3 as one notch is what
+    made two fingers feel like one click per gesture."""
+    assert gui._wheel_amount(_Wheel(delta=-3)) == (3, False)
+    assert gui._wheel_amount(_Wheel(delta=3)) == (-3, False)
+
+
+def test_a_windows_notch_is_one_line_not_a_hundred_and_twenty():
+    assert gui._wheel_amount(_Wheel(delta=-120)) == (1, False)
+    assert gui._wheel_amount(_Wheel(delta=240)) == (-2, False)
+
+
+def test_x11_sends_buttons_and_no_delta_at_all():
+    assert gui._wheel_amount(_Wheel(num=4)) == (-1, False)
+    assert gui._wheel_amount(_Wheel(num=5)) == (1, False)
+
+
+def test_a_movement_too_small_to_matter_does_nothing():
+    """A trackpad reports zeros between real movement; scrolling on them would
+    be scrolling on nothing."""
+    assert gui._wheel_amount(_Wheel(delta=0)) == (0, False)
+
+
+def test_shift_means_sideways():
+    assert gui._wheel_amount(_Wheel(delta=-3, state=1))[1] is True
+    assert gui._wheel_amount(_Wheel(delta=-3, state=0))[1] is False
+
+
+def test_scrolling_up_and_down_are_opposite():
+    for delta in (1, 3, 7, 120, 240):
+        up = gui._wheel_amount(_Wheel(delta=delta))[0]
+        down = gui._wheel_amount(_Wheel(delta=-delta))[0]
+        assert up == -down, delta

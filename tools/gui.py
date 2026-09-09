@@ -102,6 +102,7 @@ class ScannerGui:
         self._job = ""                       # what is running, for the stop label
         self.calibrated = False
         self._asked_to_calibrate = False
+        self._session_closed = False
         self._last_nudge = 0                 # which way the film last went
         self._zoom = 0.0                     # 0 = fit; otherwise pixels per pixel
         self._offset = [0.0, 0.0]            # pan, in source pixels
@@ -153,21 +154,21 @@ class ScannerGui:
         self._build_output(left)
         self._build_preview(right)
 
+        # Last, so every control in the column already exists and gets its own
+        # binding rather than relying on the event finding its way up.
+        canvas, inner = self._column
+        for widget in (canvas, inner):
+            self._scrolls(widget,
+                          lambda n, _side: canvas.yview_scroll(n, "units"))
+
     def _on_wheel(self, event: tk.Event) -> str | None:
-        """Send a wheel or two-finger scroll to whatever it is over.
+        """Route a wheel or two-finger scroll to the region it happened in.
 
-        macOS reports small deltas, X11 sends Button-4/5 and no delta at all,
-        so only the direction means the same thing everywhere.
+        The fallback path, for anything that has not been bound directly.
         """
-        if getattr(event, "num", 0) in (4, 5):
-            amount = -1 if event.num == 4 else 1
-        else:
-            delta = getattr(event, "delta", 0)
-            if not delta:
-                return None
-            amount = -1 if delta > 0 else 1
-        sideways = bool(event.state & 0x0001)            # shift held
-
+        amount, sideways = _wheel_amount(event)
+        if amount == 0:
+            return None
         widget = self.root.winfo_containing(event.x_root, event.y_root)
         while widget is not None:
             for target, handler in self._scrollers:
@@ -184,8 +185,34 @@ class ScannerGui:
         return None
 
     def _scrolls(self, widget: tk.Misc, handler) -> None:
-        """Register `widget` as somewhere the wheel does something."""
+        """Make the wheel do something over `widget` and everything inside it.
+
+        Bound on each widget itself, not only at the root. A widget's own
+        bindings run before its class's and before the "all" tag, so this
+        cannot be pre-empted by a class binding that swallows the event -- and
+        it does not depend on `winfo_containing` agreeing about what the
+        pointer is over, which is the part that differs between a mouse and a
+        trackpad.
+        """
         self._scrollers.append((widget, handler))
+
+        def wheel(event: tk.Event) -> str | None:
+            amount, sideways = _wheel_amount(event)
+            if amount == 0:
+                return None
+            handler(amount, sideways)
+            return "break"
+
+        self._bind_wheel(widget, wheel)
+        # Children added later -- the filmstrip's images, say -- are covered by
+        # the root fallback above rather than a rescan on every redraw.
+
+    def _bind_wheel(self, widget: tk.Misc, wheel) -> None:
+        for sequence in ("<MouseWheel>", "<Shift-MouseWheel>",
+                         "<Button-4>", "<Button-5>"):
+            widget.bind(sequence, wheel, add="+")
+        for child in widget.winfo_children():
+            self._bind_wheel(child, wheel)
 
     def _scrollable(self, parent: ttk.PanedWindow) -> ttk.Frame:
         """A left column that scrolls, because it is taller than the window.
@@ -207,11 +234,7 @@ class ScannerGui:
                    lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfigure(window, width=e.width))
-        # Both the canvas and the frame inside it, because the pointer is
-        # almost always over the frame or one of its children.
-        for widget in (canvas, inner):
-            self._scrolls(widget,
-                          lambda n, _side: canvas.yview_scroll(n, "units"))
+        self._column = (canvas, inner)
         return inner
 
     def _build_scan(self, parent: ttk.Frame) -> None:
@@ -763,6 +786,32 @@ class ScannerGui:
         self.closing = True
         self.v_state.set("closing ...")
         self.session.shutdown()
+        self._wait_to_quit()
+
+    def _wait_to_quit(self) -> None:
+        """Close once the worker has finished with the device, and no sooner.
+
+        There is no timeout on purpose: if a pass is in flight, the wait is the
+        whole point -- tearing the window down would abandon the read and cost
+        a power cycle. But a session whose worker has already stopped closes at
+        once, which is what the no-scanner case needs. It used to wait forever
+        there, for a "closed" event that had already been and gone before the
+        window knew it was closing, and the only way out was to kill it.
+        """
+        if not self._alive:
+            return
+        thread = self.session._thread
+        if self._session_closed or thread is None or not thread.is_alive():
+            self._quit()
+            return
+        self.root.after(150, self._wait_to_quit)
+
+    def _quit(self) -> None:
+        self._alive = False
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
     # -- the event pump ----------------------------------------------------
 
@@ -815,11 +864,11 @@ class ScannerGui:
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
+            self._session_closed = True
             self._set_busy(False)
             self.v_state.set("scanner closed")
             if self.closing:
-                self._alive = False
-                self.root.destroy()
+                self._quit()
 
     def _light(self, state: str) -> None:
         self.light.itemconfigure(self._bulb, fill=LIGHT[state])
@@ -1276,6 +1325,26 @@ def stop_label(job: str) -> str:
     second in, and so relabelled itself mid-roll.
     """
     return "Stop after this frame" if "roll" in job else "Stop (finishes this pass)"
+
+
+def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
+    """How far to scroll, and whether sideways, from any platform's event.
+
+    X11 sends Button-4/5 with no delta at all. Windows sends multiples of 120.
+    A macOS trackpad sends small numbers -- single digits, and occasionally a
+    zero for a movement too small to matter -- so treating anything under 20 as
+    already being a line count is what makes two fingers feel like two fingers
+    rather than one notch per gesture.
+    """
+    number = getattr(event, "num", 0)
+    if number in (4, 5):
+        return (-1 if number == 4 else 1), False
+    delta = int(getattr(event, "delta", 0) or 0)
+    if delta == 0:
+        return 0, False
+    size = abs(delta)
+    step = size if size < 20 else max(1, size // 120)
+    return (-step if delta > 0 else step), bool(event.state & 0x0001)
 
 
 def _numbers(text: str) -> list[float] | None:
