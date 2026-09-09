@@ -457,3 +457,13 @@ def test_the_finer_array_is_sampled_with_a_smaller_scale():
     assert "scale / detail" in source
     assert "scale * detail" not in source
     assert "x0 * detail" in source, "but the start is multiplied"
+
+
+def test_the_coarsest_level_that_has_the_detail_is_the_one_read():
+    """Going straight from the working copy to the scan meant decimating a
+    strip four times wider than the view out of 142 MB -- 30 ms against the
+    copy's 4, a step you could feel at exactly the scale where they met."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._pixels)
+    assert "for factor, array in self._levels" in source
+    assert "factor >= self._zoom" in source

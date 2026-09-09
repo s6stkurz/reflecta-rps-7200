@@ -275,6 +275,30 @@ def downscale(image: np.ndarray, max_side: int) -> np.ndarray:
     return image if s == 1 else image[::s, ::s]
 
 
+def pyramid(image: np.ndarray, down_to: float) -> list[tuple[float, np.ndarray]]:
+    """Halvings of `image`, from `down_to` times smaller up to itself.
+
+    A view is gathered from the coarsest array that still holds the detail
+    being asked for. Without the levels in between, going from a quarter-size
+    copy straight to the scan means decimating a strip four times wider than
+    the view out of the whole file -- which costs seven times as much as the
+    copy did, right at the scale where the two meet.
+
+    Plain decimation, never an average: a level is the pixels the scanner sent
+    with some left out, so what is shown is measurement rather than a
+    smoothness the file does not have.
+    """
+    levels: list[tuple[float, np.ndarray]] = []
+    step = 2
+    while down_to / step > 1.2:
+        levels.append((down_to / step,
+                       np.ascontiguousarray(image[::step, ::step])))
+        step *= 2
+    levels.append((down_to, image))
+    levels.sort(key=lambda pair: pair[0])
+    return levels
+
+
 def thumbnail(image: np.ndarray, max_side: int = THUMB_MAX_SIDE) -> np.ndarray:
     """A filmstrip-sized rendering: decimated, stretched, inverted, uint8."""
     return render(downscale(image, max_side))
