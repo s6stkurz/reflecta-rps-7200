@@ -181,3 +181,64 @@ def test_a_point_on_a_turned_view_maps_back_to_where_it_came_from(degrees):
 
 def test_an_unturned_point_is_left_alone():
     assert preview.unrotate_point(3, 4, (10, 10), 0) == (3, 4)
+
+
+# -- levels, measured once and reused --------------------------------------
+
+
+def test_levels_are_one_pair_per_channel():
+    image = rgbi(30, 40)
+    assert preview.levels(image).shape == (4, 2)
+    assert preview.levels(image[..., 0]).shape == (1, 2)
+
+
+def test_supplying_levels_gives_the_same_picture_as_measuring_them():
+    """The whole point of caching them is that nothing changes but the cost."""
+    image = rgbi(60, 80, seed=11)
+    measured = preview.render(image, "RGB")
+    supplied = preview.render(
+        image, "RGB", cuts=preview.channel_levels(preview.levels(image), "RGB"))
+    assert np.array_equal(measured, supplied)
+
+
+def test_a_crop_keeps_the_whole_pictures_levels():
+    """Otherwise the brightness changes as you pan, and the same negative looks
+    different depending on where you happen to be looking."""
+    image = rgbi(80, 120, seed=3)
+    image[:40] //= 4                         # a dark half and a bright half
+    cuts = preview.channel_levels(preview.levels(image), "RGB")
+    dark_alone = preview.render(image[:40], "RGB")
+    dark_in_context = preview.render(image[:40], "RGB", cuts=cuts)
+    assert not np.array_equal(dark_alone, dark_in_context), (
+        "stretching a crop on its own is what made panning change the picture")
+    whole = preview.render(image, "RGB", cuts=cuts)
+    assert np.array_equal(whole[:40], dark_in_context)
+
+
+def test_channel_levels_picks_the_right_rows():
+    image = rgbi(20, 20)
+    all_levels = preview.levels(image)
+    assert np.array_equal(preview.channel_levels(all_levels, "RGB"), all_levels[:3])
+    assert np.array_equal(preview.channel_levels(all_levels, "IR"), all_levels[[3]])
+    assert np.array_equal(preview.channel_levels(all_levels, "G"), all_levels[[1]])
+
+
+def test_levels_are_exact_not_sampled():
+    """The comparison files Stefan judges by eye come through here, and a
+    subsampled percentile would move them."""
+    image = rgbi(200, 300, seed=4)
+    for c in range(4):
+        want = np.percentile(image[..., c], [preview.LOW, preview.HIGH])
+        assert preview.levels(image)[c] == pytest.approx(want, abs=1e-9)
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_the_lookup_path_matches_the_arithmetic_it_replaced(dtype):
+    top = 255 if dtype == np.uint8 else 65535
+    rng = np.random.default_rng(9)
+    image = (rng.random((40, 55, 3)) * top).astype(dtype)
+    cuts = preview.channel_levels(preview.levels(image), "RGB")
+    through_lut = preview.render(image, "RGB", invert=True, cuts=cuts)
+    x = preview.normalise(image, cuts=cuts)
+    by_hand = np.clip((1.0 - x) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    assert np.array_equal(through_lut, by_hand)

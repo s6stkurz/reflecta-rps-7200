@@ -969,6 +969,11 @@ class ScannerGui:
         # what makes rotating a prescan carry over to the scan of it -- even a
         # scan taken minutes later.
         result.rotation = self.rotation
+        # Measured once, from the whole picture. Recomputing per redraw was
+        # most of what made zooming feel dead, and it also meant the brightness
+        # changed as you panned -- the same negative looking different
+        # depending on where you were looking.
+        result.levels = preview.levels(result.image) if result.image is not None else None
         # A real scan stands in for the prescan of the same picture, but only
         # when the film has not moved since -- a prescan of a different frame is
         # a different photograph, and hiding it would lose it.
@@ -1024,7 +1029,9 @@ class ScannerGui:
             arr = preview.render(
                 preview.fit(preview.rotate(r.image, r.rotation),
                             THUMB_H * 2, THUMB_H),
-                "RGB", self.v_invert.get())
+                "RGB", self.v_invert.get(),
+                cuts=(preview.channel_levels(r.levels, "RGB")
+                      if getattr(r, "levels", None) is not None else None))
             photo = tk.PhotoImage(data=preview.to_ppm(arr))
             self._thumbs.append(photo)
             tag = f"r{r.seq}"
@@ -1227,6 +1234,8 @@ class ScannerGui:
             grow = image.shape[1] / max(1, self.current.image.shape[1])
             self._offset = [self._offset[0] * grow, self._offset[1] * grow]
         self._full, self._full_seq = image, seq
+        # Deliberately not re-measured: the levels stay the working copy's, so
+        # a 1:1 look is the same picture as the fit it came from.
         self._redraw()
 
     def _set_zoom(self, zoom: float) -> None:
@@ -1275,6 +1284,16 @@ class ScannerGui:
             self.root.after_cancel(self._redraw_job)
         self._redraw_job = self.root.after(50, self._redraw)
 
+    def _cuts(self):
+        """The current picture's levels for the channel on show."""
+        r = self.current
+        if r is None or getattr(r, "levels", None) is None:
+            return None
+        try:
+            return preview.channel_levels(r.levels, self.v_channel.get())
+        except (IndexError, KeyError):
+            return None
+
     def _redraw_all(self) -> None:
         self._redraw()
         self._redraw_strip()
@@ -1312,7 +1331,8 @@ class ScannerGui:
                 arr = arr[::s, ::s]
                 scale = 1.0 / s
         try:
-            rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get())
+            rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get(),
+                                 cuts=self._cuts())
         except ValueError as exc:
             self.canvas.create_text(w // 2, h // 2, fill="#888", text=str(exc))
             return
