@@ -79,10 +79,16 @@ MAX_TRAVEL_MM = MAX_FINE_MM * MAX_FINE_STEPS
 THUMB_H = 76
 POLL_MS = 120
 
-#: How often the picture may be redrawn, in milliseconds. One frame at 60 Hz;
-#: a redraw costs about 25 ms at a full-window size, so a gesture runs at
-#: whatever the machine can manage rather than waiting on a timer.
+#: How often the picture may be redrawn, in milliseconds. One frame at 60 Hz.
 _FRAME_MS = 16
+
+#: While a gesture is running the picture is drawn at half resolution and
+#: enlarged by Tk, which costs a quarter of the pixels and about a third of the
+#: time. On a 3600 dpi frame that is 32 ms a frame against 14. It is visibly
+#: coarser, so it lasts only as long as the hand is moving.
+_GESTURE_FACTOR = 2
+#: How long after the last gesture event the full-quality frame is drawn.
+_SETTLE_MS = 130
 
 LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
 
@@ -102,6 +108,7 @@ class ScannerGui:
         self._full_seq = None
         self._loading = None
         self._redraw_job = None
+        self._settle_job = None
         self._drawn_at = 0.0
         self._alive = True
         self._job = ""                       # what is running, for the stop label
@@ -1279,7 +1286,7 @@ class ScannerGui:
         self._zoom = zoom
         self._schedule_redraw()
 
-    def _zoom_by(self, factor: float) -> None:
+    def _zoom_by(self, factor: float, moving: bool = False) -> None:
         src = self._source()
         if src is None:
             return
@@ -1288,7 +1295,7 @@ class ScannerGui:
             self._zoom = shown[2] if shown else 1.0
             self._offset = [src.shape[1] / 2, src.shape[0] / 2]
         self._zoom = max(1 / 16, min(8.0, self._zoom * factor))
-        self._schedule_redraw()
+        self._schedule_redraw(moving=moving)
 
     def _touchpad_over_picture(self, dx: int, dy: int) -> None:
         """Zoom by a trackpad swipe, smoothly and by however far it travelled.
@@ -1301,20 +1308,20 @@ class ScannerGui:
         """
         if dx and not dy and self._zoom > 0:
             self._offset[0] -= dx / self._zoom
-            self._schedule_redraw()
+            self._schedule_redraw(moving=True)
             return
         if dy:
-            self._zoom_by(math.exp(dy * _ZOOM_PER_PIXEL))
+            self._zoom_by(math.exp(dy * _ZOOM_PER_PIXEL), moving=True)
 
     def _wheel_over_picture(self, amount: int, sideways: bool) -> None:
         if sideways and self._zoom > 0:
             self._offset[0] += amount * 40 / self._zoom
-            self._schedule_redraw()
+            self._schedule_redraw(moving=True)
             return
         self._zoom_by((1 / _ZOOM_PER_NOTCH) ** amount if amount > 0
                       else _ZOOM_PER_NOTCH ** -amount)
 
-    def _schedule_redraw(self) -> None:
+    def _schedule_redraw(self, moving: bool = False) -> None:
         """Draw now if it is time, and if not, make sure one is coming.
 
         Throttled, not debounced. It used to cancel the pending redraw and
@@ -1323,13 +1330,26 @@ class ScannerGui:
         second of momentum afterwards, so the redraw was pushed back by every
         one of them and the picture did not move until the whole gesture had
         stopped. That was the half-second.
+
+        `moving` says a hand is on it. Those frames are drawn coarse and fast,
+        and a sharp one follows once the movement stops -- the only moment the
+        detail is any use is the moment you are looking rather than moving.
         """
+        if moving:
+            if self._settle_job is not None:
+                self.root.after_cancel(self._settle_job)
+            self._settle_job = self.root.after(_SETTLE_MS, self._settle)
         since = (time.monotonic() - self._drawn_at) * 1000
         if since >= _FRAME_MS:
-            self._redraw()
+            self._redraw(quick=moving)
         elif self._redraw_job is None:
             self._redraw_job = self.root.after(
-                max(1, int(_FRAME_MS - since)), self._redraw)
+                max(1, int(_FRAME_MS - since)),
+                lambda: self._redraw(quick=moving))
+
+    def _settle(self) -> None:
+        self._settle_job = None
+        self._redraw()
 
     def _cuts(self):
         """The current picture's levels for the channel on show."""
@@ -1345,7 +1365,7 @@ class ScannerGui:
         self._redraw()
         self._redraw_strip()
 
-    def _redraw(self) -> None:
+    def _redraw(self, quick: bool = False) -> None:
         self._redraw_job = None
         self._drawn_at = time.monotonic()
         self.canvas.delete("all")
@@ -1373,16 +1393,24 @@ class ScannerGui:
             cx, cy = self._offset
             x0 = max(0.0, min(wide - out_w / scale, cx - out_w / (2 * scale)))
             y0 = max(0.0, min(tall - out_h / scale, cy - out_h / (2 * scale)))
-        arr = preview.sample(src, scale, x0, y0, out_w, out_h)
+        # A moving frame is drawn at a fraction of the size and enlarged by
+        # Tk, which is far cheaper than sampling and rendering every pixel: both
+        # of those costs, and building the image Tk shows, scale with the count.
+        coarse = _GESTURE_FACTOR if quick and out_w > 2 * _GESTURE_FACTOR else 1
+        arr = preview.sample(src, scale / coarse, x0, y0,
+                             max(1, out_w // coarse), max(1, out_h // coarse))
         try:
             rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get(),
                                  cuts=self._cuts())
         except ValueError as exc:
             self.canvas.create_text(w // 2, h // 2, fill="#888", text=str(exc))
             return
-        self._photo = tk.PhotoImage(data=preview.to_ppm(rgb))
+        photo = tk.PhotoImage(data=preview.to_ppm(rgb))
+        if coarse > 1:
+            photo = photo.zoom(coarse, coarse)
+        self._photo = photo
         self.canvas.create_image(w // 2, h // 2, image=self._photo)
-        self._shown = (rgb.shape[1], rgb.shape[0], scale, x0, y0)
+        self._shown = (photo.width(), photo.height(), scale, x0, y0)
         self.v_zoomtext.set("fit" if self._zoom <= 0 else f"{scale * 100:.0f}%")
         if self._zoom > 0 and (rgb.shape[1] > w or rgb.shape[0] > h):
             self.canvas.configure(cursor="fleur")        # there is room to drag
@@ -1436,7 +1464,7 @@ class ScannerGui:
         sx, sy, start = self._drag
         self._offset = [start[0] - (event.x - sx) / self._zoom,
                         start[1] - (event.y - sy) / self._zoom]
-        self._schedule_redraw()
+        self._schedule_redraw(moving=True)
 
     def _aim(self, event: tk.Event) -> None:
         """Move the film so the clicked point becomes the centre of the frame.
