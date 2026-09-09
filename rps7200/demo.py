@@ -28,10 +28,11 @@ from .direct import RollFrame
 from .session import estimate_seconds
 from .usb_transport import UsbError
 
-#: Wall-clock is divided by this, so a 212 s infrared pass takes about five
-#: seconds. Slow enough that a progress bar has something to do, fast enough
-#: that nobody waits for a demo.
-SPEED = 40.0
+#: Wall-clock is divided by this. Slow enough that the progress bar has
+#: something to do and a stop lands somewhere, fast enough that trying the
+#: window out is not spent waiting: a 3600 dpi infrared pass, 334 s on the
+#: hardware, takes under three seconds here.
+SPEED = 120.0
 
 
 class _FakeTransport:

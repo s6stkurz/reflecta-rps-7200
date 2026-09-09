@@ -16,6 +16,8 @@ no image library at all, and the runtime dependency set stays `numpy` alone.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 
 #: The views a channel selector can offer. "IR" needs a four-channel pass;
@@ -117,14 +119,47 @@ def select(image: np.ndarray, channel: str = "RGB") -> np.ndarray:
     return image[..., plane]
 
 
-def normalise(
+def levels(
     image: np.ndarray, low: float = LOW, high: float = HIGH
+) -> np.ndarray:
+    """Per-channel `(lo, hi)` cut points, as an array of shape `(C, 2)`.
+
+    Separated from applying them because they must be computed **once per
+    picture**, not once per redraw. Recomputing them from whatever happened to
+    be on screen made the brightness change as you panned -- the same negative
+    looking different depending on where you were looking -- and cost 27 ms a
+    frame at fit and 69 ms at 1:1, which is what made zooming feel dead.
+
+    Exact, over every pixel: the comparison files Stefan judges by eye come
+    through here, and a subsampled percentile would move them.
+    """
+    x = image if image.ndim == 3 else image[..., None]
+    return np.array([
+        np.percentile(x[..., c], [low, high]) for c in range(x.shape[2])
+    ])
+
+
+def channel_levels(all_levels: np.ndarray, channel: str = "RGB") -> np.ndarray:
+    """The rows of `levels()` that a given view uses."""
+    if channel == "RGB":
+        return all_levels[:3]
+    return all_levels[[_PLANE[channel]]]
+
+
+def normalise(
+    image: np.ndarray,
+    low: float = LOW,
+    high: float = HIGH,
+    cuts: np.ndarray | None = None,
 ) -> np.ndarray:
     """Per-channel percentile stretch to floats in [0, 1].
 
     Per channel rather than jointly, because a negative's orange mask is a huge
     constant offset between the channels and stretching them together leaves the
     picture inside a tenth of the range.
+
+    `cuts` supplies the levels from `levels()` instead of measuring them here,
+    which is how a zoomed or panned view keeps the brightness of the whole.
     """
     x = image.astype(np.float64)
     if x.ndim == 2:
@@ -132,9 +167,11 @@ def normalise(
         flat = True
     else:
         flat = False
+    if cuts is None:
+        cuts = levels(image, low, high)
     out = np.empty_like(x)
     for c in range(x.shape[2]):
-        lo, hi = np.percentile(x[..., c], [low, high])
+        lo, hi = float(cuts[c][0]), float(cuts[c][1])
         span = hi - lo
         # A frame with no range at all -- an unexposed prescan, a blank test
         # array -- would otherwise divide by zero and come out as NaN.
@@ -148,20 +185,66 @@ def render(
     invert: bool = True,
     low: float = LOW,
     high: float = HIGH,
+    cuts: np.ndarray | None = None,
 ) -> np.ndarray:
     """`image` as `(H, W, 3)` uint8, ready for the screen.
 
     `invert` is a display choice and nothing else: what reaches the library is
     the raw negative the scanner sent. A single plane comes back as grey rather
     than tinted -- the infrared view is a measurement, not a colour.
+
+    `cuts` are levels from `levels()` for this view, so that a crop of a
+    picture is stretched like the picture rather than like the crop.
     """
-    x = normalise(select(image, channel), low, high)
+    view = select(image, channel)
+    if cuts is None:
+        cuts = levels(view, low, high)
+    planes = view if view.ndim == 3 else view[..., None]
+
+    if planes.dtype in (np.uint8, np.uint16):
+        # Through a lookup table rather than floating-point arithmetic. The
+        # stretch is the same curve for every pixel, so it can be computed once
+        # for each of the 256 or 65536 possible values and then read off: one
+        # gather per channel instead of four passes over the whole array in
+        # float. On a 1:1 crop that is 21 ms down to about 3.
+        out = np.empty(planes.shape[:2] + (3,), np.uint8)
+        for c in range(planes.shape[2]):
+            table = _screen_table(planes.dtype, float(cuts[c][0]),
+                                  float(cuts[c][1]), invert)
+            out[..., c] = table[planes[..., c]]
+    else:
+        x = normalise(view, low, high, cuts)
+        if invert:
+            x = 1.0 - x
+        out = np.clip(x * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        if out.ndim == 2:
+            out = out[..., None]
+
+    if out.shape[2] == 1 or planes.shape[2] == 1:
+        # A single plane is grey, not tinted: the infrared view is a
+        # measurement, not a colour.
+        out[..., 1] = out[..., 0]
+        out[..., 2] = out[..., 0]
+    return out
+
+
+@lru_cache(maxsize=64)
+def _table(size: int, lo: float, hi: float, invert: bool) -> np.ndarray:
+    """The stretch as a lookup, one entry per possible pixel value."""
+    values = np.arange(size, dtype=np.float64)
+    span = hi - lo
+    scaled = (np.zeros(size, np.float32) if span <= 0
+              else np.clip((values - lo) / span, 0.0, 1.0))
     if invert:
-        x = 1.0 - x
-    v = np.clip(x * 255.0 + 0.5, 0, 255).astype(np.uint8)
-    if v.ndim == 2:
-        v = np.repeat(v[:, :, None], 3, axis=2)
-    return v
+        scaled = 1.0 - scaled
+    return np.clip(scaled * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+
+def _screen_table(dtype, lo: float, hi: float, invert: bool) -> np.ndarray:
+    # Rounded so that a redraw with imperceptibly different cuts still hits the
+    # cache; a hundredth of a count cannot move an eight-bit result.
+    return _table(256 if dtype == np.uint8 else 65536,
+                  round(lo, 2), round(hi, 2), invert)
 
 
 def to_ppm(rgb8: np.ndarray) -> bytes:
