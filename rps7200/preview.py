@@ -37,6 +37,51 @@ THUMB_MAX_SIDE = 256
 LOW, HIGH = 0.5, 99.5
 
 
+#: The turns a picture can be given. Quarter turns only: anything else would
+#: have to resample, and a scan is measurement -- a rotation that invents
+#: pixels is not the same file any more.
+ROTATIONS = (0, 90, 180, 270)
+
+
+def rotate(image: np.ndarray, degrees: int = 0) -> np.ndarray:
+    """`image` turned clockwise by 0, 90, 180 or 270 degrees.
+
+    Lossless: a quarter turn is a transpose and a flip, so every pixel survives
+    and the result is still exactly what the scanner measured, differently
+    arranged.
+    """
+    if degrees % 360 == 0:
+        return image
+    if degrees % 90:
+        raise ValueError(f"{degrees} is not a quarter turn; expected {ROTATIONS}")
+    # np.rot90 turns anticlockwise, and this counts clockwise.
+    return np.rot90(image, k=-(degrees // 90) % 4, axes=(0, 1))
+
+
+def unrotate_point(
+    x: float, y: float, shape: tuple[int, ...], degrees: int = 0
+) -> tuple[float, float]:
+    """Where a point on a rotated view sits in the unrotated image.
+
+    `shape` is the *rotated* image's shape, which is what the caller has. This
+    is what keeps the aim honest on a turned prescan: the transport moves along
+    the unrotated x axis whatever the picture looks like on screen, so a click
+    has to come back here before it means a distance.
+    """
+    turn = degrees % 360
+    height, width = shape[0], shape[1]
+    if turn == 0:
+        return x, y
+    if turn == 90:
+        # A clockwise quarter turn sent original (x, y) to (H-1-y, x).
+        return y, (width - 1) - x
+    if turn == 180:
+        return (width - 1) - x, (height - 1) - y
+    if turn == 270:
+        return (height - 1) - y, x
+    raise ValueError(f"{degrees} is not a quarter turn; expected {ROTATIONS}")
+
+
 def has_infrared(image: np.ndarray) -> bool:
     """Whether this array carries an infrared plane at all."""
     return image.ndim == 3 and image.shape[2] >= 4

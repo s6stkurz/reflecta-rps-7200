@@ -255,9 +255,14 @@ class FrameWriter:
                 self.queue.task_done()
 
     def _write(self, job: dict) -> None:
+        # The delivered files carry the orientation that was asked for; the
+        # library entry below never does. Its pixels have to stay exactly what
+        # the scanner sent, or they stop matching the raw bytes beside them and
+        # `library.reconstruct` is right to call it a changed decode.
+        turned = preview.rotate(job["image"], job.get("rotate") or 0)
         for path in job.get("paths") or ():
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            tiff.write(str(path), job["image"], resolution=job["dpi"])
+            tiff.write(str(path), turned, resolution=job["dpi"])
         entry = None
         if job["library"]:
             entry = library.save(
@@ -316,6 +321,11 @@ class ScanSession:
         # the scan lands rather than afterwards. The library entry is the record;
         # this is the file they actually wanted.
         self.out_dir = Path(out_dir) if out_dir else None
+        #: A quarter turn applied to every file written from here on -- the
+        #: output folder's copy and a roll's own TIFF. Never the library entry.
+        #: Set from the UI, so a picture rotated on screen is rotated in the
+        #: files that follow it.
+        self.rotation = 0
         # The seam that lets tests and `--demo` run with nothing on the bus.
         self._open_scanner = open_scanner or self._default_scanner
         self._jobs: queue.Queue = queue.Queue()
@@ -759,10 +769,12 @@ class ScanSession:
                     f"raw bytes do not describe this image ({detail}); "
                     "filing it without them rather than filing the wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
+        meta = dict(meta, rotation=self.rotation)
         self._writer.submit(
             seq=seq,
             number=number,
             paths=paths,
+            rotate=self.rotation,
             image=image,
             meta=meta,
             dpi=meta.get("resolution_dpi"),

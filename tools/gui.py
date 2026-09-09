@@ -110,6 +110,7 @@ class ScannerGui:
         self._shown = None                   # what was last drawn, for clicks
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
+        self.rotation = 0                    # applied to new passes and files
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         root.geometry("1280x860")
@@ -959,6 +960,10 @@ class ScannerGui:
     def _add_result(self, result) -> None:
         result.hidden = False
         result.supersedes = None
+        # New passes arrive already turned the way the last one was, which is
+        # what makes rotating a prescan carry over to the scan of it -- even a
+        # scan taken minutes later.
+        result.rotation = self.rotation
         # A real scan stands in for the prescan of the same picture, but only
         # when the film has not moved since -- a prescan of a different frame is
         # a different photograph, and hiding it would lose it.
@@ -992,7 +997,7 @@ class ScannerGui:
         if self.v_channel.get() not in available:
             self.v_channel.set("RGB")
         marks = result.registration
-        extra = ""
+        extra = f"   \u00b7   {result.rotation}\u00b0" if result.rotation else ""
         if marks.get("offset_mm") is not None:
             extra = (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
                      f"short by {marks.get('shortfall_mm', 0):.2f} mm")
@@ -1011,8 +1016,10 @@ class ScannerGui:
         for r in self._visible():
             if r.image is None:
                 continue
-            arr = preview.render(preview.fit(r.image, THUMB_H * 2, THUMB_H),
-                                 "RGB", self.v_invert.get())
+            arr = preview.render(
+                preview.fit(preview.rotate(r.image, r.rotation),
+                            THUMB_H * 2, THUMB_H),
+                "RGB", self.v_invert.get())
             photo = tk.PhotoImage(data=preview.to_ppm(arr))
             self._thumbs.append(photo)
             tag = f"r{r.seq}"
@@ -1058,7 +1065,18 @@ class ScannerGui:
         self.menu.delete(0, "end")
         self.menu.add_command(label="Save as ...",
                               command=lambda r=target: self.on_save_as(r))
+        self.menu.add_separator()
+        for label, degrees in (("Rotate right 90\u00b0", 90),
+                               ("Rotate left 90\u00b0", 270),
+                               ("Rotate 180\u00b0", 180)):
+            self.menu.add_command(
+                label=label, command=lambda r=target, d=degrees: self.on_rotate(r, d))
+        if target.rotation:
+            self.menu.add_command(
+                label=f"Straighten (now {target.rotation}\u00b0)",
+                command=lambda r=target: self.on_rotate(r, -r.rotation))
         if target.supersedes:
+            self.menu.add_separator()
             self.menu.add_command(label="Show prescan",
                                   command=lambda r=target: self.on_show_prescan(r))
         self.menu.add_separator()
@@ -1074,14 +1092,47 @@ class ScannerGui:
         if not path:
             return
         if result.entry and (result.entry / "scan.tif").exists():
-            # Copied rather than re-written: the entry holds the full
-            # resolution, and the working copy in memory is decimated.
-            shutil.copy2(result.entry / "scan.tif", path)
-            self._say(f"saved {Path(path).name} at full resolution")
+            if result.rotation:
+                # Turned on the way out, so the exported file matches what is
+                # on screen. The entry itself is left alone.
+                tiff.write(path, preview.rotate(
+                    tiff.read(str(result.entry / "scan.tif")), result.rotation))
+                self._say(f"saved {Path(path).name} at full resolution, "
+                          f"turned {result.rotation}\u00b0")
+            else:
+                # Copied rather than re-written: the entry holds the full
+                # resolution, and the working copy in memory is decimated.
+                shutil.copy2(result.entry / "scan.tif", path)
+                self._say(f"saved {Path(path).name} at full resolution")
         elif result.image is not None:
-            tiff.write(path, result.image)
+            tiff.write(path, preview.rotate(result.image, result.rotation))
             self._say(f"saved {Path(path).name} -- reduced preview, the "
                       "full-resolution file is not filed yet")
+
+    def on_rotate(self, result, degrees: int) -> None:
+        """Turn this pass, and everything scanned after it.
+
+        The carry-over is the point: rotating a prescan is how you say which
+        way up the film is, and the scan that follows should not need telling
+        again. It reaches the files written from here on -- the output folder's
+        copy and a roll's own TIFF -- but never the library entry, whose pixels
+        have to keep matching the raw bytes filed beside them.
+        """
+        result.rotation = (result.rotation + degrees) % 360
+        self.rotation = result.rotation
+        self.session.rotation = result.rotation
+        # Anything it stands in for turns with it, so showing the prescan again
+        # does not undo what was just decided.
+        if result.supersedes:
+            for r in self.results:
+                if r.seq == result.supersedes:
+                    r.rotation = result.rotation
+        self._say(f"{result.label}: {result.rotation}\u00b0 -- new scans and "
+                  "the files written for them follow this; the library entry "
+                  "keeps the scanner's own orientation")
+        self._offset = [0.0, 0.0]
+        self._show(result)
+        self._redraw_strip()
 
     def on_show_prescan(self, result) -> None:
         for r in self.results:
@@ -1135,10 +1186,10 @@ class ScannerGui:
         if r is None:
             return None
         if self._full_seq == r.seq:
-            return self._full
+            return preview.rotate(self._full, r.rotation)
         if r.entry is not None and self._zoom >= 1.0:
             self._load_full(r)
-        return r.image
+        return preview.rotate(r.image, r.rotation)
 
     def _load_full(self, r) -> None:
         """Read the entry's own pixels, off the UI thread.
@@ -1313,7 +1364,15 @@ class ScannerGui:
         if where is None:
             return
         src = self._source()
-        fraction = where[0] / max(1, src.shape[1])
+        # The film moves along the unrotated x axis however the picture is
+        # turned on screen, so the click comes back through the rotation before
+        # it means a distance. Without this, aiming on a frame turned 90 would
+        # drive the transport from the wrong axis entirely.
+        flat_x, _flat_y = preview.unrotate_point(
+            where[0], where[1], src.shape, self.current.rotation)
+        width = (src.shape[1] if self.current.rotation % 180 == 0
+                 else src.shape[0])
+        fraction = min(1.0, max(0.0, flat_x / max(1, width)))
         want = aim_millimetres(fraction)
         side = "left" if fraction < 0.5 else "right"
         if abs(want) < FINE_STEP_MM:
