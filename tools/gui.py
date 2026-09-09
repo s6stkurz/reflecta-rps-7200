@@ -119,6 +119,7 @@ class ScannerGui:
         self._zoom = 0.0                     # 0 = fit; otherwise pixels per pixel
         self._offset = [0.0, 0.0]            # pan, in source pixels
         self._drag = None
+        self._pointer = (0.0, 0.0)           # where a zoom should pivot
         self._shown = None                   # what was last drawn, for clicks
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
@@ -249,6 +250,7 @@ class ScannerGui:
             amount, sideways = _wheel_amount(event)
             if amount == 0:
                 return None
+            self._pointer = (event.x, event.y)
             handler(amount, sideways)
             return "break"
 
@@ -256,6 +258,7 @@ class ScannerGui:
             dx, dy = _touchpad_deltas(event)
             if dx == 0 and dy == 0:
                 return None
+            self._pointer = (event.x, event.y)
             if precise is not None:
                 precise(dx, dy)
             else:
@@ -1286,16 +1289,90 @@ class ScannerGui:
         self._zoom = zoom
         self._schedule_redraw()
 
-    def _zoom_by(self, factor: float, moving: bool = False) -> None:
+    def _zoom_by(self, factor: float, moving: bool = False,
+                 anchor: tuple[float, float] | None = None) -> None:
+        """Scale about `anchor`, keeping whatever is under it where it is.
+
+        Anchoring is the whole feel of a zoom. Without it the picture scales
+        about the middle of the canvas, so the thing you were looking at slides
+        away exactly when you lean in on it -- which is what "it does not zoom
+        correctly" is: the arithmetic was right and the pivot was wrong.
+
+        Fit is the floor. Below it the picture only shrinks into the middle of
+        an empty canvas, which is not a view of anything.
+        """
         src = self._source()
         if src is None:
             return
-        if self._zoom <= 0:                              # leaving fit
-            shown = self._shown
-            self._zoom = shown[2] if shown else 1.0
+        w = max(1, self.canvas.winfo_width())
+        h = max(1, self.canvas.winfo_height())
+        fit = min(w / src.shape[1], h / src.shape[0])
+
+        focus = self._source_at(*anchor) if anchor is not None else None
+        target = (self._zoom if self._zoom > 0 else fit) * factor
+
+        if target <= fit:
+            self._zoom = 0.0                             # back to fit, and stop
             self._offset = [src.shape[1] / 2, src.shape[0] / 2]
-        self._zoom = max(1 / 16, min(8.0, self._zoom * factor))
+            self._schedule_redraw(moving=moving)
+            return
+
+        target = min(_MAX_ZOOM, target)
+        if focus is None:
+            if self._zoom <= 0:
+                self._offset = [src.shape[1] / 2, src.shape[0] / 2]
+        else:
+            # Put `focus` back under the anchor at the new scale. The picture
+            # is drawn centred, so the offset is measured from that centre.
+            out_w = min(w, max(1, int(src.shape[1] * target)))
+            out_h = min(h, max(1, int(src.shape[0] * target)))
+            left, top = (w - out_w) / 2, (h - out_h) / 2
+            self._offset = [
+                focus[0] - (anchor[0] - left) / target + out_w / (2 * target),
+                focus[1] - (anchor[1] - top) / target + out_h / (2 * target),
+            ]
+        self._zoom = target
         self._schedule_redraw(moving=moving)
+
+    def _geometry(self, src, w: int, h: int):
+        """Where the picture sits on the canvas: `(scale, x0, y0, width, height)`.
+
+        Worked out from the zoom and offset as they are now, not from the last
+        frame drawn. Several throttled zoom steps can pass between redraws, and
+        pivoting on a stale frame let the anchor creep -- ten pixels over a
+        dozen steps, which is small and is still the picture sliding under a
+        finger that is meant to be holding it still.
+        """
+        tall, wide = src.shape[0], src.shape[1]
+        if self._zoom <= 0:
+            scale = min(w / wide, h / tall)
+            return (scale, 0.0, 0.0,
+                    max(1, int(wide * scale)), max(1, int(tall * scale)))
+        scale = self._zoom
+        out_w = min(w, max(1, int(wide * scale)))
+        out_h = min(h, max(1, int(tall * scale)))
+        cx, cy = self._offset
+        x0 = max(0.0, min(wide - out_w / scale, cx - out_w / (2 * scale)))
+        y0 = max(0.0, min(tall - out_h / scale, cy - out_h / (2 * scale)))
+        return scale, x0, y0, out_w, out_h
+
+    def _source_at(self, x: float, y: float):
+        """The picture coordinates under a point on the canvas, clamped.
+
+        Unlike `_to_source` this does not refuse a point outside the drawn
+        image: a pointer can sit in the margin beside a picture that does not
+        fill the canvas, and a zoom there should still pivot somewhere sensible
+        rather than not pivot at all.
+        """
+        src = self._source()
+        if src is None:
+            return None
+        w = max(1, self.canvas.winfo_width())
+        h = max(1, self.canvas.winfo_height())
+        scale, x0, y0, dw, dh = self._geometry(src, w, h)
+        ix = min(max(x - (w - dw) / 2, 0.0), float(dw))
+        iy = min(max(y - (h - dh) / 2, 0.0), float(dh))
+        return x0 + ix / scale, y0 + iy / scale
 
     def _touchpad_over_picture(self, dx: int, dy: int) -> None:
         """Zoom by a trackpad swipe, smoothly and by however far it travelled.
@@ -1311,7 +1388,8 @@ class ScannerGui:
             self._schedule_redraw(moving=True)
             return
         if dy:
-            self._zoom_by(math.exp(dy * _ZOOM_PER_PIXEL), moving=True)
+            self._zoom_by(math.exp(dy * _ZOOM_PER_PIXEL), moving=True,
+                          anchor=self._pointer)
 
     def _wheel_over_picture(self, amount: int, sideways: bool) -> None:
         if sideways and self._zoom > 0:
@@ -1319,7 +1397,8 @@ class ScannerGui:
             self._schedule_redraw(moving=True)
             return
         self._zoom_by((1 / _ZOOM_PER_NOTCH) ** amount if amount > 0
-                      else _ZOOM_PER_NOTCH ** -amount)
+                      else _ZOOM_PER_NOTCH ** -amount,
+                      anchor=self._pointer)
 
     def _schedule_redraw(self, moving: bool = False) -> None:
         """Draw now if it is time, and if not, make sure one is coming.
@@ -1381,18 +1460,7 @@ class ScannerGui:
         # Sampled at whatever scale is asked for. Decimating and replicating by
         # whole numbers -- which is what this replaced -- can only show 50%,
         # 100%, 200%, so a smooth zoom reached the screen as jumps between them.
-        tall, wide = src.shape[0], src.shape[1]
-        if self._zoom <= 0:
-            scale = min(w / wide, h / tall)
-            out_w, out_h = max(1, int(wide * scale)), max(1, int(tall * scale))
-            x0 = y0 = 0.0
-        else:
-            scale = self._zoom
-            out_w = min(w, max(1, int(wide * scale)))
-            out_h = min(h, max(1, int(tall * scale)))
-            cx, cy = self._offset
-            x0 = max(0.0, min(wide - out_w / scale, cx - out_w / (2 * scale)))
-            y0 = max(0.0, min(tall - out_h / scale, cy - out_h / (2 * scale)))
+        scale, x0, y0, out_w, out_h = self._geometry(src, w, h)
         # A moving frame is drawn at a fraction of the size and enlarged by
         # Tk, which is far cheaper than sampling and rendering every pixel: both
         # of those costs, and building the image Tk shows, scale with the count.
@@ -1449,11 +1517,15 @@ class ScannerGui:
     def on_double_click(self, event: tk.Event) -> str:
         """Fit and 1:1, the shortcut people try before finding the buttons."""
         if self._zoom <= 0:
-            where = self._to_source(event)
+            self._pointer = (event.x, event.y)
+            # Through the same pivot as a gesture, so the point clicked is the
+            # point that stays put.
             src = self._source()
-            if where is not None and src is not None:
-                self._offset = list(where)
-            self._set_zoom(1.0)
+            if src is not None:
+                w = max(1, self.canvas.winfo_width())
+                h = max(1, self.canvas.winfo_height())
+                fit = min(w / src.shape[1], h / src.shape[0])
+                self._zoom_by(1.0 / fit if fit else 1.0, anchor=self._pointer)
         else:
             self._set_zoom(0.0)
         return "break"
@@ -1573,6 +1645,9 @@ def stop_label(job: str) -> str:
 _ZOOM_PER_PIXEL = 0.006
 #: What one wheel notch is worth, for an actual mouse.
 _ZOOM_PER_NOTCH = 1.25
+#: As close as the picture can be brought. Past eight times, a scanned pixel is
+#: a block the size of a fingernail and there is nothing further to see.
+_MAX_ZOOM = 8.0
 
 
 def _touchpad_deltas(event: tk.Event) -> tuple[int, int]:

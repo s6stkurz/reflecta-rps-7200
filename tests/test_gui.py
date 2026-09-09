@@ -363,3 +363,45 @@ def test_the_sharp_frame_is_the_only_thing_that_waits():
     source = inspect.getsource(gui.ScannerGui._schedule_redraw)
     assert "after_cancel(self._settle_job)" in source
     assert "_settle_job" in source
+
+
+# -- where a zoom pivots ----------------------------------------------------
+
+
+def test_a_zoom_pivots_on_the_pointer():
+    """Without it the picture scales about the middle of the canvas, so what
+    you were looking at slides away exactly as you lean in on it. The
+    arithmetic was right and the pivot was wrong."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._zoom_by)
+    assert "anchor" in source
+    assert "_source_at" in source
+
+
+def test_the_pointer_is_recorded_when_a_gesture_arrives():
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._scrolls)
+    assert source.count("self._pointer") == 2, (
+        "both the wheel and the trackpad have to say where they were")
+
+
+def test_fit_is_the_floor():
+    """Below it the picture only shrinks into the middle of an empty canvas,
+    which is not a view of anything."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._zoom_by)
+    assert "target <= fit" in source
+    assert "self._zoom = 0.0" in source
+
+
+def test_there_is_a_ceiling_and_it_is_past_one_to_one():
+    assert gui._MAX_ZOOM > 1.0
+
+
+def test_one_place_decides_where_the_picture_sits():
+    """A pivot worked out from the last frame drawn creeps, because several
+    throttled zoom steps can pass between redraws. Both the drawing and the
+    pivot read the same live geometry."""
+    import inspect
+    for method in (gui.ScannerGui._redraw, gui.ScannerGui._source_at):
+        assert "_geometry(" in inspect.getsource(method), method.__name__
