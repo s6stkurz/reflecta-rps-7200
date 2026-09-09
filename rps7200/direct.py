@@ -907,6 +907,35 @@ class DirectScanner:
         data = bytes([action, param, 0x00, value])
         self.t.command(_cmd(SCSI_SLIDE, 4), data=data)
 
+    def _whole_frames(
+        self, action: int, steps: int, timeout: float, poll: float, verb: str
+    ) -> int | None:
+        """Move whole frames and wait until `READ_STATE` says it happened.
+
+        Waiting is the point, and it is the same waiting in both directions.
+        `READ_STATE` byte 2 is the transport position, and it is the only signal
+        in any capture that says the film has actually moved: it stepped
+        0 -> 1 -> 2 -> 3 -> 4 across the strip session's four advances, and
+        stayed put through a session that never advanced. The new value showed
+        up 1.6 s to 6.2 s later, and the READ_STATE issued immediately after the
+        command came back empty every time -- so the poll has to survive a
+        failed read rather than treat it as the end.
+        """
+        before = self.position()
+        self.slide(action, param=0x01, value=steps)
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(poll)
+            now = self.position()
+            if now is not None and now != before:
+                self._log(f"{verb} to position {now}")
+                return now
+        self._log(
+            f"no movement: position still {before} after {timeout:.0f}s"
+        )
+        return None
+
     def advance(
         self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5
     ) -> int | None:
@@ -916,32 +945,31 @@ class DirectScanner:
         ``600_ICE_FILM_STRIP_5.pcapng`` (with ``04 01 00 02`` once, for reasons
         the capture does not explain -- the position still moved by one).
 
-        Waiting is the point. `READ_STATE` byte 2 is the transport position, and
-        it is the only signal in any capture that says the film has actually
-        moved: it stepped 0 -> 1 -> 2 -> 3 -> 4 across the strip session's four
-        advances, and stayed put through a session that never advanced. The new
-        value showed up 1.6 s to 6.2 s later, and the READ_STATE issued
-        immediately after the command came back empty every time -- so the poll
-        has to survive a failed read rather than treat it as the end.
-
         Returns the new position, or None if it never moved -- which is how a
         roll ends.
         """
-        before = self.position()
-        self.slide(SLIDE_NEXT, param=0x01, value=steps)
-
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            time.sleep(poll)
-            now = self.position()
-            if now is not None and now != before:
-                self._log(f"advanced to position {now}")
-                return now
-        self._log(
-            f"no advance: position still {before} after {timeout:.0f}s -- "
-            "treating this as the end of the film"
+        position = self._whole_frames(
+            SLIDE_NEXT, steps, timeout, poll, "advanced"
         )
-        return None
+        if position is None:
+            self._log("treating that as the end of the film")
+        return position
+
+    def retreat(
+        self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5
+    ) -> int | None:
+        """Move the film back by one frame, and wait until it has.
+
+        ``05 01 00 01``, the mirror of :meth:`advance`. This is what the vendor
+        sends to rewind a finished roll, one frame per step, and it has been
+        driven here five times in a row with the position stepping down by
+        exactly one each time.
+
+        Unlike an advance, a refusal is not the end of anything -- it usually
+        means the film is already at the first frame. Returns the new position,
+        or None if it did not move.
+        """
+        return self._whole_frames(SLIDE_PREV, steps, timeout, poll, "went back")
 
     def position(self) -> int | None:
         """Where the transport has the film, or None if it would not say.

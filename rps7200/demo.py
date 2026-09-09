@@ -64,6 +64,7 @@ class DemoScanner:
         self._inquiry = _Inquiry()
         self._entries: list[Path] = []
         self._next = 0
+        self._position = 0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -89,7 +90,34 @@ class DemoScanner:
         return self._inquiry
 
     def position(self) -> int | None:
-        return self._next
+        return self._position
+
+    def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
+        self._work(7.0)
+        if self._position >= 16:                         # a strip runs out
+            self._log("no advance: treating that as the end of the film")
+            return None
+        self._position += steps
+        self._log(f"advanced to position {self._position}")
+        return self._position
+
+    def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
+        self._work(7.0)
+        if self._position <= 0:
+            self._log("no movement: already at the first frame")
+            return None
+        self._position = max(0, self._position - steps)
+        self._log(f"went back to position {self._position}")
+        return self._position
+
+    def nudge(self, millimetres: float) -> dict[str, Any]:
+        param = max(1, min(8, round((abs(millimetres) - 0.1662) / 0.1057)))
+        asked = 0.1057 * param + 0.1662
+        asked = asked if millimetres >= 0 else -asked
+        self._log(f"slide sub-frame: {asked:+.3f} mm (param {param})")
+        self._work(1.5)
+        return {"asked_mm": asked, "param": param,
+                "forward": millimetres >= 0}
 
     def capture_record(self) -> dict[str, Any]:
         return {"reference": None, "ccd_mask": None, "raw": None, "raw_layout": None}
@@ -160,6 +188,7 @@ class DemoScanner:
     ):
         limit = frames if frames is not None else 6
         for i in range(limit):
+            self._position = skip + i
             self._log(f"frame {i}: contrast 0.31, offset +0.04 mm, short by 0.02 mm")
             prescan, _ = self.prescan()
             image = meta = None

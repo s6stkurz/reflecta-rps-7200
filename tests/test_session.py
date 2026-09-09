@@ -21,6 +21,7 @@ from rps7200.direct import RollFrame
 from rps7200.library import FilmNotes
 from rps7200.session import (
     Calibrate,
+    Move,
     Prescan,
     Roll,
     Scan,
@@ -497,3 +498,83 @@ def test_a_stop_reaches_the_driver_not_only_the_consumer_loop(tmp_path):
     from rps7200.session import ScanSession
     source = inspect.getsource(ScanSession._roll)
     assert "should_stop=self._stop.is_set" in source
+
+
+# -- moving the film without scanning ---------------------------------------
+
+
+class FakeTransportScanner(FakeScanner):
+    """Records what the transport was asked to do."""
+
+    def __init__(self, position=3, stuck=False):
+        super().__init__()
+        self.pos = position
+        self.stuck = stuck
+        self.moves = []
+
+    def advance(self, steps=1, **kw):
+        self.moves.append(("advance", steps))
+        if self.stuck:
+            return None
+        self.pos += 1
+        return self.pos
+
+    def retreat(self, steps=1, **kw):
+        self.moves.append(("retreat", steps))
+        if self.stuck:
+            return None
+        self.pos -= 1
+        return self.pos
+
+    def position(self):
+        return self.pos
+
+    def nudge(self, millimetres):
+        self.moves.append(("nudge", millimetres))
+        return {"asked_mm": millimetres, "param": 1}
+
+
+def test_moving_forward_a_frame_reports_the_new_position(tmp_path):
+    scanner = FakeTransportScanner(position=3)
+    _, scanner, events = run(Move(frames=1), tmp_path, scanner=scanner)
+    assert scanner.moves == [("advance", 1)]
+    assert [e.done for e in kinds(events, "transport")] == [4]
+
+
+def test_moving_back_a_frame_uses_the_reverse(tmp_path):
+    scanner = FakeTransportScanner(position=3)
+    _, scanner, events = run(Move(frames=-1), tmp_path, scanner=scanner)
+    assert scanner.moves == [("retreat", 1)]
+    assert [e.done for e in kinds(events, "transport")] == [2]
+
+
+def test_a_transport_that_will_not_move_is_reported_not_raised(tmp_path):
+    scanner = FakeTransportScanner(stuck=True)
+    _, _, events = run(Move(frames=1), tmp_path, scanner=scanner)
+    assert any("did not move" in e.text for e in kinds(events, "finished"))
+
+
+def test_a_nudge_says_the_frame_counter_cannot_confirm_it(tmp_path):
+    """The counter does not see a sub-frame move. Reporting a position as if it
+    had changed would be the one misleading thing this control could do."""
+    scanner = FakeTransportScanner(position=3)
+    _, scanner, events = run(Move(millimetres=0.27), tmp_path, scanner=scanner)
+    assert scanner.moves == [("nudge", 0.27)]
+    assert any("prescan to check it landed" in e.text
+               for e in kinds(events, "finished"))
+    # Position is still whatever it was; nothing pretends otherwise.
+    assert [e.done for e in kinds(events, "transport")] == [3]
+
+
+def test_a_move_never_files_anything(tmp_path):
+    run(Move(frames=1), tmp_path, scanner=FakeTransportScanner())
+    assert library.entries(tmp_path) == []
+
+
+def test_moving_several_frames_steps_one_at_a_time(tmp_path):
+    """So the position is confirmed at every frame, and a strip that runs out
+    part-way stops there rather than being asked for the rest."""
+    scanner = FakeTransportScanner(position=0)
+    _, scanner, events = run(Move(frames=3), tmp_path, scanner=scanner)
+    assert scanner.moves == [("advance", 1)] * 3
+    assert [e.done for e in kinds(events, "transport")] == [1, 2, 3]

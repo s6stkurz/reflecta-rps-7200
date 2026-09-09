@@ -31,6 +31,7 @@ from rps7200.direct import FILM_TYPES, METER_MODES       # noqa: E402
 from rps7200.library import FilmNotes                    # noqa: E402
 from rps7200.session import (                            # noqa: E402
     Calibrate,
+    Move,
     Prescan,
     Roll,
     Scan,
@@ -54,6 +55,15 @@ ARCHIVE_MAX_SIDE = 512
 THUMB_H = 76
 POLL_MS = 120
 
+#: The smallest move the transport can make: param 1 of the calibrated
+#: sub-frame law, 0.1057 mm x 1 + 0.1662 mm. Asking for less than this does not
+#: get you less, it gets you this.
+FINE_STEP_MM = 0.27
+
+#: The largest the driver will attempt, param 8. Beyond about a millimetre a
+#: correction means the measurement is wrong rather than the film being out.
+MAX_FINE_MM = 1.01
+
 
 class ScannerGui:
     def __init__(self, root: tk.Tk, session: ScanSession, demo: bool = False):
@@ -73,6 +83,7 @@ class ScannerGui:
         self._loading = None
         self._alive = True
         self._job = ""                       # what is running, for the stop label
+        self._last_nudge = 0                 # which way the film last went
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         root.geometry("1180x820")
@@ -96,15 +107,55 @@ class ScannerGui:
 
         body = ttk.Frame(self.root)
         body.pack(fill="both", expand=True)
-        left = ttk.Frame(body, padding=8)
-        left.pack(side="left", fill="y")
+        left = self._scrollable(body)
         right = ttk.Frame(body, padding=(0, 8, 8, 8))
         right.pack(side="left", fill="both", expand=True)
 
         self._build_scan(left)
+        self._build_transport(left)
         self._build_roll(left)
         self._build_film(left)
         self._build_preview(right)
+
+    def _scrollable(self, parent: ttk.Frame) -> ttk.Frame:
+        """A left column that scrolls, because it is taller than the window.
+
+        Tk has no scrollable frame, so it is the usual Canvas with a Frame
+        inside: the canvas scrolls, the frame holds the widgets, and the two are
+        kept in step by their <Configure> events -- the inner frame's tells the
+        canvas how tall the content is, the canvas's tells the frame how wide to
+        be so nothing is cut off horizontally.
+        """
+        host = ttk.Frame(parent)
+        host.pack(side="left", fill="y")
+        canvas = tk.Canvas(host, width=248, highlightthickness=0, borderwidth=0)
+        bar = ttk.Scrollbar(host, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = ttk.Frame(canvas, padding=8)
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(window, width=e.width),
+        )
+
+        def wheel(event: tk.Event) -> None:
+            # macOS reports small deltas, X11 and Windows large ones; the sign
+            # is the only part that means the same thing everywhere.
+            step = -1 if event.delta > 0 else 1
+            canvas.yview_scroll(step, "units")
+
+        # Bound while the pointer is over the column, so the wheel still works
+        # over the preview and the log.
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        return inner
 
     def _build_scan(self, parent: ttk.Frame) -> None:
         box = ttk.LabelFrame(parent, text="Scan", padding=8)
@@ -162,6 +213,50 @@ class ScannerGui:
         self.v_estimate = tk.StringVar(value="")
         ttk.Label(box, textvariable=self.v_estimate,
                   foreground="#777").pack(anchor="w")
+
+    def _build_transport(self, parent: ttk.Frame) -> None:
+        box = ttk.LabelFrame(parent, text="Transport", padding=8)
+        box.pack(fill="x", pady=(8, 0))
+
+        self.v_position = tk.StringVar(value="frame position: ?")
+        ttk.Label(box, textvariable=self.v_position).pack(anchor="w")
+
+        ttk.Label(box, text="whole frames").pack(anchor="w", pady=(6, 0))
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=2)
+        self.b_prev = ttk.Button(row, text="\u25c0 prev slide",
+                                 command=lambda: self.on_move_frames(-1))
+        self.b_prev.pack(side="left", expand=True, fill="x")
+        self.b_next = ttk.Button(row, text="next slide \u25b6",
+                                 command=lambda: self.on_move_frames(1))
+        self.b_next.pack(side="left", expand=True, fill="x", padx=(4, 0))
+
+        ttk.Label(box, text="fine adjustment").pack(anchor="w", pady=(8, 0))
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=2)
+        self.b_fine_back = ttk.Button(row, text="\u25c0 back",
+                                      command=lambda: self.on_nudge(-1))
+        self.b_fine_back.pack(side="left", expand=True, fill="x")
+        self.b_fine_fwd = ttk.Button(row, text="forward \u25b6",
+                                     command=lambda: self.on_nudge(1))
+        self.b_fine_fwd.pack(side="left", expand=True, fill="x", padx=(4, 0))
+
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text="mm", width=4).pack(side="left")
+        self.v_fine = tk.StringVar(value=f"{FINE_STEP_MM:.2f}")
+        ttk.Entry(row, textvariable=self.v_fine, width=7).pack(side="left")
+        ttk.Label(row, text=f"{FINE_STEP_MM:.2f}-{MAX_FINE_MM:.2f}",
+                  foreground="#777").pack(side="left", padx=4)
+
+        ttk.Label(
+            box, foreground="#777", wraplength=210, justify="left",
+            text=("Back and forward follow the film, which may not be left "
+                  "and right as you see it -- try one and see.\n\n"
+                  "The frame counter does not see a fine move, so only a "
+                  "prescan shows it landed. Changing direction swallows two "
+                  "or three steps to backlash."),
+        ).pack(anchor="w", pady=(4, 0))
 
     def _build_roll(self, parent: ttk.Frame) -> None:
         box = ttk.LabelFrame(parent, text="Roll", padding=8)
@@ -400,6 +495,31 @@ class ScannerGui:
             tags=self._tags(),
         ))
 
+    def on_move_frames(self, frames: int) -> None:
+        self.session.submit(Move(frames=frames))
+
+    def on_nudge(self, direction: int) -> None:
+        try:
+            mm = abs(float(self.v_fine.get().strip().replace(",", ".")))
+        except ValueError:
+            messagebox.showerror("Fine adjustment", "That has to be a number.")
+            return
+        if mm < FINE_STEP_MM or mm > MAX_FINE_MM:
+            # Said rather than silently clamped: asking for 0.05 mm and getting
+            # 0.27 mm is exactly the surprise that makes a nudge untrustworthy.
+            messagebox.showerror(
+                "Fine adjustment",
+                f"The transport moves in steps of {FINE_STEP_MM:.2f} mm and "
+                f"the driver will not attempt more than {MAX_FINE_MM:.2f} mm "
+                f"at once.\n\n{mm:.2f} mm is outside that.")
+            return
+        if direction < 0 and self._last_nudge > 0 or \
+                direction > 0 and self._last_nudge < 0:
+            self._say("changing direction: expect the first two or three "
+                      "steps to go into backlash")
+        self._last_nudge = direction
+        self.session.submit(Move(millimetres=mm * direction))
+
     def on_stop(self) -> None:
         self.session.request_stop()
         self._say("stop requested -- finishing what is already running")
@@ -461,6 +581,10 @@ class ScannerGui:
             self._progress(event.done, event.total)
         elif event.kind == "result":
             self._add_result(event.result)
+        elif event.kind == "transport":
+            self.v_position.set(
+                "frame position: ?" if event.done < 0
+                else f"frame position: {event.done}")
         elif event.kind == "filed":
             for r in self.results:
                 if r.seq == event.done:
@@ -494,20 +618,24 @@ class ScannerGui:
         if self.session.dead:
             # Nothing may be started on a device whose read was abandoned; it
             # needs a power cycle at its own switch before it will talk again.
-            for b in (self.b_scan, self.b_prescan, self.b_roll, self.b_calibrate,
-                      self.b_stop, self.b_abort):
+            for b in (*self._run_buttons(), self.b_stop, self.b_abort):
                 b.configure(state="disabled")
             self.v_caption.set(
                 "aborted -- power-cycle the scanner at its own switch, "
                 "then start this window again")
             return
         run = "disabled" if busy else "normal"
-        for b in (self.b_scan, self.b_prescan, self.b_roll, self.b_calibrate):
+        for b in self._run_buttons():
             b.configure(state=run)
         self.b_stop.configure(state="normal" if busy else "disabled")
         self.b_abort.configure(state="normal" if busy else "disabled")
         # Say what stopping will actually do, since it cannot mean "now".
         self.b_stop.configure(text=stop_label(self._job))
+
+    def _run_buttons(self) -> tuple:
+        """Everything that drives the scanner, and so cannot overlap."""
+        return (self.b_scan, self.b_prescan, self.b_roll, self.b_calibrate,
+                self.b_prev, self.b_next, self.b_fine_back, self.b_fine_fwd)
 
     def _progress(self, done: int, total: int) -> None:
         if total <= 0:

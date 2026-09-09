@@ -132,7 +132,23 @@ class Roll:
     tags: tuple[str, ...] = ()
 
 
-Job = Calibrate | Prescan | Scan | Roll
+@dataclass(frozen=True)
+class Move:
+    """Move the film without scanning anything.
+
+    Two different mechanisms, deliberately in one job so the UI cannot confuse
+    them. `frames` steps whole pictures with SLIDE_NEXT/SLIDE_PREV, which the
+    transport counts and `READ_STATE` confirms. `millimetres` is a sub-frame
+    nudge, which the frame counter does **not** see -- only a prescan can tell
+    you it landed, and two to three steps are swallowed after a direction
+    change, so a small move that reverses may not move the film at all.
+    """
+
+    frames: int = 0                          # +1 next picture, -1 previous
+    millimetres: float = 0.0                 # + towards the end of the film
+
+
+Job = Calibrate | Prescan | Scan | Roll | Move
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +181,8 @@ class Event:
 
 #: "filed" carries the sequence number in `done` and the entry path in `text`,
 #: which is how a result learns where its full-resolution pixels ended up.
-KINDS = ("state", "log", "progress", "result", "filed",
+#: "transport" carries the frame position in `done`, or -1 when it is unknown.
+KINDS = ("state", "log", "progress", "result", "filed", "transport",
          "finished", "failed", "closed")
 
 
@@ -439,6 +456,8 @@ class ScanSession:
             self._scan(job)
         elif isinstance(job, Roll):
             return self._roll(job)
+        elif isinstance(job, Move):
+            return self._move(job)
         else:
             raise TypeError(f"unknown job {job!r}")
         return None
@@ -485,6 +504,32 @@ class ScanSession:
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
         seq = self._deliver("scan", label, image, meta)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",))
+
+    def _move(self, job: Move) -> str | None:
+        """Whole frames, or a sub-frame nudge. Never both in one job."""
+        if job.frames:
+            step = self._scanner.advance if job.frames > 0 else self._scanner.retreat
+            landed = None
+            for _ in range(abs(job.frames)):
+                landed = step()
+                if landed is None:
+                    break
+                self._emit("transport", done=landed)
+            if landed is None:
+                return "the film did not move -- it may be at the end of the strip"
+            return f"at frame position {landed}"
+
+        if job.millimetres:
+            out = self._scanner.nudge(job.millimetres)
+            asked = out.get("asked_mm", job.millimetres)
+            # The frame counter does not see a sub-frame move, so the position
+            # is reported as whatever it still says rather than pretending it
+            # changed. Only a prescan can confirm a nudge landed.
+            position = self._scanner.position()
+            self._emit("transport", done=-1 if position is None else position)
+            return (f"nudged {asked:+.2f} mm -- the frame counter does not see "
+                    "this; prescan to check it landed")
+        return "nothing to move"
 
     def _roll(self, job: Roll) -> str | None:
         name = job.name or time.strftime("%Y-%m-%d")
@@ -675,4 +720,10 @@ def _describe(job: Job) -> str:
         what = "walking" if job.dry_run else "scanning"
         n = job.frames if job.frames else "?"
         return f"{what} a roll of {n} frames"
+    if isinstance(job, Move):
+        if job.frames:
+            way = "forward" if job.frames > 0 else "back"
+            n = abs(job.frames)
+            return f"moving {n} frame{'s' if n != 1 else ''} {way} (~7 s each)"
+        return f"nudging the film {job.millimetres:+.2f} mm"
     return str(job)

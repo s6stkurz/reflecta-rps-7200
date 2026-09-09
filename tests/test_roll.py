@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from rps7200.direct import (
+    SLIDE_PREV,
     FULL_FRAME,
     METER_EACH,
     METER_NONE,
@@ -742,3 +743,49 @@ def test_a_roll_asked_not_to_keep_raw_does_not_make_the_prescan_keep_it():
     s = FakeRoll([picture(seed=i) for i in range(3)])
     list(s.scan_roll(frames=2, infrared=False, meter=METER_NONE, keep_raw=False))
     assert not any(s.prescan_keep_raw), s.prescan_keep_raw
+
+
+def test_going_back_a_frame_sends_slide_prev():
+    """`05 01 00 01`, the mirror of an advance -- what the vendor sends to
+    rewind a finished roll, one frame per step."""
+    t = FakeTransport(positions=[3, 3, 2])
+    s = DirectScanner(transport=t)
+    assert s.retreat(poll=0.01) == 2
+    assert t.payloads(SCSI_SLIDE) == [bytes([SLIDE_PREV, 0x01, 0x00, 0x01])]
+
+
+def test_going_forward_a_frame_still_sends_slide_next():
+    t = FakeTransport(positions=[3, 3, 4])
+    s = DirectScanner(transport=t)
+    assert s.advance(poll=0.01) == 4
+    assert t.payloads(SCSI_SLIDE) == [bytes([SLIDE_NEXT, 0x01, 0x00, 0x01])]
+
+
+def test_a_retreat_that_does_not_move_says_so_without_calling_it_the_end():
+    """An advance that fails means the film ran out. A retreat that fails
+    usually means it is already at the first frame, which is not the same."""
+    t = FakeTransport(positions=[0])
+    s = DirectScanner(transport=t, verbose=False)
+    assert s.retreat(timeout=0.05, poll=0.01) is None
+
+
+def test_a_sub_frame_move_never_reaches_the_frame_counter():
+    """`SLIDE` action 0x00/0x01 moves the film without the counter seeing it,
+    which is why only a prescan can confirm a nudge landed."""
+    t = FakeTransport(positions=[2])
+    s = DirectScanner(transport=t, verbose=False)
+    out = s.nudge(0.5)
+    sent = t.payloads(SCSI_SLIDE)
+    assert len(sent) == 1
+    assert sent[0][0] == 0x00, "forward is action 0x00"
+    assert out["asked_mm"] > 0
+    back = DirectScanner(transport=FakeTransport(positions=[2]), verbose=False)
+    assert back.nudge(-0.5)["asked_mm"] < 0
+
+
+def test_the_smallest_nudge_is_the_smallest_the_hardware_can_do():
+    """param 1 = 0.1057 + 0.1662 mm. Asking for less does not get you less."""
+    s = DirectScanner(transport=FakeTransport(), verbose=False)
+    assert s.param_for_mm(0.01) == 1
+    assert s.param_for_mm(0.27) == 1
+    assert s.param_for_mm(99.0) == DirectScanner.MAX_CORRECTION_PARAM
