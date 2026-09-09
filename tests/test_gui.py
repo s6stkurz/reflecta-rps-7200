@@ -75,3 +75,68 @@ def test_the_window_files_its_own_entries_rather_than_letting_the_driver():
     import inspect
     source = inspect.getsource(ScanSession._default_scanner)
     assert "debug=False" in source
+
+
+# -- aiming the film at a point on the prescan ------------------------------
+
+
+def test_aiming_at_the_centre_asks_for_no_movement():
+    assert gui.aim_millimetres(0.5) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_aiming_left_and_right_are_mirror_images():
+    """The arithmetic must not favour a direction; only the transport does."""
+    assert gui.aim_millimetres(0.25) == pytest.approx(-gui.aim_millimetres(0.75))
+
+
+def test_the_edges_are_half_an_aperture_away():
+    """36.49 mm across the window, so an edge is 18.2 mm from centred -- far
+    beyond anything a sub-frame move can deliver, which is why the dialog says
+    what it will actually do rather than promising the click."""
+    assert gui.aim_millimetres(0.0) == pytest.approx(gui.APERTURE_MM / 2, abs=0.01)
+    assert gui.aim_millimetres(1.0) == pytest.approx(-gui.APERTURE_MM / 2, abs=0.01)
+
+
+def test_the_aperture_matches_the_transport_window():
+    """36.49 mm against a 36 mm frame -- the half-millimetre of slack the
+    registration work is all about."""
+    assert gui.APERTURE_MM == pytest.approx(36.49, abs=0.01)
+
+
+def test_a_click_one_pixel_off_centre_is_below_what_the_hardware_can_do():
+    """At 300 dpi the prescan is ~431 px across, so one pixel is 0.085 mm --
+    a third of the smallest step. Clicking precisely is not the hard part."""
+    per_pixel = abs(gui.aim_millimetres(0.5 + 1 / 431))
+    assert per_pixel < gui.FINE_STEP_MM
+
+
+# -- the exposure field, which parses more than one shape -------------------
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("2.5", [2.5]),
+    ("1.8, 0.9, 2.1, 1.0", [1.8, 0.9, 2.1, 1.0]),
+    ("1.8 0.9 2.1", [1.8, 0.9, 2.1]),
+    ("", []),
+    ("1,5", [1.0, 5.0]),
+])
+def test_numbers_reads_the_shapes_people_type(text, expected):
+    assert gui._numbers(text) == expected
+
+
+def test_numbers_refuses_what_is_not_a_number():
+    assert gui._numbers("bright") is None
+    assert gui._numbers("1.8, oops") is None
+
+
+def test_the_fine_step_bounds_are_the_calibrated_ones():
+    """param 1 and param 8 of distance = 0.1057 x param + 0.1662."""
+    from rps7200.direct import DirectScanner as D
+    assert gui.FINE_STEP_MM == pytest.approx(D.STEP_MM * 1 + D.OVERHEAD_MM, abs=0.01)
+    assert gui.MAX_FINE_MM == pytest.approx(
+        D.STEP_MM * D.MAX_CORRECTION_PARAM + D.OVERHEAD_MM, abs=0.01)
+
+
+def test_the_prescan_ladder_starts_at_the_scanners_own_preview_resolution():
+    assert gui.PRESCAN_LADDER[0] == 300
+    assert all(d <= 1200 for d in gui.PRESCAN_LADDER), "a prescan is meant to be cheap"

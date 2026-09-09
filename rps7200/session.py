@@ -123,6 +123,7 @@ class Roll:
     infrared: bool = True
     film: str = "negative"
     meter: str = METER_EACH
+    prescan_resolution: int = 300
     dry_run: bool = False
     correct: bool = False
     max_failures: int = 3
@@ -168,6 +169,9 @@ class Result:
     entry: Path | None = None
     registration: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    #: Where the transport was when this pass was taken. A scan can only stand
+    #: in for a prescan of the same picture, and this is how that is known.
+    position: int | None = None
 
 
 @dataclass(frozen=True)
@@ -285,11 +289,16 @@ class ScanSession:
         rolls: str | Path = "rolls",
         open_scanner: Any = None,
         verbose: bool = True,
+        out_dir: str | Path | None = None,
     ):
         self.root = str(root) if root else None
         self.reference = str(reference)
         self.rolls = Path(rolls)
         self.verbose = verbose
+        # A second copy of each scan, written where the operator asked for it as
+        # the scan lands rather than afterwards. The library entry is the record;
+        # this is the file they actually wanted.
+        self.out_dir = Path(out_dir) if out_dir else None
         # The seam that lets tests and `--demo` run with nothing on the bus.
         self._open_scanner = open_scanner or self._default_scanner
         self._jobs: queue.Queue = queue.Queue()
@@ -548,6 +557,7 @@ class ScanSession:
 
         frames = self._scanner.scan_roll(
             should_stop=self._stop.is_set,
+            prescan_resolution=job.prescan_resolution,
             frames=job.frames,
             resolution=job.resolution,
             infrared=job.infrared,
@@ -566,7 +576,8 @@ class ScanSession:
                 if rf.prescan is not None:
                     seq = self._deliver(
                         "prescan", f"frame {number} prescan", rf.prescan,
-                        {"resolution_dpi": 300}, registration=rf.registration,
+                        {"resolution_dpi": job.prescan_resolution},
+                        registration=rf.registration, position=rf.position,
                     )
                     if job.dry_run:
                         # On a dry run the prescans are the entire product --
@@ -591,7 +602,7 @@ class ScanSession:
                     )
                     seq = self._deliver(
                         "frame", label, rf.image, rf.meta,
-                        registration=rf.registration,
+                        registration=rf.registration, position=rf.position,
                     )
                     notes = replace(
                         job.notes, frame=job.notes.frame or f"{name}-{number:02d}"
@@ -633,6 +644,7 @@ class ScanSession:
         image: np.ndarray,
         meta: dict[str, Any],
         registration: dict[str, Any] | None = None,
+        position: int | None = None,
     ) -> int:
         """Hand the UI a working copy small enough to keep.
 
@@ -642,12 +654,21 @@ class ScanSession:
         reason it is allowed to happen with the device still open.
         """
         working = np.ascontiguousarray(preview.downscale(image, preview.PREVIEW_MAX_SIDE))
+        if position is None:
+            position = self._position()
         self._seq += 1
         self._emit("result", result=Result(
             seq=self._seq, kind=kind, label=label, image=working, meta=dict(meta),
-            registration=dict(registration or {}),
+            registration=dict(registration or {}), position=position,
         ))
         return self._seq
+
+    def _position(self) -> int | None:
+        """Where the transport is, or None if it will not say."""
+        try:
+            return self._scanner.position()
+        except Exception:                                # noqa: BLE001
+            return None
 
     def _file(
         self,
@@ -662,6 +683,11 @@ class ScanSession:
     ) -> None:
         if self._writer is None:
             return
+        if path is None and self.out_dir is not None:
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            dpi = meta.get("resolution_dpi") or 0
+            stamp = time.strftime("%Y%m%dT%H%M%S")
+            path = self.out_dir / f"{stamp}_{dpi}dpi_{seq:03d}.tif"
         capture = self._scanner.capture_record()
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             shape = image.shape

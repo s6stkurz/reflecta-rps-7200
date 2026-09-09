@@ -2,34 +2,38 @@
 """A window for scanning negatives on the Reflecta RPS 7200.
 
     make run                      # the real scanner
-    python3 tools/gui.py --demo   # stored library entries, nothing on the bus
+    make run-demo                 # stored library entries, nothing on the bus
 
 Prescan, scan, walk a roll, and look at what came off -- including the infrared
 plane on its own, which is the one channel no ordinary viewer will show you.
 Files are written exactly as the command-line tools write them: raw negatives,
 filed in the library with their raw bytes, their shading reference and their CCD
-mask. Inverting, dust removal and colour are NegPy's job and happen later; the
-inversion in this window is for your eyes only and never reaches disk.
+mask. Inverting, dust removal and colour are NegPy's job; the inversion in this
+window is for your eyes only and never reaches disk.
 
 Opening the window claims the device and asks it who it is, and does nothing
-else. Nothing moves the mechanism until a button is pressed -- calibration, the
-lamp, the transport, all of it waits for you.
+else. Nothing moves the mechanism until a button is pressed.
 """
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library, preview                     # noqa: E402
-from rps7200.direct import FILM_TYPES, METER_MODES       # noqa: E402
-from rps7200.library import FilmNotes                    # noqa: E402
-from rps7200.session import (                            # noqa: E402
+import numpy as np                                       # noqa: E402
+
+from rps7200 import library, preview, tiff                # noqa: E402
+from rps7200.direct import FILM_TYPES, METER_MODES        # noqa: E402
+from rps7200.framing import FULL_FRAME                    # noqa: E402
+from rps7200.library import FilmNotes                     # noqa: E402
+from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
+from rps7200.session import (                             # noqa: E402
     Calibrate,
     Move,
     Prescan,
@@ -41,28 +45,32 @@ from rps7200.session import (                            # noqa: E402
 
 #: Integer divisors of the 7200 dpi optical resolution -- the only values any
 #: USB capture of the vendor software has ever used. The box is editable, and
-#: the device refuses anything it dislikes before a single byte is transferred,
-#: so a value from outside this list costs a round trip and nothing worse.
+#: the device refuses anything it dislikes before a byte is transferred.
 DPI_LADDER = (300, 360, 400, 450, 480, 600, 720, 800, 900,
               1200, 1440, 1800, 2400, 3600, 7200)
 
+#: What a prescan is worth spending. 300 dpi is the scanner's own fast-preview
+#: resolution and what the vendor uses before every frame, at ~16 s.
+PRESCAN_LADDER = (300, 360, 400, 450, 480, 600, 720, 900, 1200)
+
 #: How many results keep a full-size working copy. Older ones are shrunk rather
-#: than dropped, so every channel and the invert toggle keep working on them;
-#: it just gets soft. A 36-frame roll then costs ~50 MB instead of ~300.
+#: than dropped, so every channel and the invert toggle keep working on them.
 WORKING_COPIES = 12
 ARCHIVE_MAX_SIDE = 512
+
+#: The transport aperture across the film, from the full scan frame.
+APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
+
+#: The smallest move the transport can make: param 1 of the calibrated
+#: sub-frame law. Asking for less does not get you less, it gets you this.
+FINE_STEP_MM = 0.27
+#: The largest the driver will attempt, param 8.
+MAX_FINE_MM = 1.01
 
 THUMB_H = 76
 POLL_MS = 120
 
-#: The smallest move the transport can make: param 1 of the calibrated
-#: sub-frame law, 0.1057 mm x 1 + 0.1662 mm. Asking for less than this does not
-#: get you less, it gets you this.
-FINE_STEP_MM = 0.27
-
-#: The largest the driver will attempt, param 8. Beyond about a millimetre a
-#: correction means the measurement is wrong rather than the film being out.
-MAX_FINE_MM = 1.01
+LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
 
 
 class ScannerGui:
@@ -78,16 +86,19 @@ class ScannerGui:
         self._thumbs: list[tk.PhotoImage] = []
         self._full = None                    # full-resolution pixels, for 1:1
         self._full_seq = None
-        self._centre = None                  # 1:1 focus, in full-image pixels
-        self._redraw_job = None
         self._loading = None
+        self._redraw_job = None
         self._alive = True
         self._job = ""                       # what is running, for the stop label
         self._last_nudge = 0                 # which way the film last went
+        self._zoom = 0.0                     # 0 = fit; otherwise pixels per pixel
+        self._offset = [0.0, 0.0]            # pan, in source pixels
+        self._drag = None
+        self._shown = None                   # (array, step, x0, y0) last drawn
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
-        root.geometry("1180x820")
-        root.minsize(940, 640)
+        root.geometry("1280x860")
+        root.minsize(900, 600)
         self._build()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.session.start()
@@ -96,39 +107,42 @@ class ScannerGui:
     # -- layout ------------------------------------------------------------
 
     def _build(self) -> None:
-        head = ttk.Frame(self.root, padding=(10, 8))
+        head = ttk.Frame(self.root, padding=(10, 6))
         head.pack(fill="x")
-        self.v_device = tk.StringVar(value="opening the scanner ...")
-        self.v_state = tk.StringVar(value="")
-        ttk.Label(head, textvariable=self.v_device,
-                  font=("TkDefaultFont", 12, "bold")).pack(side="left")
+        ttk.Button(head, text="About the scanner",
+                   command=self.on_about).pack(side="left")
+        self.v_state = tk.StringVar(value="opening ...")
         ttk.Label(head, textvariable=self.v_state).pack(side="right")
+        self.light = tk.Canvas(head, width=14, height=14, highlightthickness=0)
+        self.light.pack(side="right", padx=(0, 8))
+        self._bulb = self.light.create_oval(2, 2, 12, 12, fill=LIGHT["idle"],
+                                            outline="")
         ttk.Separator(self.root).pack(fill="x")
 
-        body = ttk.Frame(self.root)
-        body.pack(fill="both", expand=True)
-        left = self._scrollable(body)
-        right = ttk.Frame(body, padding=(0, 8, 8, 8))
-        right.pack(side="left", fill="both", expand=True)
+        # Every divider is a sash, so the widths and heights are the
+        # operator's to set rather than mine to guess.
+        outer = ttk.PanedWindow(self.root, orient="horizontal")
+        outer.pack(fill="both", expand=True)
+        left = self._scrollable(outer)
+        right = ttk.PanedWindow(outer, orient="vertical")
+        outer.add(right, weight=4)
 
         self._build_scan(left)
         self._build_transport(left)
         self._build_roll(left)
         self._build_film(left)
+        self._build_output(left)
         self._build_preview(right)
 
-    def _scrollable(self, parent: ttk.Frame) -> ttk.Frame:
+    def _scrollable(self, parent: ttk.PanedWindow) -> ttk.Frame:
         """A left column that scrolls, because it is taller than the window.
 
         Tk has no scrollable frame, so it is the usual Canvas with a Frame
-        inside: the canvas scrolls, the frame holds the widgets, and the two are
-        kept in step by their <Configure> events -- the inner frame's tells the
-        canvas how tall the content is, the canvas's tells the frame how wide to
-        be so nothing is cut off horizontally.
+        inside, kept in step by their <Configure> events.
         """
         host = ttk.Frame(parent)
-        host.pack(side="left", fill="y")
-        canvas = tk.Canvas(host, width=248, highlightthickness=0, borderwidth=0)
+        parent.add(host, weight=1)
+        canvas = tk.Canvas(host, width=262, highlightthickness=0, borderwidth=0)
         bar = ttk.Scrollbar(host, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
@@ -136,25 +150,11 @@ class ScannerGui:
 
         inner = ttk.Frame(canvas, padding=8)
         window = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind(
-            "<Configure>",
-            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
-        )
-        canvas.bind(
-            "<Configure>",
-            lambda e: canvas.itemconfigure(window, width=e.width),
-        )
-
-        def wheel(event: tk.Event) -> None:
-            # macOS reports small deltas, X11 and Windows large ones; the sign
-            # is the only part that means the same thing everywhere.
-            step = -1 if event.delta > 0 else 1
-            canvas.yview_scroll(step, "units")
-
-        # Bound while the pointer is over the column, so the wheel still works
-        # over the preview and the log.
-        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", wheel))
-        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(window, width=e.width))
+        _wheel(canvas, lambda dx, dy: canvas.yview_scroll(dy, "units"))
         return inner
 
     def _build_scan(self, parent: ttk.Frame) -> None:
@@ -163,10 +163,20 @@ class ScannerGui:
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
-        ttk.Label(row, text="dpi", width=9).pack(side="left")
+        ttk.Label(row, text="scan dpi", width=10).pack(side="left")
         self.v_dpi = tk.StringVar(value="1800")
-        ttk.Combobox(row, textvariable=self.v_dpi, width=8,
-                     values=[str(d) for d in DPI_LADDER]).pack(side="left")
+        box_dpi = ttk.Combobox(row, textvariable=self.v_dpi, width=8,
+                               values=[str(d) for d in DPI_LADDER])
+        box_dpi.pack(side="left")
+        box_dpi.bind("<<ComboboxSelected>>", lambda _e: self._show_estimate())
+        box_dpi.bind("<KeyRelease>", lambda _e: self._show_estimate())
+
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text="prescan dpi", width=10).pack(side="left")
+        self.v_predpi = tk.StringVar(value="300")
+        ttk.Combobox(row, textvariable=self.v_predpi, width=8,
+                     values=[str(d) for d in PRESCAN_LADDER]).pack(side="left")
 
         self.v_ir = tk.BooleanVar(value=True)
         ttk.Checkbutton(box, text="infrared (RGBI)", variable=self.v_ir,
@@ -174,7 +184,7 @@ class ScannerGui:
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
-        ttk.Label(row, text="film", width=9).pack(side="left")
+        ttk.Label(row, text="film", width=10).pack(side="left")
         self.v_film = tk.StringVar(value="negative")
         ttk.Combobox(row, textvariable=self.v_film, width=12, state="readonly",
                      values=list(FILM_TYPES)).pack(side="left")
@@ -184,16 +194,22 @@ class ScannerGui:
         ttk.Radiobutton(box, text="meter automatically", value="auto",
                         variable=self.v_expmode,
                         command=self._sync_exposure).pack(anchor="w")
-        row = ttk.Frame(box)
-        row.pack(fill="x")
-        ttk.Radiobutton(row, text="scale", value="manual",
+        ttk.Radiobutton(box, text="set by hand", value="manual",
                         variable=self.v_expmode,
-                        command=self._sync_exposure).pack(side="left")
+                        command=self._sync_exposure).pack(anchor="w")
+        row = ttk.Frame(box)
+        row.pack(fill="x", padx=(18, 0))
         self.v_exposure = tk.StringVar(value="1.0")
-        self.e_exposure = ttk.Entry(row, textvariable=self.v_exposure, width=12)
-        self.e_exposure.pack(side="left", padx=4)
-        ttk.Label(box, text="one value, or R,G,B,I",
-                  foreground="#777").pack(anchor="w")
+        self.e_exposure = ttk.Entry(row, textvariable=self.v_exposure, width=16)
+        self.e_exposure.pack(side="left")
+        # Typing in the box means you want it, so it selects itself rather than
+        # swallowing what you typed while disabled.
+        self.e_exposure.bind("<FocusIn>", self._claim_exposure)
+        self.e_exposure.bind("<Button-1>", self._claim_exposure)
+        self.v_exposure.trace_add("write", lambda *_a: self._show_exposure())
+        self.v_expected = tk.StringVar()
+        ttk.Label(box, textvariable=self.v_expected, foreground="#777",
+                  wraplength=210, justify="left").pack(anchor="w", padx=(18, 0))
 
         ttk.Label(box, text="shading").pack(anchor="w", pady=(6, 0))
         self.v_shading = tk.StringVar(value="measure")
@@ -205,12 +221,11 @@ class ScannerGui:
         self.b_calibrate = ttk.Button(box, text="Calibrate",
                                       command=self.on_calibrate)
         self.b_calibrate.pack(fill="x", pady=(6, 2))
-
         self.b_prescan = ttk.Button(box, text="Prescan", command=self.on_prescan)
         self.b_prescan.pack(fill="x", pady=2)
         self.b_scan = ttk.Button(box, text="Scan", command=self.on_scan)
         self.b_scan.pack(fill="x", pady=2)
-        self.v_estimate = tk.StringVar(value="")
+        self.v_estimate = tk.StringVar()
         ttk.Label(box, textvariable=self.v_estimate,
                   foreground="#777").pack(anchor="w")
 
@@ -218,26 +233,28 @@ class ScannerGui:
         box = ttk.LabelFrame(parent, text="Transport", padding=8)
         box.pack(fill="x", pady=(8, 0))
 
-        self.v_position = tk.StringVar(value="frame position: ?")
-        ttk.Label(box, textvariable=self.v_position).pack(anchor="w")
-
-        ttk.Label(box, text="whole frames").pack(anchor="w", pady=(6, 0))
         row = ttk.Frame(box)
-        row.pack(fill="x", pady=2)
-        self.b_prev = ttk.Button(row, text="\u25c0 prev slide",
+        row.pack(fill="x")
+        self.v_position = tk.StringVar(value="frame position: ?")
+        ttk.Label(row, textvariable=self.v_position).pack(side="left")
+        ttk.Button(row, text="ⓘ", width=3,
+                   command=self.on_transport_help).pack(side="right")
+
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(6, 2))
+        self.b_prev = ttk.Button(row, text="◀ prev slide",
                                  command=lambda: self.on_move_frames(-1))
         self.b_prev.pack(side="left", expand=True, fill="x")
-        self.b_next = ttk.Button(row, text="next slide \u25b6",
+        self.b_next = ttk.Button(row, text="next slide ▶",
                                  command=lambda: self.on_move_frames(1))
         self.b_next.pack(side="left", expand=True, fill="x", padx=(4, 0))
 
-        ttk.Label(box, text="fine adjustment").pack(anchor="w", pady=(8, 0))
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
-        self.b_fine_back = ttk.Button(row, text="\u25c0 back",
+        self.b_fine_back = ttk.Button(row, text="◀ back",
                                       command=lambda: self.on_nudge(-1))
         self.b_fine_back.pack(side="left", expand=True, fill="x")
-        self.b_fine_fwd = ttk.Button(row, text="forward \u25b6",
+        self.b_fine_fwd = ttk.Button(row, text="forward ▶",
                                      command=lambda: self.on_nudge(1))
         self.b_fine_fwd.pack(side="left", expand=True, fill="x", padx=(4, 0))
 
@@ -249,30 +266,24 @@ class ScannerGui:
         ttk.Label(row, text=f"{FINE_STEP_MM:.2f}-{MAX_FINE_MM:.2f}",
                   foreground="#777").pack(side="left", padx=4)
 
-        ttk.Label(
-            box, foreground="#777", wraplength=210, justify="left",
-            text=("Back and forward follow the film, which may not be left "
-                  "and right as you see it -- try one and see.\n\n"
-                  "The frame counter does not see a fine move, so only a "
-                  "prescan shows it landed. Changing direction swallows two "
-                  "or three steps to backlash."),
-        ).pack(anchor="w", pady=(4, 0))
+        self.v_aim = tk.BooleanVar(value=False)
+        ttk.Checkbutton(box, variable=self.v_aim, command=self._schedule_redraw,
+                        text="click the prescan to aim").pack(anchor="w",
+                                                              pady=(4, 0))
+        self.v_reverse = tk.BooleanVar(value=False)
+        ttk.Checkbutton(box, variable=self.v_reverse,
+                        text="reverse the direction").pack(anchor="w")
 
     def _build_roll(self, parent: ttk.Frame) -> None:
         box = ttk.LabelFrame(parent, text="Roll", padding=8)
         box.pack(fill="x", pady=(8, 0))
-
-        row = ttk.Frame(box)
-        row.pack(fill="x", pady=2)
-        ttk.Label(row, text="frames", width=9).pack(side="left")
-        self.v_frames = tk.StringVar(value="6")
-        ttk.Entry(row, textvariable=self.v_frames, width=6).pack(side="left")
-
-        row = ttk.Frame(box)
-        row.pack(fill="x", pady=2)
-        ttk.Label(row, text="start at", width=9).pack(side="left")
-        self.v_startat = tk.StringVar(value="1")
-        ttk.Entry(row, textvariable=self.v_startat, width=6).pack(side="left")
+        for label, var, default in (("frames", "v_frames", "6"),
+                                    ("start at", "v_startat", "1")):
+            row = ttk.Frame(box)
+            row.pack(fill="x", pady=2)
+            ttk.Label(row, text=label, width=9).pack(side="left")
+            setattr(self, var, tk.StringVar(value=default))
+            ttk.Entry(row, textvariable=getattr(self, var), width=6).pack(side="left")
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
@@ -287,7 +298,6 @@ class ScannerGui:
         self.v_correct = tk.BooleanVar(value=False)
         ttk.Checkbutton(box, text="nudge registration between frames",
                         variable=self.v_correct).pack(anchor="w")
-
         self.b_roll = ttk.Button(box, text="Scan roll", command=self.on_roll)
         self.b_roll.pack(fill="x", pady=(6, 0))
 
@@ -295,25 +305,48 @@ class ScannerGui:
         box = ttk.LabelFrame(parent, text="Film", padding=8)
         box.pack(fill="x", pady=(8, 0))
         self.fields = {}
-        for key, label in (("stock", "stock"), ("roll", "roll"),
-                           ("frame", "frame"), ("process", "process"),
-                           ("subject", "subject"), ("notes", "notes"),
-                           ("tags", "tags")):
+        for key in ("stock", "roll", "frame", "process", "subject", "notes",
+                    "tags"):
             row = ttk.Frame(box)
             row.pack(fill="x", pady=1)
-            ttk.Label(row, text=label, width=9).pack(side="left")
+            ttk.Label(row, text=key, width=9).pack(side="left")
             var = tk.StringVar()
-            ttk.Entry(row, textvariable=var, width=16).pack(
+            ttk.Entry(row, textvariable=var, width=14).pack(
                 side="left", fill="x", expand=True)
             self.fields[key] = var
 
-    def _build_preview(self, parent: ttk.Frame) -> None:
-        self.canvas = tk.Canvas(parent, background="#1b1b1b", highlightthickness=0)
+    def _build_output(self, parent: ttk.Frame) -> None:
+        box = ttk.LabelFrame(parent, text="Save scans to", padding=8)
+        box.pack(fill="x", pady=(8, 0))
+        self.v_outdir = tk.StringVar(
+            value=str(self.session.out_dir) if self.session.out_dir else "")
+        ttk.Entry(box, textvariable=self.v_outdir).pack(fill="x")
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(4, 0))
+        ttk.Button(row, text="Choose ...",
+                   command=self.on_choose_out).pack(side="left")
+        ttk.Button(row, text="Clear",
+                   command=lambda: self._set_outdir("")).pack(side="left", padx=4)
+        ttk.Label(box, foreground="#777", wraplength=210, justify="left",
+                  text=("A TIFF of every scan is written here as it lands, "
+                        "on top of the library entry. Leave empty for the "
+                        "library only.")).pack(anchor="w", pady=(4, 0))
+
+    def _build_preview(self, parent: ttk.PanedWindow) -> None:
+        top = ttk.Frame(parent)
+        parent.add(top, weight=5)
+        self.canvas = tk.Canvas(top, background="#1b1b1b", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _e: self._schedule_redraw())
-        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<Button-1>", self.on_press)
+        self.canvas.bind("<B1-Motion>", self.on_drag)
+        self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
+        # Two fingers pan, pinch or modifier-scroll zooms.
+        _wheel(self.canvas, self._on_wheel_pan)
+        for seq in ("<Command-MouseWheel>", "<Control-MouseWheel>"):
+            self.canvas.bind(seq, self._on_wheel_zoom)
 
-        bar = ttk.Frame(parent, padding=(0, 6))
+        bar = ttk.Frame(top, padding=(6, 4))
         bar.pack(fill="x")
         ttk.Label(bar, text="view").pack(side="left")
         self.v_channel = tk.StringVar(value="RGB")
@@ -326,24 +359,34 @@ class ScannerGui:
             self.channel_buttons[name] = b
         self.v_invert = tk.BooleanVar(value=True)
         ttk.Checkbutton(bar, text="invert", variable=self.v_invert,
-                        command=self._schedule_redraw).pack(side="left", padx=(12, 0))
-        self.v_zoom = tk.StringVar(value="fit")
-        ttk.Radiobutton(bar, text="fit", value="fit", variable=self.v_zoom,
-                        command=self._schedule_redraw).pack(side="right")
-        ttk.Radiobutton(bar, text="1:1", value="one", variable=self.v_zoom,
-                        command=self._schedule_redraw).pack(side="right")
-        ttk.Label(bar, text="zoom").pack(side="right", padx=(0, 6))
+                        command=self._redraw_all).pack(side="left", padx=(12, 0))
+        ttk.Button(bar, text="+", width=3,
+                   command=lambda: self._zoom_by(2.0)).pack(side="right")
+        ttk.Button(bar, text="−", width=3,
+                   command=lambda: self._zoom_by(0.5)).pack(side="right")
+        ttk.Button(bar, text="1:1", width=4,
+                   command=lambda: self._set_zoom(1.0)).pack(side="right")
+        ttk.Button(bar, text="Fit", width=4,
+                   command=lambda: self._set_zoom(0.0)).pack(side="right")
         self.v_caption = tk.StringVar(value="nothing scanned yet")
-        ttk.Label(parent, textvariable=self.v_caption,
-                  foreground="#777").pack(anchor="w")
+        ttk.Label(top, textvariable=self.v_caption,
+                  foreground="#777").pack(anchor="w", padx=6)
 
-        self.strip = tk.Canvas(parent, height=THUMB_H + 10, background="#111",
+        middle = ttk.Frame(parent)
+        parent.add(middle, weight=1)
+        self.strip = tk.Canvas(middle, height=THUMB_H + 12, background="#111",
                                highlightthickness=0)
-        self.strip.pack(fill="x", pady=(6, 0))
+        self.strip.pack(fill="both", expand=True)
+        _wheel(self.strip, lambda dx, dy: self.strip.xview_scroll(dy or dx, "units"))
+        for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            self.strip.bind(seq, self.on_strip_menu)
+        self.menu = tk.Menu(self.root, tearoff=0)
 
-        prog = ttk.Frame(parent, padding=(0, 6))
+        bottom = ttk.Frame(parent)
+        parent.add(bottom, weight=2)
+        prog = ttk.Frame(bottom, padding=(6, 4))
         prog.pack(fill="x")
-        self.v_progress = tk.StringVar(value="")
+        self.v_progress = tk.StringVar()
         ttk.Label(prog, textvariable=self.v_progress).pack(anchor="w")
         self.progress = ttk.Progressbar(prog, mode="determinate", maximum=1000)
         self.progress.pack(fill="x", pady=2)
@@ -356,15 +399,16 @@ class ScannerGui:
                                   command=self.on_abort, state="disabled")
         self.b_abort.pack(side="right")
 
-        logbox = ttk.Frame(parent)
-        logbox.pack(fill="x")
-        self.log = tk.Text(logbox, height=7, wrap="none", background="#111",
+        logbox = ttk.Frame(bottom)
+        logbox.pack(fill="both", expand=True)
+        self.log = tk.Text(logbox, height=6, wrap="none", background="#111",
                            foreground="#bbb", insertbackground="#bbb",
                            highlightthickness=0, borderwidth=0)
         self.log.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(logbox, command=self.log.yview)
         scroll.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=scroll.set, state="disabled")
+        _wheel(self.log, lambda dx, dy: self.log.yview_scroll(dy, "units"))
 
         self._sync_exposure()
         self._show_estimate()
@@ -384,36 +428,66 @@ class ScannerGui:
         raw = self.fields["tags"].get()
         return tuple(t.strip() for t in raw.replace(",", " ").split() if t.strip())
 
-    def _dpi(self) -> int | None:
+    def _int(self, var: tk.StringVar, what: str, low: int, high: int) -> int | None:
         try:
-            dpi = int(self.v_dpi.get().strip())
+            value = int(var.get().strip())
         except ValueError:
-            messagebox.showerror("Resolution", "dpi has to be a whole number.")
+            messagebox.showerror(what, f"{what} has to be a whole number.")
             return None
-        if not 25 <= dpi <= 7200:
-            messagebox.showerror(
-                "Resolution",
-                f"{dpi} dpi is outside 25-7200. The scanner's optical "
-                "resolution is 7200 dpi.")
+        if not low <= value <= high:
+            messagebox.showerror(what, f"{value} is outside {low}-{high}.")
             return None
-        return dpi
+        return value
+
+    def _dpi(self) -> int | None:
+        return self._int(self.v_dpi, "Scan dpi", 25, 7200)
+
+    def _prescan_dpi(self) -> int | None:
+        return self._int(self.v_predpi, "Prescan dpi", 25, 7200)
 
     def _exposure(self):
         if self.v_expmode.get() == "auto":
             return 1.0
-        text = self.v_exposure.get().replace(",", " ").split()
-        try:
-            values = [float(v) for v in text]
-        except ValueError:
+        values = _numbers(self.v_exposure.get())
+        if values is None:
             messagebox.showerror("Exposure", "Exposure must be numbers.")
             return None
         if not values:
             return 1.0
         return values[0] if len(values) == 1 else values
 
+    def _claim_exposure(self, _event=None) -> None:
+        """Typing in the box means you meant to use it."""
+        if self.v_expmode.get() != "manual":
+            self.v_expmode.set("manual")
+            self._sync_exposure()
+            self.e_exposure.focus_set()
+
     def _sync_exposure(self) -> None:
         manual = self.v_expmode.get() == "manual"
         self.e_exposure.configure(state="normal" if manual else "disabled")
+        self._show_exposure()
+
+    def _show_exposure(self) -> None:
+        """Say what will actually be sent, so the box cannot lie quietly."""
+        if self.v_expmode.get() != "manual":
+            self.v_expected.set("the scanner meters it, two RGB rounds, ~48 s")
+            return
+        values = _numbers(self.v_exposure.get())
+        if values is None:
+            self.v_expected.set("not numbers")
+            return
+        if not values:
+            self.v_expected.set("empty -- the device's own exposure")
+            return
+        if len(values) == 1:
+            self.v_expected.set(f"x{values[0]:g} on R, G, B and IR")
+            return
+        names = ["R", "G", "B", "IR"]
+        shown = ", ".join(f"{n} x{v:g}" for n, v in zip(names, values))
+        if len(values) < 4:
+            shown += f", {' and '.join(names[len(values):])} unchanged"
+        self.v_expected.set(shown)
 
     def _show_estimate(self) -> None:
         try:
@@ -421,16 +495,45 @@ class ScannerGui:
         except ValueError:
             self.v_estimate.set("")
             return
-        seconds = estimate_seconds(dpi, self.v_ir.get())
-        self.v_estimate.set(f"about {_duration(seconds)} a pass")
+        self.v_estimate.set(
+            f"about {_duration(estimate_seconds(dpi, self.v_ir.get()))} a pass")
+
+    def _set_outdir(self, path: str) -> None:
+        self.v_outdir.set(path)
+        self.session.out_dir = Path(path) if path else None
 
     # -- actions -----------------------------------------------------------
+
+    def on_about(self) -> None:
+        messagebox.showinfo(
+            "About the scanner",
+            self.session.inquiry_text or "The scanner has not answered yet.")
+
+    def on_transport_help(self) -> None:
+        messagebox.showinfo(
+            "Moving the film",
+            "Prev / next slide step whole pictures. The transport counts them "
+            "and READ_STATE confirms the move, so these are the reliable ones.\n\n"
+            "Back / forward move a fraction of a frame. The frame counter does "
+            "not see these at all, so only a prescan shows whether one landed. "
+            f"The smallest step the hardware can make is {FINE_STEP_MM:.2f} mm "
+            f"and the driver refuses more than {MAX_FINE_MM:.2f} mm at once.\n\n"
+            "Changing direction swallows two or three steps to backlash, so a "
+            "small move that reverses may not move the film at all.\n\n"
+            "Back and forward follow the film, which may not be left and right "
+            "as you see it. If it goes the wrong way, tick 'reverse the "
+            "direction'.")
+
+    def on_choose_out(self) -> None:
+        path = filedialog.askdirectory(title="Save scans to", parent=self.root)
+        if path:
+            self._set_outdir(path)
 
     def on_calibrate(self) -> None:
         mode = self.v_shading.get()
         if mode == "measure" and not messagebox.askokcancel(
             "Calibrate",
-            "This runs the scanner's calibration pass, about 3-4 minutes.\n\n"
+            "This runs the scanner's calibration pass.\n\n"
             "The film should be loaded: the calibration frame is the lower part "
             "of the transport, which the film does not cover, so the sensor is "
             "measured either way -- and an empty transport is a state the "
@@ -440,85 +543,77 @@ class ScannerGui:
         self.session.submit(Calibrate(mode=mode, reference=self.session.reference))
 
     def on_prescan(self) -> None:
-        self.session.submit(Prescan(notes=self._notes(), tags=self._tags()))
+        dpi = self._prescan_dpi()
+        if dpi is None:
+            return
+        self.session.submit(Prescan(resolution=dpi, notes=self._notes(),
+                                    tags=self._tags()))
 
     def on_scan(self) -> None:
-        dpi = self._dpi()
-        exposure = self._exposure()
+        dpi, exposure = self._dpi(), self._exposure()
         if dpi is None or exposure is None:
             return
         self.session.submit(Scan(
-            resolution=dpi,
-            infrared=self.v_ir.get(),
-            film=self.v_film.get(),
+            resolution=dpi, infrared=self.v_ir.get(), film=self.v_film.get(),
             auto_exposure=self.v_expmode.get() == "auto",
             exposure_scale=exposure,
             shading=self.v_shading.get() != "off",
-            notes=self._notes(),
-            tags=self._tags(),
+            notes=self._notes(), tags=self._tags(),
         ))
 
     def on_roll(self) -> None:
-        dpi = self._dpi()
-        if dpi is None:
+        dpi, predpi = self._dpi(), self._prescan_dpi()
+        if dpi is None or predpi is None:
             return
-        try:
-            frames = int(self.v_frames.get().strip() or 0) or None
-            start_at = max(1, int(self.v_startat.get().strip() or 1))
-        except ValueError:
-            messagebox.showerror("Roll", "Frames and start-at must be whole numbers.")
+        frames = self._int(self.v_frames, "Frames", 0, 100)
+        start_at = self._int(self.v_startat, "Start at", 1, 100)
+        if frames is None or start_at is None:
             return
         dry = self.v_dryrun.get()
         per = 23.0 if dry else estimate_seconds(dpi, self.v_ir.get()) + 70
-        total = per * (frames or 6)
         if not messagebox.askokcancel(
             "Scan roll",
             f"{'Walk' if dry else 'Scan'} {frames or 'as many frames as there are'} "
             f"frames at {dpi} dpi"
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
-            f"Roughly {_duration(total)}. The film should already be at the "
-            f"first picture -- it is scanned before anything moves.\n\n"
+            f"Roughly {_duration(per * (frames or 6))}. The film should already "
+            "be at the first picture -- it is scanned before anything moves.\n\n"
             "Start?",
         ):
             return
         self.session.submit(Roll(
-            frames=frames,
-            start_at=start_at,
-            resolution=dpi,
-            infrared=self.v_ir.get(),
-            film=self.v_film.get(),
-            meter=self.v_meter.get(),
-            dry_run=dry,
+            frames=frames or None, start_at=start_at, resolution=dpi,
+            prescan_resolution=predpi, infrared=self.v_ir.get(),
+            film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
             correct=self.v_correct.get(),
             name=self.fields["roll"].get().strip(),
-            notes=self._notes(),
-            tags=self._tags(),
+            notes=self._notes(), tags=self._tags(),
         ))
 
     def on_move_frames(self, frames: int) -> None:
         self.session.submit(Move(frames=frames))
 
-    def on_nudge(self, direction: int) -> None:
-        try:
-            mm = abs(float(self.v_fine.get().strip().replace(",", ".")))
-        except ValueError:
-            messagebox.showerror("Fine adjustment", "That has to be a number.")
-            return
-        if mm < FINE_STEP_MM or mm > MAX_FINE_MM:
-            # Said rather than silently clamped: asking for 0.05 mm and getting
-            # 0.27 mm is exactly the surprise that makes a nudge untrustworthy.
+    def on_nudge(self, direction: int, millimetres: float | None = None) -> None:
+        if millimetres is None:
+            values = _numbers(self.v_fine.get())
+            if not values:
+                messagebox.showerror("Fine adjustment", "That has to be a number.")
+                return
+            millimetres = abs(values[0])
+        if millimetres < FINE_STEP_MM or millimetres > MAX_FINE_MM:
             messagebox.showerror(
                 "Fine adjustment",
-                f"The transport moves in steps of {FINE_STEP_MM:.2f} mm and "
-                f"the driver will not attempt more than {MAX_FINE_MM:.2f} mm "
-                f"at once.\n\n{mm:.2f} mm is outside that.")
+                f"The transport moves in steps of {FINE_STEP_MM:.2f} mm and the "
+                f"driver will not attempt more than {MAX_FINE_MM:.2f} mm at "
+                f"once.\n\n{millimetres:.2f} mm is outside that.")
             return
-        if direction < 0 and self._last_nudge > 0 or \
-                direction > 0 and self._last_nudge < 0:
-            self._say("changing direction: expect the first two or three "
-                      "steps to go into backlash")
+        if self.v_reverse.get():
+            direction = -direction
+        if self._last_nudge and direction != self._last_nudge:
+            self._say("changing direction: expect the first two or three steps "
+                      "to go into backlash")
         self._last_nudge = direction
-        self.session.submit(Move(millimetres=mm * direction))
+        self.session.submit(Move(millimetres=millimetres * direction))
 
     def on_stop(self) -> None:
         self.session.request_stop()
@@ -532,9 +627,7 @@ class ScannerGui:
             "The frame is lost, and the scanner will almost certainly need a "
             "power cycle at its own switch before it will talk again. It can "
             "also take this window down with it.\n\n"
-            "Type ABORT to do it anyway:",
-            parent=self.root,
-        )
+            "Type ABORT to do it anyway:", parent=self.root)
         if (answer or "").strip().upper() != "ABORT":
             self._say("force abort cancelled")
             return
@@ -567,12 +660,8 @@ class ScannerGui:
         if event.kind == "log":
             self._say(event.text)
         elif event.kind == "state":
-            self.v_state.set(event.text)
-            if self.session.inquiry_text:
-                self.v_device.set(self.session.inquiry_text)
+            self.v_state.set(event.text.splitlines()[0])
             if event.busy:
-                # Kept apart from v_progress, which the line counter overwrites
-                # a second into the pass.
                 self._job = event.text
                 self.v_progress.set(event.text)
                 self.progress.configure(value=0)
@@ -582,9 +671,8 @@ class ScannerGui:
         elif event.kind == "result":
             self._add_result(event.result)
         elif event.kind == "transport":
-            self.v_position.set(
-                "frame position: ?" if event.done < 0
-                else f"frame position: {event.done}")
+            self.v_position.set("frame position: ?" if event.done < 0
+                                else f"frame position: {event.done}")
         elif event.kind == "filed":
             for r in self.results:
                 if r.seq == event.done:
@@ -593,18 +681,16 @@ class ScannerGui:
             self.v_progress.set(f"{event.text} -- done")
             self.progress.configure(value=1000)
         elif event.kind == "failed":
-            # Reported in place, not in a modal. A modal here sits inside the
-            # event pump and stops it: during a roll, one failed frame would
-            # freeze the window on that dialog and the thirty frames after it
-            # would arrive unseen. A roll is meant to survive a bad frame.
+            # Reported in place, not in a modal: a modal sits inside this pump
+            # and stops it, so one failed frame would freeze the window and the
+            # rest of a roll would arrive unseen.
             self._say(event.text)
             self.v_progress.set(event.text)
             self.v_caption.set(event.text)
             self.progress.configure(value=0)
             self._set_busy(False)
+            self._light("broken")
             if not self.session.inquiry_text:
-                # Except at startup: if the scanner never opened there is
-                # nothing else the window can do, and saying so once is right.
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
             self._set_busy(False)
@@ -613,35 +699,34 @@ class ScannerGui:
                 self._alive = False
                 self.root.destroy()
 
+    def _light(self, state: str) -> None:
+        self.light.itemconfigure(self._bulb, fill=LIGHT[state])
+
+    def _run_buttons(self) -> tuple:
+        return (self.b_scan, self.b_prescan, self.b_roll, self.b_calibrate,
+                self.b_prev, self.b_next, self.b_fine_back, self.b_fine_fwd)
+
     def _set_busy(self, busy: bool) -> None:
         self.busy = busy
         if self.session.dead:
-            # Nothing may be started on a device whose read was abandoned; it
-            # needs a power cycle at its own switch before it will talk again.
             for b in (*self._run_buttons(), self.b_stop, self.b_abort):
                 b.configure(state="disabled")
-            self.v_caption.set(
-                "aborted -- power-cycle the scanner at its own switch, "
-                "then start this window again")
+            self._light("broken")
+            self.v_caption.set("aborted -- power-cycle the scanner at its own "
+                               "switch, then start this window again")
             return
         run = "disabled" if busy else "normal"
         for b in self._run_buttons():
             b.configure(state=run)
-        self.b_stop.configure(state="normal" if busy else "disabled")
+        self.b_stop.configure(state="normal" if busy else "disabled",
+                              text=stop_label(self._job))
         self.b_abort.configure(state="normal" if busy else "disabled")
-        # Say what stopping will actually do, since it cannot mean "now".
-        self.b_stop.configure(text=stop_label(self._job))
-
-    def _run_buttons(self) -> tuple:
-        """Everything that drives the scanner, and so cannot overlap."""
-        return (self.b_scan, self.b_prescan, self.b_roll, self.b_calibrate,
-                self.b_prev, self.b_next, self.b_fine_back, self.b_fine_fwd)
+        self._light("busy" if busy else "idle")
 
     def _progress(self, done: int, total: int) -> None:
-        if total <= 0:
-            return
-        self.progress.configure(value=int(1000 * done / total))
-        self.v_progress.set(f"{done}/{total} lines")
+        if total > 0:
+            self.progress.configure(value=int(1000 * done / total))
+            self.v_progress.set(f"{done}/{total} lines")
 
     def _say(self, message: str) -> None:
         self.log.configure(state="normal")
@@ -652,20 +737,34 @@ class ScannerGui:
     # -- results and the filmstrip ----------------------------------------
 
     def _add_result(self, result) -> None:
+        result.hidden = False
+        result.supersedes = None
+        # A real scan stands in for the prescan of the same picture, but only
+        # when the film has not moved since -- a prescan of a different frame is
+        # a different photograph, and hiding it would lose it.
+        if result.kind in ("scan", "frame") and result.position is not None:
+            for earlier in reversed(self.results):
+                if earlier.kind != "prescan":
+                    break
+                if earlier.position == result.position and not earlier.hidden:
+                    earlier.hidden = True
+                    result.supersedes = earlier.seq
+                    break
         self.results.append(result)
-        # Older working copies shrink rather than vanish, so every channel and
-        # the invert toggle keep working on them; they just get soft.
         for old in self.results[:-WORKING_COPIES]:
             if old.image is not None and max(old.image.shape[:2]) > ARCHIVE_MAX_SIDE:
                 old.image = preview.downscale(old.image, ARCHIVE_MAX_SIDE)
         self._show(result)
         self._redraw_strip()
 
+    def _visible(self) -> list:
+        return [r for r in self.results if not r.hidden]
+
     def _show(self, result) -> None:
         self.current = result
         self._full = None
         self._full_seq = None
-        self._centre = None
+        self._offset = [0.0, 0.0]
         available = (preview.channels_available(result.image)
                      if result.image is not None else ("RGB",))
         for name, button in self.channel_buttons.items():
@@ -679,7 +778,9 @@ class ScannerGui:
                      f"short by {marks.get('shortfall_mm', 0):.2f} mm")
         shading = (result.meta or {}).get("shading")
         if shading and shading.get("clipped"):
-            extra += f"   ·   {shading['clipped']} clipped columns -- lower the exposure"
+            extra += f"   ·   {shading['clipped']} clipped -- lower the exposure"
+        if result.supersedes:
+            extra += "   ·   replaced its prescan"
         self.v_caption.set(result.label + extra)
         self._schedule_redraw()
 
@@ -687,77 +788,147 @@ class ScannerGui:
         self.strip.delete("all")
         self._thumbs = []
         x = 6
-        for i, r in enumerate(self.results):
+        for r in self._visible():
             if r.image is None:
                 continue
-            arr = preview.render(
-                preview.fit(r.image, THUMB_H * 2, THUMB_H),
-                "RGB", self.v_invert.get(),
-            )
+            arr = preview.render(preview.fit(r.image, THUMB_H * 2, THUMB_H),
+                                 "RGB", self.v_invert.get())
             photo = tk.PhotoImage(data=preview.to_ppm(arr))
             self._thumbs.append(photo)
-            tag = f"r{i}"
-            self.strip.create_image(x, 5, image=photo, anchor="nw", tags=tag)
+            tag = f"r{r.seq}"
+            self.strip.create_image(x, 6, image=photo, anchor="nw", tags=tag)
             if r is self.current:
                 self.strip.create_rectangle(
-                    x - 2, 3, x + photo.width() + 1, 7 + photo.height(),
+                    x - 2, 4, x + photo.width() + 1, 8 + photo.height(),
                     outline="#e8b64c", width=2)
             self.strip.tag_bind(tag, "<Button-1>",
-                                lambda _e, k=i: self._show(self.results[k]))
+                                lambda _e, s=r.seq: self._show_seq(s))
             x += photo.width() + 8
-        self.strip.configure(scrollregion=(0, 0, x, THUMB_H + 10))
+        self.strip.configure(scrollregion=(0, 0, x, THUMB_H + 12))
         self.strip.xview_moveto(1.0)
 
-    # -- drawing -----------------------------------------------------------
-
-    def _schedule_redraw(self) -> None:
-        # Coalesced: a window drag fires <Configure> dozens of times, and each
-        # redraw is a percentile over the whole working copy.
-        if self._redraw_job is not None:
-            self.root.after_cancel(self._redraw_job)
-        self._redraw_job = self.root.after(60, self._redraw)
-
-    def _redraw(self) -> None:
-        self._redraw_job = None
-        self.canvas.delete("all")
-        r = self.current
-        if r is None or r.image is None:
-            return
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
-        if self.v_zoom.get() == "one":
-            source = self._one_to_one_source(r)
-            if source is None:
-                self.canvas.create_text(
-                    w // 2, h // 2, fill="#888",
-                    text="reading full-resolution pixels ...")
+    def _show_seq(self, seq: int) -> None:
+        for r in self.results:
+            if r.seq == seq:
+                self._show(r)
+                self._redraw_strip()
                 return
-            cx, cy = self._centre or (source.shape[1] / 2, source.shape[0] / 2)
-            arr = preview.crop(source, cx, cy, w, h)
-        else:
-            arr = preview.fit(r.image, w, h)
-        try:
-            rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get())
-        except ValueError as exc:
-            self.canvas.create_text(w // 2, h // 2, fill="#888", text=str(exc))
+
+    def _at(self, event: tk.Event):
+        """The result under a click on the filmstrip, or None."""
+        for item in self.strip.find_overlapping(
+                self.strip.canvasx(event.x) - 1, event.y - 1,
+                self.strip.canvasx(event.x) + 1, event.y + 1):
+            for tag in self.strip.gettags(item):
+                if tag.startswith("r"):
+                    try:
+                        seq = int(tag[1:])
+                    except ValueError:
+                        continue
+                    for r in self.results:
+                        if r.seq == seq:
+                            return r
+        return None
+
+    def on_strip_menu(self, event: tk.Event) -> None:
+        target = self._at(event)
+        if target is None:
             return
-        self._photo = tk.PhotoImage(data=preview.to_ppm(rgb))
-        self.canvas.create_image(w // 2, h // 2, image=self._photo)
+        self._show_seq(target.seq)
+        self.menu.delete(0, "end")
+        self.menu.add_command(label="Save as ...",
+                              command=lambda r=target: self.on_save_as(r))
+        if target.supersedes:
+            self.menu.add_command(label="Show prescan",
+                                  command=lambda r=target: self.on_show_prescan(r))
+        self.menu.add_separator()
+        self.menu.add_command(label="Delete",
+                              command=lambda r=target: self.on_delete(r))
+        self.menu.tk_popup(event.x_root, event.y_root)
 
-    def _one_to_one_source(self, r):
-        """Full-resolution pixels for the 1:1 view, read from the entry on disk.
+    def on_save_as(self, result) -> None:
+        name = f"{result.label.replace(' ', '_').replace('·', '')}.tif"
+        path = filedialog.asksaveasfilename(
+            parent=self.root, defaultextension=".tif", initialfile=name,
+            filetypes=[("TIFF", "*.tif")])
+        if not path:
+            return
+        if result.entry and (result.entry / "scan.tif").exists():
+            # Copied rather than re-written: the entry holds the full
+            # resolution, and the working copy in memory is decimated.
+            shutil.copy2(result.entry / "scan.tif", path)
+            self._say(f"saved {Path(path).name} at full resolution")
+        elif result.image is not None:
+            tiff.write(path, result.image)
+            self._say(f"saved {Path(path).name} -- reduced preview, the "
+                      "full-resolution file is not filed yet")
 
-        A downscaled preview cannot show grain or shadow noise, so the 1:1 view
-        has to come from the file rather than from the working copy. The read is
-        on its own thread: at 3600 dpi it is 142 MB, and doing it on the UI
-        thread would freeze the window for seconds.
-        """
+    def on_show_prescan(self, result) -> None:
+        for r in self.results:
+            if r.seq == result.supersedes:
+                r.hidden = False
+                result.supersedes = None
+                self._show_seq(r.seq)
+                self._redraw_strip()
+                return
+
+    def on_delete(self, result) -> None:
+        entry = result.entry
+        question = f"Remove {result.label} from this session?"
+        if entry and entry.exists():
+            question += (f"\n\nIts library entry {entry.name} holds the raw "
+                         "bytes, which cannot be recovered without rescanning.")
+            keep = messagebox.askyesnocancel(
+                "Delete", question + "\n\nKeep the library entry?", parent=self.root)
+            if keep is None:
+                return
+            if not keep:
+                try:
+                    shutil.rmtree(entry)
+                    library.reindex(entry.parent)
+                    self._say(f"deleted library entry {entry.name}")
+                except OSError as exc:
+                    self._say(f"could not delete {entry.name}: {exc}")
+        elif not messagebox.askokcancel("Delete", question, parent=self.root):
+            return
+        # Anything it was standing in for comes back rather than vanishing too.
+        if result.supersedes:
+            for r in self.results:
+                if r.seq == result.supersedes:
+                    r.hidden = False
+        self.results = [r for r in self.results if r.seq != result.seq]
+        if self.current is result:
+            visible = self._visible()
+            self.current = visible[-1] if visible else None
+            if self.current:
+                self._show(self.current)
+            else:
+                self.v_caption.set("nothing scanned yet")
+                self._schedule_redraw()
+        self._redraw_strip()
+
+    # -- drawing, zoom and pan --------------------------------------------
+
+    def _source(self):
+        """The pixels to draw: full resolution once read, else the copy."""
+        r = self.current
+        if r is None:
+            return None
         if self._full_seq == r.seq:
             return self._full
-        if r.entry is None:
-            return r.image                   # not filed yet; the copy is all there is
-        if getattr(self, "_loading", None) == r.seq:
-            return None
+        if r.entry is not None and self._zoom >= 1.0:
+            self._load_full(r)
+        return r.image
+
+    def _load_full(self, r) -> None:
+        """Read the entry's own pixels, off the UI thread.
+
+        A downscaled preview cannot show grain or shadow noise, so anything at
+        1:1 or closer has to come from the file. At 3600 dpi that is 142 MB,
+        which would freeze the window for seconds if it were read here.
+        """
+        if self._loading == r.seq:
+            return
         self._loading = r.seq
 
         def work(entry: Path, seq: int) -> None:
@@ -765,47 +936,187 @@ class ScannerGui:
             try:
                 image, _ = library.load(entry)
             except Exception as exc:                     # noqa: BLE001
-                # Bound as a default argument: `exc` is gone by the time the
-                # main loop runs this, and the name would not resolve.
-                self.root.after(
-                    0, lambda name=entry.name, why=str(exc):
-                    self._say(f"could not read {name}: {why}")
-                )
+                self.root.after(0, lambda name=entry.name, why=str(exc):
+                                self._say(f"could not read {name}: {why}"))
             self.root.after(0, lambda got=image: self._loaded(seq, got))
 
         threading.Thread(target=work, args=(r.entry, r.seq), daemon=True).start()
-        return None
 
     def _loaded(self, seq: int, image) -> None:
         self._loading = None
-        if self.current is None or self.current.seq != seq:
+        if self.current is None or self.current.seq != seq or image is None:
             return
-        self._full = image if image is not None else self.current.image
-        self._full_seq = seq
+        # Keep the pan pointing at the same place in the picture.
+        if self.current.image is not None:
+            grow = image.shape[1] / max(1, self.current.image.shape[1])
+            self._offset = [self._offset[0] * grow, self._offset[1] * grow]
+        self._full, self._full_seq = image, seq
         self._redraw()
 
-    def on_canvas_click(self, event: tk.Event) -> None:
-        """Click to recentre the 1:1 view, or to enter it from the fit view."""
-        r = self.current
-        if r is None or r.image is None:
+    def _set_zoom(self, zoom: float) -> None:
+        self._zoom = zoom
+        self._schedule_redraw()
+
+    def _zoom_by(self, factor: float) -> None:
+        src = self._source()
+        if src is None:
             return
+        if self._zoom <= 0:                              # leaving fit
+            shown = self._shown
+            self._zoom = shown[2] if shown else 1.0
+            self._offset = [src.shape[1] / 2, src.shape[0] / 2]
+        self._zoom = max(1 / 16, min(8.0, self._zoom * factor))
+        self._schedule_redraw()
+
+    def _on_wheel_zoom(self, event: tk.Event) -> str:
+        self._zoom_by(1.1 if event.delta > 0 else 1 / 1.1)
+        return "break"
+
+    def _on_wheel_pan(self, dx: int, dy: int) -> None:
+        if self._zoom <= 0:
+            return
+        self._offset[0] += dx * 24 / self._zoom
+        self._offset[1] += dy * 24 / self._zoom
+        self._schedule_redraw()
+
+    def _schedule_redraw(self) -> None:
+        # Coalesced: a sash drag fires <Configure> dozens of times and each
+        # redraw is a percentile over the whole working copy.
+        if self._redraw_job is not None:
+            self.root.after_cancel(self._redraw_job)
+        self._redraw_job = self.root.after(50, self._redraw)
+
+    def _redraw_all(self) -> None:
+        self._redraw()
+        self._redraw_strip()
+
+    def _redraw(self) -> None:
+        self._redraw_job = None
+        self.canvas.delete("all")
+        self._shown = None
+        src = self._source()
         w = max(1, self.canvas.winfo_width())
         h = max(1, self.canvas.winfo_height())
-        if self.v_zoom.get() == "fit":
-            shown = preview.fit(r.image, w, h)
-            sh, sw = shown.shape[:2]
-            fx = (event.x - (w - sw) / 2) / max(1, sw)
-            fy = (event.y - (h - sh) / 2) / max(1, sh)
-            if not (0 <= fx <= 1 and 0 <= fy <= 1):
-                return
-            source = self._full if self._full_seq == r.seq else r.image
-            self._centre = (fx * source.shape[1], fy * source.shape[0])
-            self.v_zoom.set("one")
+        if src is None:
+            self.canvas.create_text(w // 2, h // 2, fill="#666",
+                                    text="nothing scanned yet")
+            return
+
+        if self._zoom <= 0:
+            arr = preview.fit(src, w, h)
+            scale = arr.shape[1] / max(1, src.shape[1])
+            x0 = y0 = 0
         else:
-            source = self._full if self._full_seq == r.seq else r.image
-            cx, cy = self._centre or (source.shape[1] / 2, source.shape[0] / 2)
-            self._centre = (cx + event.x - w / 2, cy + event.y - h / 2)
+            scale = self._zoom
+            sw = max(1, int(w / scale))
+            sh = max(1, int(h / scale))
+            cx, cy = self._offset
+            x0 = int(max(0, min(max(0, src.shape[1] - sw), cx - sw / 2)))
+            y0 = int(max(0, min(max(0, src.shape[0] - sh), cy - sh / 2)))
+            arr = src[y0:y0 + sh, x0:x0 + sw]
+            if scale >= 1:
+                f = max(1, int(round(scale)))
+                arr = np.repeat(np.repeat(arr, f, axis=0), f, axis=1)
+                scale = float(f)
+            else:
+                s = max(1, int(round(1 / scale)))
+                arr = arr[::s, ::s]
+                scale = 1.0 / s
+        try:
+            rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get())
+        except ValueError as exc:
+            self.canvas.create_text(w // 2, h // 2, fill="#888", text=str(exc))
+            return
+        self._photo = tk.PhotoImage(data=preview.to_ppm(rgb))
+        self.canvas.create_image(w // 2, h // 2, image=self._photo)
+        self._shown = (rgb.shape[1], rgb.shape[0], scale, x0, y0)
+        if self.v_aim.get() and self.current.kind == "prescan":
+            self.canvas.create_line(w // 2, 0, w // 2, h, fill="#e8b64c",
+                                    dash=(4, 4))
+            self.canvas.create_text(w // 2 + 6, 12, anchor="w", fill="#e8b64c",
+                                    text="click where the centre should be")
+
+    def _to_source(self, event: tk.Event):
+        """Canvas coordinates to source-image pixels, or None if off-image."""
+        if self._shown is None:
+            return None
+        dw, dh, scale, x0, y0 = self._shown
+        w = max(1, self.canvas.winfo_width())
+        h = max(1, self.canvas.winfo_height())
+        ix = event.x - (w - dw) / 2
+        iy = event.y - (h - dh) / 2
+        if not (0 <= ix < dw and 0 <= iy < dh):
+            return None
+        return x0 + ix / scale, y0 + iy / scale
+
+    def on_press(self, event: tk.Event) -> None:
+        if self.v_aim.get() and self.current is not None \
+                and self.current.kind == "prescan":
+            self._aim(event)
+            return
+        self._drag = (event.x, event.y, list(self._offset))
+
+    def on_drag(self, event: tk.Event) -> None:
+        if self._drag is None or self._zoom <= 0:
+            return
+        sx, sy, start = self._drag
+        self._offset = [start[0] - (event.x - sx) / self._zoom,
+                        start[1] - (event.y - sy) / self._zoom]
         self._schedule_redraw()
+
+    def _aim(self, event: tk.Event) -> None:
+        """Move the film so the clicked point becomes the centre of the frame.
+
+        The prescan covers the whole transport window, so a fraction across the
+        image is a fraction across the aperture, and the aperture is a measured
+        width. What the transport can actually deliver is a different question,
+        and one the dialog answers before anything moves.
+        """
+        where = self._to_source(event)
+        if where is None:
+            return
+        src = self._source()
+        want = aim_millimetres(where[0] / max(1, src.shape[1]))
+        if abs(want) < FINE_STEP_MM:
+            messagebox.showinfo(
+                "Aim",
+                f"That is {abs(want):.2f} mm from centred, and the smallest "
+                f"move the transport can make is {FINE_STEP_MM:.2f} mm.\n\n"
+                "It is already as close as the hardware can put it.")
+            return
+        asked = min(MAX_FINE_MM, abs(want))
+        short = ("" if asked >= abs(want) - 0.01 else
+                 f"\n\nThat is {abs(want):.2f} mm; the driver will not attempt "
+                 f"more than {MAX_FINE_MM:.2f} mm at once, so this moves "
+                 f"{asked:.2f} mm and you can click again.")
+        way = "forward" if want > 0 else "back"
+        if self.v_reverse.get():
+            way = "back" if want > 0 else "forward"
+        if not messagebox.askokcancel(
+            "Aim",
+            f"Move the film {asked:.2f} mm {way} so that point is centred?"
+            f"{short}\n\nThe frame counter will not see this, so prescan again "
+            "to check it landed. If it goes the wrong way, tick 'reverse the "
+            "direction' and try again.", parent=self.root,
+        ):
+            return
+        self.on_nudge(1 if want > 0 else -1, millimetres=asked)
+
+
+# ---------------------------------------------------------------------------
+
+
+def aim_millimetres(fraction: float) -> float:
+    """How far to move the film so the point at `fraction` becomes the centre.
+
+    A prescan covers the whole transport window, so a fraction across the image
+    is a fraction across the aperture, and the aperture is a measured width
+    (36.49 mm, from the full scan frame). Positive means the film has to travel
+    in the +x direction; which way that is physically is the operator's to
+    discover, and the "reverse the direction" tick is there for when it is not
+    what they expected.
+    """
+    return -(fraction - 0.5) * APERTURE_MM
 
 
 def stop_label(job: str) -> str:
@@ -813,11 +1124,46 @@ def stop_label(job: str) -> str:
 
     "Stop" cannot mean "now" on this device: a pass in flight always finishes,
     because an abandoned read is what costs a power cycle. So the button has to
-    say which of the two things it will actually do, and be right about it for
-    the whole run -- it once read the progress label, which the line counter
-    overwrites a second in, and so relabelled itself mid-roll.
+    say which of the two things it will do, and be right about it for the whole
+    run -- it once read the progress label, which the line counter overwrites a
+    second in, and so relabelled itself mid-roll.
     """
     return "Stop after this frame" if "roll" in job else "Stop (finishes this pass)"
+
+
+def _numbers(text: str) -> list[float] | None:
+    """The numbers in `text`, or None if any of it is not one."""
+    try:
+        return [float(v) for v in text.replace(",", " ").split()]
+    except ValueError:
+        return None
+
+
+def _wheel(widget: tk.Misc, move) -> None:
+    """Two-finger scrolling, bound while the pointer is over `widget`.
+
+    macOS reports small deltas and X11 large ones, so only the sign means the
+    same thing everywhere. Bound and released on Enter/Leave so the wheel keeps
+    working over whatever the pointer is actually on.
+    """
+    def vertical(event: tk.Event) -> str:
+        move(0, -1 if event.delta > 0 else 1)
+        return "break"
+
+    def horizontal(event: tk.Event) -> str:
+        move(-1 if event.delta > 0 else 1, 0)
+        return "break"
+
+    def enter(_event: tk.Event) -> None:
+        widget.bind_all("<MouseWheel>", vertical)
+        widget.bind_all("<Shift-MouseWheel>", horizontal)
+
+    def leave(_event: tk.Event) -> None:
+        widget.unbind_all("<MouseWheel>")
+        widget.unbind_all("<Shift-MouseWheel>")
+
+    widget.bind("<Enter>", enter, add="+")
+    widget.bind("<Leave>", leave, add="+")
 
 
 def _duration(seconds: float) -> str:
@@ -840,17 +1186,16 @@ def main() -> int:
                     help="where scans are filed (default: library)")
     ap.add_argument("--reference", default="calibration/shading.npz")
     ap.add_argument("--rolls", default="rolls")
+    ap.add_argument("--out", default=None,
+                    help="also write a TIFF of every scan here")
     args = ap.parse_args()
 
-    session = ScanSession(
-        root=args.library,
-        reference=args.reference,
-        rolls=args.rolls,
-    )
+    session = ScanSession(root=args.library, reference=args.reference,
+                          rolls=args.rolls, out_dir=args.out)
     if args.demo:
         from rps7200.demo import DemoScanner
-
         session._open_scanner = lambda: DemoScanner(args.library)
+
     root = tk.Tk()
     ScannerGui(root, session, demo=args.demo)
     root.mainloop()
