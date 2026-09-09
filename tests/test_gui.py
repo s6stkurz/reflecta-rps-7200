@@ -445,3 +445,15 @@ def test_fit_still_centres_what_it_shows():
     import inspect
     source = inspect.getsource(gui.ScannerGui._geometry)
     assert "/ 2" in source, "fit centres the picture on both axes"
+
+
+def test_the_finer_array_is_sampled_with_a_smaller_scale():
+    """One of `detail` pixels of the picture is `detail` of the scan's, so a
+    step across the output covers more of them and the scale is divided. It was
+    multiplied, which sampled a region sixteen times too small and blew it up
+    -- at exactly 25% of a 3600 dpi scan, where the two arrays swap."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._redraw)
+    assert "scale / detail" in source
+    assert "scale * detail" not in source
+    assert "x0 * detail" in source, "but the start is multiplied"
