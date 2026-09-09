@@ -53,6 +53,20 @@ fix:
 	@echo "Applying safe autofixes (ruff check --fix)..."
 	@$(UV) ruff check --fix .
 
+# Run the scanning GUI locally. Opening the window claims the device and asks
+# it who it is, and nothing else: no calibration, no mechanism, until a button
+# is pressed. `--demo` needs no scanner at all and drives the window from
+# stored library entries.
+.PHONY: run
+run:
+	@echo "Starting the RPS 7200 scanner GUI..."
+	@$(UV) python tools/gui.py
+
+.PHONY: run-demo
+run-demo:
+	@echo "Starting the GUI in demo mode (no scanner)..."
+	@$(UV) python tools/gui.py --demo
+
 # Whole-file reformat. Deliberately NOT part of `all`, and not to be run
 # casually: this source is hand-wrapped at ~79 columns with aligned comment
 # blocks, and reformatting it rewrites ~1800 lines across 22 files, which buries

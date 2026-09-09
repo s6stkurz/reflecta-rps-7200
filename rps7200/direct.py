@@ -264,11 +264,19 @@ class DirectScanner:
     #: library -- which it did, once, before this existed.
     DEBUG_ROOT_ENV = "RPS7200_DEBUG_ROOT"
 
+    #: Where a display listens in. Declared on the class as well as set in
+    #: __init__, because the test doubles stand in for a scanner without
+    #: running its constructor and would otherwise not have them at all.
+    log_hook: Callable[[str], None] | None = None
+    progress_hook: Callable[[int, int], None] | None = None
+
     def __init__(
         self,
         transport: Transport | None = None,
         verbose: bool = False,
         debug: bool | None = None,
+        log_hook: Callable[[str], None] | None = None,
+        progress_hook: Callable[[int, int], None] | None = None,
     ):
         # `debug` files every scan in the library automatically. Off by default
         # so ordinary use is not burdened; see the class docstring and
@@ -285,6 +293,10 @@ class DirectScanner:
         self._debug_pending: list[dict[str, Any]] = []
         self._debug_spool: Path | None = None
         self.verbose = verbose
+        # Where a display listens. Both are host-side and optional: nothing the
+        # device is sent changes, which is why PROTOCOL_REVISION stays put.
+        self.log_hook = log_hook
+        self.progress_hook = progress_hook
         self._own_transport = transport is None
         self.t = transport or Transport(verbose=verbose)
         self._scanning = False
@@ -301,6 +313,14 @@ class DirectScanner:
     def _log(self, message: str) -> None:
         if self.verbose:
             print(f"[scan] {message}")
+        # A UI wants these lines without capturing stdout. Swallowing the hook's
+        # own failures is deliberate: a broken display must not take down the
+        # scan it is displaying, least of all mid-read.
+        if self.log_hook is not None:
+            try:
+                self.log_hook(message)
+            except Exception:                            # noqa: BLE001
+                pass
 
     # -- the session's calibration -----------------------------------------
     #
@@ -1198,6 +1218,13 @@ class DirectScanner:
             chunks.append(chunk)
             got += n
             self._log(f"{got}/{total_lines} lines")
+            # Structured, so a progress bar does not have to parse the line
+            # above and then go quietly dead the day it is reworded.
+            if self.progress_hook is not None:
+                try:
+                    self.progress_hook(got, total_lines)
+                except Exception:                        # noqa: BLE001
+                    pass
 
         blob = b"".join(chunks)
         if keep_raw:
@@ -1252,7 +1279,10 @@ class DirectScanner:
     # -- prescan and framing -----------------------------------------------
 
     def prescan(
-        self, resolution: int = 300, frame: tuple[int, int, int, int] | None = None
+        self,
+        resolution: int = 300,
+        frame: tuple[int, int, int, int] | None = None,
+        keep_raw: bool = False,
     ) -> tuple[np.ndarray, ScanParameters]:
         """Low-resolution RGB pass over the full transport.
 
@@ -1273,6 +1303,7 @@ class DirectScanner:
             depth=DEPTH_8,
             frame=frame or FULL_FRAME,
             shading=False,
+            keep_raw=keep_raw,
         )
         params = ScanParameters(
             width=meta["width"],

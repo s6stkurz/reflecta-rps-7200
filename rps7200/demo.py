@@ -1,0 +1,244 @@
+"""A stand-in scanner backed by the library, for driving the UI with no device.
+
+Every control in the GUI -- the filmstrip, the channel switch, the progress bar,
+both stop buttons -- can be exercised against real pixels this way, because the
+library keeps each scan's raw bytes and correction alongside it. That is the same
+reason the test suite never needs the hardware: "test the host side against
+stored bytes, not against the scanner".
+
+It is a demonstration, not a simulation. It does not model the protocol, and
+nothing it reports about the device means anything. What it does model is the
+*shape* of a session -- how long a pass takes, that progress arrives in batches,
+that a roll yields a prescan before each frame, and that a stop lands between
+frames rather than inside one.
+
+    python3 tools/gui.py --demo
+"""
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from . import library
+from .direct import RollFrame
+from .session import estimate_seconds
+from .usb_transport import UsbError
+
+#: Wall-clock is divided by this, so a 212 s infrared pass takes about five
+#: seconds. Slow enough that a progress bar has something to do, fast enough
+#: that nobody waits for a demo.
+SPEED = 40.0
+
+
+class _FakeTransport:
+    """Just enough of `Transport` for `ScanSession.force_abort` to work on."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _Inquiry:
+    def describe(self) -> str:
+        return "DEMO  MF Scanner  fw 1.70  (no scanner attached)"
+
+
+class DemoScanner:
+    """Serves stored library entries as though they had just been scanned."""
+
+    def __init__(self, root: str | Path = "library", speed: float = SPEED):
+        self.root = Path(root)
+        self.speed = max(1.0, speed)
+        self.t = _FakeTransport()
+        self.log_hook: Any = None
+        self.progress_hook: Any = None
+        self.shading = None
+        self.ccd_mask = None
+        self.last_raw = None
+        self.last_raw_layout = None
+        self._inquiry = _Inquiry()
+        self._entries: list[Path] = []
+        self._next = 0
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def open(self) -> DemoScanner:
+        self._entries = sorted(
+            p.parent for p in self.root.glob("*/scan.json")
+        ) if self.root.exists() else []
+        self._log(f"demo mode: {len(self._entries)} stored entries to draw on")
+        if not self._entries:
+            self._log("no library entries found; showing generated frames instead")
+        return self
+
+    def close(self) -> None:
+        self.t.close()
+
+    def __enter__(self) -> DemoScanner:
+        return self.open()
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def inquiry(self, refresh: bool = False) -> _Inquiry:
+        return self._inquiry
+
+    def position(self) -> int | None:
+        return self._next
+
+    def capture_record(self) -> dict[str, Any]:
+        return {"reference": None, "ccd_mask": None, "raw": None, "raw_layout": None}
+
+    # -- the parts the session calls --------------------------------------
+
+    def ensure_shading(self, path: Any, reuse: bool = False, skip: bool = False) -> dict:
+        if skip:
+            return {"action": "skipped", "summary": "shading off (demo)"}
+        self._work(210.0 if not reuse else 1.0)
+        return {
+            "action": "loaded" if reuse else "calibrated",
+            "summary": f"shading {'loaded' if reuse else 'calibrated'} (demo)",
+        }
+
+    def prescan(
+        self, resolution: int = 300, frame: Any = None, keep_raw: bool = False
+    ) -> tuple[np.ndarray, Any]:
+        self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
+        image = self._pixels(channels=3)
+        return image[..., :3].astype(np.uint8) if image.dtype != np.uint8 else image, None
+
+    def scan(
+        self,
+        resolution: int = 1800,
+        infrared: bool = True,
+        film: str = "negative",
+        auto_exposure: bool = False,
+        exposure_scale: Any = 1.0,
+        shading: bool = True,
+        frame: Any = None,
+        keep_raw: bool = False,
+        **kw: Any,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        if auto_exposure:
+            self._log("auto-exposure: probing in RGB")
+            self._work(48.0)
+            self._log("auto-exposure: [1.82, 0.94, 2.11, 1.0]")
+        started = time.monotonic()
+        self._work(
+            estimate_seconds(resolution, infrared),
+            lines=int(resolution * 0.957),
+        )
+        image = self._pixels(channels=4 if infrared else 3)
+        meta = {
+            "resolution_dpi": resolution,
+            "channels": image.shape[2],
+            "channel_order": list("RGBI"[: image.shape[2]]),
+            "film": film,
+            "depth": 16,
+            "width": image.shape[1],
+            "height": image.shape[0],
+            "shading": {"columns": image.shape[1], "clipped": 0} if shading else None,
+            "exposure_scale": exposure_scale,
+            "duration_s": round(time.monotonic() - started, 1),
+            "demo": True,
+        }
+        return image, meta
+
+    def scan_roll(
+        self,
+        frames: int | None = None,
+        resolution: int = 1800,
+        infrared: bool = True,
+        dry_run: bool = False,
+        skip: int = 0,
+        **kw: Any,
+    ):
+        limit = frames if frames is not None else 6
+        for i in range(limit):
+            self._log(f"frame {i}: contrast 0.31, offset +0.04 mm, short by 0.02 mm")
+            prescan, _ = self.prescan()
+            image = meta = None
+            if not dry_run:
+                image, meta = self.scan(
+                    resolution=resolution, infrared=infrared, keep_raw=True
+                )
+            yield RollFrame(
+                index=skip + i,
+                position=skip + i,
+                image=image,
+                meta=meta or {},
+                prescan=prescan,
+                registration={"offset_mm": 0.04, "shortfall_mm": 0.02, "contrast": 0.31},
+            )
+            self._work(7.0)                              # the advance
+
+    # -- internals ---------------------------------------------------------
+
+    def _log(self, message: str) -> None:
+        if self.log_hook is not None:
+            self.log_hook(message)
+
+    def _work(self, seconds: float, lines: int = 0) -> None:
+        """Spend `seconds` of pretend scanning, reporting progress as it goes."""
+        total = max(1, lines)
+        steps = 40
+        for i in range(steps):
+            if self.t.closed:
+                # What a force abort feels like from in here.
+                raise UsbError("transport is not open")
+            time.sleep(seconds / self.speed / steps)
+            if lines and self.progress_hook is not None:
+                self.progress_hook(round(total * (i + 1) / steps), total)
+
+    def _pixels(self, channels: int) -> np.ndarray:
+        """Real pixels from the library where there are any, else a test card."""
+        wanted = [
+            p for p in self._entries
+            if _entry_channels(p) == channels
+        ] or self._entries
+        if wanted:
+            path = wanted[self._next % len(wanted)]
+            self._next += 1
+            try:
+                image, _ = library.load(path)
+                self._log(f"demo frame from {path.name}")
+                if image.ndim == 3 and image.shape[2] >= channels:
+                    return image[..., :channels]
+                return image
+            except Exception as exc:                     # noqa: BLE001
+                self._log(f"could not read {path.name}: {exc}")
+        self._next += 1
+        return _test_card(channels, self._next)
+
+
+def _entry_channels(path: Path) -> int:
+    try:
+        import json
+        record = json.loads((path / "scan.json").read_text())
+        return int((record.get("scan") or {}).get("channels") or 0)
+    except Exception:                                    # noqa: BLE001
+        return 0
+
+
+def _test_card(channels: int, seed: int) -> np.ndarray:
+    """A synthetic negative, for a checkout with an empty library."""
+    h, w = 574, 862
+    y, x = np.mgrid[0:h, 0:w]
+    rng = np.random.default_rng(seed)
+    base = (
+        0.35
+        + 0.25 * np.sin(x / 90.0 + seed)
+        + 0.15 * np.cos(y / 60.0)
+        + 0.05 * rng.standard_normal((h, w))
+    )
+    planes = []
+    for c in range(channels):
+        # An orange mask: a negative's channels sit at very different levels.
+        level = (0.75, 0.45, 0.25, 0.85)[c] if c < 4 else 0.5
+        planes.append(np.clip(base * level + level * 0.4, 0, 1))
+    return (np.stack(planes, axis=-1) * 65535).astype(np.uint16)
