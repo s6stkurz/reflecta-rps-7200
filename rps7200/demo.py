@@ -16,13 +16,14 @@ frames rather than inside one.
 """
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from . import library
+from . import library, tiff
 from .direct import RollFrame
 from .session import estimate_seconds
 from .usb_transport import UsbError
@@ -51,8 +52,14 @@ class _Inquiry:
 class DemoScanner:
     """Serves stored library entries as though they had just been scanned."""
 
-    def __init__(self, root: str | Path = "library", speed: float = SPEED):
+    def __init__(self, root: str | Path = "library", speed: float = SPEED,
+                 entry: str | Path | None = None):
         self.root = Path(root)
+        #: The one entry this demo is showing, when it found a good pair. Its
+        #: prescan answers a prescan and its scan answers a scan, so the two
+        #: are the same picture -- which is what makes the filmstrip's
+        #: "the scan replaces its prescan" behaviour visible at all.
+        self.pair: Path | None = Path(entry) if entry else None
         self.speed = max(1.0, speed)
         self.t = _FakeTransport()
         self.log_hook: Any = None
@@ -72,8 +79,15 @@ class DemoScanner:
         self._entries = sorted(
             p.parent for p in self.root.glob("*/scan.json")
         ) if self.root.exists() else []
-        self._log(f"demo mode: {len(self._entries)} stored entries to draw on")
-        if not self._entries:
+        if self.pair is None:
+            self.pair = best_pair(self.root)
+        if self.pair is not None:
+            self._log(f"demo mode: showing {self.pair.name}")
+            self._log("its own prescan answers Prescan, its scan answers Scan "
+                      "-- the same picture, as if you had just taken both")
+        elif self._entries:
+            self._log(f"demo mode: {len(self._entries)} stored entries to draw on")
+        else:
             self._log("no library entries found; showing generated frames instead")
         return self
 
@@ -137,6 +151,9 @@ class DemoScanner:
         self, resolution: int = 300, frame: Any = None, keep_raw: bool = False
     ) -> tuple[np.ndarray, Any]:
         self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
+        stored = self._pair_image("prescan.tif")
+        if stored is not None:
+            return stored, None
         image = self._pixels(channels=3)
         return image[..., :3].astype(np.uint8) if image.dtype != np.uint8 else image, None
 
@@ -161,7 +178,11 @@ class DemoScanner:
             estimate_seconds(resolution, infrared),
             lines=int(resolution * 0.957),
         )
-        image = self._pixels(channels=4 if infrared else 3)
+        image = self._pair_image("scan.tif")
+        if image is None:
+            image = self._pixels(channels=4 if infrared else 3)
+        elif not infrared and image.ndim == 3 and image.shape[2] > 3:
+            image = image[..., :3]
         meta = {
             "resolution_dpi": resolution,
             "channels": image.shape[2],
@@ -224,6 +245,21 @@ class DemoScanner:
             if lines and self.progress_hook is not None:
                 self.progress_hook(round(total * (i + 1) / steps), total)
 
+    def _pair_image(self, name: str) -> np.ndarray | None:
+        """One of the chosen entry's own files, or None if there is no pair."""
+        if self.pair is None:
+            return None
+        path = self.pair / name
+        if not path.exists():
+            return None
+        try:
+            image = tiff.read(str(path))
+        except Exception as exc:                         # noqa: BLE001
+            self._log(f"could not read {path.name}: {exc}")
+            return None
+        self._log(f"{name} from {self.pair.name}  {image.shape}")
+        return image
+
     def _pixels(self, channels: int) -> np.ndarray:
         """Real pixels from the library where there are any, else a test card."""
         wanted = [
@@ -245,9 +281,32 @@ class DemoScanner:
         return _test_card(channels, self._next)
 
 
+def best_pair(root: Path) -> Path | None:
+    """A stored entry that has both a prescan and a full scan of one picture.
+
+    The highest resolution one wins, because the point of showing a real pair
+    is having something worth zooming into -- a 3600 dpi frame is 135 MB of
+    actual grain, where the generated test card has none.
+    """
+    best, best_dpi = None, 0
+    if not root.exists():
+        return None
+    for candidate in sorted(root.glob("*/scan.json")):
+        entry = candidate.parent
+        if not (entry / "prescan.tif").exists():
+            continue
+        try:
+            record = json.loads(candidate.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        dpi = int((record.get("scan") or {}).get("resolution_dpi") or 0)
+        if dpi > best_dpi:
+            best, best_dpi = entry, dpi
+    return best
+
+
 def _entry_channels(path: Path) -> int:
     try:
-        import json
         record = json.loads((path / "scan.json").read_text())
         return int((record.get("scan") or {}).get("channels") or 0)
     except Exception:                                    # noqa: BLE001

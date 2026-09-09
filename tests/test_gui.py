@@ -224,3 +224,41 @@ def test_scrolling_up_and_down_are_opposite():
         up = gui._wheel_amount(_Wheel(delta=delta))[0]
         down = gui._wheel_amount(_Wheel(delta=-delta))[0]
         assert up == -down, delta
+
+
+# -- the trackpad, which is a different event entirely ----------------------
+
+
+class _Touchpad:
+    """A <TouchpadScroll> event: both axes packed into one integer."""
+
+    def __init__(self, dx=0, dy=0):
+        self.delta = (dx << 16) | (dy & 0xFFFF)
+        self.state = 0
+        self.num = 0
+
+
+@pytest.mark.parametrize("dx,dy", [
+    (0, 12), (0, -12), (7, 0), (-7, 0), (3, -5), (-9, 40), (0, 0),
+])
+def test_touchpad_deltas_unpack_both_axes(dx, dy):
+    """Tk packs x in the high half and y in the low half, sign-extended. Tk 9
+    on macOS sends these instead of <MouseWheel> for a trackpad, which is the
+    whole reason binding the wheel alone left two fingers dead."""
+    assert gui._touchpad_deltas(_Touchpad(dx, dy)) == (dx, dy)
+
+
+def test_a_touchpad_at_rest_asks_for_nothing():
+    assert gui._touchpad_deltas(_Touchpad(0, 0)) == (0, 0)
+
+
+def test_touchpad_deltas_are_pixels_not_notches():
+    """A wheel notch is one line; a trackpad reports how far it actually
+    travelled, and scrolling by a line per event would crawl."""
+    assert gui._touchpad_deltas(_Touchpad(0, 40))[1] == 40
+
+
+def test_a_zoom_notch_costs_real_travel():
+    """These events arrive many times a second. Zooming on each one would take
+    the picture from fit to 8x in a flick."""
+    assert gui._ZOOM_PIXELS >= 20

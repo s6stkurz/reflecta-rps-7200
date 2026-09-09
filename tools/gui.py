@@ -109,6 +109,7 @@ class ScannerGui:
         self._drag = None
         self._shown = None                   # what was last drawn, for clicks
         self._scrollers: list = []           # (widget, handler) for the wheel
+        self._zoom_travel = 0                # trackpad pixels not yet spent
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         root.geometry("1280x860")
@@ -121,6 +122,7 @@ class ScannerGui:
         for sequence in ("<MouseWheel>", "<Shift-MouseWheel>",
                          "<Button-4>", "<Button-5>"):
             root.bind_all(sequence, self._on_wheel, add="+")
+        root.bind_all("<TouchpadScroll>", self._on_touchpad, add="+")
         self.session.start()
         self.root.after(POLL_MS, self._pump)
 
@@ -158,8 +160,11 @@ class ScannerGui:
         # binding rather than relying on the event finding its way up.
         canvas, inner = self._column
         for widget in (canvas, inner):
-            self._scrolls(widget,
-                          lambda n, _side: canvas.yview_scroll(n, "units"))
+            self._scrolls(
+                widget,
+                lambda n, _side: canvas.yview_scroll(n, "units"),
+                precise=lambda dx, dy: _scroll_pixels(canvas, 0, dy),
+            )
 
     def _on_wheel(self, event: tk.Event) -> str | None:
         """Route a wheel or two-finger scroll to the region it happened in.
@@ -184,15 +189,37 @@ class ScannerGui:
                 return None
         return None
 
-    def _scrolls(self, widget: tk.Misc, handler) -> None:
-        """Make the wheel do something over `widget` and everything inside it.
+    def _on_touchpad(self, event: tk.Event) -> str | None:
+        """Fallback for anything not bound directly."""
+        dx, dy = _touchpad_deltas(event)
+        if dx == 0 and dy == 0:
+            return None
+        widget = self.root.winfo_containing(event.x_root, event.y_root)
+        while widget is not None:
+            for target, handler in self._scrollers:
+                if widget is target:
+                    handler(-1 if (dy or dx) > 0 else 1, bool(dx and not dy))
+                    return "break"
+            name = widget.winfo_parent()
+            if not name:
+                return None
+            try:
+                widget = self.root.nametowidget(name)
+            except KeyError:
+                return None
+        return None
 
-        Bound on each widget itself, not only at the root. A widget's own
-        bindings run before its class's and before the "all" tag, so this
-        cannot be pre-empted by a class binding that swallows the event -- and
-        it does not depend on `winfo_containing` agreeing about what the
-        pointer is over, which is the part that differs between a mouse and a
-        trackpad.
+    def _scrolls(self, widget: tk.Misc, handler, precise=None) -> None:
+        """Make scrolling do something over `widget` and everything inside it.
+
+        Two different events, because a mouse and a trackpad are not the same
+        thing here. A wheel sends <MouseWheel> in notches; a trackpad on macOS
+        under Tk 9 sends <TouchpadScroll> in pixels, and never a MouseWheel at
+        all -- which is why binding only the wheel left the trackpad dead.
+
+        Bound on each widget itself rather than at the root: a widget's own
+        bindings run before its class's and before the "all" tag, so nothing
+        can swallow the event first.
         """
         self._scrollers.append((widget, handler))
 
@@ -203,16 +230,30 @@ class ScannerGui:
             handler(amount, sideways)
             return "break"
 
-        self._bind_wheel(widget, wheel)
-        # Children added later -- the filmstrip's images, say -- are covered by
-        # the root fallback above rather than a rescan on every redraw.
+        def touchpad(event: tk.Event) -> str | None:
+            dx, dy = _touchpad_deltas(event)
+            if dx == 0 and dy == 0:
+                return None
+            if precise is not None:
+                precise(dx, dy)
+            else:
+                # No pixel path: fall back to notches, which is coarse but
+                # still moves.
+                if dy:
+                    handler(-1 if dy > 0 else 1, False)
+                elif dx:
+                    handler(-1 if dx > 0 else 1, True)
+            return "break"
 
-    def _bind_wheel(self, widget: tk.Misc, wheel) -> None:
+        self._bind_scroll(widget, wheel, touchpad)
+
+    def _bind_scroll(self, widget: tk.Misc, wheel, touchpad) -> None:
         for sequence in ("<MouseWheel>", "<Shift-MouseWheel>",
                          "<Button-4>", "<Button-5>"):
             widget.bind(sequence, wheel, add="+")
+        widget.bind("<TouchpadScroll>", touchpad, add="+")
         for child in widget.winfo_children():
-            self._bind_wheel(child, wheel)
+            self._bind_scroll(child, wheel, touchpad)
 
     def _scrollable(self, parent: ttk.PanedWindow) -> ttk.Frame:
         """A left column that scrolls, because it is taller than the window.
@@ -422,7 +463,8 @@ class ScannerGui:
         self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
         # Two fingers zoom, because that is the gesture people reach for on
         # a picture; panning is the drag, which needs no gesture support at all.
-        self._scrolls(self.canvas, self._wheel_over_picture)
+        self._scrolls(self.canvas, self._wheel_over_picture,
+                      precise=self._touchpad_over_picture)
 
         bar = ttk.Frame(top, padding=(6, 4))
         bar.pack(fill="x")
@@ -455,8 +497,13 @@ class ScannerGui:
         self.strip = tk.Canvas(middle, height=THUMB_H + 12, background="#111",
                                highlightthickness=0)
         self.strip.pack(fill="both", expand=True)
-        self._scrolls(self.strip,
-                      lambda n, _side: self.strip.xview_scroll(n, "units"))
+        self._scrolls(
+            self.strip,
+            lambda n, _side: self.strip.xview_scroll(n, "units"),
+            # A filmstrip is a row, so either axis of a two-finger swipe
+            # should walk along it.
+            precise=lambda dx, dy: _scroll_pixels(self.strip, dx or dy, 0),
+        )
         for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
             self.strip.bind(seq, self.on_strip_menu)
         self.menu = tk.Menu(self.root, tearoff=0)
@@ -487,7 +534,9 @@ class ScannerGui:
         scroll = ttk.Scrollbar(logbox, command=self.log.yview)
         scroll.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=scroll.set, state="disabled")
-        self._scrolls(self.log, lambda n, _side: self.log.yview_scroll(n, "units"))
+        self._scrolls(self.log,
+                      lambda n, _side: self.log.yview_scroll(n, "units"),
+                      precise=lambda dx, dy: _scroll_pixels(self.log, 0, dy))
 
         self._sync_exposure()
         self._show_estimate()
@@ -1139,6 +1188,23 @@ class ScannerGui:
         self._zoom = max(1 / 16, min(8.0, self._zoom * factor))
         self._schedule_redraw()
 
+    def _touchpad_over_picture(self, dx: int, dy: int) -> None:
+        """Zoom by a trackpad swipe, one notch per `_ZOOM_PIXELS` of travel.
+
+        These events arrive many times a second, so zooming on each one would
+        shoot from fit to 8x in a flick. The travel is accumulated instead and
+        spent a notch at a time.
+        """
+        if dx and not dy and self._zoom > 0:
+            self._offset[0] -= dx / self._zoom
+            self._schedule_redraw()
+            return
+        self._zoom_travel += dy
+        while abs(self._zoom_travel) >= _ZOOM_PIXELS:
+            step = _ZOOM_PIXELS if self._zoom_travel > 0 else -_ZOOM_PIXELS
+            self._zoom_travel -= step
+            self._zoom_by(1.15 if step > 0 else 1 / 1.15)
+
     def _wheel_over_picture(self, amount: int, sideways: bool) -> None:
         if sideways and self._zoom > 0:
             self._offset[0] += amount * 40 / self._zoom
@@ -1327,6 +1393,39 @@ def stop_label(job: str) -> str:
     return "Stop after this frame" if "roll" in job else "Stop (finishes this pass)"
 
 
+#: How far a trackpad has to travel to spend one zoom notch on the picture.
+_ZOOM_PIXELS = 60
+
+
+def _touchpad_deltas(event: tk.Event) -> tuple[int, int]:
+    """Unpack a <TouchpadScroll> delta into pixels, as tk::PreciseScrollDeltas.
+
+    Tk packs both axes into one integer: x in the high half, y in the low half
+    sign-extended. Tk 9 on macOS sends these instead of <MouseWheel> for a
+    trackpad, which is why binding the wheel alone left two fingers dead.
+    """
+    packed = int(getattr(event, "delta", 0) or 0)
+    dx = packed >> 16
+    low = packed & 0xFFFF
+    dy = low if low < 0x8000 else low - 0x10000
+    return dx, dy
+
+
+def _scroll_pixels(widget: tk.Misc, dx: int, dy: int) -> None:
+    """Scroll by pixels, the way tk::ScrollByPixels does.
+
+    Canvas and Text take `moveto` fractions, not pixel counts -- `yview_scroll`
+    has no "pixels" unit on a canvas -- so the pixels become a fraction of the
+    widget.
+    """
+    if dy:
+        height = max(1.0, float(widget.winfo_height()))
+        widget.yview_moveto(widget.yview()[0] - dy / height)
+    if dx:
+        width = max(1.0, float(widget.winfo_width()))
+        widget.xview_moveto(widget.xview()[0] - dx / width)
+
+
 def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
     """How far to scroll, and whether sideways, from any platform's event.
 
@@ -1383,6 +1482,10 @@ def main() -> int:
                          "demo/library with --demo)")
     ap.add_argument("--demo-source", default="library",
                     help="which library --demo shows pictures from")
+    ap.add_argument("--demo-entry", default=None,
+                    help="a specific library entry for --demo to show; by "
+                         "default the highest-resolution one that has both a "
+                         "prescan and a scan of the same picture")
     ap.add_argument("--reference", default=None)
     ap.add_argument("--rolls", default=None)
     ap.add_argument("--out", default=None,
@@ -1398,8 +1501,8 @@ def main() -> int:
     )
     if args.demo:
         from rps7200.demo import DemoScanner
-        source = args.demo_source
-        session._open_scanner = lambda: DemoScanner(source)
+        source, entry = args.demo_source, args.demo_entry
+        session._open_scanner = lambda: DemoScanner(source, entry=entry)
 
     root = tk.Tk()
     ScannerGui(root, session, demo=args.demo)
