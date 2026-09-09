@@ -44,15 +44,29 @@ from rps7200.session import (                             # noqa: E402
     estimate_seconds,
 )
 
-#: Integer divisors of the 7200 dpi optical resolution -- the only values any
-#: USB capture of the vendor software has ever used. The box is editable, and
-#: the device refuses anything it dislikes before a byte is transferred.
-DPI_LADDER = (300, 360, 400, 450, 480, 600, 720, 800, 900,
-              1200, 1440, 1800, 2400, 3600, 7200)
+#: Resolutions this scanner has actually been driven at, plus the optical
+#: maximum it reports for itself.
+#:
+#: 300, 600, 900, 1800 and 3600 all appear in the USB captures of the vendor
+#: software or in timings measured here; 7200 is what INQUIRY calls the optical
+#: resolution. Nothing else has evidence behind it. An earlier version of this
+#: list held every integer divisor of 7200 -- 360, 400, 450, 480, 720, 800,
+#: 1200, 1440, 2400 -- which came from `docs/dpi-tradeoff-plan.md`, where it is
+#: the *candidate* list for an experiment titled "which resolutions the device
+#: accepts". That experiment has not been run, so the list was a set of guesses
+#: presented as a menu.
+#:
+#: The box stays editable, so anything can still be typed: there is no
+#: client-side validation, the value goes into MODE SELECT as a 16-bit field,
+#: and the device refuses what it dislikes with sense 0x26/0x82 before a single
+#: byte of image data moves. Guessing is cheap; offering a guess is not.
+DPI_LADDER = (300, 600, 900, 1800, 3600, 7200)
 
 #: What a prescan is worth spending. 300 dpi is the scanner's own fast-preview
-#: resolution and what the vendor uses before every frame, at ~16 s.
-PRESCAN_LADDER = (300, 360, 400, 450, 480, 600, 720, 900, 1200)
+#: resolution, reported by INQUIRY and what the vendor uses before every frame,
+#: at ~16 s. 600 is what its own session-start previews use. Beyond that a
+#: framing pass stops being cheap, which is the only reason it exists.
+PRESCAN_LADDER = (300, 600, 900)
 
 #: How many results keep a full-size working copy. Older ones are shrunk rather
 #: than dropped, so every channel and the invert toggle keep working on them.

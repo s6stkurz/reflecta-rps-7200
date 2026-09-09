@@ -46,11 +46,30 @@ def test_the_label_does_not_depend_on_the_progress_readout():
 # -- what the form asks the scanner for -------------------------------------
 
 
-def test_the_dpi_ladder_is_the_divisors_the_captures_use():
-    assert gui.DPI_LADDER[0] == 300 and gui.DPI_LADDER[-1] == 7200
-    assert all(7200 % d == 0 for d in gui.DPI_LADDER)
-    for seen_in_captures in (300, 600, 900, 1800, 3600):
-        assert seen_in_captures in gui.DPI_LADDER
+def test_the_dpi_ladder_only_offers_resolutions_with_evidence():
+    """Every value on it has been driven at, or is what the scanner reports.
+
+    It used to hold every integer divisor of 7200, taken from the candidate
+    list in `docs/dpi-tradeoff-plan.md` -- whose Part 1 is titled "which
+    resolutions the device accepts" and has not been run. A menu of guesses
+    reads as a menu of capabilities.
+    """
+    for driven in (300, 600, 900, 1800, 3600):
+        assert driven in gui.DPI_LADDER, f"{driven} appears in the captures"
+    assert gui.DPI_LADDER[-1] == 7200, "what INQUIRY calls the optical maximum"
+    for unprobed in (360, 400, 450, 480, 720, 800, 1200, 1440, 2400):
+        assert unprobed not in gui.DPI_LADDER, (
+            f"{unprobed} has never been asked of this scanner")
+
+
+def test_the_ladder_is_a_convenience_and_not_a_limit():
+    """The box is editable on purpose: there is no client-side validation, and
+    the device refuses what it dislikes before any image data moves. So an
+    unlisted value can still be typed -- 2400 is the suspected sweet spot and
+    is exactly the sort of thing worth trying."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._build_scan)
+    assert 'state="readonly"' not in source.split("scan dpi")[1].split("prescan")[0]
 
 
 @pytest.mark.parametrize("seconds,expected", [
@@ -179,8 +198,12 @@ def test_the_fine_step_bounds_are_the_calibrated_ones():
 
 
 def test_the_prescan_ladder_starts_at_the_scanners_own_preview_resolution():
+    """300 is what INQUIRY reports as the fast preview and what the vendor uses
+    before every frame. A framing pass that is not cheap has no reason to be."""
     assert gui.PRESCAN_LADDER[0] == 300
-    assert all(d <= 1200 for d in gui.PRESCAN_LADDER), "a prescan is meant to be cheap"
+    assert all(d <= 900 for d in gui.PRESCAN_LADDER), "a prescan is meant to be cheap"
+    assert all(d in gui.DPI_LADDER for d in gui.PRESCAN_LADDER), (
+        "a prescan resolution is still a resolution -- it needs the same evidence")
 
 
 # -- the wheel, which means different numbers on every platform -------------
