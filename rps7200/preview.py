@@ -292,6 +292,50 @@ def fit(image: np.ndarray, width: int, height: int) -> np.ndarray:
     return image if s <= 1 else image[::s, ::s]
 
 
+def sample(
+    image: np.ndarray,
+    scale: float,
+    x0: float,
+    y0: float,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """A `width` x `height` view of `image` at any `scale`, from `(x0, y0)`.
+
+    Nearest neighbour, by gathering: the output's rows and columns are worked
+    out as source coordinates once, and the pixels read in a single pass. That
+    matters twice over. It allows a fractional scale -- decimating by a whole
+    number and replicating by a whole number, which is what this replaced, can
+    only show 50%, 100%, 200%, so a smooth zoom arrived on screen as jumps
+    between them. And it touches only the pixels that end up visible, rather
+    than striding across the whole picture to throw most of it away.
+
+    No smoothing on the way down. A decimated view aliases, and honestly: it
+    shows the grain that is there rather than a cleanliness the file does not
+    have.
+    """
+    if width <= 0 or height <= 0:
+        return image[:0, :0]
+    rows = np.clip((np.arange(height) / scale + y0).astype(np.intp),
+                   0, image.shape[0] - 1)
+    columns = np.clip((np.arange(width) / scale + x0).astype(np.intp),
+                      0, image.shape[1] - 1)
+
+    # Narrow to the columns that will be read before touching any rows. On a
+    # zoomed view of a 3600 dpi frame the visible strip is a small part of a
+    # 142 MB array, and this is the difference between carrying 29 MB through
+    # the first gather and carrying three.
+    first, last = int(columns[0]), int(columns[-1]) + 1
+    if last - first < image.shape[1]:
+        image = image[:, first:last]
+        columns = columns - first
+
+    # Two one-dimensional takes rather than one two-dimensional index: whole
+    # rows and then whole columns, which numpy does three to four times faster
+    # than the scattered gather a 2-D fancy index performs.
+    return np.take(np.take(image, rows, axis=0), columns, axis=1)
+
+
 def crop(
     image: np.ndarray, cx: float, cy: float, width: int, height: int
 ) -> np.ndarray:

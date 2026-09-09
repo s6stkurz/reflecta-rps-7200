@@ -28,8 +28,6 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import numpy as np                                       # noqa: E402
-
 from rps7200 import library, preview, tiff                # noqa: E402
 from rps7200.direct import FILM_TYPES, METER_MODES        # noqa: E402
 from rps7200.framing import FULL_FRAME                    # noqa: E402
@@ -1360,26 +1358,22 @@ class ScannerGui:
                                     text="nothing scanned yet")
             return
 
+        # Sampled at whatever scale is asked for. Decimating and replicating by
+        # whole numbers -- which is what this replaced -- can only show 50%,
+        # 100%, 200%, so a smooth zoom reached the screen as jumps between them.
+        tall, wide = src.shape[0], src.shape[1]
         if self._zoom <= 0:
-            arr = preview.fit(src, w, h)
-            scale = arr.shape[1] / max(1, src.shape[1])
-            x0 = y0 = 0
+            scale = min(w / wide, h / tall)
+            out_w, out_h = max(1, int(wide * scale)), max(1, int(tall * scale))
+            x0 = y0 = 0.0
         else:
             scale = self._zoom
-            sw = max(1, int(w / scale))
-            sh = max(1, int(h / scale))
+            out_w = min(w, max(1, int(wide * scale)))
+            out_h = min(h, max(1, int(tall * scale)))
             cx, cy = self._offset
-            x0 = int(max(0, min(max(0, src.shape[1] - sw), cx - sw / 2)))
-            y0 = int(max(0, min(max(0, src.shape[0] - sh), cy - sh / 2)))
-            arr = src[y0:y0 + sh, x0:x0 + sw]
-            if scale >= 1:
-                f = max(1, int(round(scale)))
-                arr = np.repeat(np.repeat(arr, f, axis=0), f, axis=1)
-                scale = float(f)
-            else:
-                s = max(1, int(round(1 / scale)))
-                arr = arr[::s, ::s]
-                scale = 1.0 / s
+            x0 = max(0.0, min(wide - out_w / scale, cx - out_w / (2 * scale)))
+            y0 = max(0.0, min(tall - out_h / scale, cy - out_h / (2 * scale)))
+        arr = preview.sample(src, scale, x0, y0, out_w, out_h)
         try:
             rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get(),
                                  cuts=self._cuts())

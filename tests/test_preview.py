@@ -242,3 +242,59 @@ def test_the_lookup_path_matches_the_arithmetic_it_replaced(dtype):
     x = preview.normalise(image, cuts=cuts)
     by_hand = np.clip((1.0 - x) * 255.0 + 0.5, 0, 255).astype(np.uint8)
     assert np.array_equal(through_lut, by_hand)
+
+
+# -- sampling at any scale --------------------------------------------------
+
+
+def test_sampling_at_one_to_one_is_the_pixels_themselves():
+    image = rgbi(40, 60)
+    assert np.array_equal(preview.sample(image, 1.0, 0, 0, 20, 15), image[:15, :20])
+
+
+def test_sampling_at_half_matches_striding():
+    image = rgbi(40, 60)
+    assert np.array_equal(preview.sample(image, 0.5, 0, 0, 30, 20),
+                          image[:40:2, :60:2])
+
+
+def test_sampling_above_one_replicates_rather_than_inventing():
+    """A scan is a measurement. Upscaling shows bigger pixels, not guesses."""
+    image = rgbi(10, 12)
+    out = preview.sample(image, 2.0, 0, 0, 8, 6)
+    assert np.array_equal(out[0, 0], out[0, 1])
+    assert np.array_equal(out[0, 0], image[0, 0])
+
+
+def test_the_offset_is_honoured():
+    image = rgbi(30, 40)
+    out = preview.sample(image, 1.0, 7, 5, 4, 3)
+    assert np.array_equal(out, image[5:8, 7:11])
+
+
+@pytest.mark.parametrize("scale", [0.31, 0.437, 0.79, 1.0, 1.37, 2.63])
+def test_any_scale_gives_the_size_asked_for(scale):
+    """Whole-number decimation could only show 50%, 100%, 200%, so a smooth
+    zoom arrived on screen as jumps between them."""
+    image = rgbi(200, 300)
+    out = preview.sample(image, scale, 0, 0, 120, 90)
+    assert out.shape == (90, 120, 4)
+
+
+def test_sampling_past_the_edge_clamps_rather_than_wrapping():
+    image = rgbi(20, 20)
+    out = preview.sample(image, 1.0, 15, 15, 20, 20)
+    assert out.shape == (20, 20, 4)
+    assert np.array_equal(out[-1, -1], image[-1, -1])
+
+
+def test_an_empty_window_is_empty_not_an_error():
+    assert preview.sample(rgbi(10, 10), 1.0, 0, 0, 0, 0).size == 0
+
+
+def test_narrowing_the_columns_does_not_change_the_pixels():
+    """The optimisation that keeps a zoomed view off 142 MB of memory has to be
+    invisible in the result."""
+    image = rgbi(60, 200, seed=6)
+    out = preview.sample(image, 1.0, 120, 10, 30, 20)
+    assert np.array_equal(out, image[10:30, 120:150])
