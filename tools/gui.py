@@ -83,11 +83,15 @@ POLL_MS = 120
 #: How often the picture may be redrawn, in milliseconds. One frame at 60 Hz.
 _FRAME_MS = 16
 
-#: While a gesture is running the picture is drawn at half resolution and
-#: enlarged by Tk, which costs a quarter of the pixels and about a third of the
-#: time. On a 3600 dpi frame that is 32 ms a frame against 14. It is visibly
-#: coarser, so it lasts only as long as the hand is moving.
-_GESTURE_FACTOR = 2
+#: While a gesture is running the picture is drawn at a third of the size and
+#: enlarged by Tk, which is a ninth of the pixels to sample and render. It is
+#: visibly coarser, and lasts only as long as the hand is moving -- a sharp
+#: frame follows the moment it stops.
+#:
+#: Three rather than two because the measurement said so: a moving frame of a
+#: 3600 dpi scan costs 16-23 ms at two and 14-20 at three, and past three the
+#: blocks are large enough to see while the gain keeps shrinking.
+_GESTURE_FACTOR = 3
 #: How long after the last gesture event the full-quality frame is drawn.
 _SETTLE_MS = 130
 
@@ -104,6 +108,11 @@ class ScannerGui:
         self.busy = False
         self.closing = False
         self._photo: tk.PhotoImage | None = None
+        self._small: tk.PhotoImage | None = None   # the coarse frame, enlarged
+        self._photo_size = None
+        self._small_size = None
+        self._item = None                    # the one canvas item showing it
+        self._item_photo = None
         self._thumbs: list[tk.PhotoImage] = []
         self._full = None                    # full-resolution pixels, for 1:1
         self._full_seq = None
@@ -1508,13 +1517,15 @@ class ScannerGui:
     def _redraw(self, quick: bool = False) -> None:
         self._redraw_job = None
         self._drawn_at = time.monotonic()
-        self.canvas.delete("all")
+        self.canvas.delete("note")
         self._shown = None
         src = self._source()
         w = max(1, self.canvas.winfo_width())
         h = max(1, self.canvas.winfo_height())
         if src is None:
-            self.canvas.create_text(w // 2, h // 2, fill="#666",
+            self.canvas.delete("picture")
+            self._item = None
+            self.canvas.create_text(w // 2, h // 2, fill="#666", tags="note",
                                     text="nothing scanned yet")
             return
 
@@ -1542,14 +1553,13 @@ class ScannerGui:
             rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get(),
                                  cuts=self._cuts())
         except ValueError as exc:
-            self.canvas.create_text(w // 2, h // 2, fill="#888", text=str(exc))
+            self.canvas.create_text(w // 2, h // 2, fill="#888", tags="note",
+                                    text=str(exc))
             return
-        photo = tk.PhotoImage(data=preview.to_ppm(rgb))
-        if coarse > 1:
-            photo = photo.zoom(coarse, coarse)
-        self._photo = photo
-        self.canvas.create_image(left, top, anchor="nw", image=self._photo)
-        self._shown = (photo.width(), photo.height(), scale, x0, y0, left, top)
+        photo = self._paint(rgb, coarse)
+        self._place(photo, left, top)
+        drawn_w, drawn_h = self._photo_size
+        self._shown = (drawn_w, drawn_h, scale, x0, y0, left, top)
         self.v_zoomtext.set("fit" if self._zoom <= 0
                             else f"{scale / self._finest() * 100:.0f}%")
         if self._zoom > 0 and (rgb.shape[1] > w or rgb.shape[0] > h):
@@ -1559,12 +1569,51 @@ class ScannerGui:
         if self.v_aim.get() and self.current.kind == "prescan":
             dw, left = self._shown[0], self._shown[5]
             for x in (int(left), int(left + dw)):
-                self.canvas.create_line(x, 0, x, h, fill="#e8b64c", dash=(4, 4))
-            self.canvas.create_line(w // 2, 0, w // 2, h, fill="#555", dash=(2, 6))
+                self.canvas.create_line(x, 0, x, h, fill="#e8b64c", dash=(4, 4),
+                                        tags="note")
+            self.canvas.create_line(w // 2, 0, w // 2, h, fill="#555",
+                                    dash=(2, 6), tags="note")
             self.canvas.create_text(
-                w // 2, 12, fill="#e8b64c",
+                w // 2, 12, fill="#e8b64c", tags="note",
                 text="click an edge of the picture -- it moves to the nearer "
                      "side of the aperture")
+
+    def _paint(self, rgb, coarse: int) -> tk.PhotoImage:
+        """The rendered pixels, in a Tk image, reusing the one from last time.
+
+        Building a fresh `PhotoImage` every frame and handing it to a fresh
+        canvas item was two thirds of the cost of a moving frame -- 6.5 ms in
+        `create_image` alone, because binding an image Tk has not seen before
+        makes it do the work again from scratch. Writing into an image it
+        already knows, at a size it already is, costs a fraction of that.
+        """
+        ppm = preview.to_ppm(rgb)
+        tall, wide = rgb.shape[0], rgb.shape[1]
+        if coarse > 1:
+            self._small, self._small_size = _sized(
+                self._small, self._small_size, wide, tall)
+            self._small.put(ppm)
+            self._photo, self._photo_size = _sized(
+                self._photo, self._photo_size, wide * coarse, tall * coarse)
+            # Tk enlarges in place, into an image that already exists, rather
+            # than `zoom()` which returns a new one every time.
+            self.root.call(str(self._photo), "copy", str(self._small),
+                           "-zoom", coarse, coarse)
+        else:
+            self._photo, self._photo_size = _sized(
+                self._photo, self._photo_size, wide, tall)
+            self._photo.put(ppm)
+        return self._photo
+
+    def _place(self, photo: tk.PhotoImage, left: float, top: float) -> None:
+        """Show `photo` at `(left, top)`, keeping the one canvas item."""
+        if self._item is None or photo is not self._item_photo:
+            self.canvas.delete("picture")
+            self._item = self.canvas.create_image(
+                left, top, anchor="nw", image=photo, tags="picture")
+            self._item_photo = photo
+        else:
+            self.canvas.coords(self._item, left, top)
 
     def _to_source(self, event: tk.Event):
         """Canvas coordinates to source-image pixels, or None if off-image."""
@@ -1772,6 +1821,19 @@ def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
     size = abs(delta)
     step = size if size < 20 else max(1, size // 120)
     return (-step if delta > 0 else step), bool(event.state & 0x0001)
+
+
+def _sized(photo, size, width: int, height: int):
+    """`photo` if it is already this size, otherwise a new one that is.
+
+    The size is remembered on this side rather than asked for: `width()` and
+    `height()` are round trips into Tk, and four of them a frame is not free
+    when a frame is aiming at sixteen milliseconds.
+    """
+    if photo is not None and size == (width, height):
+        return photo, size
+    made = tk.PhotoImage(width=max(1, width), height=max(1, height))
+    return made, (width, height)
 
 
 def _numbers(text: str) -> list[float] | None:
