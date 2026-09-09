@@ -40,3 +40,6 @@ probe/
 
 # local Claude config: machine-specific paths and permissions
 .claude/
+
+# Where `make run-demo` writes, so trying the window out leaves no trace.
+demo/

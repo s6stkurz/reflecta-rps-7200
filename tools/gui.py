@@ -1297,24 +1297,40 @@ def _duration(seconds: float) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
+#: Where a demo run writes. It reads the real library for pixels -- that is the
+#: point of it -- but it must not file into it: a demo scan is not a scan, and
+#: an afternoon of trying the window out would leave the library full of
+#: entries whose raw bytes belong to some other photograph.
+DEMO_ROOT = Path("demo")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--demo", action="store_true",
                     help="drive the window from stored library entries, with "
-                         "no scanner on the bus")
-    ap.add_argument("--library", default="library",
-                    help="where scans are filed (default: library)")
-    ap.add_argument("--reference", default="calibration/shading.npz")
-    ap.add_argument("--rolls", default="rolls")
+                         "no scanner on the bus; writes under demo/")
+    ap.add_argument("--library", default=None,
+                    help="where scans are filed (default: library, or "
+                         "demo/library with --demo)")
+    ap.add_argument("--demo-source", default="library",
+                    help="which library --demo shows pictures from")
+    ap.add_argument("--reference", default=None)
+    ap.add_argument("--rolls", default=None)
     ap.add_argument("--out", default=None,
                     help="also write a TIFF of every scan here")
     args = ap.parse_args()
 
-    session = ScanSession(root=args.library, reference=args.reference,
-                          rolls=args.rolls, out_dir=args.out)
+    home = DEMO_ROOT if args.demo else Path(".")
+    session = ScanSession(
+        root=args.library or str(home / "library"),
+        reference=args.reference or str(home / "calibration" / "shading.npz"),
+        rolls=args.rolls or str(home / "rolls"),
+        out_dir=args.out,
+    )
     if args.demo:
         from rps7200.demo import DemoScanner
-        session._open_scanner = lambda: DemoScanner(args.library)
+        source = args.demo_source
+        session._open_scanner = lambda: DemoScanner(source)
 
     root = tk.Tk()
     ScannerGui(root, session, demo=args.demo)
