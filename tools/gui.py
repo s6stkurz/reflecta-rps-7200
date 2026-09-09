@@ -1518,10 +1518,13 @@ class ScannerGui:
         pixels, detail = self._pixels()
         if pixels is None:
             return
-        # `detail` is how much finer the sampled array is than the picture the
-        # view is measured against, so the same view reads the same place out
-        # of either one.
-        arr = preview.sample(pixels, scale * detail / coarse,
+        # `detail` is how many of the sampled array's pixels make up one of the
+        # picture's, so the start is that many times further in and a step
+        # across the output covers that many more of them -- the scale is
+        # divided by it, not multiplied. Multiplying sampled a region sixteen
+        # times too small and blew it up, and because every coordinate stayed
+        # consistent with every other, it looked right to everything but an eye.
+        arr = preview.sample(pixels, scale / detail / coarse,
                              x0 * detail, y0 * detail,
                              max(1, out_w // coarse), max(1, out_h // coarse))
         try:

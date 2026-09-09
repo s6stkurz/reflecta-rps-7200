@@ -298,3 +298,46 @@ def test_narrowing_the_columns_does_not_change_the_pixels():
     image = rgbi(60, 200, seed=6)
     out = preview.sample(image, 1.0, 120, 10, 30, 20)
     assert np.array_equal(out, image[10:30, 120:150])
+
+
+def test_the_same_view_reads_the_same_place_from_a_finer_copy():
+    """The window measures the view against a reduced copy and samples either
+    that or the full-resolution scan. Converting between them is one rule -- the
+    start is `detail` times further in, the scale `detail` times smaller -- and
+    getting it backwards samples a region `detail` squared too small and blows
+    it up. Every coordinate stays consistent with every other when that happens,
+    so only comparing what the two actually show catches it.
+
+    A smooth picture, so that nearest neighbour landing on a different pixel of
+    the finer array is a small difference rather than a random one.
+    """
+    y, x = np.mgrid[0:400, 0:600]
+    smooth = ((x * 40 + y * 25) % 60000).astype(np.uint16)
+    fine = np.repeat(smooth[:, :, None], 3, axis=2)
+    detail = 4
+    coarse = np.ascontiguousarray(fine[::detail, ::detail])
+
+    for scale, x0, y0 in ((1.5, 20.0, 12.0), (0.5, 5.0, 3.0), (3.0, 40.0, 30.0)):
+        from_coarse = preview.sample(coarse, scale, x0, y0, 40, 30)
+        from_fine = preview.sample(fine, scale / detail,
+                                   x0 * detail, y0 * detail, 40, 30)
+        assert from_coarse.shape == from_fine.shape
+        apart = np.abs(from_coarse.astype(int) - from_fine.astype(int)).mean()
+        assert apart < 800, f"scale {scale}: {apart:.0f} apart -- a different place"
+
+
+def test_getting_the_conversion_backwards_lands_somewhere_else():
+    """A guard on the guard: the wrong rule must not accidentally agree."""
+    y, x = np.mgrid[0:400, 0:600]
+    smooth = ((x * 40 + y * 25) % 60000).astype(np.uint16)
+    fine = np.repeat(smooth[:, :, None], 3, axis=2)
+    detail = 4
+    coarse = np.ascontiguousarray(fine[::detail, ::detail])
+
+    right = preview.sample(fine, 1.5 / detail, 80.0, 48.0, 40, 30)
+    wrong = preview.sample(fine, 1.5 * detail, 80.0, 48.0, 40, 30)
+    reference = preview.sample(coarse, 1.5, 20.0, 12.0, 40, 30)
+    # Measured: the right rule lands 64 from the reference, the wrong one
+    # 2797 -- it samples a six-pixel strip where a hundred were wanted.
+    assert np.abs(right.astype(int) - reference.astype(int)).mean() < 800
+    assert np.abs(wrong.astype(int) - reference.astype(int)).mean() > 1500
