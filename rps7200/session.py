@@ -51,6 +51,22 @@ from .library import FilmNotes
 #: however few lines were asked for. Measured at 212-227 s across resolutions.
 INFRARED_FLOOR_S = 212.0
 
+#: What one SLIDE sub-frame command can move, from the calibrated law:
+#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and param 8.
+FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
+FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
+               + DirectScanner.OVERHEAD_MM)
+
+#: How many sub-frame commands one move may use. The law itself holds over
+#: twenty steps and goes sub-linear past them, but the guard sits lower: a
+#: sub-frame move asked to travel further than this is a whole-frame job, and
+#: SLIDE_NEXT/SLIDE_PREV do that properly.
+MAX_FINE_STEPS = 8
+
+#: Where prescans go inside the operator's output folder. They are framing
+#: passes, not photographs, and mixing them in with the scans buries them.
+PRESCAN_SUBDIR = "prescans"
+
 #: Lines per inch of transport travel, for turning dpi into a line count.
 _LINES_PER_DPI = 6888 / 7200
 
@@ -239,8 +255,9 @@ class FrameWriter:
                 self.queue.task_done()
 
     def _write(self, job: dict) -> None:
-        if job.get("path"):
-            tiff.write(str(job["path"]), job["image"], resolution=job["dpi"])
+        for path in job.get("paths") or ():
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            tiff.write(str(path), job["image"], resolution=job["dpi"])
         entry = None
         if job["library"]:
             entry = library.save(
@@ -493,6 +510,7 @@ class ScanSession:
         self._file(
             seq=seq,
             number=0,
+            kind="prescan",
             image=image,
             meta={"resolution_dpi": job.resolution, "channel_order": ["R", "G", "B"]},
             notes=job.notes,
@@ -529,15 +547,35 @@ class ScanSession:
             return f"at frame position {landed}"
 
         if job.millimetres:
-            out = self._scanner.nudge(job.millimetres)
-            asked = out.get("asked_mm", job.millimetres)
+            # One SLIDE command tops out at ~1.01 mm, so anything further is
+            # several of them. Doing that here rather than making the caller
+            # loop is what stops a request for 7 mm quietly becoming a single
+            # 1.01 mm move -- which is exactly what it used to do, so every
+            # click on the prescan moved the film the same distance.
+            want = abs(job.millimetres)
+            sign = 1.0 if job.millimetres > 0 else -1.0
+            steps = max(1, -(-int(want * 1000) // int(FINE_MAX_MM * 1000)))
+            if steps > MAX_FINE_STEPS:
+                return (f"{want:.2f} mm needs {steps} sub-frame moves; past "
+                        f"{MAX_FINE_STEPS} the calibration goes sub-linear and "
+                        "the distance would not be what was asked for -- use "
+                        "the slide buttons for anything this far")
+            moved = 0.0
+            done = 0
+            while want - moved >= FINE_MIN_MM * 0.5 and done < steps:
+                if self._stop.is_set():
+                    break
+                out = self._scanner.nudge(sign * min(FINE_MAX_MM, want - moved))
+                moved += abs(out.get("asked_mm", 0.0))
+                done += 1
             # The frame counter does not see a sub-frame move, so the position
             # is reported as whatever it still says rather than pretending it
             # changed. Only a prescan can confirm a nudge landed.
             position = self._scanner.position()
             self._emit("transport", done=-1 if position is None else position)
-            return (f"nudged {asked:+.2f} mm -- the frame counter does not see "
-                    "this; prescan to check it landed")
+            how = f" in {done} moves" if done > 1 else ""
+            return (f"moved {sign * moved:+.2f} mm{how} -- the frame counter "
+                    "does not see this; prescan to check it landed")
         return "nothing to move"
 
     def _roll(self, job: Roll) -> str | None:
@@ -592,6 +630,7 @@ class ScanSession:
                             replace(job.notes,
                                     frame=job.notes.frame or f"{name}-{number:02d}"),
                             tuple(job.tags) + ("gui", "roll", "prescan", name),
+                            kind="prescan",
                         )
                 if rf.error:
                     self._emit("log", text=f"frame {number}: {rf.error}")
@@ -680,14 +719,18 @@ class ScanSession:
         tags: tuple[str, ...],
         prescan: np.ndarray | None = None,
         path: Path | None = None,
+        kind: str = "scan",
     ) -> None:
         if self._writer is None:
             return
-        if path is None and self.out_dir is not None:
-            self.out_dir.mkdir(parents=True, exist_ok=True)
-            dpi = meta.get("resolution_dpi") or 0
-            stamp = time.strftime("%Y%m%dT%H%M%S")
-            path = self.out_dir / f"{stamp}_{dpi}dpi_{seq:03d}.tif"
+        # A roll frame has its own place in the roll directory *and* wants a
+        # copy wherever the operator asked for one. Setting `path` used to skip
+        # the output folder entirely, so a whole roll went missing from it.
+        paths = [path] if path is not None else []
+        if self.out_dir is not None:
+            where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
+                     else self.out_dir)
+            paths.append(where / self._out_name(seq, number, meta, kind))
         capture = self._scanner.capture_record()
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             shape = image.shape
@@ -719,7 +762,7 @@ class ScanSession:
         self._writer.submit(
             seq=seq,
             number=number,
-            path=path,
+            paths=paths,
             image=image,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
@@ -730,6 +773,17 @@ class ScanSession:
             inquiry=getattr(self._scanner, "_inquiry", None),
             capture=capture,
         )
+
+    def _out_name(
+        self, seq: int, number: int, meta: dict[str, Any], kind: str
+    ) -> str:
+        """A filename that sorts by time and says what the pass was."""
+        dpi = meta.get("resolution_dpi") or 0
+        channels = meta.get("channels") or len(meta.get("channel_order") or "")
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        frame = f"_frame{number:02d}" if number else ""
+        ir = "_ir" if channels and int(channels) >= 4 else ""
+        return f"{stamp}{frame}_{dpi}dpi{ir}_{seq:03d}.tif"
 
 
 def _describe(job: Job) -> str:

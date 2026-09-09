@@ -20,7 +20,9 @@ scan_roll = load_tool("scan_roll")
 def job(number, path, library=None, image=None, raw=b"raw bytes"):
     return dict(
         number=number,
-        path=path,
+        # A frame can want several destinations now -- its place in the roll
+        # and a copy wherever the operator asked for one.
+        paths=[path] if path is not None else [],
         dpi=600,
         image=np.zeros((8, 8, 3), np.uint16) if image is None else image,
         meta={"resolution_dpi": 600, "channels": 3},
@@ -64,9 +66,15 @@ def test_a_frame_is_filed_in_the_library_with_its_raw_bytes(tmp_path):
 
 def test_one_unwritable_frame_does_not_end_the_roll(tmp_path):
     """A roll runs for hours; a frame that cannot be filed costs that frame."""
+    # A missing directory is no longer a failure -- the writer creates the
+    # output folder it was pointed at. A *file* where a directory has to be is,
+    # and it is the same kind of accident.
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+
     writer = scan_roll.FrameWriter()
     writer.submit(**job(1, tmp_path / "frame01.tif"))
-    writer.submit(**job(2, tmp_path / "no-such-dir" / "frame02.tif"))
+    writer.submit(**job(2, blocker / "frame02.tif"))
     writer.submit(**job(3, tmp_path / "frame03.tif"))
     writer.finish()
 

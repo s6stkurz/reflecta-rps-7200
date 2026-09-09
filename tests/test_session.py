@@ -428,10 +428,12 @@ def test_the_writer_collects_failures_rather_than_raising(tmp_path):
     frame, not the thirty after it."""
     done: queue.Queue = queue.Queue()
     writer = session.FrameWriter(on_done=lambda *a: done.put(a))
-    writer.submit(number=1, path=None, image=picture(), meta={},
+    writer.submit(number=1, paths=[], image=picture(), meta={},
                   dpi=600, library=None, film=FilmNotes(), tags=[],
                   prescan=None, inquiry=None, capture={}, seq=1)
-    writer.submit(number=2, path=tmp_path / "nope" / "deep" / "x.tif",
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    writer.submit(number=2, paths=[blocker / "no.tif"],
                   image=picture(), meta={}, dpi=600, library=None,
                   film=FilmNotes(), tags=[], prescan=None, inquiry=None,
                   capture={}, seq=2)
@@ -447,7 +449,7 @@ def test_the_writer_runs_off_the_calling_thread():
         seen["thread"] = threading.current_thread().name
 
     writer = session.FrameWriter(on_done=note)
-    writer.submit(number=1, path=None, image=picture(), meta={}, dpi=600,
+    writer.submit(number=1, paths=[], image=picture(), meta={}, dpi=600,
                   library=None, film=FilmNotes(), tags=[], prescan=None,
                   inquiry=None, capture={}, seq=1)
     writer.finish()

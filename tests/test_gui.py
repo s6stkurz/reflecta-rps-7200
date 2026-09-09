@@ -80,21 +80,44 @@ def test_the_window_files_its_own_entries_rather_than_letting_the_driver():
 # -- aiming the film at a point on the prescan ------------------------------
 
 
-def test_aiming_at_the_centre_asks_for_no_movement():
-    assert gui.aim_millimetres(0.5) == pytest.approx(0.0, abs=1e-9)
+def test_a_point_already_at_its_edge_asks_for_no_movement():
+    assert gui.aim_millimetres(0.0) == pytest.approx(0.0, abs=1e-9)
+    assert gui.aim_millimetres(1.0) == pytest.approx(0.0, abs=1e-9)
 
 
-def test_aiming_left_and_right_are_mirror_images():
+def test_a_point_goes_to_the_edge_it_is_nearer():
+    """Clicking is for putting a border of the picture against a border of the
+    aperture. Aiming at the middle was the wrong tool: what you can see and
+    want to place is the edge of the frame."""
+    left = gui.aim_millimetres(0.25)
+    right = gui.aim_millimetres(0.75)
+    # A quarter of the aperture in each case, in opposite directions.
+    assert abs(left) == pytest.approx(gui.APERTURE_MM * 0.25, abs=0.01)
+    assert abs(right) == pytest.approx(gui.APERTURE_MM * 0.25, abs=0.01)
+    assert left == pytest.approx(-right, abs=1e-9)
+
+
+def test_the_two_halves_are_mirror_images():
     """The arithmetic must not favour a direction; only the transport does."""
-    assert gui.aim_millimetres(0.25) == pytest.approx(-gui.aim_millimetres(0.75))
+    for f in (0.1, 0.2, 0.3, 0.45):
+        assert gui.aim_millimetres(f) == pytest.approx(
+            -gui.aim_millimetres(1 - f), abs=1e-9)
 
 
-def test_the_edges_are_half_an_aperture_away():
-    """36.49 mm across the window, so an edge is 18.2 mm from centred -- far
-    beyond anything a sub-frame move can deliver, which is why the dialog says
-    what it will actually do rather than promising the click."""
-    assert gui.aim_millimetres(0.0) == pytest.approx(gui.APERTURE_MM / 2, abs=0.01)
-    assert gui.aim_millimetres(1.0) == pytest.approx(-gui.APERTURE_MM / 2, abs=0.01)
+def test_the_furthest_a_click_can_ask_for_is_half_the_aperture():
+    """Clicking the middle means "send this to an edge", which is the longest
+    trip on offer -- and further than the sub-frame law can be trusted, which
+    is why the dialog refuses rather than delivering something else."""
+    worst = max(abs(gui.aim_millimetres(f)) for f in (0.499, 0.501))
+    assert worst == pytest.approx(gui.APERTURE_MM / 2, abs=0.05)
+    assert worst > gui.MAX_TRAVEL_MM, "so the dialog has to refuse it"
+
+
+def test_a_click_near_an_edge_is_within_reach():
+    """Which is the case this is for: the picture's border is near the
+    aperture's, and a few millimetres puts them together."""
+    assert abs(gui.aim_millimetres(0.05)) < gui.MAX_TRAVEL_MM
+    assert abs(gui.aim_millimetres(0.95)) < gui.MAX_TRAVEL_MM
 
 
 def test_the_aperture_matches_the_transport_window():
@@ -103,11 +126,29 @@ def test_the_aperture_matches_the_transport_window():
     assert gui.APERTURE_MM == pytest.approx(36.49, abs=0.01)
 
 
-def test_a_click_one_pixel_off_centre_is_below_what_the_hardware_can_do():
+def test_one_pixel_of_click_is_finer_than_the_transport_can_move():
     """At 300 dpi the prescan is ~431 px across, so one pixel is 0.085 mm --
     a third of the smallest step. Clicking precisely is not the hard part."""
-    per_pixel = abs(gui.aim_millimetres(0.5 + 1 / 431))
+    per_pixel = gui.APERTURE_MM / 431
     assert per_pixel < gui.FINE_STEP_MM
+
+
+def test_a_move_reaches_the_worst_real_misframing_and_not_much_further():
+    """One command is 1.01 mm. The aperture slack a drifted frame shows is
+    about 0.5 mm and the worst mis-framing on record is the 6 mm CyberView lost
+    on one frame of its own strip. Reaching much past that would mean doing
+    badly, in twenty nudges, what one slide button does properly."""
+    assert gui.MAX_TRAVEL_MM > 6.0
+    assert gui.MAX_TRAVEL_MM < gui.APERTURE_MM / 4
+
+
+def test_the_window_and_the_session_agree_on_how_far_is_too_far():
+    """Two different numbers would mean the window offering a move the session
+    then refuses, which reads as the button being broken."""
+    from rps7200 import session as s
+    assert gui.MAX_FINE_STEPS == s.MAX_FINE_STEPS
+    assert gui.MAX_FINE_MM == pytest.approx(s.FINE_MAX_MM, abs=0.01)
+    assert gui.FINE_STEP_MM == pytest.approx(s.FINE_MIN_MM, abs=0.01)
 
 
 # -- the exposure field, which parses more than one shape -------------------
