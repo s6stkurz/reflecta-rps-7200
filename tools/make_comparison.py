@@ -19,7 +19,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.par
 import numpy as np
 from PIL import Image
 
-from rps7200 import tiff
+from rps7200 import preview, tiff
 from rps7200.direct import (
     destripe,
     find_column_defects,
@@ -78,13 +78,14 @@ def worst_colour(image: np.ndarray, window: int = 25) -> tuple[float, int]:
 
 
 def invert(image: np.ndarray) -> np.ndarray:
-    """Plain per-channel inversion, enough to judge by eye. Use NegPy for real work."""
-    x = image[..., :3].astype(np.float64)
-    out = np.empty_like(x)
-    for c in range(3):
-        lo, hi = np.percentile(x[..., c], [0.5, 99.5])
-        out[..., c] = 65535 - np.clip((x[..., c] - lo) / (hi - lo), 0, 1) * 65535
-    return np.clip(out, 0, 65535).astype(np.uint16)
+    """Plain per-channel inversion, enough to judge by eye. Use NegPy for real work.
+
+    The stretch itself lives in `rps7200.preview` so that the files written here
+    and the GUI's on-screen preview are the same transform -- two copies of "how
+    a negative is made judgeable" would drift, and Stefan judges by eye.
+    """
+    x = preview.normalise(image[..., :3])
+    return np.clip((1.0 - x) * 65535, 0, 65535).astype(np.uint16)
 
 
 def main() -> None:

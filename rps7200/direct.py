@@ -264,11 +264,19 @@ class DirectScanner:
     #: library -- which it did, once, before this existed.
     DEBUG_ROOT_ENV = "RPS7200_DEBUG_ROOT"
 
+    #: Where a display listens in. Declared on the class as well as set in
+    #: __init__, because the test doubles stand in for a scanner without
+    #: running its constructor and would otherwise not have them at all.
+    log_hook: Callable[[str], None] | None = None
+    progress_hook: Callable[[int, int], None] | None = None
+
     def __init__(
         self,
         transport: Transport | None = None,
         verbose: bool = False,
         debug: bool | None = None,
+        log_hook: Callable[[str], None] | None = None,
+        progress_hook: Callable[[int, int], None] | None = None,
     ):
         # `debug` files every scan in the library automatically. Off by default
         # so ordinary use is not burdened; see the class docstring and
@@ -285,6 +293,10 @@ class DirectScanner:
         self._debug_pending: list[dict[str, Any]] = []
         self._debug_spool: Path | None = None
         self.verbose = verbose
+        # Where a display listens. Both are host-side and optional: nothing the
+        # device is sent changes, which is why PROTOCOL_REVISION stays put.
+        self.log_hook = log_hook
+        self.progress_hook = progress_hook
         self._own_transport = transport is None
         self.t = transport or Transport(verbose=verbose)
         self._scanning = False
@@ -301,6 +313,14 @@ class DirectScanner:
     def _log(self, message: str) -> None:
         if self.verbose:
             print(f"[scan] {message}")
+        # A UI wants these lines without capturing stdout. Swallowing the hook's
+        # own failures is deliberate: a broken display must not take down the
+        # scan it is displaying, least of all mid-read.
+        if self.log_hook is not None:
+            try:
+                self.log_hook(message)
+            except Exception:                            # noqa: BLE001
+                pass
 
     # -- the session's calibration -----------------------------------------
     #
@@ -887,6 +907,35 @@ class DirectScanner:
         data = bytes([action, param, 0x00, value])
         self.t.command(_cmd(SCSI_SLIDE, 4), data=data)
 
+    def _whole_frames(
+        self, action: int, steps: int, timeout: float, poll: float, verb: str
+    ) -> int | None:
+        """Move whole frames and wait until `READ_STATE` says it happened.
+
+        Waiting is the point, and it is the same waiting in both directions.
+        `READ_STATE` byte 2 is the transport position, and it is the only signal
+        in any capture that says the film has actually moved: it stepped
+        0 -> 1 -> 2 -> 3 -> 4 across the strip session's four advances, and
+        stayed put through a session that never advanced. The new value showed
+        up 1.6 s to 6.2 s later, and the READ_STATE issued immediately after the
+        command came back empty every time -- so the poll has to survive a
+        failed read rather than treat it as the end.
+        """
+        before = self.position()
+        self.slide(action, param=0x01, value=steps)
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(poll)
+            now = self.position()
+            if now is not None and now != before:
+                self._log(f"{verb} to position {now}")
+                return now
+        self._log(
+            f"no movement: position still {before} after {timeout:.0f}s"
+        )
+        return None
+
     def advance(
         self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5
     ) -> int | None:
@@ -896,32 +945,31 @@ class DirectScanner:
         ``600_ICE_FILM_STRIP_5.pcapng`` (with ``04 01 00 02`` once, for reasons
         the capture does not explain -- the position still moved by one).
 
-        Waiting is the point. `READ_STATE` byte 2 is the transport position, and
-        it is the only signal in any capture that says the film has actually
-        moved: it stepped 0 -> 1 -> 2 -> 3 -> 4 across the strip session's four
-        advances, and stayed put through a session that never advanced. The new
-        value showed up 1.6 s to 6.2 s later, and the READ_STATE issued
-        immediately after the command came back empty every time -- so the poll
-        has to survive a failed read rather than treat it as the end.
-
         Returns the new position, or None if it never moved -- which is how a
         roll ends.
         """
-        before = self.position()
-        self.slide(SLIDE_NEXT, param=0x01, value=steps)
-
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            time.sleep(poll)
-            now = self.position()
-            if now is not None and now != before:
-                self._log(f"advanced to position {now}")
-                return now
-        self._log(
-            f"no advance: position still {before} after {timeout:.0f}s -- "
-            "treating this as the end of the film"
+        position = self._whole_frames(
+            SLIDE_NEXT, steps, timeout, poll, "advanced"
         )
-        return None
+        if position is None:
+            self._log("treating that as the end of the film")
+        return position
+
+    def retreat(
+        self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5
+    ) -> int | None:
+        """Move the film back by one frame, and wait until it has.
+
+        ``05 01 00 01``, the mirror of :meth:`advance`. This is what the vendor
+        sends to rewind a finished roll, one frame per step, and it has been
+        driven here five times in a row with the position stepping down by
+        exactly one each time.
+
+        Unlike an advance, a refusal is not the end of anything -- it usually
+        means the film is already at the first frame. Returns the new position,
+        or None if it did not move.
+        """
+        return self._whole_frames(SLIDE_PREV, steps, timeout, poll, "went back")
 
     def position(self) -> int | None:
         """Where the transport has the film, or None if it would not say.
@@ -1198,6 +1246,13 @@ class DirectScanner:
             chunks.append(chunk)
             got += n
             self._log(f"{got}/{total_lines} lines")
+            # Structured, so a progress bar does not have to parse the line
+            # above and then go quietly dead the day it is reworded.
+            if self.progress_hook is not None:
+                try:
+                    self.progress_hook(got, total_lines)
+                except Exception:                        # noqa: BLE001
+                    pass
 
         blob = b"".join(chunks)
         if keep_raw:
@@ -1252,7 +1307,10 @@ class DirectScanner:
     # -- prescan and framing -----------------------------------------------
 
     def prescan(
-        self, resolution: int = 300, frame: tuple[int, int, int, int] | None = None
+        self,
+        resolution: int = 300,
+        frame: tuple[int, int, int, int] | None = None,
+        keep_raw: bool = False,
     ) -> tuple[np.ndarray, ScanParameters]:
         """Low-resolution RGB pass over the full transport.
 
@@ -1273,6 +1331,7 @@ class DirectScanner:
             depth=DEPTH_8,
             frame=frame or FULL_FRAME,
             shading=False,
+            keep_raw=keep_raw,
         )
         params = ScanParameters(
             width=meta["width"],
@@ -2150,6 +2209,7 @@ class DirectScanner:
         skip: int = 0,
         keep_raw: bool = True,
         max_failures: int = 3,
+        should_stop: Callable[[], bool] | None = None,
         scan_frame: tuple[int, int, int, int] | None = None,
         dry_run: bool = False,
         correct: bool = False,
@@ -2226,13 +2286,23 @@ class DirectScanner:
             index += 1
 
         while frames is None or index < skip + frames:
+            # The frame has not begun here, so this is where stopping is
+            # cheapest -- and it covers the advance, which takes 2-7 seconds
+            # during which a stop would otherwise not be looked at again until
+            # the frame after it had been prescanned. At 3600 dpi RGBI that is
+            # six minutes and 250 MB spent after the operator said stop.
+            if should_stop is not None and should_stop():
+                self._log("stopping before the next frame, as asked")
+                return
             started = time.monotonic()
             prescan_image = None
             marks: dict[str, Any] = {}
             position = self.position()
 
             try:
-                prescan_image, _ = self.prescan(resolution=prescan_resolution)
+                prescan_image, _ = self.prescan(
+                    resolution=prescan_resolution, keep_raw=keep_raw
+                )
                 contrast = frame_contrast(prescan_image)
                 marks = dict(registration(prescan_image, window))
                 marks["contrast"] = round(contrast, 4)
@@ -2338,5 +2408,12 @@ class DirectScanner:
             index += 1
             if frames is not None and index >= skip + frames:
                 break
+            # Checked here, immediately before the film moves, because this is
+            # the last instant at which stopping is free. A caller that only
+            # checks after consuming a frame has already let this advance and
+            # the prescan after it happen.
+            if should_stop is not None and should_stop():
+                self._log("stopping before the next advance, as asked")
+                return
             if self.advance() is None:
                 return

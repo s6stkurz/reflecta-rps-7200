@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from rps7200.direct import (
+    SLIDE_PREV,
     FULL_FRAME,
     METER_EACH,
     METER_NONE,
@@ -173,6 +174,7 @@ class FakeRoll(DirectScanner):
         self.frames_scanned = []
         self.metered_for_infrared = []
         self.advances = 0
+        self.prescan_keep_raw = []
 
     # -- the device
     def get_gain_offset(self):
@@ -192,7 +194,8 @@ class FakeRoll(DirectScanner):
         return self.at
 
     # -- the passes
-    def prescan(self, resolution=300, frame=None):
+    def prescan(self, resolution=300, frame=None, keep_raw=False):
+        self.prescan_keep_raw.append(keep_raw)
         # `prescans` lets a test script what successive looks return, which is
         # how a correction's before/after pair gets simulated.
         if self.prescans:
@@ -662,3 +665,127 @@ def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
     s.close()
     assert not spool.exists(), "the spool outlived the session"
     assert s._debug_spool is None
+
+
+# ---------------------------------------------------------------------------
+# Stopping, and the bytes a prescan is filed with. Both of these were found on
+# the hardware rather than here, which is why they are here now.
+# ---------------------------------------------------------------------------
+
+
+def test_a_stop_while_a_frame_is_running_ends_the_roll_after_it():
+    """The ordinary case, and the one the button describes.
+
+    A frame takes minutes; the operator presses stop somewhere inside that. The
+    roll must finish the frame in hand -- abandoning a read is what costs a
+    power cycle -- and then stop, without advancing the film again.
+    """
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    stop = {"now": False}
+    seen = []
+    for rf in s.scan_roll(frames=5, infrared=False, meter=METER_NONE,
+                          should_stop=lambda: stop["now"]):
+        seen.append(rf.index)
+        if len(seen) == 2:
+            stop["now"] = True                   # pressed while frame 2 is in hand
+    assert seen == [0, 1], seen
+    # One advance to reach frame 2, and none after the stop.
+    assert s.advances == 1, s.advances
+
+
+def test_a_stop_during_the_advance_still_saves_the_next_frame():
+    """The advance takes 2-7 seconds on the hardware. A stop landing inside it
+    used to go unlooked-at until the frame after had been prescanned in full."""
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    stop = {"now": False}
+    real_advance = s.advance
+
+    def advance_and_press(*a, **kw):
+        position = real_advance(*a, **kw)
+        stop["now"] = True                       # pressed mid-advance
+        return position
+
+    s.advance = advance_and_press
+    seen = [rf.index for rf in s.scan_roll(frames=5, infrared=False,
+                                           meter=METER_NONE,
+                                           should_stop=lambda: stop["now"])]
+    # Frame 1, then the advance, then the stop is seen before frame 2 begins.
+    assert seen == [0], seen
+
+
+def test_a_stop_set_before_the_roll_starts_scans_nothing():
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    seen = [rf.index for rf in s.scan_roll(frames=5, infrared=False,
+                                           meter=METER_NONE,
+                                           should_stop=lambda: True)]
+    assert seen == []
+    assert s.advances == 0
+
+
+def test_without_a_stop_the_roll_runs_to_its_frame_count():
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    seen = [rf.index for rf in s.scan_roll(frames=3, infrared=False,
+                                           meter=METER_NONE)]
+    assert seen == [0, 1, 2]
+    assert s.advances == 2
+
+
+def test_a_roll_prescan_keeps_its_own_bytes():
+    """Otherwise `capture_record()` hands back whatever the previous pass left
+    in `last_raw`, and the prescan is filed with another photograph's bytes --
+    which is what happened to three entries on the hardware run."""
+    s = FakeRoll([picture(seed=i) for i in range(3)])
+    list(s.scan_roll(frames=2, infrared=False, meter=METER_NONE, keep_raw=True))
+    assert s.prescan_keep_raw and all(s.prescan_keep_raw), s.prescan_keep_raw
+
+
+def test_a_roll_asked_not_to_keep_raw_does_not_make_the_prescan_keep_it():
+    s = FakeRoll([picture(seed=i) for i in range(3)])
+    list(s.scan_roll(frames=2, infrared=False, meter=METER_NONE, keep_raw=False))
+    assert not any(s.prescan_keep_raw), s.prescan_keep_raw
+
+
+def test_going_back_a_frame_sends_slide_prev():
+    """`05 01 00 01`, the mirror of an advance -- what the vendor sends to
+    rewind a finished roll, one frame per step."""
+    t = FakeTransport(positions=[3, 3, 2])
+    s = DirectScanner(transport=t)
+    assert s.retreat(poll=0.01) == 2
+    assert t.payloads(SCSI_SLIDE) == [bytes([SLIDE_PREV, 0x01, 0x00, 0x01])]
+
+
+def test_going_forward_a_frame_still_sends_slide_next():
+    t = FakeTransport(positions=[3, 3, 4])
+    s = DirectScanner(transport=t)
+    assert s.advance(poll=0.01) == 4
+    assert t.payloads(SCSI_SLIDE) == [bytes([SLIDE_NEXT, 0x01, 0x00, 0x01])]
+
+
+def test_a_retreat_that_does_not_move_says_so_without_calling_it_the_end():
+    """An advance that fails means the film ran out. A retreat that fails
+    usually means it is already at the first frame, which is not the same."""
+    t = FakeTransport(positions=[0])
+    s = DirectScanner(transport=t, verbose=False)
+    assert s.retreat(timeout=0.05, poll=0.01) is None
+
+
+def test_a_sub_frame_move_never_reaches_the_frame_counter():
+    """`SLIDE` action 0x00/0x01 moves the film without the counter seeing it,
+    which is why only a prescan can confirm a nudge landed."""
+    t = FakeTransport(positions=[2])
+    s = DirectScanner(transport=t, verbose=False)
+    out = s.nudge(0.5)
+    sent = t.payloads(SCSI_SLIDE)
+    assert len(sent) == 1
+    assert sent[0][0] == 0x00, "forward is action 0x00"
+    assert out["asked_mm"] > 0
+    back = DirectScanner(transport=FakeTransport(positions=[2]), verbose=False)
+    assert back.nudge(-0.5)["asked_mm"] < 0
+
+
+def test_the_smallest_nudge_is_the_smallest_the_hardware_can_do():
+    """param 1 = 0.1057 + 0.1662 mm. Asking for less does not get you less."""
+    s = DirectScanner(transport=FakeTransport(), verbose=False)
+    assert s.param_for_mm(0.01) == 1
+    assert s.param_for_mm(0.27) == 1
+    assert s.param_for_mm(99.0) == DirectScanner.MAX_CORRECTION_PARAM

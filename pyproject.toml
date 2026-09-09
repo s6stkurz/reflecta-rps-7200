@@ -67,6 +67,7 @@ exclude = [
     "dist",
     # Scanner output and captures, none of it source.
     "library",
+    "demo",
     "scans",
     "previews",
     "rolls",

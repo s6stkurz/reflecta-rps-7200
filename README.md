@@ -40,7 +40,8 @@ data out, and the backend cannot apply the shading correction either.
 pip install -e .
 ```
 
-numpy is the only hard dependency. libusb is needed to talk to the scanner, and is loaded
+numpy is the only hard dependency; the GUI adds none, because Tk ships with
+Python and its `PhotoImage` reads the raw PPM bytes `rps7200.preview` produces. libusb is needed to talk to the scanner, and is loaded
 the first time something actually does — so decoding a stored scan, merging a bracket or
 writing a TIFF works on a machine with no scanner drivers at all. SANE is not required. `tifffile` is optional; it is used automatically when
 present, and the built-in TIFF reader/writer is complete on its own. The two are held to
@@ -101,6 +102,41 @@ with DirectScanner() as s:
     image, meta = s.scan(resolution=1800, infrared=True)
     rgb, ir = image[..., :3], image[..., 3]      # (H,W,3) and (H,W), uint16
 ```
+
+### A window instead of a command line
+
+```sh
+make run                        # the scanner
+make run-demo                   # no scanner: stored library entries drive the window
+```
+
+Prescan, scan, walk a roll, and look at what came off -- the filmstrip along the
+bottom holds every pass of the session, prescans included, and clicking one puts
+it back on the canvas. The channel selector switches between RGB and R, G, B or
+**infrared alone**, which is the one plane no ordinary viewer will show you.
+
+The preview is inverted by default so a negative can be judged by eye, and that
+inversion is display only: what reaches `library/` is the raw negative with its
+raw bytes, exactly as `tools/scan.py` files it. Inverting for real is NegPy's
+job.
+
+Opening the window claims the device and asks it who it is, and nothing else --
+no calibration, no lamp, no transport until a button is pressed.
+
+**Stopping.** A pass in flight cannot be interrupted safely: infrared holds the
+device for its ~212 s floor however few lines were asked for, and an abandoned
+read is what costs a power cycle. So *Stop* is cooperative -- it ends a roll
+after the frame in flight, and a single scan after the pass finishes -- and says
+which it will do. *Force abort* closes the transport out from under the read,
+which is the only thing that actually unblocks it; the frame is lost and the
+scanner will almost certainly need a power cycle at its own switch. It asks you
+to type ABORT first.
+
+The options are the ones the driver implements: resolution, infrared, film type,
+exposure (metered or by hand), shading (measure, reuse or none), and for a roll
+the frame count, a start-at for resuming, the metering mode and a dry run.
+Bracketing is deliberately absent -- see `docs/multi-exposure-plan.md`, which
+measured it and found it does not pay.
 
 ## How scans are corrected
 

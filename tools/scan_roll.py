@@ -24,22 +24,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import queue
 import sys
-import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library, tiff
+from rps7200 import tiff
 from rps7200.direct import (
     METER_EACH,
     METER_MODES,
     DirectScanner,
 )
 from rps7200.library import FilmNotes
+# Lives in the package so the GUI and this tool share one writer rather than
+# two copies of the same reasoning about not gzipping with the device open.
+from rps7200.session import FrameWriter
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,68 +108,6 @@ def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
               flush=True)
     print(scanner.ensure_shading(ref_path, reuse=args.reuse,
                                  skip=args.no_shading)["summary"])
-
-
-class FrameWriter:
-    """Writes finished frames to disk on a thread, off the scanning loop.
-
-    Filing a frame gzips its raw bytes -- seconds at 1800 dpi and several times
-    that at 3600 -- and doing it inline leaves the scanner **open and idle** for
-    exactly that long, once per frame. That is the state that preceded a wedge
-    (see CLAUDE.md). On this thread the write instead overlaps the next frame's
-    scan, so the device is busy rather than idle throughout.
-
-    The queue is bounded. A scan costs far longer than a write, so the writer is
-    normally idle waiting; a bound only matters if that stops being true, and
-    then blocking is right -- an unbounded queue would hold whole frames in
-    memory, and at 3600 dpi one frame is over a hundred megabytes.
-
-    Failures are collected, not raised: a roll runs for hours, and a frame that
-    cannot be filed should cost that frame, not the thirty after it. `errors`
-    is drained by the caller once the roll ends.
-    """
-
-    def __init__(self, depth: int = 2):
-        self.queue: queue.Queue = queue.Queue(maxsize=depth)
-        self.errors: list[str] = []
-        self.done: list[tuple[int, Path | None]] = []
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def _run(self) -> None:
-        while True:
-            job = self.queue.get()
-            try:
-                if job is None:
-                    return
-                self._write(job)
-            except Exception as exc:                     # noqa: BLE001
-                self.errors.append(f"picture {job['number']}: {exc}")
-            finally:
-                self.queue.task_done()
-
-    def _write(self, job: dict) -> None:
-        tiff.write(str(job["path"]), job["image"], resolution=job["dpi"])
-        entry = None
-        if job["library"]:
-            entry = library.save(
-                job["image"], job["meta"],
-                root=job["library"],
-                film=job["film"],
-                tags=job["tags"],
-                prescan=job["prescan"],
-                inquiry=job["inquiry"],
-                **job["capture"],
-            )
-        self.done.append((job["number"], entry))
-
-    def submit(self, **job) -> None:
-        self.queue.put(job)
-
-    def finish(self) -> None:
-        """Wait for every queued frame. Call after the session has closed."""
-        self.queue.put(None)
-        self._thread.join()
 
 
 def main() -> int:
