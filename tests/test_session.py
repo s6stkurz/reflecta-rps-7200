@@ -79,7 +79,8 @@ class FakeScanner:
             "reference": None,
             "ccd_mask": None,
             "raw": b"\x00\x01" * 32,
-            "raw_layout": {"format": "index", "width": 36, "lines": 24},
+            "raw_layout": {"format": "index", "width": 36, "lines": 24,
+                           "channels": 4},
         }
 
     def ensure_shading(self, path, reuse=False, skip=False):
@@ -218,9 +219,21 @@ def test_a_roll_writes_its_manifest_after_every_frame(tmp_path):
     assert recorded["frames"][0]["registration"]["offset_mm"] == 0.04
 
 
-def test_a_dry_run_files_nothing(tmp_path):
+def test_a_dry_run_files_its_prescans(tmp_path):
+    """They are the entire product of a dry run -- there is no frame to hang
+    them off, and a walk that leaves nothing behind cannot be looked at later."""
     run(Roll(frames=3, dry_run=True, name="walk"), tmp_path)
-    assert library.entries(tmp_path) == []
+    entries = library.entries(tmp_path)
+    assert len(entries) == 3
+    assert all("prescan" in e["tags"] for e in entries)
+
+
+def test_a_real_roll_does_not_file_its_prescans_separately(tmp_path):
+    """They ride along with the frame instead. Filing both would double a roll."""
+    run(Roll(frames=3, dry_run=False, name="real"), tmp_path)
+    entries = library.entries(tmp_path)
+    assert len(entries) == 3
+    assert not any("prescan" in e["tags"] for e in entries)
 
 
 # -- stopping ---------------------------------------------------------------
@@ -438,3 +451,49 @@ def test_the_writer_runs_off_the_calling_thread():
                   inquiry=None, capture={}, seq=1)
     writer.finish()
     assert seen["thread"] != threading.current_thread().name
+
+
+def test_raw_bytes_that_describe_another_image_are_not_filed(tmp_path):
+    """The one failure the library exists to make impossible.
+
+    `last_raw` holds whatever the previous pass left behind when a pass did not
+    keep its own, so `capture_record()` can hand over bytes belonging to a
+    different photograph. Three roll prescans were filed that way on the
+    hardware -- 300 dpi RGB pixels beside a 600 dpi RGBI scan's bytes -- and the
+    entry decodes to the wrong picture with nothing to say so. Better an entry
+    with no raw than one with the wrong raw.
+    """
+    scanner = FakeScanner()
+    scanner.capture_record = lambda: {
+        "reference": None, "ccd_mask": None,
+        "raw": b"\x00" * 64,
+        # A 600 dpi RGBI pass, filed beside a 24x36x4 image.
+        "raw_layout": {"format": "index", "width": 860, "lines": 573,
+                       "channels": 4},
+    }
+    _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner)
+    entry = tmp_path / library.entries(tmp_path)[0]["id"]
+    assert not (entry / "raw.bin.gz").exists()
+    assert any("do not describe this image" in e.text for e in kinds(events, "log"))
+
+
+def test_matching_raw_bytes_are_still_filed(tmp_path):
+    """The guard must not throw away good bytes over a field it cannot check."""
+    scanner = FakeScanner()
+    scanner.capture_record = lambda: {
+        "reference": None, "ccd_mask": None,
+        "raw": b"\x00\x01" * 32,
+        "raw_layout": {"format": "index", "width": 36},   # says nothing else
+    }
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    entry = tmp_path / library.entries(tmp_path)[0]["id"]
+    assert (entry / "raw.bin.gz").exists()
+
+
+def test_a_stop_reaches_the_driver_not_only_the_consumer_loop(tmp_path):
+    """The session has to hand `scan_roll` a way to check before it advances;
+    checking only between yields lets one more frame happen."""
+    import inspect
+    from rps7200.session import ScanSession
+    source = inspect.getsource(ScanSession._roll)
+    assert "should_stop=self._stop.is_set" in source

@@ -502,6 +502,7 @@ class ScanSession:
         }
 
         frames = self._scanner.scan_roll(
+            should_stop=self._stop.is_set,
             frames=job.frames,
             resolution=job.resolution,
             infrared=job.infrared,
@@ -518,10 +519,24 @@ class ScanSession:
             for rf in frames:
                 number = rf.index + 1
                 if rf.prescan is not None:
-                    self._deliver(
+                    seq = self._deliver(
                         "prescan", f"frame {number} prescan", rf.prescan,
                         {"resolution_dpi": 300}, registration=rf.registration,
                     )
+                    if job.dry_run:
+                        # On a dry run the prescans are the entire product --
+                        # there is no frame entry to hang them off, so they are
+                        # filed in their own right. On a real roll they ride
+                        # along with the frame instead, which is why this is not
+                        # unconditional: that would file every one of them twice.
+                        self._file(
+                            seq, number, rf.prescan,
+                            {"resolution_dpi": 300,
+                             "channel_order": ["R", "G", "B"]},
+                            replace(job.notes,
+                                    frame=job.notes.frame or f"{name}-{number:02d}"),
+                            tuple(job.tags) + ("gui", "roll", "prescan", name),
+                        )
                 if rf.error:
                     self._emit("log", text=f"frame {number}: {rf.error}")
                 elif rf.image is not None:
@@ -602,6 +617,34 @@ class ScanSession:
     ) -> None:
         if self._writer is None:
             return
+        capture = self._scanner.capture_record()
+        if capture.get("raw") is not None or capture.get("raw_path") is not None:
+            shape = image.shape
+            layout = capture.get("raw_layout") or {}
+            actual = {
+                "lines": shape[0],
+                "width": shape[1],
+                "channels": shape[2] if len(shape) > 2 else 1,
+            }
+            # Only fields the layout actually declares are judged; an absent one
+            # says nothing, and dropping good bytes over it would be its own bug.
+            disagree = {
+                k: (layout[k], actual[k])
+                for k in actual
+                if layout.get(k) is not None and layout[k] != actual[k]
+            }
+            if disagree:
+                # `last_raw` holds whatever the previous pass left behind when a
+                # pass did not keep its own. Filing that here produces an entry
+                # that decodes to a different photograph -- which is the one
+                # failure the library exists to make impossible. It happened:
+                # three roll prescans were filed with a 600 dpi RGBI scan's
+                # bytes before the driver kept the prescan's own.
+                detail = ", ".join(f"{k} {a} vs {b}" for k, (a, b) in disagree.items())
+                self._emit("log", text=(
+                    f"raw bytes do not describe this image ({detail}); "
+                    "filing it without them rather than filing the wrong ones"))
+                capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
         self._writer.submit(
             seq=seq,
             number=number,
@@ -614,7 +657,7 @@ class ScanSession:
             tags=list(tags),
             prescan=prescan,
             inquiry=getattr(self._scanner, "_inquiry", None),
-            capture=self._scanner.capture_record(),
+            capture=capture,
         )
 
 

@@ -173,6 +173,7 @@ class FakeRoll(DirectScanner):
         self.frames_scanned = []
         self.metered_for_infrared = []
         self.advances = 0
+        self.prescan_keep_raw = []
 
     # -- the device
     def get_gain_offset(self):
@@ -192,7 +193,8 @@ class FakeRoll(DirectScanner):
         return self.at
 
     # -- the passes
-    def prescan(self, resolution=300, frame=None):
+    def prescan(self, resolution=300, frame=None, keep_raw=False):
+        self.prescan_keep_raw.append(keep_raw)
         # `prescans` lets a test script what successive looks return, which is
         # how a correction's before/after pair gets simulated.
         if self.prescans:
@@ -662,3 +664,53 @@ def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
     s.close()
     assert not spool.exists(), "the spool outlived the session"
     assert s._debug_spool is None
+
+
+# ---------------------------------------------------------------------------
+# Stopping, and the bytes a prescan is filed with. Both of these were found on
+# the hardware rather than here, which is why they are here now.
+# ---------------------------------------------------------------------------
+
+
+def test_a_stop_is_honoured_before_the_film_moves():
+    """Not after the next frame has already been prescanned.
+
+    A caller that only checks between yields has, by the time it looks, already
+    let the generator advance the film and prescan the frame after it. On a real
+    roll at 3600 dpi RGBI that is six minutes and 250 MB the operator asked not
+    to spend. Measured on the hardware: a stop during frame 2 produced frame 3.
+    """
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    stop = {"now": False}
+    seen = []
+    for rf in s.scan_roll(frames=5, infrared=False, meter=METER_NONE,
+                          should_stop=lambda: stop["now"]):
+        seen.append(rf.index)
+        if len(seen) == 2:
+            stop["now"] = True                   # pressed while frame 2 is in hand
+    assert seen == [0, 1], seen
+    # One advance to reach frame 2, and none after the stop.
+    assert s.advances == 1, s.advances
+
+
+def test_without_a_stop_the_roll_runs_to_its_frame_count():
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    seen = [rf.index for rf in s.scan_roll(frames=3, infrared=False,
+                                           meter=METER_NONE)]
+    assert seen == [0, 1, 2]
+    assert s.advances == 2
+
+
+def test_a_roll_prescan_keeps_its_own_bytes():
+    """Otherwise `capture_record()` hands back whatever the previous pass left
+    in `last_raw`, and the prescan is filed with another photograph's bytes --
+    which is what happened to three entries on the hardware run."""
+    s = FakeRoll([picture(seed=i) for i in range(3)])
+    list(s.scan_roll(frames=2, infrared=False, meter=METER_NONE, keep_raw=True))
+    assert s.prescan_keep_raw and all(s.prescan_keep_raw), s.prescan_keep_raw
+
+
+def test_a_roll_asked_not_to_keep_raw_does_not_make_the_prescan_keep_it():
+    s = FakeRoll([picture(seed=i) for i in range(3)])
+    list(s.scan_roll(frames=2, infrared=False, meter=METER_NONE, keep_raw=False))
+    assert not any(s.prescan_keep_raw), s.prescan_keep_raw

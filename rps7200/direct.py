@@ -2181,6 +2181,7 @@ class DirectScanner:
         skip: int = 0,
         keep_raw: bool = True,
         max_failures: int = 3,
+        should_stop: Callable[[], bool] | None = None,
         scan_frame: tuple[int, int, int, int] | None = None,
         dry_run: bool = False,
         correct: bool = False,
@@ -2263,7 +2264,9 @@ class DirectScanner:
             position = self.position()
 
             try:
-                prescan_image, _ = self.prescan(resolution=prescan_resolution)
+                prescan_image, _ = self.prescan(
+                    resolution=prescan_resolution, keep_raw=keep_raw
+                )
                 contrast = frame_contrast(prescan_image)
                 marks = dict(registration(prescan_image, window))
                 marks["contrast"] = round(contrast, 4)
@@ -2369,5 +2372,12 @@ class DirectScanner:
             index += 1
             if frames is not None and index >= skip + frames:
                 break
+            # Checked here, immediately before the film moves, because this is
+            # the last instant at which stopping is free. A caller that only
+            # checks after consuming a frame has already let this advance and
+            # the prescan after it happen.
+            if should_stop is not None and should_stop():
+                self._log("stopping before the next advance, as asked")
+                return
             if self.advance() is None:
                 return
