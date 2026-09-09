@@ -294,3 +294,44 @@ def test_a_wheel_notch_is_worth_more_than_a_trackpad_pixel():
     """A notch is a discrete click; a pixel is a fraction of a gesture."""
     import math
     assert gui._ZOOM_PER_NOTCH > math.exp(gui._ZOOM_PER_PIXEL)
+
+
+# -- redrawing, which has to keep up with a gesture -------------------------
+
+
+def test_the_redraw_is_throttled_and_not_debounced():
+    """Cancelling the pending redraw on every event sounds like the same thing
+    and is not: a trackpad sends events right through a gesture and for most of
+    a second of momentum after it, so each one pushed the redraw back and the
+    picture did not move until everything stopped. That was the half-second."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._schedule_redraw)
+    assert "after_cancel" not in source, (
+        "cancelling the pending redraw is what made a gesture wait for its own end")
+    assert "_drawn_at" in source, "it has to know when it last drew"
+
+
+def test_a_frame_budget_that_allows_a_smooth_gesture():
+    """60 Hz. A redraw costs about 16 ms at a full window, so the throttle
+    should not be what limits it."""
+    assert 8 <= gui._FRAME_MS <= 33
+
+
+def test_the_full_resolution_array_is_only_used_when_close_in():
+    """A decimating view over 142 MB gathers from scattered memory and is a
+    third slower than reading a contiguous nine. It was used for every redraw
+    once loaded, fit included."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._source)
+    assert "close_in" in source
+    assert "self._zoom >= 1.0" in source
+
+
+def test_the_loader_thread_cannot_reach_into_a_closed_window():
+    """A full-resolution read takes a moment and the window can be closed
+    inside it; calling Tk from that thread afterwards raises where nobody
+    catches it."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._later)
+    assert "_alive" in source
+    assert "TclError" in source

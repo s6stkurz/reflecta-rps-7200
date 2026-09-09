@@ -81,6 +81,11 @@ MAX_TRAVEL_MM = MAX_FINE_MM * MAX_FINE_STEPS
 THUMB_H = 76
 POLL_MS = 120
 
+#: How often the picture may be redrawn, in milliseconds. One frame at 60 Hz;
+#: a redraw costs about 25 ms at a full-window size, so a gesture runs at
+#: whatever the machine can manage rather than waiting on a timer.
+_FRAME_MS = 16
+
 LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
 
 
@@ -99,6 +104,7 @@ class ScannerGui:
         self._full_seq = None
         self._loading = None
         self._redraw_job = None
+        self._drawn_at = 0.0
         self._alive = True
         self._job = ""                       # what is running, for the stop label
         self.calibrated = False
@@ -161,12 +167,20 @@ class ScannerGui:
         # Last, so every control in the column already exists and gets its own
         # binding rather than relying on the event finding its way up.
         canvas, inner = self._column
-        for widget in (canvas, inner):
-            self._scrolls(
-                widget,
-                lambda n, _side: canvas.yview_scroll(n, "units"),
-                precise=lambda dx, dy: _scroll_pixels(canvas, 0, dy),
-            )
+        # `inner` alone: it is a child of the canvas and holds every control,
+        # so binding both put two handlers on each widget and scrolled twice
+        # per event.
+        self._scrolls(
+            inner,
+            lambda n, _side: canvas.yview_scroll(n, "units"),
+            precise=lambda dx, dy: _scroll_pixels(canvas, 0, dy),
+        )
+        self._scrolls(
+            canvas,
+            lambda n, _side: canvas.yview_scroll(n, "units"),
+            precise=lambda dx, dy: _scroll_pixels(canvas, 0, dy),
+            deep=False,
+        )
 
     def _on_wheel(self, event: tk.Event) -> str | None:
         """Route a wheel or two-finger scroll to the region it happened in.
@@ -211,7 +225,8 @@ class ScannerGui:
                 return None
         return None
 
-    def _scrolls(self, widget: tk.Misc, handler, precise=None) -> None:
+    def _scrolls(self, widget: tk.Misc, handler, precise=None,
+                 deep: bool = True) -> None:
         """Make scrolling do something over `widget` and everything inside it.
 
         Two different events, because a mouse and a trackpad are not the same
@@ -247,15 +262,17 @@ class ScannerGui:
                     handler(-1 if dx > 0 else 1, True)
             return "break"
 
-        self._bind_scroll(widget, wheel, touchpad)
+        self._bind_scroll(widget, wheel, touchpad, deep)
 
-    def _bind_scroll(self, widget: tk.Misc, wheel, touchpad) -> None:
+    def _bind_scroll(self, widget: tk.Misc, wheel, touchpad,
+                     deep: bool = True) -> None:
         for sequence in ("<MouseWheel>", "<Shift-MouseWheel>",
                          "<Button-4>", "<Button-5>"):
             widget.bind(sequence, wheel, add="+")
         widget.bind("<TouchpadScroll>", touchpad, add="+")
-        for child in widget.winfo_children():
-            self._bind_scroll(child, wheel, touchpad)
+        if deep:
+            for child in widget.winfo_children():
+                self._bind_scroll(child, wheel, touchpad)
 
     def _scrollable(self, parent: ttk.PanedWindow) -> ttk.Frame:
         """A left column that scrolls, because it is taller than the window.
@@ -1193,13 +1210,20 @@ class ScannerGui:
     # -- drawing, zoom and pan --------------------------------------------
 
     def _source(self):
-        """The pixels to draw: full resolution once read, else the copy."""
+        """The pixels to draw: full resolution when close in, else the copy.
+
+        The working copy is used whenever it is enough, even after the
+        full-resolution array has been read, because a decimating view over
+        142 MB gathers from scattered memory and is a third slower than reading
+        a contiguous nine.
+        """
         r = self.current
         if r is None:
             return None
-        if self._full_seq == r.seq:
+        close_in = self._zoom >= 1.0
+        if close_in and self._full_seq == r.seq:
             return preview.rotate(self._full, r.rotation)
-        if r.entry is not None and self._zoom >= 1.0:
+        if close_in and r.entry is not None:
             self._load_full(r)
         return preview.rotate(r.image, r.rotation)
 
@@ -1219,11 +1243,26 @@ class ScannerGui:
             try:
                 image, _ = library.load(entry)
             except Exception as exc:                     # noqa: BLE001
-                self.root.after(0, lambda name=entry.name, why=str(exc):
-                                self._say(f"could not read {name}: {why}"))
-            self.root.after(0, lambda got=image: self._loaded(seq, got))
+                self._later(lambda name=entry.name, why=str(exc):
+                            self._say(f"could not read {name}: {why}"))
+            self._later(lambda got=image: self._loaded(seq, got))
 
         threading.Thread(target=work, args=(r.entry, r.seq), daemon=True).start()
+
+    def _later(self, call) -> None:
+        """Run `call` on the UI thread, unless the window has gone.
+
+        A full-resolution read takes a moment, and the window can be closed
+        inside it. Reaching into Tk from the reading thread afterwards raises
+        out of that thread, where nobody catches it and it surfaces as a
+        traceback with nothing to do about it.
+        """
+        if not self._alive:
+            return
+        try:
+            self.root.after(0, call)
+        except (tk.TclError, RuntimeError):
+            pass
 
     def _loaded(self, seq: int, image) -> None:
         self._loading = None
@@ -1278,11 +1317,21 @@ class ScannerGui:
                       else _ZOOM_PER_NOTCH ** -amount)
 
     def _schedule_redraw(self) -> None:
-        # Coalesced: a sash drag fires <Configure> dozens of times and each
-        # redraw is a percentile over the whole working copy.
-        if self._redraw_job is not None:
-            self.root.after_cancel(self._redraw_job)
-        self._redraw_job = self.root.after(50, self._redraw)
+        """Draw now if it is time, and if not, make sure one is coming.
+
+        Throttled, not debounced. It used to cancel the pending redraw and
+        reschedule on every event, which sounds like the same thing and is not:
+        a trackpad sends events continuously through a gesture and for most of a
+        second of momentum afterwards, so the redraw was pushed back by every
+        one of them and the picture did not move until the whole gesture had
+        stopped. That was the half-second.
+        """
+        since = (time.monotonic() - self._drawn_at) * 1000
+        if since >= _FRAME_MS:
+            self._redraw()
+        elif self._redraw_job is None:
+            self._redraw_job = self.root.after(
+                max(1, int(_FRAME_MS - since)), self._redraw)
 
     def _cuts(self):
         """The current picture's levels for the channel on show."""
@@ -1300,6 +1349,7 @@ class ScannerGui:
 
     def _redraw(self) -> None:
         self._redraw_job = None
+        self._drawn_at = time.monotonic()
         self.canvas.delete("all")
         self._shown = None
         src = self._source()
