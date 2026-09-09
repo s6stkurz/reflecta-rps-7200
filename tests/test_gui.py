@@ -322,13 +322,26 @@ def test_a_frame_budget_that_allows_a_smooth_gesture():
     assert 8 <= gui._FRAME_MS <= 33
 
 
-def test_the_full_resolution_array_is_only_used_when_close_in():
-    """A decimating view over 142 MB gathers from scattered memory and is a
-    third slower than reading a contiguous nine. It was used for every redraw
-    once loaded, fit included."""
+def test_a_view_reads_the_coarsest_array_that_can_serve_it():
+    """The scan's own pixels back the picture at every size now, but a view
+    that does not need them still reads the reduced copy -- it is the coarsest
+    level, so fit costs what it always did while a zoom gets real detail."""
     import inspect
     source = inspect.getsource(gui.ScannerGui._pixels)
-    assert "self._zoom > 1.0" in source
+    assert "factor >= scale" in source, (
+        "chosen by the scale being drawn -- at fit the zoom is zero, and "
+        "choosing by it upscaled the reduced copy on a wide pane")
+    loaded = inspect.getsource(gui.ScannerGui._loaded)
+    assert "(1.0, self.current.image)" in loaded, (
+        "the reduced copy has to be in the list, or fit reads more than it needs")
+
+
+def test_the_scan_is_read_as_soon_as_a_picture_is_shown():
+    """Not held back until a zoom asks for it: what is on screen should be the
+    scan wherever it can be, with the copy filling the moment it takes to
+    arrive."""
+    import inspect
+    assert "self._load_full(result)" in inspect.getsource(gui.ScannerGui._show)
 
 
 def test_the_view_is_measured_against_one_array_only():
@@ -467,7 +480,16 @@ def test_the_coarsest_level_that_has_the_detail_is_the_one_read():
     import inspect
     source = inspect.getsource(gui.ScannerGui._pixels)
     assert "for factor, array in self._levels" in source
-    assert "factor >= self._zoom" in source
+    assert "factor >= scale" in source
+
+
+def test_a_moving_frame_asks_for_less_detail_as_well_as_fewer_pixels():
+    """It draws a third of them, so a third of the detail is all that can
+    reach the screen; asking for the sharp frame's level gathered from a finer
+    array than anything shown could use."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._redraw)
+    assert "self._pixels(scale / coarse)" in source
 
 
 def test_the_picture_is_written_into_an_image_tk_already_knows():

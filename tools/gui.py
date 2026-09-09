@@ -1048,6 +1048,12 @@ class ScannerGui:
         self._levels = []
         self._levels_seq = None
         self._view = [0.0, 0.0]
+        # Read the scan's own pixels straight away rather than waiting for a
+        # zoom to ask for them: what is on screen is then the scan at every
+        # size, and the reduced copy is only what fills the gap while 142 MB
+        # comes off disk.
+        if result.entry is not None and result.image is not None:
+            self._load_full(result)
         available = (preview.channels_available(result.image)
                      if result.image is not None else ("RGB",))
         for name, button in self.channel_buttons.items():
@@ -1270,7 +1276,7 @@ class ScannerGui:
         across = r.image.shape[0] if turned else r.image.shape[1]
         return max(1.0, float(scanned) / max(1, across))
 
-    def _pixels(self):
+    def _pixels(self, scale: float):
         """What to sample, and how much finer it is than the picture.
 
         The coarsest array that still holds the detail being asked for. Going
@@ -1284,23 +1290,27 @@ class ScannerGui:
         r = self.current
         if r is None or r.image is None:
             return None, 1.0
-        if self._zoom > 1.0:                             # upscaling the copy
-            if self._levels_seq == r.seq and self._levels:
-                for factor, array in self._levels:
-                    if factor >= self._zoom or array is self._levels[-1][1]:
-                        return preview.rotate(array, r.rotation), factor
-            elif r.entry is not None:
-                self._load_full(r)
+        if self._levels_seq == r.seq and self._levels:
+            # By the scale actually being drawn, not by the zoom: at fit the
+            # zoom is zero, and choosing by it upscaled the reduced copy on any
+            # pane wider than the copy -- soft exactly where the whole picture
+            # is on show.
+            for factor, array in self._levels:
+                if factor >= scale:
+                    return preview.rotate(array, r.rotation), factor
+            finest, array = self._levels[-1]
+            return preview.rotate(array, r.rotation), finest
         return preview.rotate(r.image, r.rotation), 1.0
 
     def _load_full(self, r) -> None:
         """Read the entry's own pixels, off the UI thread.
 
-        A downscaled preview cannot show grain or shadow noise, so anything at
-        1:1 or closer has to come from the file. At 3600 dpi that is 142 MB,
-        which would freeze the window for seconds if it were read here.
+        A reduced copy cannot show grain or shadow noise, so the picture on
+        screen should be the scan itself wherever it can be. At 3600 dpi that
+        is 142 MB, which would freeze the window for seconds if it were read
+        here.
         """
-        if self._loading == r.seq:
+        if self._loading == r.seq or self._levels_seq == r.seq:
             return
         self._loading = r.seq
 
@@ -1327,9 +1337,13 @@ class ScannerGui:
         # working copy, so the big array arriving changes what is sampled and
         # not what any of the numbers mean.
         self._full, self._full_seq = image, seq
-        self._levels = preview.pyramid(
+        # The reduced copy is the coarsest level, so a view that does not need
+        # the scan's own pixels still costs what it always did.
+        self._levels = [(1.0, self.current.image)] + preview.pyramid(
             image, image.shape[1] / max(1, self.current.image.shape[1]))
         self._levels_seq = seq
+        self._say(f"{self.current.label}: now showing the scan's own "
+                  f"{image.shape[1]}x{image.shape[0]} pixels")
         # Deliberately not re-measured: the levels stay the working copy's, so
         # a 1:1 look is the same picture as the fit it came from.
         self._redraw()
@@ -1537,7 +1551,10 @@ class ScannerGui:
         # Tk, which is far cheaper than sampling and rendering every pixel: both
         # of those costs, and building the image Tk shows, scale with the count.
         coarse = _GESTURE_FACTOR if quick and out_w > 2 * _GESTURE_FACTOR else 1
-        pixels, detail = self._pixels()
+        # A coarse frame draws a third of the pixels, so it needs a third of
+        # the detail: asking for the level the sharp frame would use meant
+        # gathering from a finer array than anything on screen could show.
+        pixels, detail = self._pixels(scale / coarse)
         if pixels is None:
             return
         # `detail` is how many of the sampled array's pixels make up one of the
@@ -1765,9 +1782,11 @@ def stop_label(job: str) -> str:
 _ZOOM_PER_PIXEL = 0.006
 #: What one wheel notch is worth, for an actual mouse.
 _ZOOM_PER_NOTCH = 1.25
-#: As close as the picture can be brought. Past eight times, a scanned pixel is
-#: a block the size of a fingernail and there is nothing further to see.
-_MAX_ZOOM = 8.0
+#: As close as the picture can be brought, in scanned pixels per screen pixel.
+#: At sixteen a single scanned pixel is a block you could put a finger on, which
+#: is the right size for looking at a speck of dust and about the end of what
+#: there is to see.
+_MAX_ZOOM = 16.0
 #: How much of the canvas may be empty before the view is pulled back. Some
 #: slack is what lets a zoom hold its anchor near an edge; too much and the
 #: picture can be pushed out of sight altogether.
