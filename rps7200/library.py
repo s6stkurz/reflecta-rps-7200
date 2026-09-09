@@ -214,7 +214,7 @@ def save(
                 "resolution_dpi", "frame", "width", "height", "depth",
                 "channels", "channel_order", "bytes_per_line", "film",
                 "exposure_scale", "exposure_metered", "duration_s",
-                "protocol_revision",
+                "protocol_revision", "rotation",
             )
         },
         "device_settings": {

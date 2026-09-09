@@ -128,3 +128,56 @@ def test_a_crop_at_the_edge_stays_inside_the_image():
 def test_a_crop_larger_than_the_image_is_the_image():
     image = np.zeros((12, 14), np.uint16)
     assert preview.crop(image, 6, 7, 500, 500).shape == (12, 14)
+
+
+# -- turning a picture ------------------------------------------------------
+
+
+def test_a_quarter_turn_swaps_the_sides():
+    image = rgbi(40, 60)
+    assert preview.rotate(image, 90).shape == (60, 40, 4)
+    assert preview.rotate(image, 270).shape == (60, 40, 4)
+    assert preview.rotate(image, 180).shape == (40, 60, 4)
+    assert preview.rotate(image, 0).shape == (40, 60, 4)
+
+
+def test_turning_is_lossless():
+    """A scan is a measurement. A rotation that resampled would not be the same
+    file any more, which is why only quarter turns are offered."""
+    image = rgbi(13, 17)
+    turned = preview.rotate(image, 90)
+    assert sorted(turned.ravel().tolist()) == sorted(image.ravel().tolist())
+
+
+def test_four_quarter_turns_come_home():
+    image = rgbi(13, 17)
+    there = image
+    for _ in range(4):
+        there = preview.rotate(there, 90)
+    assert np.array_equal(there, image)
+
+
+def test_left_and_right_undo_each_other():
+    image = rgbi(9, 14)
+    assert np.array_equal(preview.rotate(preview.rotate(image, 90), 270), image)
+
+
+def test_anything_but_a_quarter_turn_is_refused():
+    with pytest.raises(ValueError, match="quarter turn"):
+        preview.rotate(rgbi(4, 4), 45)
+
+
+@pytest.mark.parametrize("degrees", preview.ROTATIONS)
+def test_a_point_on_a_turned_view_maps_back_to_where_it_came_from(degrees):
+    """This is what keeps aiming honest on a turned prescan: the film moves
+    along the unrotated x axis however the picture looks on screen."""
+    marked = np.zeros((4, 7), np.uint16)
+    marked[1, 5] = 999                       # y=1, x=5
+    turned = preview.rotate(marked, degrees)
+    ys, xs = np.where(turned == 999)
+    back = preview.unrotate_point(int(xs[0]), int(ys[0]), turned.shape, degrees)
+    assert (round(back[0]), round(back[1])) == (5, 1), degrees
+
+
+def test_an_unturned_point_is_left_alone():
+    assert preview.unrotate_point(3, 4, (10, 10), 0) == (3, 4)

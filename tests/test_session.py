@@ -580,3 +580,43 @@ def test_moving_several_frames_steps_one_at_a_time(tmp_path):
     _, scanner, events = run(Move(frames=3), tmp_path, scanner=scanner)
     assert scanner.moves == [("advance", 1)] * 3
     assert [e.done for e in kinds(events, "transport")] == [1, 2, 3]
+
+
+# -- rotation ---------------------------------------------------------------
+
+
+def test_a_turn_reaches_the_delivered_file_but_not_the_entry(tmp_path):
+    """The entry's pixels have to keep matching the raw bytes filed beside
+    them, or `library.reconstruct` is right to call it a changed decode. The
+    file the operator actually wanted is a different question."""
+    out = tmp_path / "out"
+    scanner = FakeScanner()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
+    s.rotation = 90
+    s.start()
+    s.submit(Scan(resolution=600, infrared=True))
+    s.shutdown()
+    s.join(timeout=15)
+
+    from rps7200 import tiff
+    delivered = sorted(out.rglob("*.tif"))
+    assert len(delivered) == 1
+    turned = tiff.read(str(delivered[0]))
+    stored, record = library.load(tmp_path / "lib" / library.entries(
+        tmp_path / "lib")[0]["id"])
+    assert turned.shape[:2] == stored.shape[:2][::-1], "the file is turned"
+    assert stored.shape[:2] == (24, 36), "the entry is not"
+    assert record["scan"]["rotation"] == 90, "but it records what was chosen"
+
+
+def test_no_turn_leaves_both_alone(tmp_path):
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600, infrared=True))
+    s.shutdown()
+    s.join(timeout=15)
+    from rps7200 import tiff
+    assert tiff.read(str(sorted(out.rglob("*.tif"))[0])).shape[:2] == (24, 36)
