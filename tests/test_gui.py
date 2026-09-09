@@ -405,3 +405,28 @@ def test_one_place_decides_where_the_picture_sits():
     import inspect
     for method in (gui.ScannerGui._redraw, gui.ScannerGui._source_at):
         assert "_geometry(" in inspect.getsource(method), method.__name__
+
+
+def test_the_view_is_one_point_not_a_centre_and_a_padding():
+    """The anchor is exact only because there is a single thing to solve for:
+    which point of the picture sits at the corner of the canvas."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._zoom_by)
+    assert "self._view = [focus[0] - anchor[0] / target" in source
+
+
+def test_a_picture_may_be_pushed_partly_off_the_canvas():
+    """Insisting the whole picture stay visible is what made it slide between
+    fit and about 105%: there was room to show all of it, so it was moved to
+    show all of it, and a point held under the pointer moved with it. Zooming
+    into the top of something is a request to let the bottom go."""
+    assert 0.0 < gui._OFF_CANVAS < 1.0
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._clamped_view)
+    assert "_OFF_CANVAS" in source
+
+
+def test_fit_still_centres_what_it_shows():
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._geometry)
+    assert "/ 2" in source, "fit centres the picture on both axes"
