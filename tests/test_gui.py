@@ -262,3 +262,33 @@ def test_a_zoom_notch_costs_real_travel():
     """These events arrive many times a second. Zooming on each one would take
     the picture from fit to 8x in a flick."""
     assert gui._ZOOM_PIXELS >= 20
+
+
+# -- zoom, which has to answer the hand ------------------------------------
+
+
+def test_a_short_swipe_visibly_changes_the_zoom():
+    """Spending one 1.15x notch per 60 px meant five full two-finger swipes to
+    double the size, which reads as the gesture doing nothing at all."""
+    import math
+    for travel, least in ((20, 1.05), (100, 1.5)):
+        assert math.exp(travel * gui._ZOOM_PER_PIXEL) > least, travel
+
+
+def test_doubling_the_size_costs_a_swipe_not_five():
+    import math
+    pixels = math.log(2) / gui._ZOOM_PER_PIXEL
+    assert 60 < pixels < 200, f"{pixels:.0f} px to double"
+
+
+def test_zooming_in_and_out_by_the_same_travel_comes_home():
+    import math
+    there = math.exp(140 * gui._ZOOM_PER_PIXEL)
+    back = math.exp(-140 * gui._ZOOM_PER_PIXEL)
+    assert there * back == pytest.approx(1.0, abs=1e-9)
+
+
+def test_a_wheel_notch_is_worth_more_than_a_trackpad_pixel():
+    """A notch is a discrete click; a pixel is a fraction of a gesture."""
+    import math
+    assert gui._ZOOM_PER_NOTCH > math.exp(gui._ZOOM_PER_PIXEL)
