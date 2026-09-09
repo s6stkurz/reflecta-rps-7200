@@ -672,13 +672,12 @@ def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_a_stop_is_honoured_before_the_film_moves():
-    """Not after the next frame has already been prescanned.
+def test_a_stop_while_a_frame_is_running_ends_the_roll_after_it():
+    """The ordinary case, and the one the button describes.
 
-    A caller that only checks between yields has, by the time it looks, already
-    let the generator advance the film and prescan the frame after it. On a real
-    roll at 3600 dpi RGBI that is six minutes and 250 MB the operator asked not
-    to spend. Measured on the hardware: a stop during frame 2 produced frame 3.
+    A frame takes minutes; the operator presses stop somewhere inside that. The
+    roll must finish the frame in hand -- abandoning a read is what costs a
+    power cycle -- and then stop, without advancing the film again.
     """
     s = FakeRoll([picture(seed=i) for i in range(5)])
     stop = {"now": False}
@@ -691,6 +690,35 @@ def test_a_stop_is_honoured_before_the_film_moves():
     assert seen == [0, 1], seen
     # One advance to reach frame 2, and none after the stop.
     assert s.advances == 1, s.advances
+
+
+def test_a_stop_during_the_advance_still_saves_the_next_frame():
+    """The advance takes 2-7 seconds on the hardware. A stop landing inside it
+    used to go unlooked-at until the frame after had been prescanned in full."""
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    stop = {"now": False}
+    real_advance = s.advance
+
+    def advance_and_press(*a, **kw):
+        position = real_advance(*a, **kw)
+        stop["now"] = True                       # pressed mid-advance
+        return position
+
+    s.advance = advance_and_press
+    seen = [rf.index for rf in s.scan_roll(frames=5, infrared=False,
+                                           meter=METER_NONE,
+                                           should_stop=lambda: stop["now"])]
+    # Frame 1, then the advance, then the stop is seen before frame 2 begins.
+    assert seen == [0], seen
+
+
+def test_a_stop_set_before_the_roll_starts_scans_nothing():
+    s = FakeRoll([picture(seed=i) for i in range(5)])
+    seen = [rf.index for rf in s.scan_roll(frames=5, infrared=False,
+                                           meter=METER_NONE,
+                                           should_stop=lambda: True)]
+    assert seen == []
+    assert s.advances == 0
 
 
 def test_without_a_stop_the_roll_runs_to_its_frame_count():

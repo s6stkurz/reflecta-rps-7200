@@ -2258,6 +2258,14 @@ class DirectScanner:
             index += 1
 
         while frames is None or index < skip + frames:
+            # The frame has not begun here, so this is where stopping is
+            # cheapest -- and it covers the advance, which takes 2-7 seconds
+            # during which a stop would otherwise not be looked at again until
+            # the frame after it had been prescanned. At 3600 dpi RGBI that is
+            # six minutes and 250 MB spent after the operator said stop.
+            if should_stop is not None and should_stop():
+                self._log("stopping before the next frame, as asked")
+                return
             started = time.monotonic()
             prescan_image = None
             marks: dict[str, Any] = {}
