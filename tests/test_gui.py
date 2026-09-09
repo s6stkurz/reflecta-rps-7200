@@ -327,19 +327,34 @@ def test_the_full_resolution_array_is_only_used_when_close_in():
     third slower than reading a contiguous nine. It was used for every redraw
     once loaded, fit included."""
     import inspect
-    source = inspect.getsource(gui.ScannerGui._source)
-    assert "close_in" in source
-    assert "self._zoom >= 1.0" in source
+    source = inspect.getsource(gui.ScannerGui._pixels)
+    assert "self._zoom > 1.0" in source
 
 
-def test_the_loader_thread_cannot_reach_into_a_closed_window():
-    """A full-resolution read takes a moment and the window can be closed
-    inside it; calling Tk from that thread afterwards raises where nobody
-    catches it."""
+def test_the_view_is_measured_against_one_array_only():
+    """The zoom and the view are in working-copy coordinates whatever is being
+    sampled. Rescaling them when the big array arrived meant the zoom crossed
+    back under its own threshold, which swapped the array again -- a picture
+    that jumped about as it passed 1:1."""
     import inspect
-    source = inspect.getsource(gui.ScannerGui._later)
-    assert "_alive" in source
-    assert "TclError" in source
+    assert "preview.rotate(r.image, r.rotation)" in inspect.getsource(
+        gui.ScannerGui._source)
+    loaded = inspect.getsource(gui.ScannerGui._loaded)
+    assert "grow" not in loaded, "the arrival of the big array must move nothing"
+
+
+def test_the_loader_thread_never_touches_tk():
+    """`after()` from another thread is not safe, and wrapping it in a
+    try/except turned a visible failure into a silent one: the read finished,
+    the callback never arrived, and the full-resolution view simply never
+    appeared with nothing anywhere to say why. It hands the result back through
+    a queue that the main loop already drains."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._load_full)
+    assert "self._reads.put" in source
+    assert "self.root" not in source, "the reading thread must not call Tk"
+    assert "_reads" in inspect.getsource(gui.ScannerGui._pump), (
+        "and the main loop has to collect it")
 
 
 def test_a_moving_frame_is_drawn_coarse_and_a_still_one_sharp():

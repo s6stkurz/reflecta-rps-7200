@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import queue
 import shutil
 import sys
 import time
@@ -117,10 +118,10 @@ class ScannerGui:
         self._session_closed = False
         self._last_nudge = 0                 # which way the film last went
         self._zoom = 0.0                     # 0 = fit; otherwise pixels per pixel
-        self._offset = [0.0, 0.0]            # pan, in source pixels
         self._drag = None
         self._pointer = (0.0, 0.0)           # where a zoom should pivot
         self._view = [0.0, 0.0]              # the picture point at the corner
+        self._reads: queue.Queue = queue.Queue()   # full-resolution reads landing
         self._shown = None                   # what was last drawn, for clicks
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
@@ -514,7 +515,7 @@ class ScannerGui:
         ttk.Button(bar, text="−", width=3,
                    command=lambda: self._zoom_by(0.5)).pack(side="right")
         ttk.Button(bar, text="1:1", width=4,
-                   command=lambda: self._set_zoom(1.0)).pack(side="right")
+                   command=lambda: self._set_zoom(self._finest())).pack(side="right")
         ttk.Button(bar, text="Fit", width=4,
                    command=lambda: self._set_zoom(0.0)).pack(side="right")
         self.v_zoomtext = tk.StringVar(value="fit")
@@ -899,6 +900,14 @@ class ScannerGui:
     def _pump(self) -> None:
         if not self._alive:
             return
+        while True:
+            try:
+                seq, image, problem = self._reads.get_nowait()
+            except queue.Empty:
+                break
+            if problem:
+                self._say(problem)
+            self._loaded(seq, image)
         for event in self.session.poll():
             self._handle(event)
             if not self._alive:
@@ -1168,7 +1177,7 @@ class ScannerGui:
         self._say(f"{result.label}: {result.rotation}\u00b0 -- new scans and "
                   "the files written for them follow this; the library entry "
                   "keeps the scanner's own orientation")
-        self._offset = [0.0, 0.0]
+        self._view = [0.0, 0.0]
         self._show(result)
         self._redraw_strip()
 
@@ -1219,7 +1228,37 @@ class ScannerGui:
     # -- drawing, zoom and pan --------------------------------------------
 
     def _source(self):
-        """The pixels to draw: full resolution when close in, else the copy.
+        """The picture, in the coordinates the zoom and the view are measured in.
+
+        Always the working copy. Everything about where the picture sits is
+        expressed against this one array, so reading the full-resolution pixels
+        cannot move anything -- it only changes what is sampled, never what the
+        numbers mean.
+        """
+        r = self.current
+        if r is None or r.image is None:
+            return None
+        return preview.rotate(r.image, r.rotation)
+
+    def _finest(self) -> float:
+        """How much finer the scan is than the working copy the view uses.
+
+        So that the percentage means what it says: 100% is one scanned pixel
+        per screen pixel, not one pixel of the reduced copy the window happens
+        to be drawing from. On a 3600 dpi frame those differ by four.
+        """
+        r = self.current
+        if r is None or r.image is None:
+            return 1.0
+        scanned = (r.meta or {}).get("width")
+        if not scanned:
+            return 1.0
+        turned = r.rotation % 180 != 0
+        across = r.image.shape[0] if turned else r.image.shape[1]
+        return max(1.0, float(scanned) / max(1, across))
+
+    def _pixels(self):
+        """What to sample, and how much bigger it is than the picture.
 
         The working copy is used whenever it is enough, even after the
         full-resolution array has been read, because a decimating view over
@@ -1227,14 +1266,15 @@ class ScannerGui:
         a contiguous nine.
         """
         r = self.current
-        if r is None:
-            return None
-        close_in = self._zoom >= 1.0
-        if close_in and self._full_seq == r.seq:
-            return preview.rotate(self._full, r.rotation)
-        if close_in and r.entry is not None:
-            self._load_full(r)
-        return preview.rotate(r.image, r.rotation)
+        if r is None or r.image is None:
+            return None, 1.0
+        if self._zoom > 1.0:                             # upscaling the copy
+            if self._full_seq == r.seq and self._full is not None:
+                return (preview.rotate(self._full, r.rotation),
+                        self._full.shape[1] / max(1, r.image.shape[1]))
+            if r.entry is not None:
+                self._load_full(r)
+        return preview.rotate(r.image, r.rotation), 1.0
 
     def _load_full(self, r) -> None:
         """Read the entry's own pixels, off the UI thread.
@@ -1248,45 +1288,27 @@ class ScannerGui:
         self._loading = r.seq
 
         def work(entry: Path, seq: int) -> None:
-            image = None
+            image = problem = None
             try:
                 image, _ = library.load(entry)
             except Exception as exc:                     # noqa: BLE001
-                self._later(lambda name=entry.name, why=str(exc):
-                            self._say(f"could not read {name}: {why}"))
-            self._later(lambda got=image: self._loaded(seq, got))
+                problem = f"could not read {entry.name}: {exc}"
+            # Through a queue, never by calling Tk. `after()` from another
+            # thread is not safe, and wrapping it in a try/except turned a
+            # visible failure into a silent one: the read finished, the call
+            # back never arrived, and the full-resolution view simply never
+            # appeared with nothing anywhere to say why.
+            self._reads.put((seq, image, problem))
 
         threading.Thread(target=work, args=(r.entry, r.seq), daemon=True).start()
-
-    def _later(self, call) -> None:
-        """Run `call` on the UI thread, unless the window has gone.
-
-        A full-resolution read takes a moment, and the window can be closed
-        inside it. Reaching into Tk from the reading thread afterwards raises
-        out of that thread, where nobody catches it and it surfaces as a
-        traceback with nothing to do about it.
-        """
-        if not self._alive:
-            return
-        try:
-            self.root.after(0, call)
-        except (tk.TclError, RuntimeError):
-            pass
 
     def _loaded(self, seq: int, image) -> None:
         self._loading = None
         if self.current is None or self.current.seq != seq or image is None:
             return
-        # Keep the pan pointing at the same place in the picture.
-        if self.current.image is not None:
-            grow = image.shape[1] / max(1, self.current.image.shape[1])
-            self._offset = [self._offset[0] * grow, self._offset[1] * grow]
-        if self.current.image is not None:
-            # The view is in picture coordinates, and the picture just got
-            # bigger underneath it.
-            grow = image.shape[1] / max(1, self.current.image.shape[1])
-            self._view = [self._view[0] * grow, self._view[1] * grow]
-            self._zoom = self._zoom / grow if self._zoom > 0 else 0.0
+        # Nothing is adjusted: the zoom and the view are measured against the
+        # working copy, so the big array arriving changes what is sampled and
+        # not what any of the numbers mean.
         self._full, self._full_seq = image, seq
         # Deliberately not re-measured: the levels stay the working copy's, so
         # a 1:1 look is the same picture as the fit it came from.
@@ -1330,7 +1352,7 @@ class ScannerGui:
             self._schedule_redraw(moving=moving)
             return
 
-        target = min(_MAX_ZOOM, target)
+        target = min(_MAX_ZOOM * self._finest(), target)
         if focus is None:
             focus = self._source_at(w / 2, h / 2)
             anchor = (w / 2, h / 2)
@@ -1493,7 +1515,14 @@ class ScannerGui:
         # Tk, which is far cheaper than sampling and rendering every pixel: both
         # of those costs, and building the image Tk shows, scale with the count.
         coarse = _GESTURE_FACTOR if quick and out_w > 2 * _GESTURE_FACTOR else 1
-        arr = preview.sample(src, scale / coarse, x0, y0,
+        pixels, detail = self._pixels()
+        if pixels is None:
+            return
+        # `detail` is how much finer the sampled array is than the picture the
+        # view is measured against, so the same view reads the same place out
+        # of either one.
+        arr = preview.sample(pixels, scale * detail / coarse,
+                             x0 * detail, y0 * detail,
                              max(1, out_w // coarse), max(1, out_h // coarse))
         try:
             rgb = preview.render(arr, self.v_channel.get(), self.v_invert.get(),
@@ -1507,7 +1536,8 @@ class ScannerGui:
         self._photo = photo
         self.canvas.create_image(left, top, anchor="nw", image=self._photo)
         self._shown = (photo.width(), photo.height(), scale, x0, y0, left, top)
-        self.v_zoomtext.set("fit" if self._zoom <= 0 else f"{scale * 100:.0f}%")
+        self.v_zoomtext.set("fit" if self._zoom <= 0
+                            else f"{scale / self._finest() * 100:.0f}%")
         if self._zoom > 0 and (rgb.shape[1] > w or rgb.shape[0] > h):
             self.canvas.configure(cursor="fleur")        # there is room to drag
         else:
@@ -1551,7 +1581,8 @@ class ScannerGui:
                 w = max(1, self.canvas.winfo_width())
                 h = max(1, self.canvas.winfo_height())
                 fit = min(w / src.shape[1], h / src.shape[0])
-                self._zoom_by(1.0 / fit if fit else 1.0, anchor=self._pointer)
+                want = self._finest()
+                self._zoom_by(want / fit if fit else 1.0, anchor=self._pointer)
         else:
             self._set_zoom(0.0)
         return "break"
