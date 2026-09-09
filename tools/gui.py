@@ -107,6 +107,8 @@ class ScannerGui:
         self._thumbs: list[tk.PhotoImage] = []
         self._full = None                    # full-resolution pixels, for 1:1
         self._full_seq = None
+        self._levels: list = []              # coarser copies, finest last
+        self._levels_seq = None
         self._loading = None
         self._redraw_job = None
         self._settle_job = None
@@ -1034,6 +1036,8 @@ class ScannerGui:
         self.current = result
         self._full = None
         self._full_seq = None
+        self._levels = []
+        self._levels_seq = None
         self._view = [0.0, 0.0]
         available = (preview.channels_available(result.image)
                      if result.image is not None else ("RGB",))
@@ -1258,21 +1262,25 @@ class ScannerGui:
         return max(1.0, float(scanned) / max(1, across))
 
     def _pixels(self):
-        """What to sample, and how much bigger it is than the picture.
+        """What to sample, and how much finer it is than the picture.
 
-        The working copy is used whenever it is enough, even after the
-        full-resolution array has been read, because a decimating view over
-        142 MB gathers from scattered memory and is a third slower than reading
-        a contiguous nine.
+        The coarsest array that still holds the detail being asked for. Going
+        straight from the working copy to the full scan meant that just past
+        the point where the copy runs out, a 3400-pixel-wide strip had to be
+        decimated out of 142 MB for a 900-pixel view -- 30 ms against the
+        copy's 4, a step you could feel exactly where the two met. A level in
+        between keeps the strip read to about twice what is drawn, whatever the
+        zoom, and costs 11.
         """
         r = self.current
         if r is None or r.image is None:
             return None, 1.0
         if self._zoom > 1.0:                             # upscaling the copy
-            if self._full_seq == r.seq and self._full is not None:
-                return (preview.rotate(self._full, r.rotation),
-                        self._full.shape[1] / max(1, r.image.shape[1]))
-            if r.entry is not None:
+            if self._levels_seq == r.seq and self._levels:
+                for factor, array in self._levels:
+                    if factor >= self._zoom or array is self._levels[-1][1]:
+                        return preview.rotate(array, r.rotation), factor
+            elif r.entry is not None:
                 self._load_full(r)
         return preview.rotate(r.image, r.rotation), 1.0
 
@@ -1310,6 +1318,9 @@ class ScannerGui:
         # working copy, so the big array arriving changes what is sampled and
         # not what any of the numbers mean.
         self._full, self._full_seq = image, seq
+        self._levels = preview.pyramid(
+            image, image.shape[1] / max(1, self.current.image.shape[1]))
+        self._levels_seq = seq
         # Deliberately not re-measured: the levels stay the working copy's, so
         # a 1:1 look is the same picture as the fit it came from.
         self._redraw()

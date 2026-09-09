@@ -341,3 +341,44 @@ def test_getting_the_conversion_backwards_lands_somewhere_else():
     # 2797 -- it samples a six-pixel strip where a hundred were wanted.
     assert np.abs(right.astype(int) - reference.astype(int)).mean() < 800
     assert np.abs(wrong.astype(int) - reference.astype(int)).mean() > 1500
+
+
+# -- levels between the working copy and the scan ---------------------------
+
+
+def test_a_pyramid_reaches_from_the_copy_to_the_scan():
+    image = rgbi(400, 600)
+    levels = preview.pyramid(image, 4.0)
+    factors = [f for f, _ in levels]
+    assert factors == sorted(factors), "coarsest first"
+    assert factors[-1] == 4.0 and levels[-1][1] is image
+    assert 2.0 in factors, "a step in between, or the jump is the whole way"
+
+
+def test_each_level_is_the_size_its_factor_claims():
+    image = rgbi(400, 600)
+    for factor, array in preview.pyramid(image, 4.0):
+        assert array.shape[1] == pytest.approx(600 * factor / 4.0, rel=0.01)
+
+
+def test_levels_are_decimated_not_averaged():
+    """A level is the pixels the scanner sent with some left out. An average
+    would show a smoothness the file does not have."""
+    image = rgbi(200, 300, seed=8)
+    levels = dict(preview.pyramid(image, 4.0))
+    half = levels[2.0]
+    assert np.array_equal(half, image[::2, ::2])
+
+
+def test_a_shallow_pyramid_is_just_the_image():
+    """Nothing to put in between when the copy is already close to the scan."""
+    image = rgbi(100, 120)
+    assert [f for f, _ in preview.pyramid(image, 1.0)] == [1.0]
+
+
+def test_every_level_is_contiguous():
+    """A strided view would put the gather back on scattered memory, which is
+    the cost the levels exist to avoid."""
+    image = rgbi(200, 400)
+    for _factor, array in preview.pyramid(image, 4.0):
+        assert array.flags["C_CONTIGUOUS"]
