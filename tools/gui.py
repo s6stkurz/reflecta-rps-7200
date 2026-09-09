@@ -120,6 +120,7 @@ class ScannerGui:
         self._offset = [0.0, 0.0]            # pan, in source pixels
         self._drag = None
         self._pointer = (0.0, 0.0)           # where a zoom should pivot
+        self._view = [0.0, 0.0]              # the picture point at the corner
         self._shown = None                   # what was last drawn, for clicks
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
@@ -1024,7 +1025,7 @@ class ScannerGui:
         self.current = result
         self._full = None
         self._full_seq = None
-        self._offset = [0.0, 0.0]
+        self._view = [0.0, 0.0]
         available = (preview.channels_available(result.image)
                      if result.image is not None else ("RGB",))
         for name, button in self.channel_buttons.items():
@@ -1280,12 +1281,25 @@ class ScannerGui:
         if self.current.image is not None:
             grow = image.shape[1] / max(1, self.current.image.shape[1])
             self._offset = [self._offset[0] * grow, self._offset[1] * grow]
+        if self.current.image is not None:
+            # The view is in picture coordinates, and the picture just got
+            # bigger underneath it.
+            grow = image.shape[1] / max(1, self.current.image.shape[1])
+            self._view = [self._view[0] * grow, self._view[1] * grow]
+            self._zoom = self._zoom / grow if self._zoom > 0 else 0.0
         self._full, self._full_seq = image, seq
         # Deliberately not re-measured: the levels stay the working copy's, so
         # a 1:1 look is the same picture as the fit it came from.
         self._redraw()
 
     def _set_zoom(self, zoom: float) -> None:
+        """Fit, or a scale about the middle of what is on screen."""
+        src = self._source()
+        if zoom > 0 and src is not None:
+            w = max(1, self.canvas.winfo_width())
+            h = max(1, self.canvas.winfo_height())
+            middle = self._source_at(w / 2, h / 2)
+            self._view = [middle[0] - (w / 2) / zoom, middle[1] - (h / 2) / zoom]
         self._zoom = zoom
         self._schedule_redraw()
 
@@ -1313,24 +1327,18 @@ class ScannerGui:
 
         if target <= fit:
             self._zoom = 0.0                             # back to fit, and stop
-            self._offset = [src.shape[1] / 2, src.shape[0] / 2]
             self._schedule_redraw(moving=moving)
             return
 
         target = min(_MAX_ZOOM, target)
         if focus is None:
-            if self._zoom <= 0:
-                self._offset = [src.shape[1] / 2, src.shape[0] / 2]
-        else:
-            # Put `focus` back under the anchor at the new scale. The picture
-            # is drawn centred, so the offset is measured from that centre.
-            out_w = min(w, max(1, int(src.shape[1] * target)))
-            out_h = min(h, max(1, int(src.shape[0] * target)))
-            left, top = (w - out_w) / 2, (h - out_h) / 2
-            self._offset = [
-                focus[0] - (anchor[0] - left) / target + out_w / (2 * target),
-                focus[1] - (anchor[1] - top) / target + out_h / (2 * target),
-            ]
+            focus = self._source_at(w / 2, h / 2)
+            anchor = (w / 2, h / 2)
+        # One line, and it is exact at every scale and in every direction: the
+        # picture point under the pointer is the point the corner is measured
+        # from.
+        self._view = [focus[0] - anchor[0] / target,
+                      focus[1] - anchor[1] / target]
         self._zoom = target
         self._schedule_redraw(moving=moving)
 
@@ -1346,15 +1354,35 @@ class ScannerGui:
         tall, wide = src.shape[0], src.shape[1]
         if self._zoom <= 0:
             scale = min(w / wide, h / tall)
-            return (scale, 0.0, 0.0,
-                    max(1, int(wide * scale)), max(1, int(tall * scale)))
-        scale = self._zoom
-        out_w = min(w, max(1, int(wide * scale)))
-        out_h = min(h, max(1, int(tall * scale)))
-        cx, cy = self._offset
-        x0 = max(0.0, min(wide - out_w / scale, cx - out_w / (2 * scale)))
-        y0 = max(0.0, min(tall - out_h / scale, cy - out_h / (2 * scale)))
-        return scale, x0, y0, out_w, out_h
+            view = [-(w / scale - wide) / 2, -(h / scale - tall) / 2]
+        else:
+            scale = self._zoom
+            view = self._clamped_view(scale, w, h, wide, tall)
+
+        # The corner of the canvas sits at `view` in the picture; negative
+        # means the picture starts inside the canvas and there is a margin.
+        x0, y0 = max(0.0, view[0]), max(0.0, view[1])
+        left, top = max(0.0, -view[0] * scale), max(0.0, -view[1] * scale)
+        out_w = max(1, min(int(w - left), int(round((wide - x0) * scale))))
+        out_h = max(1, min(int(h - top), int(round((tall - y0) * scale))))
+        return scale, x0, y0, out_w, out_h, left, top
+
+    def _clamped_view(self, scale, w, h, wide, tall):
+        """The view, kept far enough on the picture to still be looking at it.
+
+        Deliberately not "the whole picture must stay visible". Insisting on
+        that meant a picture only a little smaller than the canvas had to slide
+        as it grew -- there was room to show all of it, so it was moved to show
+        all of it, and a point held under the pointer moved with it. That band
+        runs from fit to about 105%, which is exactly where the sliding was
+        noticed. Zooming into the top of something is a request to let the
+        bottom go.
+        """
+        vx, vy = self._view
+        span_x, span_y = w / scale, h / scale
+        vx = min(max(vx, -span_x * _OFF_CANVAS), wide - span_x * (1 - _OFF_CANVAS))
+        vy = min(max(vy, -span_y * _OFF_CANVAS), tall - span_y * (1 - _OFF_CANVAS))
+        return [vx, vy]
 
     def _source_at(self, x: float, y: float):
         """The picture coordinates under a point on the canvas, clamped.
@@ -1369,9 +1397,9 @@ class ScannerGui:
             return None
         w = max(1, self.canvas.winfo_width())
         h = max(1, self.canvas.winfo_height())
-        scale, x0, y0, dw, dh = self._geometry(src, w, h)
-        ix = min(max(x - (w - dw) / 2, 0.0), float(dw))
-        iy = min(max(y - (h - dh) / 2, 0.0), float(dh))
+        scale, x0, y0, dw, dh, left, top = self._geometry(src, w, h)
+        ix = min(max(x - left, 0.0), float(dw))
+        iy = min(max(y - top, 0.0), float(dh))
         return x0 + ix / scale, y0 + iy / scale
 
     def _touchpad_over_picture(self, dx: int, dy: int) -> None:
@@ -1384,7 +1412,7 @@ class ScannerGui:
         and a long one is a large change, which is what the hand expects.
         """
         if dx and not dy and self._zoom > 0:
-            self._offset[0] -= dx / self._zoom
+            self._view[0] += dx / self._zoom
             self._schedule_redraw(moving=True)
             return
         if dy:
@@ -1393,7 +1421,7 @@ class ScannerGui:
 
     def _wheel_over_picture(self, amount: int, sideways: bool) -> None:
         if sideways and self._zoom > 0:
-            self._offset[0] += amount * 40 / self._zoom
+            self._view[0] += amount * 40 / self._zoom
             self._schedule_redraw(moving=True)
             return
         self._zoom_by((1 / _ZOOM_PER_NOTCH) ** amount if amount > 0
@@ -1460,7 +1488,7 @@ class ScannerGui:
         # Sampled at whatever scale is asked for. Decimating and replicating by
         # whole numbers -- which is what this replaced -- can only show 50%,
         # 100%, 200%, so a smooth zoom reached the screen as jumps between them.
-        scale, x0, y0, out_w, out_h = self._geometry(src, w, h)
+        scale, x0, y0, out_w, out_h, left, top = self._geometry(src, w, h)
         # A moving frame is drawn at a fraction of the size and enlarged by
         # Tk, which is far cheaper than sampling and rendering every pixel: both
         # of those costs, and building the image Tk shows, scale with the count.
@@ -1477,16 +1505,16 @@ class ScannerGui:
         if coarse > 1:
             photo = photo.zoom(coarse, coarse)
         self._photo = photo
-        self.canvas.create_image(w // 2, h // 2, image=self._photo)
-        self._shown = (photo.width(), photo.height(), scale, x0, y0)
+        self.canvas.create_image(left, top, anchor="nw", image=self._photo)
+        self._shown = (photo.width(), photo.height(), scale, x0, y0, left, top)
         self.v_zoomtext.set("fit" if self._zoom <= 0 else f"{scale * 100:.0f}%")
         if self._zoom > 0 and (rgb.shape[1] > w or rgb.shape[0] > h):
             self.canvas.configure(cursor="fleur")        # there is room to drag
         else:
             self.canvas.configure(cursor="")
         if self.v_aim.get() and self.current.kind == "prescan":
-            dw = self._shown[0]
-            for x in ((w - dw) // 2, (w + dw) // 2):
+            dw, left = self._shown[0], self._shown[5]
+            for x in (int(left), int(left + dw)):
                 self.canvas.create_line(x, 0, x, h, fill="#e8b64c", dash=(4, 4))
             self.canvas.create_line(w // 2, 0, w // 2, h, fill="#555", dash=(2, 6))
             self.canvas.create_text(
@@ -1498,11 +1526,9 @@ class ScannerGui:
         """Canvas coordinates to source-image pixels, or None if off-image."""
         if self._shown is None:
             return None
-        dw, dh, scale, x0, y0 = self._shown
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
-        ix = event.x - (w - dw) / 2
-        iy = event.y - (h - dh) / 2
+        dw, dh, scale, x0, y0, left, top = self._shown
+        ix = event.x - left
+        iy = event.y - top
         if not (0 <= ix < dw and 0 <= iy < dh):
             return None
         return x0 + ix / scale, y0 + iy / scale
@@ -1512,7 +1538,7 @@ class ScannerGui:
                 and self.current.kind == "prescan":
             self._aim(event)
             return
-        self._drag = (event.x, event.y, list(self._offset))
+        self._drag = (event.x, event.y, list(self._view))
 
     def on_double_click(self, event: tk.Event) -> str:
         """Fit and 1:1, the shortcut people try before finding the buttons."""
@@ -1534,8 +1560,8 @@ class ScannerGui:
         if self._drag is None or self._zoom <= 0:
             return
         sx, sy, start = self._drag
-        self._offset = [start[0] - (event.x - sx) / self._zoom,
-                        start[1] - (event.y - sy) / self._zoom]
+        self._view = [start[0] - (event.x - sx) / self._zoom,
+                      start[1] - (event.y - sy) / self._zoom]
         self._schedule_redraw(moving=True)
 
     def _aim(self, event: tk.Event) -> None:
@@ -1648,6 +1674,10 @@ _ZOOM_PER_NOTCH = 1.25
 #: As close as the picture can be brought. Past eight times, a scanned pixel is
 #: a block the size of a fingernail and there is nothing further to see.
 _MAX_ZOOM = 8.0
+#: How much of the canvas may be empty before the view is pulled back. Some
+#: slack is what lets a zoom hold its anchor near an edge; too much and the
+#: picture can be pushed out of sight altogether.
+_OFF_CANVAS = 0.75
 
 
 def _touchpad_deltas(event: tk.Event) -> tuple[int, int]:
