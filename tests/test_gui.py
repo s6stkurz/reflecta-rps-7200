@@ -365,7 +365,8 @@ def test_a_moving_frame_is_drawn_coarse_and_a_still_one_sharp():
     assert gui._GESTURE_FACTOR >= 2
     source = inspect.getsource(gui.ScannerGui._redraw)
     assert "quick" in source and "_GESTURE_FACTOR" in source
-    assert ".zoom(coarse, coarse)" in source, (
+    painting = inspect.getsource(gui.ScannerGui._paint)
+    assert '"-zoom", coarse, coarse' in painting, (
         "a coarse frame has to be enlarged, or the picture would shrink")
 
 
@@ -467,3 +468,25 @@ def test_the_coarsest_level_that_has_the_detail_is_the_one_read():
     source = inspect.getsource(gui.ScannerGui._pixels)
     assert "for factor, array in self._levels" in source
     assert "factor >= self._zoom" in source
+
+
+def test_the_picture_is_written_into_an_image_tk_already_knows():
+    """Building a fresh PhotoImage every frame and binding it to a fresh canvas
+    item cost 6.5 ms in `create_image` alone -- an image Tk has not seen before
+    makes it start from scratch. Two thirds of a moving frame went there."""
+    import inspect
+    painting = inspect.getsource(gui.ScannerGui._paint)
+    assert "_sized(" in painting, "the image is reused when it is already right"
+    assert "tk.PhotoImage(data=" not in painting, (
+        "allocating from data every frame is what this replaced")
+    placing = inspect.getsource(gui.ScannerGui._place)
+    assert "self.canvas.coords" in placing, "and the canvas item is moved, not remade"
+
+
+def test_only_the_overlay_is_cleared_between_frames():
+    """Deleting everything would take the picture item with it, and remaking
+    that is the cost being avoided."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._redraw)
+    assert 'self.canvas.delete("note")' in source
+    assert 'self.canvas.delete("all")' not in source
