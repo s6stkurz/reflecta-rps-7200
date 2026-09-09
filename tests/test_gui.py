@@ -335,3 +335,28 @@ def test_the_loader_thread_cannot_reach_into_a_closed_window():
     source = inspect.getsource(gui.ScannerGui._later)
     assert "_alive" in source
     assert "TclError" in source
+
+
+def test_a_moving_frame_is_drawn_coarse_and_a_still_one_sharp():
+    """Both the sampling and the image Tk shows cost in proportion to the pixel
+    count, so a moving frame draws a quarter of them. The only moment the
+    detail is any use is the moment you have stopped moving."""
+    import inspect
+    assert gui._GESTURE_FACTOR >= 2
+    source = inspect.getsource(gui.ScannerGui._redraw)
+    assert "quick" in source and "_GESTURE_FACTOR" in source
+    assert ".zoom(coarse, coarse)" in source, (
+        "a coarse frame has to be enlarged, or the picture would shrink")
+
+
+def test_the_sharp_frame_follows_soon_enough_to_feel_immediate():
+    assert 60 <= gui._SETTLE_MS <= 250
+
+
+def test_only_the_quality_pass_is_debounced():
+    """The frames themselves must not be -- that was the half-second. Only the
+    sharp one that follows waits for the movement to stop."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._schedule_redraw)
+    assert source.count("after_cancel") == 1, "only the settle job may be cancelled"
+    assert "_settle_job" in source
