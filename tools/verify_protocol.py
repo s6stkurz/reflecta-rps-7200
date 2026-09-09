@@ -31,7 +31,6 @@ from rps7200 import tiff
 from rps7200.direct import (
     DEPTH_8,
     FULL_FRAME,
-    ONE_PASS_COLOR,
     SCSI_VENDOR_E7,
     DirectScanner,
     _cmd,
@@ -68,7 +67,8 @@ def mirror_score(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     if ga.shape != gb.shape:
         return float("nan"), float("nan")
     def corr(x, y):
-        x = x - x.mean(); y = y - y.mean()
+        x = x - x.mean()
+        y = y - y.mean()
         d = np.sqrt((x * x).sum() * (y * y).sum())
         return float((x * y).sum() / d) if d else float("nan")
     return corr(ga, gb), corr(ga, np.flipud(gb))
@@ -453,7 +453,7 @@ def stage8(s: DirectScanner) -> dict:
         resid = float(np.max(np.abs(ms - (slope*ps + inter))))
         print(f"\n  reverse fit: {slope:+.4f} mm/unit, intercept {inter:+.4f} mm,"
               f" worst residual {resid:.4f}")
-        print(f"  forward was: +0.1049 mm/unit, intercept +0.1710 mm")
+        print("  forward was: +0.1049 mm/unit, intercept +0.1710 mm")
         out["reverse_fit"] = {"mm_per_unit": round(float(slope), 4),
                               "intercept_mm": round(float(inter), 4),
                               "worst_residual_mm": round(resid, 4)}
