@@ -17,6 +17,7 @@ else. Nothing moves the mechanism until a button is pressed.
 from __future__ import annotations
 
 import argparse
+import math
 import shutil
 import sys
 import time
@@ -462,6 +463,7 @@ class ScannerGui:
         self.canvas.bind("<Button-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
+        self.canvas.bind("<Double-Button-1>", self.on_double_click)
         # Two fingers zoom, because that is the gesture people reach for on
         # a picture; panning is the drag, which needs no gesture support at all.
         self._scrolls(self.canvas, self._wheel_over_picture,
@@ -489,6 +491,9 @@ class ScannerGui:
                    command=lambda: self._set_zoom(1.0)).pack(side="right")
         ttk.Button(bar, text="Fit", width=4,
                    command=lambda: self._set_zoom(0.0)).pack(side="right")
+        self.v_zoomtext = tk.StringVar(value="fit")
+        ttk.Label(bar, textvariable=self.v_zoomtext, width=7,
+                  anchor="e").pack(side="right", padx=(0, 8))
         self.v_caption = tk.StringVar(value="nothing scanned yet")
         ttk.Label(top, textvariable=self.v_caption,
                   foreground="#777").pack(anchor="w", padx=6)
@@ -1240,28 +1245,28 @@ class ScannerGui:
         self._schedule_redraw()
 
     def _touchpad_over_picture(self, dx: int, dy: int) -> None:
-        """Zoom by a trackpad swipe, one notch per `_ZOOM_PIXELS` of travel.
+        """Zoom by a trackpad swipe, smoothly and by however far it travelled.
 
-        These events arrive many times a second, so zooming on each one would
-        shoot from fit to 8x in a flick. The travel is accumulated instead and
-        spent a notch at a time.
+        Continuous rather than notched. Spending one 1.15x notch per 60 px of
+        travel meant five full swipes to double the size, which reads as the
+        gesture doing nothing at all -- and reasonably so. A pixel of travel is
+        worth a fixed proportion instead, so a short swipe is a small change
+        and a long one is a large change, which is what the hand expects.
         """
         if dx and not dy and self._zoom > 0:
             self._offset[0] -= dx / self._zoom
             self._schedule_redraw()
             return
-        self._zoom_travel += dy
-        while abs(self._zoom_travel) >= _ZOOM_PIXELS:
-            step = _ZOOM_PIXELS if self._zoom_travel > 0 else -_ZOOM_PIXELS
-            self._zoom_travel -= step
-            self._zoom_by(1.15 if step > 0 else 1 / 1.15)
+        if dy:
+            self._zoom_by(math.exp(dy * _ZOOM_PER_PIXEL))
 
     def _wheel_over_picture(self, amount: int, sideways: bool) -> None:
         if sideways and self._zoom > 0:
             self._offset[0] += amount * 40 / self._zoom
             self._schedule_redraw()
             return
-        self._zoom_by(1 / 1.15 if amount > 0 else 1.15)
+        self._zoom_by((1 / _ZOOM_PER_NOTCH) ** amount if amount > 0
+                      else _ZOOM_PER_NOTCH ** -amount)
 
     def _schedule_redraw(self) -> None:
         # Coalesced: a sash drag fires <Configure> dozens of times and each
@@ -1314,6 +1319,11 @@ class ScannerGui:
         self._photo = tk.PhotoImage(data=preview.to_ppm(rgb))
         self.canvas.create_image(w // 2, h // 2, image=self._photo)
         self._shown = (rgb.shape[1], rgb.shape[0], scale, x0, y0)
+        self.v_zoomtext.set("fit" if self._zoom <= 0 else f"{scale * 100:.0f}%")
+        if self._zoom > 0 and (rgb.shape[1] > w or rgb.shape[0] > h):
+            self.canvas.configure(cursor="fleur")        # there is room to drag
+        else:
+            self.canvas.configure(cursor="")
         if self.v_aim.get() and self.current.kind == "prescan":
             dw = self._shown[0]
             for x in ((w - dw) // 2, (w + dw) // 2):
@@ -1343,6 +1353,18 @@ class ScannerGui:
             self._aim(event)
             return
         self._drag = (event.x, event.y, list(self._offset))
+
+    def on_double_click(self, event: tk.Event) -> str:
+        """Fit and 1:1, the shortcut people try before finding the buttons."""
+        if self._zoom <= 0:
+            where = self._to_source(event)
+            src = self._source()
+            if where is not None and src is not None:
+                self._offset = list(where)
+            self._set_zoom(1.0)
+        else:
+            self._set_zoom(0.0)
+        return "break"
 
     def on_drag(self, event: tk.Event) -> None:
         if self._drag is None or self._zoom <= 0:
@@ -1452,8 +1474,13 @@ def stop_label(job: str) -> str:
     return "Stop after this frame" if "roll" in job else "Stop (finishes this pass)"
 
 
-#: How far a trackpad has to travel to spend one zoom notch on the picture.
-_ZOOM_PIXELS = 60
+#: What one pixel of trackpad travel is worth, as a proportion. 150 px of
+#: swiping is then about 2.5x, which is roughly what a hand expects from the
+#: gesture; the notched version this replaced wanted 300 px to reach 2x and
+#: read as doing nothing.
+_ZOOM_PER_PIXEL = 0.006
+#: What one wheel notch is worth, for an actual mouse.
+_ZOOM_PER_NOTCH = 1.25
 
 
 def _touchpad_deltas(event: tk.Event) -> tuple[int, int]:
