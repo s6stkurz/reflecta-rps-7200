@@ -299,15 +299,20 @@ def test_a_wheel_notch_is_worth_more_than_a_trackpad_pixel():
 # -- redrawing, which has to keep up with a gesture -------------------------
 
 
-def test_the_redraw_is_throttled_and_not_debounced():
-    """Cancelling the pending redraw on every event sounds like the same thing
-    and is not: a trackpad sends events right through a gesture and for most of
-    a second of momentum after it, so each one pushed the redraw back and the
-    picture did not move until everything stopped. That was the half-second."""
+def test_the_frames_themselves_are_never_postponed():
+    """Cancelling the pending redraw on every event sounds like coalescing and
+    is not: a trackpad sends events right through a gesture and for most of a
+    second of momentum after it, so each one pushed the redraw back and the
+    picture did not move until everything stopped. That was the half-second.
+
+    The sharp frame that follows a gesture *is* debounced, and should be, so
+    this names the job that must not be -- the earlier version forbade
+    `after_cancel` outright and broke the moment a settle timer was added,
+    which is what comes of asserting on a string rather than on the rule."""
     import inspect
     source = inspect.getsource(gui.ScannerGui._schedule_redraw)
-    assert "after_cancel" not in source, (
-        "cancelling the pending redraw is what made a gesture wait for its own end")
+    assert "after_cancel(self._redraw_job)" not in source, (
+        "cancelling the pending frame is what made a gesture wait for its end")
     assert "_drawn_at" in source, "it has to know when it last drew"
 
 
@@ -353,10 +358,8 @@ def test_the_sharp_frame_follows_soon_enough_to_feel_immediate():
     assert 60 <= gui._SETTLE_MS <= 250
 
 
-def test_only_the_quality_pass_is_debounced():
-    """The frames themselves must not be -- that was the half-second. Only the
-    sharp one that follows waits for the movement to stop."""
+def test_the_sharp_frame_is_the_only_thing_that_waits():
     import inspect
     source = inspect.getsource(gui.ScannerGui._schedule_redraw)
-    assert source.count("after_cancel") == 1, "only the settle job may be cancelled"
+    assert "after_cancel(self._settle_job)" in source
     assert "_settle_job" in source
