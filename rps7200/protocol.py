@@ -139,6 +139,12 @@ def locks_white_balance(film: str) -> bool:
     Red is at its ceiling either way, so unlocking costs it nothing and buys
     green and blue about half a stop each.
 
+    Note this diverges from `nkscan`, which groups monochrome with the slides
+    and locks it. That is right for its hardware and not for ours: a Coolscan's
+    exposure register is 26 bits wide with no channel that runs out, so locking
+    costs it nothing. Here red's ceiling is a hard rail the lock propagates to
+    the other two.
+
     Note what this scanner can actually deliver on the negative side. Blue sits
     near the top of the 16-bit exposure timer before any film is loaded -- the
     lamp is weak there and the blue filter passes little -- so there is only

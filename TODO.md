@@ -53,6 +53,40 @@ to the power-on that measured it.
   `docs/analog-gain-plan.md` has the ladder and the reasoning so nobody spends
   the scanner time again.
 
+- **The red plane is one scan line out, in every scan measured.** Cross-
+  correlating R and B against green over 14 entries -- 300, 600, 900 and 1800
+  dpi, colour negative and B&W alike -- red lines up best at row -1 every
+  single time, and blue at row -1 or 0. Correcting it lifts R-to-G correlation
+  from 0.944 to 0.962 on a B&W frame, where the two channels are the same
+  photograph and ought to agree almost perfectly.
+
+  **It does not scale with resolution**, which is the interesting part: a
+  physical offset between the rows of a trilinear CCD would be four lines at
+  3600 dpi where it is one at 900. A constant one line points at the decode or
+  at a residual the device leaves after its own compensation, not at optics.
+
+  `GET PARAMETERS` returns `filter_offset1` and `filter_offset2` -- both 12 in
+  `captures/bw.pcapng` -- and this driver reads them, records them in `meta`,
+  and never applies them. `library.save` then drops them on the floor, the same
+  way it was dropping `metering`, so no filed entry has them either. Start
+  there.
+
+- **NegPy cannot tell a black and white scan from this scanner.** It classifies
+  by minimum channel correlation over a strided 256 px crop, `> 0.99` meaning
+  monochrome (`negpy/features/process/logic.py`). Measured over the library:
+  B&W spans 0.926-0.988 and colour negative 0.008-0.976. **They overlap, so no
+  threshold separates them** -- this is not a value that needs tuning.
+
+  Two reasons the correlation is low: the red row offset above, and noise (the
+  downsample is a stride, `img[::step, ::step]`, so it decimates rather than
+  averages and keeps every bit of the per-pixel noise).
+
+  The real fix is not to make NegPy guess better. **This driver knows the film
+  type and throws it away when it writes the TIFF.** `scan.film` is in the
+  sidecar, but an exported TIFF carries nothing, and NegPy's loader reads only
+  `ExtraSamples` and `InterColorProfile`. Putting it in `ImageDescription` and
+  teaching the loader to read it would settle it on both sides.
+
 - **Black and white comes out as an RGB file, and nothing converts it.** The
   hardware has no black and white mode worth using -- `passes = 0x04` is the
   green filter alone, returns untagged PIXEL-format data our deinterleave
