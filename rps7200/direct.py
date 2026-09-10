@@ -2140,6 +2140,16 @@ class DirectScanner:
             self.advance()
 
         shading_report = None
+        # Why a pass came back raw, when it was asked to be corrected. Kept
+        # separately from `shading_report`, which library.save reads as "a
+        # correction happened" -- and separately from `shading=False`, which is
+        # a request for raw pixels and not a shortfall at all.
+        #
+        # Six 3600 dpi RGBI frames were filed uncorrectable on 2026-09-09
+        # because a restarted session had no reference and every scan simply
+        # logged one line and carried on. Half an hour of scanning, and nothing
+        # in the entries said the correction had been wanted.
+        shading_skipped = None
         if (
             shading
             and self._shading is not None
@@ -2149,11 +2159,11 @@ class DirectScanner:
             # than the calibration cannot be mapped -- at 7200 dpi the image is
             # 10344 columns against 5172 in the reference. Correcting half the
             # frame is worse than correcting none.
-            self._log(
-                f"shading skipped: this pass is {params.width} columns but the "
-                f"reference covers {self._shading.pixels_per_line}; returning "
-                f"raw pixels"
+            shading_skipped = (
+                f"this pass is {params.width} columns but the reference covers "
+                f"{self._shading.pixels_per_line}"
             )
+            self._log(f"shading skipped: {shading_skipped}; returning raw pixels")
         elif shading and self._shading is not None:
             image, shading_report = apply_shading(image, self._shading, ccd_mask)
             # Name the channel, not just the count. Clipping here is almost
@@ -2172,10 +2182,11 @@ class DirectScanner:
                    if shading_report["clipped"] else "")
             )
         elif shading:
+            shading_skipped = "no shading reference in this session"
             self._log(
-                "no shading reference: returning raw pixels. Run "
-                "calibrate_shading() once per session -- the scanner does not "
-                "correct its own output"
+                "*** NO SHADING REFERENCE: these pixels are RAW and can never "
+                "be corrected. Run calibrate_shading() once per session -- the "
+                "scanner does not correct its own output ***"
             )
 
         meta = {
@@ -2184,6 +2195,7 @@ class DirectScanner:
             "film": film,
             "protocol_revision": PROTOCOL_REVISION,
             "shading": shading_report,
+            "shading_skipped": shading_skipped,
             "channel_order": list(CHANNEL_ORDER[:channels]),
             "depth": 16 if depth == DEPTH_16 else 8,
             "frame": list(frame),

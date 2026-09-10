@@ -489,7 +489,7 @@ class ScanSession:
         elif isinstance(job, Prescan):
             self._prescan(job)
         elif isinstance(job, Scan):
-            self._scan(job)
+            return self._scan(job)
         elif isinstance(job, Roll):
             return self._roll(job)
         elif isinstance(job, Move):
@@ -527,7 +527,7 @@ class ScanSession:
             tags=tuple(job.tags) + ("gui", "prescan"),
         )
 
-    def _scan(self, job: Scan) -> None:
+    def _scan(self, job: Scan) -> str | None:
         image, meta = self._scanner.scan(
             resolution=job.resolution,
             infrared=job.infrared,
@@ -541,6 +541,14 @@ class ScanSession:
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
         seq = self._deliver("scan", label, image, meta)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",))
+        # Surface it as the job's outcome, not as one log line among hundreds.
+        # A restarted session has no reference and nothing stops it scanning:
+        # six 3600 dpi RGBI frames went out uncorrectable that way, half an
+        # hour of scanning, with the warning scrolled off the top.
+        if meta.get("shading_skipped"):
+            return (f"{label} came back RAW and can never be corrected "
+                    f"({meta['shading_skipped']}) -- calibrate, then rescan")
+        return None
 
     def _move(self, job: Move) -> str | None:
         """Whole frames, or a sub-frame nudge. Never both in one job."""
