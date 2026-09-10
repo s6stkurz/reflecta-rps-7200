@@ -121,7 +121,9 @@ from .protocol import (
     _is_unity,
     batch_for,
     describe_sense,
+    INFRARED_IS_BLIND_TO,
     locks_white_balance,
+    supports_infrared,
 )
 from .shading import ShadingReference, apply_shading, calculate_shading
 from .usb_transport import CheckCondition, NoDataYet, Transport, UsbError
@@ -229,7 +231,9 @@ __all__ = [
     "find_column_defects",
     "flat_defect_sigma",
     "frame_contrast",
+    "INFRARED_IS_BLIND_TO",
     "locks_white_balance",
+    "supports_infrared",
     "registration",
     "registration_error_mm",
     "resample_reference",
@@ -2097,23 +2101,24 @@ class DirectScanner:
         :meth:`calibrate_shading`, once per session, as the vendor does at
         power-on -- the stripes are simply left in.
         """
-        if infrared and film == FILM_BW:
-            # Traditional silver-halide black and white is opaque to infrared:
-            # the grains block it exactly as dust does, so the plane comes back
-            # holding the picture rather than what is on top of it. Measured on
-            # the one B&W scan here, the infrared plane correlated +0.97 with
-            # green -- it is a fourth copy of the image, bought for the ~212 s
-            # infrared floor.
+        if infrared and not supports_infrared(film):
+            # Refused rather than warned. This costs the ~212 s infrared floor
+            # and returns a plane holding the photograph instead of the dust --
+            # measured on a B&W frame here at +0.97 correlation with green --
+            # and it drags blue's metering along with it, which is what put 34%
+            # of that scan's blue channel at the rail.
             #
-            # A warning and not a refusal, because chromogenic black and white
-            # -- XP2, BW400CN, anything C-41 -- is dye-based and does clean
-            # properly. The film type cannot tell the two apart, so this is the
-            # operator's call to make.
-            self._log(
-                "note: infrared on black and white film. Silver-halide stock "
-                "is opaque to infrared, so the plane will carry the picture "
-                "rather than the dust and the pass costs its ~212 s floor for "
-                "nothing. Chromogenic (C-41) black and white is the exception."
+            # Chromogenic black and white (XP2, BW400CN, anything C-41) is
+            # dye-based and does clean properly. It is not FILM_BW: it is a
+            # colour negative that looks grey, and belongs under
+            # FILM_NEGATIVE, which is where the exception lives.
+            raise ValueError(
+                f"infrared is blind to {film}: its "
+                + ("grain" if film == FILM_BW else "cyan layer")
+                + " absorbs infrared, so the pass would spend its ~212 s floor "
+                "and hand back the picture rather than the dust. Scan it RGB. "
+                "(Chromogenic C-41 black and white does clean properly -- scan "
+                "that as a negative.)"
             )
 
         if auto_exposure:
@@ -2514,6 +2519,17 @@ class DirectScanner:
         # metering, and a roll would otherwise spend three failures discovering
         # a typo it could have refused in the first second.
         locks_white_balance(film)
+        # Same reasoning, and it costs far more here: a roll calibrates for
+        # three or four minutes before the first frame, so an infrared setting
+        # the film is blind to would be discovered after the expensive part.
+        if infrared and not supports_infrared(film):
+            raise ValueError(
+                f"infrared is blind to {film}: its "
+                + ("grain" if film == FILM_BW else "cyan layer")
+                + " absorbs infrared, so every frame of this roll would spend "
+                "its ~212 s floor and hand back the picture rather than the "
+                "dust. Scan it RGB."
+            )
 
         window = scan_frame or FULL_FRAME
 

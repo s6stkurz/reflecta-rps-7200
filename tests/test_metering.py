@@ -22,6 +22,7 @@ from rps7200.direct import (
     DirectScanner,
     blue_rgbi_headroom,
     locks_white_balance,
+    supports_infrared,
 )
 
 
@@ -517,3 +518,40 @@ def test_a_bw_scan_no_longer_blows_its_blue_channel():
     assert landed < CLIP_START / FULL_SCALE, (
         f"blue lands at {landed:.0%}, past the knee bracket.py stops trusting"
     )
+
+
+# -- infrared is refused on film that absorbs it ---------------------------
+
+
+def test_infrared_is_blind_to_silver_bw_and_kodachrome():
+    assert supports_infrared(FILM_NEGATIVE) is True
+    assert supports_infrared(FILM_POSITIVE) is True
+    assert supports_infrared(FILM_BW) is False
+    assert supports_infrared(FILM_KODACHROME) is False
+
+
+def test_an_unknown_film_is_refused_here_too():
+    with pytest.raises(ValueError, match="unknown film type"):
+        supports_infrared("colour-negative")
+
+
+@pytest.mark.parametrize("film", [FILM_BW, FILM_KODACHROME])
+def test_a_scan_refuses_infrared_on_blind_film(film):
+    """Not a warning. The pass costs its ~212 s floor and returns a plane
+    holding the photograph -- measured at +0.97 correlation with green on a
+    B&W frame -- and it drags blue's metering with it, which is what put 34%
+    of that scan's blue channel at the rail.
+    """
+    s = FakeScanner((0.55, 0.60, 0.58))
+    with pytest.raises(ValueError, match="infrared is blind"):
+        DirectScanner.scan(s, infrared=True, film=film)
+
+
+@pytest.mark.parametrize("film", [FILM_NEGATIVE, FILM_POSITIVE])
+def test_infrared_is_left_alone_on_film_that_can_use_it(film):
+    """The guard must not reach film whose dyes are transparent to infrared."""
+    s = FakeScanner((0.55, 0.60, 0.58))
+    # It gets past the guard; FakeScanner has no device, so it fails later.
+    with pytest.raises(Exception) as exc:
+        DirectScanner.scan(s, infrared=True, film=film)
+    assert "infrared is blind" not in str(exc.value)

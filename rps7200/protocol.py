@@ -129,6 +129,37 @@ def locks_white_balance(film: str) -> bool:
     return film != FILM_NEGATIVE
 
 
+#: Film whose dye or grain absorbs infrared, so an infrared pass reads the
+#: picture instead of what is lying on top of it.
+#:
+#: * **Silver-halide black and white.** The grain blocks infrared exactly as
+#:   dust does. Measured here on one B&W frame: the infrared plane correlated
+#:   **+0.97 with green** -- a fourth copy of the image, bought for the ~212 s
+#:   infrared floor.
+#: * **Kodachrome.** Its cyan layer absorbs infrared, which is why no scanner's
+#:   dust removal has ever worked on it. This is the one every vendor documents
+#:   and every vendor still lets you switch on.
+#:
+#: The exception, and the reason this is keyed on film type rather than guessed
+#: from the image: **chromogenic black and white** -- XP2, BW400CN, anything
+#: developed C-41 -- is dye-based and cleans properly. It is not `FILM_BW` here;
+#: it is a colour negative that happens to look grey, and should be scanned as
+#: one.
+INFRARED_IS_BLIND_TO = (FILM_BW, FILM_KODACHROME)
+
+
+def supports_infrared(film: str) -> bool:
+    """Whether an infrared pass on this film would tell you anything.
+
+    False does not mean the scanner refuses -- it will happily take the pass,
+    spend its ~212 s floor and hand back a plane holding the photograph. It
+    means the plane is worthless for what infrared is for.
+    """
+    if film not in FILM_TYPES:
+        raise ValueError(f"unknown film type {film!r}; expected one of {FILM_TYPES}")
+    return film not in INFRARED_IS_BLIND_TO
+
+
 # Slide / autofeed transport actions
 SLIDE_NEXT = 0x04
 SLIDE_PREV = 0x05

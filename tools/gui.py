@@ -30,7 +30,11 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library, preview, settings, tiff      # noqa: E402
-from rps7200.direct import FILM_TYPES, METER_MODES        # noqa: E402
+from rps7200.direct import (                              # noqa: E402
+    FILM_TYPES,
+    INFRARED_IS_BLIND_TO,
+    METER_MODES,
+)
 from rps7200.framing import FULL_FRAME                    # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
 from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
@@ -273,6 +277,7 @@ class ScannerGui:
         elif self.session.out_dir is not None:
             self.v_outdir.set(str(self.session.out_dir))
         self._sync_exposure()
+        self._sync_infrared()
         self._show_estimate()
         self._refresh_presets()
         # Sashes only once the panes have a size to divide, or the positions
@@ -328,6 +333,7 @@ class ScannerGui:
                 except tk.TclError:
                     pass
         self._sync_exposure()
+        self._sync_infrared()
         self._show_estimate()
 
     def on_preset_save(self) -> None:
@@ -515,15 +521,21 @@ class ScannerGui:
                      values=[str(d) for d in PRESCAN_LADDER]).pack(side="left")
 
         self.v_ir = tk.BooleanVar(value=True)
-        ttk.Checkbutton(box, text="infrared (RGBI)", variable=self.v_ir,
-                        command=self._show_estimate).pack(anchor="w", pady=2)
+        self.c_ir = ttk.Checkbutton(box, text="infrared (RGBI)",
+                                    variable=self.v_ir,
+                                    command=self._show_estimate)
+        self.c_ir.pack(anchor="w", pady=2)
+        self.l_ir = ttk.Label(box, text="", foreground="#8a6d00",
+                              wraplength=240, justify="left")
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
         ttk.Label(row, text="film", width=10).pack(side="left")
         self.v_film = tk.StringVar(value="negative")
-        ttk.Combobox(row, textvariable=self.v_film, width=12, state="readonly",
-                     values=list(FILM_TYPES)).pack(side="left")
+        film_box = ttk.Combobox(row, textvariable=self.v_film, width=12,
+                                state="readonly", values=list(FILM_TYPES))
+        film_box.pack(side="left")
+        film_box.bind("<<ComboboxSelected>>", lambda _e: self._sync_infrared())
 
         ttk.Label(box, text="exposure").pack(anchor="w", pady=(6, 0))
         self.v_expmode = tk.StringVar(value="auto")
@@ -768,6 +780,7 @@ class ScannerGui:
                       precise=lambda dx, dy: _scroll_pixels(self.log, 0, dy))
 
         self._sync_exposure()
+        self._sync_infrared()
         self._show_estimate()
 
     # -- reading the controls ---------------------------------------------
@@ -824,6 +837,30 @@ class ScannerGui:
         manual = self.v_expmode.get() == "manual"
         self.e_exposure.configure(state="normal" if manual else "disabled")
         self._show_exposure()
+
+    def _sync_infrared(self) -> None:
+        """Infrared off and unavailable on film that absorbs it.
+
+        Silver-halide black and white and Kodachrome both do. The pass costs
+        its ~212 s floor and hands back a plane holding the picture instead of
+        the dust -- measured at +0.97 correlation with green on a B&W frame
+        here. The scanner refuses it, so the box has to go with it rather than
+        letting someone arm a scan that will fail at the last moment.
+        """
+        film = self.v_film.get()
+        blind = film in INFRARED_IS_BLIND_TO
+        if blind:
+            self.v_ir.set(False)
+            self.c_ir.configure(state="disabled")
+            self.l_ir.configure(
+                text=f"infrared is off: {film} absorbs it, so the plane would "
+                     f"hold the picture rather than the dust"
+            )
+            self.l_ir.pack(anchor="w", padx=(20, 0))
+        else:
+            self.c_ir.configure(state="normal")
+            self.l_ir.pack_forget()
+        self._show_estimate()
 
     def _show_exposure(self) -> None:
         """Say what will actually be sent, so the box cannot lie quietly."""

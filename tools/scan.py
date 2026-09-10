@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import library, tiff
-from rps7200.direct import DirectScanner
+from rps7200.direct import DirectScanner, supports_infrared
 from rps7200.library import FilmNotes
 
 
@@ -84,6 +84,15 @@ def main() -> int:
     ap.add_argument("--tag", action="append", default=[], dest="tags")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     args = ap.parse_args()
+    if args.ir and not supports_infrared(args.film):
+        ap.error(
+            f"--ir with --film {args.film}: infrared is blind to it -- its "
+            + ("grain" if args.film == "bw" else "cyan layer")
+            + " absorbs infrared, so the pass would spend its ~212 s floor a "
+            "frame and hand back the picture rather than the dust. Drop --ir. "
+            "(Chromogenic C-41 black and white does clean properly: scan that "
+            "as --film negative.)"
+        )
     if args.no_library:
         args.library = None
     if args.bracket and not (
