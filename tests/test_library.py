@@ -142,6 +142,33 @@ def test_an_entry_without_calibration_is_flagged(tmp_path):
     assert any("cannot be re-decoded" in p for p in problems)
 
 
+def test_a_scan_that_wanted_correction_and_missed_it_says_so(tmp_path):
+    """Six 3600 dpi RGBI frames were filed uncorrectable in one sitting because
+    a restarted session had no reference and nothing recorded that the
+    correction had been *asked for*.
+
+    An empty `corrections_applied` cannot say it: a scan deliberately taken raw
+    looks exactly the same.
+    """
+    raw, image = index_stream(8, 4, 3)
+    library.save(
+        image,
+        {"resolution_dpi": 3600, "channels": 3,
+         "shading_skipped": "no shading reference in this session"},
+        root=tmp_path,
+    )
+    problems = library.verify(tmp_path)
+    assert any("correction was asked for" in p for p in problems), problems
+
+
+def test_a_scan_deliberately_taken_raw_is_not_reported_as_a_shortfall(tmp_path):
+    raw, image = index_stream(8, 4, 3)
+    library.save(image, {"resolution_dpi": 300, "channels": 3}, root=tmp_path)
+    problems = library.verify(tmp_path)
+    assert any("can never be corrected" in p for p in problems)
+    assert not any("correction was asked for" in p for p in problems)
+
+
 def test_the_index_summarises_every_entry(tmp_path):
     make_entry(tmp_path)
     make_entry(tmp_path, width=8, lines=4)

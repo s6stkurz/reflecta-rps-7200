@@ -56,11 +56,18 @@ re-decoding their stored raw bytes reproduces the stored pixels exactly.
 
 ### Still open
 
-- **Blue behaves differently in RGBI than RGB** at identical exposure — 2.0x
-  brighter on one frame, ~3.7x on another, and not linear in between. Metering
-  in RGB and reusing the values is what CyberView does, but it keeps blue far
-  lower than this driver's auto-exposure does. Until that is understood, meter
-  an IR scan from its own throwaway IR pass rather than from an RGB probe.
+- **Blue behaves differently in RGBI than RGB** at identical exposure. The
+  size and shape of it are now measured: **~5x brighter**, and *linear* in
+  between — the ratio is flat across the whole density range (5.02 in the
+  densest decile against 4.95 in the brightest), so the "not linear in between"
+  recorded here from two scattered readings was an artefact of comparing
+  different frames and of measuring blue where it was already clipped.
+
+  That closes the practical question — one constant works, and it is
+  `BLUE_RGBI_HEADROOM` — without closing the *cause*, which is still unknown.
+  Metering an IR scan from an RGB probe is therefore fine, and remains what
+  CyberView does; a throwaway IR pass is not needed and would cost the 212 s
+  floor.
 - The 7200 dpi guard is implemented but untested: the mask covers 5172 columns
   and a 7200 dpi pass is 10344 wide, so the correction refuses and returns raw.
 

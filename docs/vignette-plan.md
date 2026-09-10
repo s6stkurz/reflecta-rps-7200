@@ -368,11 +368,12 @@ in IR" means an IR component differs from the RGB ones by more than the IR repea
 
 1. **Metering is cheap, and must stay in RGB.** `auto_exposure(infrared=True)` already
    probes three-channel only, in at most two rounds, and divides blue's target by
-   `infrared_blue_headroom = 4.0` (`rps7200/direct.py:2188-2198`, commit 4d53901).
+   `infrared_blue_headroom` (`BLUE_RGBI_HEADROOM`, 5.2; it read 4.0 in commit
+   4d53901, when this was written).
    Meter once at the start of phase 2 with `--ir` and lock the result. Do **not**
    reach for an infrared probe: it costs the ~212 s floor per round, which is the
    ten-minute mistake 4d53901 removed.
-2. **A new exposure is required.** Blue comes back 2-3.7× brighter in RGBI than in RGB
+2. **A new exposure is required.** Blue comes back ~5× brighter in RGBI than in RGB
    at the same exposure, so phase 1's locked `exposure_scale` will clip in RGBI. Phase
    2 gets its own metering round and its own locked value — and therefore its own
    shading calibration at that exposure, exactly as in phase 1.

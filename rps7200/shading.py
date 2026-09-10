@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -190,7 +191,7 @@ def apply_shading(
     image: np.ndarray,
     reference: ShadingReference,
     ccd_mask: bytes | np.ndarray | None = None,
-) -> tuple[np.ndarray, dict[str, int]]:
+) -> tuple[np.ndarray, dict[str, Any]]:
     """Flat-field an ``(H, W, C)`` image from a reference. Returns (image, report).
 
     Two-point where the calibration gave both phases::
@@ -224,8 +225,14 @@ def apply_shading(
 
     out = image.copy()
     maxval = np.iinfo(image.dtype).max if np.issubdtype(image.dtype, np.integer) else None
-    report = {
+    # `clipped` stays the total, because every stored sidecar holds a scalar
+    # there and reading one back must not become a special case.
+    # `clipped_per_channel` is what is actually diagnostic: blue is the only
+    # channel on this scanner that ever clips, so a sum over all of them buries
+    # the one signal worth having.
+    report: dict[str, Any] = {
         "columns": int(loc.size), "width": w, "clipped": 0, "uncorrected": 0,
+        "clipped_per_channel": [0] * nc,
         "two_point": int(reference.two_point),
     }
 
@@ -247,7 +254,9 @@ def apply_shading(
             # floor(x + 0.5) reproduces the C's lround(); np.rint would not,
             # rounding halves to even.
             np.floor(vals + 0.5, out=vals)
-            report["clipped"] += int(np.count_nonzero(vals > maxval))
+            over = int(np.count_nonzero(vals > maxval))
+            report["clipped"] += over
+            report["clipped_per_channel"][c] = over
             np.clip(vals, 0, maxval, out=vals)
         out[:, : loc.size, c] = vals.astype(image.dtype)
 

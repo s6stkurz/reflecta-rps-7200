@@ -44,13 +44,33 @@ to the power-on that measured it.
   exact frames that were drifting. A gap-based detector works, keying on
   columns that are both bright and flat since the inter-frame gap is unexposed
   base, and recovers the 1/10/36 px cleanly. Measured, not implemented.
-- **Blue is 2-3.7x brighter in RGBI than in RGB at the same exposure**, and the
-  cause is unknown. Worked around by metering blue with 4x headroom when an
-  infrared scan follows (`auto_exposure(infrared=True)`). The headroom is the
-  worst of only two measurements plus margin, so it is probably too
-  conservative. Tighten it for free: have each RGBI scan log its actual blue
-  level against what the RGB prescan predicted, and the real range emerges over
-  a few scans with no extra passes.
+- **The gain register is a digital multiplier** (measured 2026-09-10, closed).
+  It was the only lever left for blue in plain RGB, where the exposure timer
+  runs out with blue still ~30% below red and green. It is honoured, and not
+  linear in the code — 21→39 is ×1.857 in the code and ×1.480 in the output —
+  but the noise rises with the signal: ×1.4842 against ×1.4763, a shortfall of
+  0.53% where analog gain would give ~4%. Net SNR gain 0.5%. No code change;
+  `docs/analog-gain-plan.md` has the ladder and the reasoning so nobody spends
+  the scanner time again.
+
+- **Blue is ~5x brighter in RGBI than in RGB at the same exposure**, and the
+  cause is still unknown — but its *shape* is now settled, which is most of
+  what was needed. Measured 4.98-5.02 on the one matched pair in the library
+  (`20260909T103542Z` against `20260909T104022Z_ir`, same frame 4.7 min apart),
+  and the ratio is **flat across density**, 5.02 in the densest decile against
+  4.95 in the brightest. So it is a multiplicative change in blue's
+  sensitivity, not an infrared leak into the blue record — blue's excess
+  correlates +0.9985 with predicted blue and only +0.49 with the infrared
+  plane. A single constant is therefore the right model.
+
+  This entry used to say the 4x headroom was "probably too conservative". It
+  was the opposite: too small, which put blue at 88-96% of full scale where
+  metering aimed for 70%. Now `BLUE_RGBI_HEADROOM = 5.2`.
+
+  The free tightening described here is **done**: `auto_exposure` leaves what
+  each round measured on `last_metering` and `scan` files it, so every ordinary
+  RGBI scan now yields an estimate with no extra passes. What remains is to
+  read a few back and confirm 5.2 against a second film.
 
   To settle the *cause* rather than work around it, one experiment closes it —
   but every step must happen inside a single power-on, because a shading

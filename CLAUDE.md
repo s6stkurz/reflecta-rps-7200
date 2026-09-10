@@ -212,11 +212,20 @@ It needs a power cycle afterwards, so avoid these:
   reference and the host divides. See `docs/shading-calibration-plan.md`.
 - `SET GAIN OFFSET` does **not** persist across a scan sequence. Exposure has
   to go through each scan's `exposure_scale`.
-- Meter in **RGB only, two rounds** — the vendor's sequence. An infrared probe
-  costs the 212 s floor per round. Blue returns 2-3.7x brighter in RGBI at the
-  same exposure, which is handled by metering blue lower, not by probing in IR.
+- Meter in **RGB only, two rounds** — the vendor's sequence, plus one further
+  round only when a channel came back clipped, because there the correction is
+  a retreat rather than a measurement. An infrared probe costs the 212 s floor
+  per round. Blue returns **~5x brighter in RGBI** at the same exposure, which
+  is handled by metering blue lower (`BLUE_RGBI_HEADROOM`), not by probing in
+  IR. Earlier readings of 2-3.7x are superseded; see the constant for the
+  measurement.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
+- **The gain field is a digital multiplier; it buys nothing.** Measured
+  2026-09-10 on a blue ladder 21→39: signal ×1.484, random noise ×1.476, a
+  shortfall of 0.53% where an analog gain would have given ~4%. It is safe to
+  write and pointless to. Blue's rail limit in RGB cannot be lifted this way —
+  scan RGBI, where blue is ~5× more sensitive. See `docs/analog-gain-plan.md`.
 - Bump `PROTOCOL_REVISION` in `rps7200/direct.py` when the commands sent to the
   device change — not for host-side work, which is re-runnable from raw bytes.
 - **There is no vignette, and no vignette correction should be added.** Measured

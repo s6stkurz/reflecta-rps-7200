@@ -98,3 +98,42 @@ def test_the_mask_places_the_columns():
         mask[i] = 0x00
     loc = build_width_to_loc(bytes(mask), PPL // 2)
     assert loc.tolist() == list(range(0, PPL, 2))
+
+
+def test_clipping_is_reported_per_channel():
+    """A total buries the one signal worth having.
+
+    Blue is the only channel on this scanner that ever clips, so a scalar sum
+    over all of them cannot say which exposure to lower -- which is how a roll
+    went out with 22% of its blue at the rail and the report reading only
+    "983454 samples clipped".
+    """
+    data, truth = block(170, 47000)
+    ref = calculate_shading(data, PPL)
+
+    # Red and green comfortable, blue up against the ceiling.
+    scene = np.zeros((32, PPL, 3))
+    scene[..., 0] = 20000
+    scene[..., 1] = 20000
+    scene[..., 2] = 65000
+    raw = np.clip(scene, 0, 65535).astype(np.uint16)
+
+    _, report = apply_shading(raw, ref)
+    per = report["clipped_per_channel"]
+
+    assert len(per) == 3
+    assert sum(per) == report["clipped"], "the per-channel counts must total"
+    assert per[2] > 0, "blue was pushed over the ceiling and was not counted"
+    assert per[0] == 0 and per[1] == 0, (
+        f"only blue should have clipped, got {per}"
+    )
+
+
+def test_the_clipped_total_survives_for_stored_sidecars():
+    """Every filed entry holds a scalar there; reading one back must not
+    become a special case."""
+    data, _ = block(170, 47000)
+    ref = calculate_shading(data, PPL)
+    raw = np.full((8, PPL, 3), 20000, dtype=np.uint16)
+    _, report = apply_shading(raw, ref)
+    assert isinstance(report["clipped"], int)

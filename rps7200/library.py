@@ -231,6 +231,10 @@ def save(
                 if reference is not None else None
             ),
             "report": meta.get("shading"),
+            # Set when the pass asked to be corrected and could not be. An
+            # empty `corrections_applied` alone cannot say that: it looks
+            # identical to a scan deliberately taken raw.
+            "skipped": meta.get("shading_skipped"),
         },
         "film": asdict(film),
         "tags": sorted(set(tags or [])),
@@ -491,9 +495,13 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             if name and not (path / name).exists():
                 problems.append(f"{path.name}: {name} is missing")
         if not cal.get("shading"):
+            # Say which kind this is. A scan deliberately taken raw and one that
+            # wanted correction and silently went without look the same here
+            # otherwise, and only the second is a thing that went wrong.
+            why = cal.get("skipped")
             problems.append(
                 f"{path.name}: no shading reference, so this scan can never be "
-                f"corrected"
+                f"corrected" + (f" -- correction was asked for: {why}" if why else "")
             )
         raw = record.get("raw") or {}
         if not raw.get("file"):
