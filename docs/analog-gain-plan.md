@@ -37,10 +37,24 @@ Not decisive either way, but worth having straight:
   — `EXPOSURE_VALUE` only. Nikon folds gain and integration time together
   behind one exposure number and decides the split itself.
 - **pieusb never touches it.** Its metering moves `exp_rel_*` and nothing else.
-- **CyberView never touches it either**: gain is identical in 36 of 36
-  `WRITE GAIN/OFFSET` payloads across every capture.
+- **CyberView does touch it, and that was recorded here wrongly.** This said
+  "never": gain identical in 36 of 36 `WRITE GAIN/OFFSET` payloads. It is not
+  true of `captures/bw.pcapng` (2026-09-10), where CyberView writes **three**
+  different triples in one session:
 
-So nobody has driven this register on this scanner, and the vendor does not.
+  | written | on |
+  |---|---|
+  | `44, 38, 26` | the 3600 dpi 8-bit calibration pass |
+  | `44, 37, 26` | the two 600 dpi prescans after it |
+  | `39, 33, 21` | everything from the 300 dpi prescans onward |
+
+  The device reported `39, 33, 21` in all 12 `READ GAIN/OFFSET` responses of
+  that session, so the first two are the vendor deliberately raising gain --
+  13% on red, 15% on green, 24% on blue -- and not an echo of something it read.
+  It raises it for **calibration** and drops back afterwards.
+
+So the vendor does drive this register, which the earlier captures did not show
+because none of them contained a calibration.
 
 ## Why it is not the `SET_SCAN_HEAD` situation
 
@@ -162,6 +176,12 @@ noise at gain 21, which is about what quantisation alone would give.
 
 So raising blue's gain from 21 to 39 improves its signal-to-noise ratio by
 **0.5%**. It brightens the picture and amplifies the noise with it.
+
+That the vendor raises gain for its calibration pass does not contradict this.
+A digital multiplier is a perfectly sensible thing to use there: the shading
+reference is divided by its own mean, so a uniform factor cancels, and it lifts
+a dark calibration signal into a range the arithmetic handles well. It buys
+*range*, not information -- which is exactly what the measurement above says.
 
 The measurement was made at blue median 11% of full scale, deliberately dim.
 That is the *most* favourable case for detecting an un-amplified read-noise

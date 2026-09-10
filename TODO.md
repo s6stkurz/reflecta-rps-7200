@@ -53,6 +53,19 @@ to the power-on that measured it.
   `docs/analog-gain-plan.md` has the ladder and the reasoning so nobody spends
   the scanner time again.
 
+- **Black and white comes out as an RGB file, and nothing converts it.** The
+  hardware has no black and white mode worth using -- `passes = 0x04` is the
+  green filter alone, returns untagged PIXEL-format data our deinterleave
+  cannot read, and still costs a full colour pass (`docs/protocol.md`).
+  CyberView does the same thing: `captures/bw.pcapng` is eight passes and every
+  one is `0x80` RGB.
+
+  So the conversion is a host-side step, and it is worth having here rather than
+  only downstream: three channels of one density average to sqrt(3) less noise,
+  and the driver is where the linear data lives. Not started. It must be
+  optional and must not overwrite the three-channel file -- a merged channel
+  cannot be un-merged.
+
 - **How much brighter blue comes back in RGBI depends on the film.** Two
   matched pairs, each the same frame in both modes minutes apart, with red and
   green confirming the mode was the only variable: **4.98-5.02 on colour
