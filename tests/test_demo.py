@@ -149,17 +149,28 @@ def test_it_shows_the_film_that_was_asked_for(tmp_path):
 
 def test_the_prescan_and_the_scan_are_the_same_picture(tmp_path):
     """Two different pictures either side of a framing pass would make the
-    frame the operator lined up meaningless."""
-    entry(tmp_path, film="negative")
-    entry(tmp_path, film="bw")
+    frame the operator lined up meaningless.
+
+    They are normally at different resolutions, so the check is that they come
+    from one entry and agree once sized alike -- not that the arrays match.
+    """
+    entry(tmp_path, film="negative", dpi=900)
+    entry(tmp_path, film="bw", dpi=900)
+    entry(tmp_path, film="bw", dpi=1800, lines=12, width=16)
+
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
+    chosen = s._source_for("bw")
     pre, _ = s.prescan(resolution=300, film="bw")
     scan, meta = s.scan(resolution=900, infrared=False, film="bw")
-    s.close()
+    assert s._source_for("bw") == chosen, "the picture changed under us"
     assert meta["film"] == "bw"
-    assert pre.shape[:2] == scan.shape[:2]
-    assert np.array_equal(pre[..., 1], scan[..., 1])
+    # Same resolution as the prescan, so the two can be compared at all.
+    same = s.scan(resolution=300, infrared=False, film="bw")[0]
+    s.close()
+    assert np.array_equal(pre[..., 1], same[..., 1]), (
+        "the prescan and the scan are different photographs"
+    )
 
 
 def test_a_film_with_nothing_stored_still_drives_the_window(tmp_path):
@@ -171,3 +182,65 @@ def test_a_film_with_nothing_stored_still_drives_the_window(tmp_path):
     s.close()
     assert image.ndim == 3 and image.size > 0
     assert meta["film"] == "positive"
+
+
+def test_a_pass_comes_back_at_the_resolution_it_asked_for(tmp_path):
+    """A pass reported as 900 dpi that hands back 1800 dpi pixels is a
+    stand-in lying about the one thing the window sizes everything from -- the
+    estimate, the zoom and the crop are then all off by a factor.
+    """
+    entry(tmp_path, film="bw", dpi=900, lines=8, width=12)
+    entry(tmp_path, film="bw", dpi=1800, lines=16, width=24)
+
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    for dpi, shape in ((900, (8, 12)), (1800, (16, 24))):
+        image, _ = s.scan(resolution=dpi, infrared=False, film="bw")
+        assert image.shape[:2] == shape, f"{dpi} dpi gave {image.shape}"
+    s.close()
+
+
+def test_a_resolution_with_nothing_stored_is_resized_to_fit(tmp_path):
+    """The nearest entry, scaled, rather than the wrong shape."""
+    entry(tmp_path, film="bw", dpi=900, lines=8, width=12)
+
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, _ = s.scan(resolution=1800, infrared=False, film="bw")
+    capture = s.capture_record()
+    s.close()
+    assert image.shape[:2] == (16, 24), image.shape
+    assert capture["raw"] is None, (
+        "bytes from a 900 dpi pass were kept against resized 1800 dpi pixels"
+    )
+
+
+def test_a_prescan_is_always_three_channels(tmp_path):
+    """The real one sets passes=0x80 and 8-bit, so a four-channel prescan is a
+    shape the window would never see from the device."""
+    entry(tmp_path, film="bw", channels=4)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, _ = s.prescan(resolution=900, film="bw")
+    s.close()
+    assert image.ndim == 3 and image.shape[2] == 3, image.shape
+
+
+def test_the_shape_comes_from_the_library_not_from_a_ratio(tmp_path):
+    """The widths the device reports -- 428, 860, 1292, 2584, 5172 for 300 to
+    3600 dpi -- are not a constant multiple of the resolution. It rounds its
+    own way, so the shape is looked up rather than derived, and any film's
+    entry at that resolution will do: the frame is the same size whatever is
+    in it.
+    """
+    entry(tmp_path, film="bw", dpi=1800, lines=20, width=30)
+    entry(tmp_path, film="negative", dpi=900, lines=9, width=14)  # odd on purpose
+
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    assert s._shape_for(900) == (9, 14)
+    image, _ = s.scan(resolution=900, infrared=False, film="bw")
+    s.close()
+    assert image.shape[:2] == (9, 14), (
+        f"a ratio would have given {(10, 15)}, the device gives (9, 14)"
+    )

@@ -84,6 +84,11 @@ class DemoScanner:
         }
         #: What the last decode's shading correction did, or None if none ran.
         self._shading_report: dict[str, Any] | None = None
+        #: The resolution the last decoded entry was taken at.
+        self._source_dpi = 0
+        #: What shape the device produces at each resolution, read from the
+        #: library rather than derived. See :meth:`_shape_for`.
+        self._shapes: dict[int, tuple[int, int] | None] = {}
         #: The one entry this demo is showing, when it found a good pair. Its
         #: prescan answers a prescan and its scan answers a scan, so the two
         #: are the same picture -- which is what makes the filmstrip's
@@ -193,11 +198,16 @@ class DemoScanner:
         film: str = "negative",
     ) -> tuple[np.ndarray, Any]:
         self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
-        stored = self._pair_image("prescan.tif", film)
-        if stored is not None:
-            return stored, None
-        image = self._pixels(channels=3)
-        return image[..., :3].astype(np.uint8) if image.dtype != np.uint8 else image, None
+        image = self._pair_image("prescan.tif", film, resolution)
+        if image is None:
+            image = self._pixels(channels=3)
+        # A framing pass is RGB, always: the real one sets passes=0x80 and
+        # 8-bit, so a four-channel prescan is a shape the window would never
+        # see from the device.
+        if image.ndim == 3 and image.shape[2] > 3:
+            image = image[..., :3]
+            self._drop_raw("a prescan is three channels")
+        return image, None
 
     def scan(
         self,
@@ -230,7 +240,7 @@ class DemoScanner:
             estimate_seconds(resolution, infrared),
             lines=int(resolution * 0.957),
         )
-        image = self._pair_image("scan.tif", film)
+        image = self._pair_image("scan.tif", film, resolution)
         if image is None:
             image = self._pixels(channels=4 if infrared else 3)
         elif not infrared and image.ndim == 3 and image.shape[2] > 3:
@@ -340,6 +350,12 @@ class DemoScanner:
         if film in self._by_film:
             return self._by_film[film]
 
+        # One entry per film, not one per resolution. Picking by resolution
+        # too would be tidier in shape and wrong in substance: the library's
+        # black and white scans are of *two different frames*, so a 300 dpi
+        # prescan and a 900 dpi scan would show different photographs and the
+        # framing the operator lined up would mean nothing. Every resolution is
+        # served by rescaling this one instead.
         best, best_dpi = None, -1
         for path in self._entries:
             try:
@@ -349,15 +365,66 @@ class DemoScanner:
             scan = record.get("scan") or {}
             if scan.get("film") != film or not (path / "raw.bin.gz").exists():
                 continue
-            dpi = int(scan.get("resolution_dpi") or 0)
-            # Not the largest: a 3600 dpi frame is 140 MB to decode every pass
-            # and the window is being tried out, not benchmarked.
-            if best is None or abs(dpi - 1800) < abs(best_dpi - 1800):
-                best, best_dpi = path, dpi
+            found = int(scan.get("resolution_dpi") or 0)
+            # Nearest 1800: high enough to downscale from for most passes,
+            # small enough that decoding it every pass is not 140 MB of work.
+            if best is None or abs(found - 1800) < abs(best_dpi - 1800):
+                best, best_dpi = path, found
         if best is not None:
             self._log(f"{film}: showing {best.name} ({best_dpi} dpi)")
         self._by_film[film] = best or self.pair
         return self._by_film[film]
+
+    def _shape_for(self, dpi: int) -> tuple[int, int] | None:
+        """What the device actually produces at this resolution.
+
+        A ratio gets close and not closer: the widths the scanner reports are
+        428, 860, 1292, 2584, 5172 for 300 to 3600 dpi, which is not a constant
+        multiple of the resolution -- it rounds its own way. The library has
+        entries at each of these, so the shape is recorded rather than derived.
+        Any film will do; the frame is the same size whatever is in it.
+        """
+        if dpi in self._shapes:
+            return self._shapes[dpi]
+        found = None
+        for path in self._entries:
+            try:
+                scan = (json.loads((path / "scan.json").read_text())
+                        .get("scan") or {})
+            except (OSError, ValueError):
+                continue
+            if int(scan.get("resolution_dpi") or 0) != dpi:
+                continue
+            h, w = scan.get("height"), scan.get("width")
+            if h and w:
+                found = (int(h), int(w))
+                break
+        self._shapes[dpi] = found
+        return found
+
+    @staticmethod
+    def _rescale(image: np.ndarray, factor: float) -> np.ndarray:
+        """Nearest-neighbour to the size a resolution implies.
+
+        Only so the shape matches the label. A pass reported as 900 dpi that
+        hands back 1800 dpi pixels is a stand-in that lies about the one thing
+        the window sizes everything from, and every readout downstream -- the
+        estimate, the zoom, the crop -- is then off by a factor.
+        """
+        if abs(factor - 1.0) < 1e-9:
+            return image
+        h = max(1, round(image.shape[0] * factor))
+        w = max(1, round(image.shape[1] * factor))
+        return DemoScanner._resample(image, h, w)
+
+    @staticmethod
+    def _resample(image: np.ndarray, h: int, w: int) -> np.ndarray:
+        if image.shape[:2] == (h, w):
+            return image
+        factor = h / image.shape[0]
+        ys = np.clip((np.arange(h) / factor).astype(int), 0, image.shape[0] - 1)
+        xs = np.clip((np.arange(w) / factor).astype(int), 0, image.shape[1] - 1)
+        return image[ys][:, xs]
 
     def _decode(self, path: Path) -> tuple[np.ndarray, dict[str, Any]] | None:
         """An entry's pixels from its **raw bytes**, not from its TIFF.
@@ -404,6 +471,9 @@ class DemoScanner:
         if "shading" in applied and reference is not None:
             image, self._shading_report = apply_shading(image, reference, mask)
 
+        self._source_dpi = int(
+            (record.get("scan") or {}).get("resolution_dpi") or 0
+        )
         self._log(f"{path.name}: {len(raw) / 1e6:.1f} MB of raw bytes "
                   f"-> {image.shape}")
         return image, {
@@ -411,7 +481,8 @@ class DemoScanner:
             "raw": raw, "raw_layout": layout,
         }
 
-    def _pair_image(self, name: str, film: str = "negative") -> np.ndarray | None:
+    def _pair_image(self, name: str, film: str = "negative",
+                    dpi: int = 0) -> np.ndarray | None:
         """The picture for this film: its prescan, or its scan.
 
         A prescan uses the entry's stored `prescan.tif` where there is one, and
@@ -437,6 +508,15 @@ class DemoScanner:
             return None
         image, capture = got
         self._capture = capture
+        if dpi and self._source_dpi and dpi != self._source_dpi:
+            shape = self._shape_for(dpi)
+            image = (self._resample(image, *shape) if shape
+                     else self._rescale(image, dpi / self._source_dpi))
+            # The bytes were taken at another resolution, so they no longer
+            # describe these pixels.
+            self._drop_raw(
+                f"resized from {self._source_dpi} dpi to {dpi}"
+            )
         return image
 
     def _pixels(self, channels: int) -> np.ndarray:
