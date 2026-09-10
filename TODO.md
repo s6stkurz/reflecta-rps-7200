@@ -157,6 +157,15 @@ to the power-on that measured it.
 
 ## Untested
 
+- **Filing a roll compresses while the device is open.** `FrameWriter` gzips
+  each frame on its own thread while the next one scans, which is what keeps a
+  38-frame roll from ending in an eleven-minute wait. CLAUDE.md's warning is
+  about the scanner open and **idle**, and here it is busy -- a plausible
+  distinction and an untested one, on a path that runs for hours unattended.
+  `tools/filing_load_test.py` measures it: alternating identical 300 dpi passes
+  on a quiet host and one gzipping in the background, so warm-up cannot look
+  like an effect. ~5 minutes, nothing touches the transport.
+
 - **The 7200 dpi shading guard.** The CCD mask covers 5172 columns and a
   7200 dpi pass is 10344 wide, so the correction refuses and returns raw
   pixels. The code path has never been exercised.
