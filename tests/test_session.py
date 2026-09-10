@@ -620,3 +620,59 @@ def test_no_turn_leaves_both_alone(tmp_path):
     s.join(timeout=15)
     from rps7200 import tiff
     assert tiff.read(str(sorted(out.rglob("*.tif"))[0])).shape[:2] == (24, 36)
+
+
+# -- what the files are called ----------------------------------------------
+
+
+def test_a_roll_names_its_files_by_roll_and_frame(tmp_path):
+    """NegPy reads these next. What this replaced led with a timestamp and
+    ended with a sequence number, so it sorted by when it was scanned and said
+    nothing about what it was -- fine for one pass, useless for thirty-eight."""
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=3600, infrared=True,
+                  name="2026-09-09-gold200"))
+    s.shutdown()
+    s.join(timeout=20)
+    names = sorted(f.name for f in out.glob("*.tif"))
+    assert names == ["2026-09-09-gold200_frame01_3600dpi_ir.tif",
+                     "2026-09-09-gold200_frame02_3600dpi_ir.tif"], names
+
+
+def test_a_scan_outside_a_roll_still_gets_a_name(tmp_path):
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600, infrared=False))
+    s.shutdown()
+    s.join(timeout=20)
+    written = list(out.glob("*.tif"))
+    assert len(written) == 1
+    assert written[0].name.endswith("_600dpi.tif")
+    assert "_ir" not in written[0].name, "three channels is not infrared"
+
+
+def test_a_rescanned_frame_does_not_overwrite_the_first_attempt(tmp_path):
+    """The better of the two is not always the second."""
+    out = tmp_path / "out"
+    for _ in range(2):
+        s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                        out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+        s.start()
+        s.submit(Roll(frames=1, resolution=600, infrared=False, name="strip"))
+        s.shutdown()
+        s.join(timeout=20)
+    names = {f.name for f in out.glob("*.tif")}
+    assert names == {"strip_frame01_600dpi.tif", "strip_frame01_600dpi-2.tif"}, names
+
+
+def test_a_roll_name_that_is_not_a_filename_is_made_into_one(tmp_path):
+    from rps7200.session import _safe
+    assert _safe("2026-09-09 gold/200") == "2026-09-09-gold-200"
+    assert _safe("  ../../etc/passwd ") == "etc-passwd"
+    assert _safe("") == "roll"
+    assert _safe("///") == "roll"

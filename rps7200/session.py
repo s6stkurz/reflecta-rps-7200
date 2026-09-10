@@ -641,6 +641,7 @@ class ScanSession:
                                     frame=job.notes.frame or f"{name}-{number:02d}"),
                             tuple(job.tags) + ("gui", "roll", "prescan", name),
                             kind="prescan",
+                            roll=name,
                         )
                 if rf.error:
                     self._emit("log", text=f"frame {number}: {rf.error}")
@@ -661,6 +662,7 @@ class ScanSession:
                         tuple(job.tags) + ("gui", "roll", name),
                         prescan=rf.prescan,
                         path=out / f"frame{number:02d}.tif",
+                        roll=name,
                     )
 
                 manifest["frames"].append({
@@ -730,6 +732,7 @@ class ScanSession:
         prescan: np.ndarray | None = None,
         path: Path | None = None,
         kind: str = "scan",
+        roll: str = "",
     ) -> None:
         if self._writer is None:
             return
@@ -740,7 +743,7 @@ class ScanSession:
         if self.out_dir is not None:
             where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
                      else self.out_dir)
-            paths.append(where / self._out_name(seq, number, meta, kind))
+            paths.append(_unclaimed(where / self._out_name(number, meta, roll)))
         capture = self._scanner.capture_record()
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             shape = image.shape
@@ -787,15 +790,47 @@ class ScanSession:
         )
 
     def _out_name(
-        self, seq: int, number: int, meta: dict[str, Any], kind: str
+        self, number: int, meta: dict[str, Any], roll: str
     ) -> str:
-        """A filename that sorts by time and says what the pass was."""
+        """A filename that says which roll and which frame it came from.
+
+        NegPy reads these next, so the roll and the frame number lead. What this
+        replaced led with a timestamp and ended with a sequence number, which
+        sorted by when it was scanned and said nothing about what it was --
+        fine for one pass, useless for thirty-eight of them.
+
+        A scan that belongs to no roll keeps a timestamp, because there is
+        nothing better to call it.
+        """
         dpi = meta.get("resolution_dpi") or 0
         channels = meta.get("channels") or len(meta.get("channel_order") or "")
-        stamp = time.strftime("%Y%m%dT%H%M%S")
-        frame = f"_frame{number:02d}" if number else ""
         ir = "_ir" if channels and int(channels) >= 4 else ""
-        return f"{stamp}{frame}_{dpi}dpi{ir}_{seq:03d}.tif"
+        if roll and number:
+            return f"{_safe(roll)}_frame{number:02d}_{dpi}dpi{ir}.tif"
+        if roll:
+            return f"{_safe(roll)}_{time.strftime('%H%M%S')}_{dpi}dpi{ir}.tif"
+        return f"{time.strftime('%Y%m%dT%H%M%S')}_{dpi}dpi{ir}.tif"
+
+
+def _safe(name: str) -> str:
+    """`name` with anything a filename should not carry taken out."""
+    kept = [c if (c.isalnum() or c in "-_.") else "-" for c in name.strip()]
+    return "".join(kept).strip("-.") or "roll"
+
+
+def _unclaimed(wanted: Path) -> Path:
+    """`wanted`, or the next free name beside it.
+
+    A frame rescanned after a failure would otherwise land on the file the
+    first attempt wrote, and the better of the two is not always the second.
+    """
+    if not wanted.exists():
+        return wanted
+    for n in range(2, 1000):
+        candidate = wanted.with_name(f"{wanted.stem}-{n}{wanted.suffix}")
+        if not candidate.exists():
+            return candidate
+    return wanted
 
 
 def _describe(job: Job) -> str:
