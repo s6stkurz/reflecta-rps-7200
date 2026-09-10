@@ -70,7 +70,8 @@ Sixteen bytes:
 ```
 byte  1     0x0f            length - 1
 bytes 2-3   resolution      16-bit LE dpi
-byte  4     passes          0x80 = RGB one pass, 0x90 = RGBI one pass
+byte  4     passes          0x80 = RGB one pass, 0x90 = RGBI one pass,
+                            0x04 = green filter alone (greyscale)
 byte  5     depth           0x04 = 8-bit, 0x20 = 16-bit
 byte  6     colour format
 byte  8     byte order      Intel
@@ -103,6 +104,46 @@ The whole byte is unexplained. This driver sets it as
 channel count, which the table refutes — RGB passes carry `0x21` twenty-six times.
 `set_mode` takes a `byte14` override so it can be driven directly; the default is
 left alone because nothing measured yet says what it should be.
+
+### There is a greyscale mode, and it is not worth using
+
+`passes = 0x04` selects the green filter alone, from `pieusb_specific.h:55-75`
+(`SCAN_FILTER_GREEN`). It is the only single-filter mode that works: the SANE C
+backend records being "unable to get R & B & I to work" that way.
+
+**Nothing here uses it, and nothing should.** It returns `colorFormat = 0x01`
+(PIXEL), whose lines carry no `RR`/`GG`/`BB` tag, so the tag-based deinterleave
+in `_deinterleave` cannot read it — `pieusb` lists `gray` in `UNSUPPORTED_MODES`
+for exactly that reason. And the data still comes back as RGB pixel triples of
+which only the first is valid, so it costs the same time and the same bandwidth
+as a colour pass and returns a third as much.
+
+For black and white film the better path is the one CyberView takes: scan RGB
+and combine host-side, where three measurements of one density average to
+sqrt(3) less noise. **`captures/bw.pcapng` confirms it** — a whole black and
+white session, eight passes, every one `0x80`.
+
+### What a black and white session actually looks like
+
+`captures/bw.pcapng`, 2026-09-10, 585 commands. Power-on, CyberView opened,
+a B&W prescan, a second prescan, then a 3600 dpi scan:
+
+| pass | dpi | passes | depth | quality | byte 14 |
+|---|---|---|---|---|---|
+| 1 | 3600 | `0x80` | 8-bit | `0x0800` calibrate | `0x20` |
+| 2 | 600 | `0x80` | 8-bit | `0x0008` skip-shading | `0x11` |
+| 3 | 600 | `0x80` | 8-bit | `0x0008` | `0x10` |
+| 4-7 | 300 | `0x80` | 8-bit | `0x0008` | `0x31`, `0x30`, `0x31`, `0x30` |
+| 8 | 3600 | `0x80` | 16-bit | `0x0008` | `0x30` |
+
+Three things worth having:
+
+- **No infrared anywhere**, and no greyscale mode. Every pass is `0x80` RGB.
+- **Every prescan is 8-bit whatever the operator picked**; only the final scan
+  is 16-bit. This driver's `prescan()` already matches that.
+- **Byte 14 takes `0x30` and `0x31`**, which the table in section 4 does not
+  have. Its upper nibble is now seen as 1, 2 and 3, which rules out the
+  channel-count reading for good.
 
 ## 5. SLIDE (`0xD1`) — the film transport
 

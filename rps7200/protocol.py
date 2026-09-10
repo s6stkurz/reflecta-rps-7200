@@ -113,9 +113,37 @@ def locks_white_balance(film: str) -> bool:
     is metered per channel, which takes the mask off before the ADC instead of
     after it.
 
-    Everything else keeps its balance. A slide, a Kodachrome and a black and
-    white negative all carry their cast because that cast *is* the picture;
-    stretching each channel to the same target on its own takes it off.
+    A slide and a Kodachrome keep their balance: their cast *is* the picture,
+    and stretching each channel to the same target on its own takes it off.
+
+    **Black and white is metered per channel too**, which this used to get
+    wrong by grouping it with the slides. Silver halide has no dye layers, so
+    there is no colour record to protect -- what looks like a cast is the film
+    base plus the sensor's own response, and holding the channels together to
+    preserve it costs real exposure. Red's base exposure is 9604 against 6506
+    for the other two, so red's ceiling is x6.82 where theirs is x10.07; on a
+    B&W frame red is also the least sensitive per count, so it binds and drags
+    green and blue down with it.
+
+    Measured on one frame, 900 dpi, two repeats at each setting so the random
+    part could be separated from the grain:
+
+    ==========  ==============  ==============  =========================
+    channel     locked level    unlocked        random noise per signal
+    ==========  ==============  ==============  =========================
+    red         59.1%           59.4%           -2.2%
+    green       60.5%           87.0%           **-16.8%**
+    blue        67.8%           85.9%           **-11.0%**
+    ==========  ==============  ==============  =========================
+
+    Red is at its ceiling either way, so unlocking costs it nothing and buys
+    green and blue about half a stop each.
+
+    Note this diverges from `nkscan`, which groups monochrome with the slides
+    and locks it. That is right for its hardware and not for ours: a Coolscan's
+    exposure register is 26 bits wide with no channel that runs out, so locking
+    costs it nothing. Here red's ceiling is a hard rail the lock propagates to
+    the other two.
 
     Note what this scanner can actually deliver on the negative side. Blue sits
     near the top of the 16-bit exposure timer before any film is loaded -- the
@@ -126,7 +154,38 @@ def locks_white_balance(film: str) -> bool:
     """
     if film not in FILM_TYPES:
         raise ValueError(f"unknown film type {film!r}; expected one of {FILM_TYPES}")
-    return film != FILM_NEGATIVE
+    return film in (FILM_POSITIVE, FILM_KODACHROME)
+
+
+#: Film whose dye or grain absorbs infrared, so an infrared pass reads the
+#: picture instead of what is lying on top of it.
+#:
+#: * **Silver-halide black and white.** The grain blocks infrared exactly as
+#:   dust does. Measured here on one B&W frame: the infrared plane correlated
+#:   **+0.97 with green** -- a fourth copy of the image, bought for the ~212 s
+#:   infrared floor.
+#: * **Kodachrome.** Its cyan layer absorbs infrared, which is why no scanner's
+#:   dust removal has ever worked on it. This is the one every vendor documents
+#:   and every vendor still lets you switch on.
+#:
+#: The exception, and the reason this is keyed on film type rather than guessed
+#: from the image: **chromogenic black and white** -- XP2, BW400CN, anything
+#: developed C-41 -- is dye-based and cleans properly. It is not `FILM_BW` here;
+#: it is a colour negative that happens to look grey, and should be scanned as
+#: one.
+INFRARED_IS_BLIND_TO = (FILM_BW, FILM_KODACHROME)
+
+
+def supports_infrared(film: str) -> bool:
+    """Whether an infrared pass on this film would tell you anything.
+
+    False does not mean the scanner refuses -- it will happily take the pass,
+    spend its ~212 s floor and hand back a plane holding the photograph. It
+    means the plane is worthless for what infrared is for.
+    """
+    if film not in FILM_TYPES:
+        raise ValueError(f"unknown film type {film!r}; expected one of {FILM_TYPES}")
+    return film not in INFRARED_IS_BLIND_TO
 
 
 # Slide / autofeed transport actions

@@ -13,13 +13,17 @@ from conftest import settings
 from rps7200.bracket import CLIP_START, FULL_SCALE
 from rps7200.direct import (
     BLUE_RGBI_HEADROOM,
+    BLUE_RGBI_HEADROOM_UNMEASURED,
     EXPOSURE_TARGET,
+    OVER_TARGET_TOLERANCE,
     FILM_BW,
     FILM_KODACHROME,
     FILM_NEGATIVE,
     FILM_POSITIVE,
     DirectScanner,
+    blue_rgbi_headroom,
     locks_white_balance,
+    supports_infrared,
 )
 
 
@@ -54,9 +58,17 @@ class FakeScanner(DirectScanner):
         return (np.full((8, 8, n), 0.0) + np.array(level) * 65535).astype(np.uint16), {}
 
 
-def test_only_a_negative_is_metered_per_channel():
+def test_film_with_no_colour_record_is_metered_per_channel():
+    """Only a slide and a Kodachrome have a cast that *is* the picture.
+
+    Black and white was grouped with them and should not have been: silver
+    halide has no dye layers, so holding its channels together preserves the
+    film base and the sensor's response, not a photograph -- and it costs green
+    and blue about half a stop each, measured.
+    """
     assert locks_white_balance(FILM_NEGATIVE) is False
-    for film in (FILM_POSITIVE, FILM_KODACHROME, FILM_BW):
+    assert locks_white_balance(FILM_BW) is False
+    for film in (FILM_POSITIVE, FILM_KODACHROME):
         assert locks_white_balance(film) is True
 
 
@@ -426,4 +438,163 @@ def test_the_shipped_target_is_the_measured_one():
     from rps7200.bracket import CLIP_START, FULL_SCALE
     assert EXPOSURE_TARGET <= CLIP_START / FULL_SCALE, (
         "metering must not aim above the level bracket.py stops trusting"
+    )
+
+
+# -- a locked film stays locked against the timer ceiling -------------------
+
+
+def test_the_ceiling_does_not_break_the_lock():
+    """The channels' ceilings are not equal, and that used to put a cast on
+    exactly the films the lock exists to protect.
+
+    Red's base exposure is 9604 against 6506 for green and blue, so its ceiling
+    is x6.82 where theirs is x10.07. Clamping each channel on its own left red
+    45% below the other two on any locked film that wanted more than x6.82 --
+    measured on a real B&W scan as scales [6.824, 6.905, ...] where the lock
+    promised one number.
+    """
+    for film in (FILM_POSITIVE, FILM_KODACHROME):
+        s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+        scales = s.auto_exposure(target=0.8, film=film, rounds=2)
+        assert scales[0] == pytest.approx(scales[1], rel=0.01), (
+            f"{film}: red {scales[0]:.3f} against green {scales[1]:.3f} -- "
+            f"the lock was broken by the ceiling"
+        )
+        assert scales[1] == pytest.approx(scales[2], rel=0.01), film
+
+
+def test_a_held_back_locked_meter_is_reported(capsys):
+    """Under-exposing the whole scan is the right trade, but it has to be said:
+    the operator can lower nothing else to get the range back."""
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    s.verbose = True
+    s.auto_exposure(target=0.8, film=FILM_POSITIVE, rounds=2)
+    out = capsys.readouterr().out
+    assert "locked metering held" in out, out
+
+
+def test_the_lock_survives_the_infrared_blue_headroom():
+    """Blue is metered lower for an RGBI pass, and on a locked film that is
+    still the right thing: blue comes back ~5x brighter there, so a blue held
+    down by the same factor lands *in proportion* with red and green rather
+    than out of it. What must not happen is red and green drifting apart.
+    """
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=0.8, film=FILM_POSITIVE, infrared=True,
+                             rounds=2)
+    assert scales[0] == pytest.approx(scales[1], rel=0.01)
+    assert scales[2] == pytest.approx(
+        scales[1] / blue_rgbi_headroom(FILM_POSITIVE), rel=0.01)
+
+
+def test_a_negative_is_still_metered_per_channel():
+    """The fix must not reach films that are deliberately not locked."""
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=2)
+    assert scales[1] > scales[0] * 1.2, (
+        "a negative was moved as one group; the mask stays in the blue record"
+    )
+
+
+def test_the_blue_headroom_is_not_one_number_for_every_film():
+    """It was, and that put 34% of a B&W scan's blue channel at the rail.
+
+    Measured 4.98-5.02 on a colour negative and ~9.6 on black and white, each
+    from a matched pair with red and green confirming the mode was the only
+    variable. A film with no measurement of its own has to fail safe -- too
+    much headroom only darkens a noise-limited channel, too little destroys it.
+    """
+    assert blue_rgbi_headroom(FILM_NEGATIVE) == BLUE_RGBI_HEADROOM
+    assert blue_rgbi_headroom(FILM_BW) > BLUE_RGBI_HEADROOM
+    assert blue_rgbi_headroom("something nobody has measured") == (
+        BLUE_RGBI_HEADROOM_UNMEASURED
+    )
+    for film in (FILM_BW, FILM_POSITIVE, FILM_KODACHROME):
+        assert blue_rgbi_headroom(film) >= BLUE_RGBI_HEADROOM, film
+
+
+def test_a_bw_scan_no_longer_blows_its_blue_channel():
+    """The scan this came from: film=bw, RGBI, blue 34% at the rail.
+
+    Modelled with the ratio actually measured on that film, 9.6 -- not the 5.2
+    the metering assumed.
+    """
+    measured_bw_ratio = 9.6
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    # scan() now refuses this combination outright; auto_exposure is tested on
+    # its own so the headroom table stays honest if that guard ever moves.
+    scales = s.auto_exposure(target=EXPOSURE_TARGET, film=FILM_BW, infrared=True)
+    landed = min(1.0, 6506 * scales[2] / 65535.0 * 0.58) * measured_bw_ratio
+    assert landed < 1.0, f"blue still clips, landing at {landed:.0%}"
+    assert landed < CLIP_START / FULL_SCALE, (
+        f"blue lands at {landed:.0%}, past the knee bracket.py stops trusting"
+    )
+
+
+# -- infrared is refused on film that absorbs it ---------------------------
+
+
+def test_infrared_is_blind_to_silver_bw_and_kodachrome():
+    assert supports_infrared(FILM_NEGATIVE) is True
+    assert supports_infrared(FILM_POSITIVE) is True
+    assert supports_infrared(FILM_BW) is False
+    assert supports_infrared(FILM_KODACHROME) is False
+
+
+def test_an_unknown_film_is_refused_here_too():
+    with pytest.raises(ValueError, match="unknown film type"):
+        supports_infrared("colour-negative")
+
+
+@pytest.mark.parametrize("film", [FILM_BW, FILM_KODACHROME])
+def test_a_scan_refuses_infrared_on_blind_film(film):
+    """Not a warning. The pass costs its ~212 s floor and returns a plane
+    holding the photograph -- measured at +0.97 correlation with green on a
+    B&W frame -- and it drags blue's metering with it, which is what put 34%
+    of that scan's blue channel at the rail.
+    """
+    s = FakeScanner((0.55, 0.60, 0.58))
+    with pytest.raises(ValueError, match="infrared is blind"):
+        DirectScanner.scan(s, infrared=True, film=film)
+
+
+@pytest.mark.parametrize("film", [FILM_NEGATIVE, FILM_POSITIVE])
+def test_infrared_is_left_alone_on_film_that_can_use_it(film):
+    """The guard must not reach film whose dyes are transparent to infrared."""
+    s = FakeScanner((0.55, 0.60, 0.58))
+    # It gets past the guard; FakeScanner has no device, so it fails later.
+    with pytest.raises(Exception) as exc:
+        DirectScanner.scan(s, infrared=True, film=film)
+    assert "infrared is blind" not in str(exc.value)
+
+
+# -- the acceptance band is asymmetric ------------------------------------
+
+
+def test_metering_will_not_stop_above_the_target():
+    """Landing under costs noise; landing over clips, and that is not
+    recoverable. The band either side of the target is not symmetric.
+
+    This was `abs(level - target) <= tolerance`. At the old target of 0.70 that
+    accepted 0.78 and was harmless; raising the target to 0.80 moved the top of
+    the band to 0.88, past the knee bracket.py stops trusting -- and a real B&W
+    frame landed at 87% with samples at the rail.
+    """
+    # A film bright enough that one proportional step overshoots.
+    s = FakeScanner((0.9, 0.9, 0.9), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=EXPOSURE_TARGET, film=FILM_NEGATIVE,
+                             rounds=3)
+    for c, base in enumerate((9604, 6506, 6506)):
+        landed = min(1.0, base * scales[c] / 65535.0 * 0.9)
+        assert landed <= EXPOSURE_TARGET + OVER_TARGET_TOLERANCE + 0.01, (
+            f"{'RGB'[c]} settled at {landed:.0%}, above the target"
+        )
+
+
+def test_the_band_above_the_target_stays_under_the_knee():
+    from rps7200.bracket import CLIP_START, FULL_SCALE
+    assert EXPOSURE_TARGET + OVER_TARGET_TOLERANCE <= CLIP_START / FULL_SCALE + 0.02
+    assert OVER_TARGET_TOLERANCE < 0.08, (
+        "the band above the target must be tighter than the one below it"
     )

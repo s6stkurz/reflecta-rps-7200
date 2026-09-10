@@ -53,33 +53,81 @@ to the power-on that measured it.
   `docs/analog-gain-plan.md` has the ladder and the reasoning so nobody spends
   the scanner time again.
 
-- **Blue is ~5x brighter in RGBI than in RGB at the same exposure**, and the
-  cause is still unknown — but its *shape* is now settled, which is most of
-  what was needed. Measured 4.98-5.02 on the one matched pair in the library
-  (`20260909T103542Z` against `20260909T104022Z_ir`, same frame 4.7 min apart),
-  and the ratio is **flat across density**, 5.02 in the densest decile against
-  4.95 in the brightest. So it is a multiplicative change in blue's
-  sensitivity, not an infrared leak into the blue record — blue's excess
-  correlates +0.9985 with predicted blue and only +0.49 with the infrared
-  plane. A single constant is therefore the right model.
+- **The red plane is one scan line out, in every scan measured.** Cross-
+  correlating R and B against green over 14 entries -- 300, 600, 900 and 1800
+  dpi, colour negative and B&W alike -- red lines up best at row -1 every
+  single time, and blue at row -1 or 0. Correcting it lifts R-to-G correlation
+  from 0.944 to 0.962 on a B&W frame, where the two channels are the same
+  photograph and ought to agree almost perfectly.
 
-  This entry used to say the 4x headroom was "probably too conservative". It
-  was the opposite: too small, which put blue at 88-96% of full scale where
-  metering aimed for 70%. Now `BLUE_RGBI_HEADROOM = 5.2`.
+  **It does not scale with resolution**, which is the interesting part: a
+  physical offset between the rows of a trilinear CCD would be four lines at
+  3600 dpi where it is one at 900. A constant one line points at the decode or
+  at a residual the device leaves after its own compensation, not at optics.
 
-  The free tightening described here is **done**: `auto_exposure` leaves what
-  each round measured on `last_metering` and `scan` files it, so every ordinary
-  RGBI scan now yields an estimate with no extra passes. What remains is to
-  read a few back and confirm 5.2 against a second film.
+  `GET PARAMETERS` returns `filter_offset1` and `filter_offset2` -- both 12 in
+  `captures/bw.pcapng` -- and this driver reads them, records them in `meta`,
+  and never applies them. `library.save` then drops them on the floor, the same
+  way it was dropping `metering`, so no filed entry has them either. Start
+  there.
 
-  To settle the *cause* rather than work around it, one experiment closes it —
-  but every step must happen inside a single power-on, because a shading
-  reference belongs to the power-on that measured it (`docs/vignette-plan.md`,
-  "One phase, one power-on"): meter RGB on the empty transport and lock the
-  scale (~75 s); calibrate (~3-4 min); one RGB pass (~1 min); one RGBI pass at
-  the same locked exposure (~212 s infrared floor). About 10 minutes of scanner
-  time. The last pass against the one before it isolates filter transmission
-  from the gain path, because only the channel count differs.
+- **Black and white is now delivered as one channel** (done). NegPy classifies
+  by minimum channel correlation, `> 0.99` meaning monochrome. Measured across
+  this library, B&W spans 0.926-0.988 and colour negative 0.008-0.976: they
+  overlap, so no threshold separates them and it is not a value that needs
+  tuning. Run through NegPy's own `detect_process_mode` in its own venv, a
+  three-channel B&W scan came back **Transparency** -- processed as a slide.
+
+  Its loader expands a 2-D image to three identical planes, so a genuine
+  greyscale TIFF classifies as B&W with certainty and nothing downstream has to
+  change. `rps7200/mono.py` does the reduction; `tools/scan.py --mono` is on by
+  default for `--film bw`. The library still files all three channels.
+
+  The window follows the film type: setting it to `bw` ticks "deliver one
+  channel", and that reaches the scan, the roll and Save as -- including the
+  branch that used to copy the entry's three-channel file over verbatim.
+
+- **Black and white comes out as an RGB file, and nothing converts it.** The
+  hardware has no black and white mode worth using -- `passes = 0x04` is the
+  green filter alone, returns untagged PIXEL-format data our deinterleave
+  cannot read, and still costs a full colour pass (`docs/protocol.md`).
+  CyberView does the same thing: `captures/bw.pcapng` is eight passes and every
+  one is `0x80` RGB.
+
+  So the conversion is a host-side step. **It is not an average**, which was
+  the obvious guess and is wrong: the grain in a silver emulsion is the same
+  grain in all three channels, so it does not average out, and a plain mean
+  measured 5.6-22.4% *worse* than the best single channel across three
+  resolutions.
+
+  **Blue is the cleanest channel**, from repeat pairs at 900 dpi -- random noise
+  per unit signal 2.7 against green 3.0 and red 3.7. A single pass says the
+  opposite, because red reads low at the dense *and* the thin end, which is
+  softness rather than cleanliness. Only the repeat pair separates them.
+
+  Not started. It must be optional and must not overwrite the three-channel
+  file -- a merged channel cannot be un-merged.
+
+- **How much brighter blue comes back in RGBI depends on the film.** Two
+  matched pairs, each the same frame in both modes minutes apart, with red and
+  green confirming the mode was the only variable: **4.98-5.02 on colour
+  negative**, **~9.6 on black and white** (8.3-10.5 across percentiles). The
+  cause is still unknown, but the shape now points somewhere: on the colour
+  negative the ratio is flat across density (5.02 densest decile against 4.95
+  brightest) while on B&W it slopes 10.2 -> 8.3, which is what an *additive*
+  leak into the blue record looks like rather than a change of gain. On a
+  colour negative the mask suppresses blue hard enough that the leak dominates
+  everywhere, which would make it look multiplicative.
+
+  A single constant was wrong and cost a scan: 5.2 applied to black and white
+  put 34% of its blue channel at the rail. `blue_rgbi_headroom(film)` now
+  carries a value per film, with unmeasured films taking the safe end.
+
+  What would settle it: a matched RGB/RGBI pair on a slide and on Kodachrome,
+  which are still unmeasured, and a clear-base frame to separate the leak from
+  the film. `last_metering` is filed with every metered scan now, so the
+  achieved blue level accumulates without a special run.
+
 - **Passes sit at different column offsets and nobody knows why.** Two 3600 dpi
   passes of one frame correlate at r=0.936 only once shifted 16 columns, and a
   shading reference matched a scan best at lag -11/-12 across sessions.

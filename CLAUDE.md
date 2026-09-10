@@ -215,10 +215,17 @@ It needs a power cycle afterwards, so avoid these:
 - Meter in **RGB only, two rounds** — the vendor's sequence, plus one further
   round only when a channel came back clipped, because there the correction is
   a retreat rather than a measurement. An infrared probe costs the 212 s floor
-  per round. Blue returns **~5x brighter in RGBI** at the same exposure, which
-  is handled by metering blue lower (`BLUE_RGBI_HEADROOM`), not by probing in
-  IR. Earlier readings of 2-3.7x are superseded; see the constant for the
-  measurement.
+  per round. Blue returns several times brighter in RGBI at the same exposure,
+  which is handled by metering blue lower (`blue_rgbi_headroom(film)`), not by
+  probing in IR.
+- **How much brighter blue comes back in RGBI depends on the film**, by about a
+  factor of two: measured 4.98-5.02 on colour negative and ~9.6 on black and
+  white. One constant for all films put 34% of a B&W scan's blue channel at the
+  rail. Unmeasured films take the safe end. See `BLUE_RGBI_HEADROOM`.
+- **Infrared does nothing for traditional black and white.** Silver-halide
+  grain is opaque to IR, so the plane comes back holding the picture rather
+  than the dust -- measured at +0.97 correlation with green -- and the pass
+  still costs its ~212 s floor. Chromogenic (C-41) B&W is the exception.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
 - **The gain field is a digital multiplier; it buys nothing.** Measured

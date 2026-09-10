@@ -38,6 +38,7 @@ from rps7200.direct import (
     METER_EACH,
     METER_MODES,
     DirectScanner,
+    supports_infrared,
 )
 from rps7200.library import FilmNotes
 # Lives in the package so the GUI and this tool share one writer rather than
@@ -113,7 +114,17 @@ def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    ap = build_parser()
+    args = ap.parse_args()
+    if args.ir and not supports_infrared(args.film):
+        ap.error(
+            f"--ir with --film {args.film}: infrared is blind to it -- its "
+            + ("grain" if args.film == "bw" else "cyan layer")
+            + " absorbs infrared, so every frame would spend its ~212 s floor "
+            "and hand back the picture rather than the dust. Drop --ir. "
+            "(Chromogenic C-41 black and white does clean properly: scan that "
+            "as --film negative.)"
+        )
 
     roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
     out = Path(args.out or f"rolls/{roll_name}")

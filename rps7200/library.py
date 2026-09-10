@@ -220,6 +220,12 @@ def save(
         "device_settings": {
             k: meta.get(k) for k in ("exposure", "gain", "offset")
         },
+        # What the metering probe measured, when this scan did its own. The
+        # exposure above is the conclusion; this is the evidence for it, and
+        # without it a scan that came out wrong cannot be told from one metered
+        # against a frame that asked for something odd. Absent on a scan given
+        # its exposure rather than metering one.
+        "metering": meta.get("metering"),
         "calibration": {
             "shading": "shading.npz" if reference is not None else None,
             "ccd_mask": "ccd_mask.bin" if ccd_mask is not None else None,

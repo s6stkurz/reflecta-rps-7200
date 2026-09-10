@@ -90,7 +90,8 @@ class FakeScanner:
         self.calls.append(("shading", reuse, skip))
         return {"action": "calibrated", "summary": "shading calibrated (fake)"}
 
-    def prescan(self, resolution=300, frame=None, keep_raw=False):
+    def prescan(self, resolution=300, frame=None, keep_raw=False,
+                film="negative"):
         self.calls.append(("prescan", resolution, keep_raw))
         if self.progress_hook:
             self.progress_hook(287, 287)
@@ -740,3 +741,19 @@ def test_a_roll_name_that_is_not_a_filename_is_made_into_one(tmp_path):
     assert _safe("  ../../etc/passwd ") == "etc-passwd"
     assert _safe("") == "roll"
     assert _safe("///") == "roll"
+
+
+def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
+    """A framing pass does not expose for the film -- it runs at the device's
+    own settings -- but the entry should still say what was in the transport.
+
+    It used to file `film: None`, which made a prescan of black and white
+    indistinguishable from a prescan of anything else.
+    """
+    run(Prescan(film="bw"), tmp_path)
+    entries = library.entries(tmp_path)
+    assert len(entries) == 1
+    record = json.loads(
+        (tmp_path / str(entries[0]["id"]) / "scan.json").read_text()
+    )
+    assert record["scan"]["film"] == "bw"

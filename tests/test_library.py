@@ -169,6 +169,34 @@ def test_a_scan_deliberately_taken_raw_is_not_reported_as_a_shortfall(tmp_path):
     assert not any("correction was asked for" in p for p in problems)
 
 
+def test_the_metering_telemetry_reaches_the_sidecar(tmp_path):
+    """It did not, and that is why a blown B&W blue channel could not be
+    diagnosed from the entry: auto_exposure recorded what the probe measured,
+    scan() put it in meta, and library.save built the sidecar from fixed key
+    lists that had no place for it. The evidence was assembled and dropped.
+    """
+    raw, image = index_stream(8, 4, 3)
+    probe = {"target": 0.8, "film": "bw", "infrared": True,
+             "blue_headroom": 11.0,
+             "rounds": [{"round": 1, "levels": [0.2, 0.2, 0.3],
+                         "targets": [0.8, 0.8, 0.073], "clipped": [0, 0, 0]}]}
+    path = library.save(
+        image,
+        {"resolution_dpi": 600, "channels": 3, "metering": probe},
+        root=tmp_path,
+    )
+    record = json.loads((path / "scan.json").read_text())
+    assert record["metering"] == probe
+
+
+def test_a_scan_given_its_exposure_records_no_metering(tmp_path):
+    raw, image = index_stream(8, 4, 3)
+    path = library.save(image, {"resolution_dpi": 600, "channels": 3},
+                        root=tmp_path)
+    record = json.loads((path / "scan.json").read_text())
+    assert record["metering"] is None
+
+
 def test_the_index_summarises_every_entry(tmp_path):
     make_entry(tmp_path)
     make_entry(tmp_path, width=8, lines=4)
