@@ -46,6 +46,7 @@ import numpy as np
 from . import library, preview, tiff
 from .direct import METER_EACH, DirectScanner
 from .library import FilmNotes
+from .mono import to_monochrome, wants_mono
 
 #: The infrared floor: a pass with infrared on holds the device this long
 #: however few lines were asked for. Measured at 212-227 s across resolutions.
@@ -124,6 +125,9 @@ class Scan:
     auto_exposure: bool = True
     exposure_scale: Any = 1.0
     shading: bool = True
+    #: Deliver one channel instead of three. None follows the film:
+    #: on for black and white, off otherwise. See rps7200/mono.py.
+    mono: bool | None = None
     frame: tuple[int, int, int, int] | None = None
     notes: FilmNotes = field(default_factory=FilmNotes)
     tags: tuple[str, ...] = ()
@@ -139,6 +143,8 @@ class Roll:
     infrared: bool = True
     film: str = "negative"
     meter: str = METER_EACH
+    #: As on :class:`Scan`.
+    mono: bool | None = None
     prescan_resolution: int = 300
     dry_run: bool = False
     #: The frame numbers worth scanning, as the window numbers them -- 1 for the
@@ -270,9 +276,13 @@ class FrameWriter:
         # the scanner sent, or they stop matching the raw bytes beside them and
         # `library.reconstruct` is right to call it a changed decode.
         turned = preview.rotate(job["image"], job.get("rotate") or 0)
+        # One channel on the way out, three in the library. A consumer cannot
+        # tell black and white from a slide by looking at the pixels -- see
+        # rps7200/mono.py -- so the file it reads has to say so by its shape.
+        delivered = to_monochrome(turned) if job.get("mono") else turned
         for path in job.get("paths") or ():
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            tiff.write(str(path), turned, resolution=job["dpi"])
+            tiff.write(str(path), delivered, resolution=job["dpi"])
         entry = None
         if job["library"]:
             entry = library.save(
@@ -550,7 +560,8 @@ class ScanSession:
         )
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
         seq = self._deliver("scan", label, image, meta)
-        self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",))
+        self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
+                   mono=wants_mono(job.mono, job.film))
         # Surface it as the job's outcome, not as one log line among hundreds.
         # A restarted session has no reference and nothing stops it scanning:
         # six 3600 dpi RGBI frames went out uncorrectable that way, half an
@@ -701,6 +712,7 @@ class ScanSession:
                         prescan=rf.prescan,
                         path=out / f"frame{number:02d}.tif",
                         roll=name,
+                        mono=wants_mono(job.mono, job.film),
                     )
 
                 record: dict[str, Any] = {
@@ -776,6 +788,7 @@ class ScanSession:
         path: Path | None = None,
         kind: str = "scan",
         roll: str = "",
+        mono: bool = False,
     ) -> None:
         if self._writer is None:
             return
@@ -830,6 +843,7 @@ class ScanSession:
             prescan=prescan,
             inquiry=getattr(self._scanner, "_inquiry", None),
             capture=capture,
+            mono=mono,
         )
 
     def _out_name(

@@ -31,12 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library, preview, settings, tiff      # noqa: E402
 from rps7200.direct import (                              # noqa: E402
+    FILM_BW,
     FILM_TYPES,
     INFRARED_IS_BLIND_TO,
     METER_MODES,
 )
 from rps7200.framing import FULL_FRAME                    # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
+from rps7200.mono import to_monochrome                    # noqa: E402
 from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
 from rps7200.session import (                             # noqa: E402
     Calibrate,
@@ -277,7 +279,7 @@ class ScannerGui:
         elif self.session.out_dir is not None:
             self.v_outdir.set(str(self.session.out_dir))
         self._sync_exposure()
-        self._sync_infrared()
+        self._sync_film()
         self._show_estimate()
         self._refresh_presets()
         # Sashes only once the panes have a size to divide, or the positions
@@ -333,7 +335,7 @@ class ScannerGui:
                 except tk.TclError:
                     pass
         self._sync_exposure()
-        self._sync_infrared()
+        self._sync_film()
         self._show_estimate()
 
     def on_preset_save(self) -> None:
@@ -535,7 +537,13 @@ class ScannerGui:
         film_box = ttk.Combobox(row, textvariable=self.v_film, width=12,
                                 state="readonly", values=list(FILM_TYPES))
         film_box.pack(side="left")
-        film_box.bind("<<ComboboxSelected>>", lambda _e: self._sync_infrared())
+        film_box.bind("<<ComboboxSelected>>", lambda _e: self._sync_film())
+
+        self.v_mono = tk.BooleanVar(value=False)
+        self.c_mono = ttk.Checkbutton(
+            box, text="deliver one channel (black and white)",
+            variable=self.v_mono)
+        self.c_mono.pack(anchor="w", pady=2)
 
         ttk.Label(box, text="exposure").pack(anchor="w", pady=(6, 0))
         self.v_expmode = tk.StringVar(value="auto")
@@ -780,7 +788,7 @@ class ScannerGui:
                       precise=lambda dx, dy: _scroll_pixels(self.log, 0, dy))
 
         self._sync_exposure()
-        self._sync_infrared()
+        self._sync_film()
         self._show_estimate()
 
     # -- reading the controls ---------------------------------------------
@@ -837,6 +845,21 @@ class ScannerGui:
         manual = self.v_expmode.get() == "manual"
         self.e_exposure.configure(state="normal" if manual else "disabled")
         self._show_exposure()
+
+    def _sync_film(self) -> None:
+        """Everything that follows the film type, in one place."""
+        self._sync_infrared()
+        self._sync_mono()
+
+    def _sync_mono(self) -> None:
+        """One channel out for black and white, three for everything else.
+
+        Follows the film rather than being remembered on its own: a consumer
+        cannot tell a B&W scan from a slide by looking at the pixels -- measured
+        across this library the two overlap -- so the delivered file has to say
+        which it is by its shape. See rps7200/mono.py.
+        """
+        self.v_mono.set(self.v_film.get() == FILM_BW)
 
     def _sync_infrared(self) -> None:
         """Infrared off and unavailable on film that absorbs it.
@@ -1006,7 +1029,7 @@ class ScannerGui:
         self.session.submit(Scan(
             resolution=dpi, infrared=self.v_ir.get(), film=self.v_film.get(),
             auto_exposure=self.v_expmode.get() == "auto",
-            exposure_scale=exposure,
+            exposure_scale=exposure, mono=self.v_mono.get(),
             notes=self._notes(), tags=self._tags(),
         ))
 
@@ -1040,7 +1063,7 @@ class ScannerGui:
             frames=frames or None, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
-            correct=self.v_correct.get(),
+            correct=self.v_correct.get(), mono=self.v_mono.get(),
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),
         ))
@@ -1119,6 +1142,7 @@ class ScannerGui:
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=False,
             correct=self.v_correct.get(), only=tuple(numbers),
+            mono=self.v_mono.get(),
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),
         ))
@@ -1515,21 +1539,27 @@ class ScannerGui:
             filetypes=[("TIFF", "*.tif")])
         if not path:
             return
+        mono = self.v_mono.get()
         if result.entry and (result.entry / "scan.tif").exists():
-            if result.rotation:
-                # Turned on the way out, so the exported file matches what is
-                # on screen. The entry itself is left alone.
-                tiff.write(path, preview.rotate(
-                    tiff.read(str(result.entry / "scan.tif")), result.rotation))
-                self._say(f"saved {Path(path).name} at full resolution, "
-                          f"turned {result.rotation}\u00b0")
+            if result.rotation or mono:
+                # Turned and/or reduced on the way out, so the exported file
+                # matches what is on screen and says which film it is by its
+                # shape. The entry itself is left alone.
+                full = preview.rotate(
+                    tiff.read(str(result.entry / "scan.tif")), result.rotation)
+                tiff.write(path, to_monochrome(full) if mono else full)
+                self._say(f"saved {Path(path).name} at full resolution"
+                          + (f", turned {result.rotation}\u00b0"
+                             if result.rotation else "")
+                          + (", one channel" if mono else ""))
             else:
                 # Copied rather than re-written: the entry holds the full
                 # resolution, and the working copy in memory is decimated.
                 shutil.copy2(result.entry / "scan.tif", path)
                 self._say(f"saved {Path(path).name} at full resolution")
         elif result.image is not None:
-            tiff.write(path, preview.rotate(result.image, result.rotation))
+            turned = preview.rotate(result.image, result.rotation)
+            tiff.write(path, to_monochrome(turned) if mono else turned)
             self._say(f"saved {Path(path).name} -- reduced preview, the "
                       "full-resolution file is not filed yet")
 

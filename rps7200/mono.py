@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .protocol import CHANNEL_ORDER
+from .protocol import CHANNEL_ORDER, FILM_BW
 
 #: Which channel a monochrome file carries. Green -- see the module docstring.
 MONO_CHANNEL = "G"
@@ -73,3 +73,15 @@ def to_monochrome(image: np.ndarray, channel: str = MONO_CHANNEL) -> np.ndarray:
             f"channel {channel!r} is not in this scan; it has {order}"
         )
     return image[..., order.index(channel)].copy()
+
+
+def wants_mono(asked: bool | None, film: str) -> bool:
+    """Whether to deliver one channel, given what was asked and the film.
+
+    ``None`` means "follow the film", which is the useful default: black and
+    white is the case a consumer cannot work out for itself, and every other
+    film is one where three channels are the point.
+    """
+    if asked is not None:
+        return bool(asked)
+    return film == FILM_BW

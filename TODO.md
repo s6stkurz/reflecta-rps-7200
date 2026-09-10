@@ -83,8 +83,9 @@ to the power-on that measured it.
   change. `rps7200/mono.py` does the reduction; `tools/scan.py --mono` is on by
   default for `--film bw`. The library still files all three channels.
 
-  What is left: the window has no equivalent, so a B&W scan saved from the GUI
-  still goes out with three channels.
+  The window follows the film type: setting it to `bw` ticks "deliver one
+  channel", and that reaches the scan, the roll and Save as -- including the
+  branch that used to copy the entry's three-channel file over verbatim.
 
 - **Black and white comes out as an RGB file, and nothing converts it.** The
   hardware has no black and white mode worth using -- `passes = 0x04` is the

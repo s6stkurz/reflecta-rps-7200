@@ -93,3 +93,67 @@ def test_a_consumer_that_classifies_by_channel_correlation_cannot_be_wrong():
                    corr(a[...,0], a[...,2]))
 
     assert min_corr(to_monochrome(img)) == pytest.approx(1.0)
+
+
+# -- the delivery policy ---------------------------------------------------
+
+from rps7200.mono import wants_mono                          # noqa: E402
+from rps7200.protocol import (                               # noqa: E402
+    FILM_BW,
+    FILM_KODACHROME,
+    FILM_NEGATIVE,
+    FILM_POSITIVE,
+)
+
+
+def test_by_default_only_black_and_white_is_reduced():
+    assert wants_mono(None, FILM_BW) is True
+    for film in (FILM_NEGATIVE, FILM_POSITIVE, FILM_KODACHROME):
+        assert wants_mono(None, film) is False, film
+
+
+@pytest.mark.parametrize("film", [FILM_BW, FILM_NEGATIVE])
+def test_an_explicit_answer_beats_the_film(film):
+    assert wants_mono(True, film) is True
+    assert wants_mono(False, film) is False
+
+
+def test_a_black_and_white_scan_is_written_with_one_channel(tmp_path):
+    """End to end through the writer the window uses.
+
+    The delivered file is what a consumer reads, and it has to say by its shape
+    which film it is. The library entry keeps all three channels: a merged
+    channel cannot be un-merged.
+    """
+    from rps7200 import tiff
+    from rps7200.session import FrameWriter
+
+    img = scene(h=16, w=24)
+    out = tmp_path / "frame.tif"
+    w = FrameWriter()
+    w.submit(seq=0, number=1, paths=[out], rotate=0, image=img,
+             meta={"resolution_dpi": 900}, dpi=900, library=None,
+             film=None, tags=[], prescan=None, inquiry=None, capture={},
+             mono=True)
+    w.finish()
+    assert not w.errors, w.errors
+
+    back = tiff.read(str(out))
+    assert back.ndim == 2, f"delivered file has shape {back.shape}"
+    assert np.array_equal(back, img[..., 1])
+
+
+def test_a_colour_scan_keeps_its_three_channels(tmp_path):
+    from rps7200 import tiff
+    from rps7200.session import FrameWriter
+
+    img = scene(h=16, w=24)
+    out = tmp_path / "frame.tif"
+    w = FrameWriter()
+    w.submit(seq=0, number=1, paths=[out], rotate=0, image=img,
+             meta={"resolution_dpi": 900}, dpi=900, library=None,
+             film=None, tags=[], prescan=None, inquiry=None, capture={},
+             mono=False)
+    w.finish()
+    assert not w.errors, w.errors
+    assert tiff.read(str(out)).shape == img.shape
