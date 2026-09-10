@@ -133,10 +133,38 @@ scanner will almost certainly need a power cycle at its own switch. It asks you
 to type ABORT first.
 
 The options are the ones the driver implements: resolution, infrared, film type,
-exposure (metered or by hand), shading (measure, reuse or none), and for a roll
-the frame count, a start-at for resuming, the metering mode and a dry run.
+exposure (metered or by hand), shading (measure or reuse), and for a roll the
+frame count, a start-at for resuming, the metering mode and a dry run.
 Bracketing is deliberately absent -- see `docs/multi-exposure-plan.md`, which
 measured it and found it does not pay.
+
+The resolutions on the menu are the ones this scanner has been driven at --
+300, 600, 900, 1800, 3600 -- plus the 7200 dpi it reports as its optical
+maximum. The box is editable and there is no client-side validation, so anything
+else can be typed: it goes into MODE SELECT and the device refuses what it
+dislikes with sense `0x26/0x82` before a byte of image data moves.
+
+**It remembers the setup.** Resolution, infrared, film, exposure, metering,
+where the files go, the window size and the pane widths all come back next
+launch, from `gui-settings.json` beside the library (`RPS7200_SETTINGS` moves
+it, `--settings` overrides it). Scan settings can be saved as named presets.
+Losing that file costs a few seconds of resetting controls and nothing else: a
+missing or corrupt one opens the window on its defaults rather than not opening
+it.
+
+What is deliberately *not* remembered is the roll name, frame, subject and
+notes. Those describe one shot, and a stale value would file today's scan under
+yesterday's name.
+
+**Files are named by roll and frame**, because NegPy reads them next:
+
+    2026-09-09-gold200_frame03_3600dpi_ir.tif
+
+in whichever folder the window is pointed at, prescans in a `prescans/`
+subdirectory beside them. A frame rescanned after a failure gets a suffix rather
+than overwriting the first attempt -- the better of the two is not always the
+second. The library entry keeps its own timestamped id, which is what makes it
+findable years later.
 
 ## How scans are corrected
 

@@ -29,7 +29,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library, preview, tiff                # noqa: E402
+from rps7200 import library, preview, settings, tiff      # noqa: E402
 from rps7200.direct import FILM_TYPES, METER_MODES        # noqa: E402
 from rps7200.framing import FULL_FRAME                    # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
@@ -67,6 +67,24 @@ DPI_LADDER = (300, 600, 900, 1800, 3600, 7200)
 #: at ~16 s. 600 is what its own session-start previews use. Beyond that a
 #: framing pass stops being cheap, which is the only reason it exists.
 PRESCAN_LADDER = (300, 600, 900)
+
+#: The controls worth carrying between launches: what the scanner is being
+#: asked to do. Not the view -- channel, invert and zoom start where they always
+#: did, because they describe the last thing looked at rather than the setup.
+REMEMBERED = ("dpi", "predpi", "ir", "film", "expmode", "exposure", "shading",
+              "meter", "dryrun", "correct", "fine", "aim", "reverse",
+              "frames", "startat")
+
+#: What a preset carries: the scan settings, and nothing about the film in the
+#: transport or where the files go.
+PRESET_KEYS = ("dpi", "predpi", "ir", "film", "expmode", "exposure", "shading",
+               "meter")
+
+#: Film fields safe to carry over. `stock`, `process` and `tags` describe the
+#: film and are the same all roll; `roll`, `frame`, `subject` and `notes`
+#: describe one shot, and a stale value there would file today's scan under
+#: yesterday's name.
+REMEMBERED_FILM = ("stock", "process", "tags")
 
 #: How many results keep a full-size working copy. Older ones are shrunk rather
 #: than dropped, so every channel and the invert toggle keep working on them.
@@ -113,10 +131,14 @@ LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
 
 
 class ScannerGui:
-    def __init__(self, root: tk.Tk, session: ScanSession, demo: bool = False):
+    def __init__(self, root: tk.Tk, session: ScanSession, demo: bool = False,
+                 settings_path=None):
         self.root = root
         self.session = session
         self.demo = demo
+        # First, because the controls and the presets below start from it.
+        self._settings_path = settings_path
+        self.remembered = settings.load(settings_path)
         self.results: list = []
         self.current = None
         self.busy = False
@@ -127,6 +149,8 @@ class ScannerGui:
         self._small_size = None
         self._item = None                    # the one canvas item showing it
         self._item_photo = None
+        self.presets: dict = dict(self.remembered.get("presets") or {})
+        self._pending: set = set()           # after() jobs still to fire
         self._thumbs: list[tk.PhotoImage] = []
         self._full = None                    # full-resolution pixels, for 1:1
         self._full_seq = None
@@ -153,9 +177,10 @@ class ScannerGui:
         self.rotation = 0                    # applied to new passes and files
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
-        root.geometry("1280x860")
+        root.geometry(self.remembered["window"].get("geometry") or "1280x860")
         root.minsize(900, 600)
         self._build()
+        self._restore()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         # One binding at the root, dispatched by what the pointer is actually
         # over. Binding per widget did not work: the panel's children sit on
@@ -165,7 +190,7 @@ class ScannerGui:
             root.bind_all(sequence, self._on_wheel, add="+")
         root.bind_all("<TouchpadScroll>", self._on_touchpad, add="+")
         self.session.start()
-        self.root.after(POLL_MS, self._pump)
+        self._later(POLL_MS, self._pump)
 
     # -- layout ------------------------------------------------------------
 
@@ -189,6 +214,7 @@ class ScannerGui:
         left = self._scrollable(outer)
         right = ttk.PanedWindow(outer, orient="vertical")
         outer.add(right, weight=4)
+        self._outer, self._right = outer, right
 
         self._build_scan(left)
         self._build_transport(left)
@@ -214,6 +240,119 @@ class ScannerGui:
             precise=lambda dx, dy: _scroll_pixels(canvas, 0, dy),
             deep=False,
         )
+
+    def _restore(self) -> None:
+        """Put back what was set last time, control by control.
+
+        Each is applied on its own and a bad value is skipped rather than
+        stopping the rest: a settings file edited by hand, or written by an
+        older version, should cost the one control it got wrong.
+        """
+        for key, value in self.remembered["controls"].items():
+            if key not in REMEMBERED:
+                continue
+            variable = getattr(self, f"v_{key}", None)
+            if variable is None:
+                continue
+            try:
+                variable.set(value)
+            except tk.TclError:
+                pass
+        for key, value in self.remembered["film"].items():
+            if key in REMEMBERED_FILM and key in self.fields:
+                self.fields[key].set(str(value))
+        # An explicit --out wins: it was typed for this run.
+        if self.remembered["output"] and self.session.out_dir is None:
+            self._set_outdir(str(self.remembered["output"]))
+        elif self.session.out_dir is not None:
+            self.v_outdir.set(str(self.session.out_dir))
+        self._sync_exposure()
+        self._show_estimate()
+        self._refresh_presets()
+        # Sashes only once the panes have a size to divide, or the positions
+        # are clamped to a window that has not been laid out yet.
+        self._later(120, self._restore_sashes)
+
+    def _restore_sashes(self) -> None:
+        for name, pane in (("outer", self._outer), ("right", self._right)):
+            wanted = self.remembered["window"].get(name) or []
+            for index, position in enumerate(wanted):
+                try:
+                    pane.sashpos(index, int(position))
+                except (tk.TclError, ValueError, TypeError):
+                    pass
+
+    def _remember(self) -> None:
+        """Gather the setup and write it. Never allowed to stop the window."""
+        try:
+            controls = {key: getattr(self, f"v_{key}").get()
+                        for key in REMEMBERED if hasattr(self, f"v_{key}")}
+            film = {key: self.fields[key].get()
+                    for key in REMEMBERED_FILM if key in self.fields}
+            window = {"geometry": self.root.winfo_geometry()}
+            for name, pane in (("outer", self._outer), ("right", self._right)):
+                window[name] = _sash_positions(pane)
+            settings.save({
+                "controls": controls,
+                "film": film,
+                "output": self.v_outdir.get(),
+                "window": window,
+                "presets": self.presets,
+            }, self._settings_path)
+        except Exception as exc:                         # noqa: BLE001
+            self._say(f"could not save the settings: {exc}")
+
+    # -- presets -----------------------------------------------------------
+
+    def _refresh_presets(self) -> None:
+        names = sorted(self.presets)
+        self.preset_box.configure(values=names)
+        if self.v_preset.get() not in names:
+            self.v_preset.set("")
+
+    def on_preset_chosen(self, _event=None) -> None:
+        stored = self.presets.get(self.v_preset.get())
+        if not stored:
+            return
+        for key, value in stored.items():
+            variable = getattr(self, f"v_{key}", None)
+            if variable is not None:
+                try:
+                    variable.set(value)
+                except tk.TclError:
+                    pass
+        self._sync_exposure()
+        self._show_estimate()
+
+    def on_preset_save(self) -> None:
+        name = simpledialog.askstring(
+            "Save preset", "A name for these settings:",
+            initialvalue=self.v_preset.get() or self._suggested_preset(),
+            parent=self.root)
+        if not (name or "").strip():
+            return
+        self.presets[name.strip()] = {
+            key: getattr(self, f"v_{key}").get()
+            for key in PRESET_KEYS if hasattr(self, f"v_{key}")
+        }
+        self.v_preset.set(name.strip())
+        self._refresh_presets()
+        self._remember()
+        self._say(f"saved the preset {name.strip()!r}")
+
+    def on_preset_delete(self) -> None:
+        name = self.v_preset.get()
+        if name and name in self.presets and messagebox.askokcancel(
+            "Delete preset", f"Forget the preset {name!r}?", parent=self.root
+        ):
+            del self.presets[name]
+            self._refresh_presets()
+            self._remember()
+
+    def _suggested_preset(self) -> str:
+        stock = self.fields["stock"].get().strip()
+        return (f"{stock + ' at ' if stock else ''}{self.v_dpi.get()} dpi "
+                f"{'RGBI' if self.v_ir.get() else 'RGB'}")
 
     def _on_wheel(self, event: tk.Event) -> str | None:
         """Route a wheel or two-finger scroll to the region it happened in.
@@ -335,6 +474,22 @@ class ScannerGui:
     def _build_scan(self, parent: ttk.Frame) -> None:
         box = ttk.LabelFrame(parent, text="Scan", padding=8)
         box.pack(fill="x")
+
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(0, 4))
+        ttk.Label(row, text="preset", width=10).pack(side="left")
+        self.v_preset = tk.StringVar()
+        self.preset_box = ttk.Combobox(row, textvariable=self.v_preset, width=13,
+                                       state="readonly", values=[])
+        self.preset_box.pack(side="left", fill="x", expand=True)
+        self.preset_box.bind("<<ComboboxSelected>>", self.on_preset_chosen)
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(0, 4))
+        ttk.Label(row, text="", width=10).pack(side="left")
+        ttk.Button(row, text="Save", width=6,
+                   command=self.on_preset_save).pack(side="left")
+        ttk.Button(row, text="Forget", width=7,
+                   command=self.on_preset_delete).pack(side="left", padx=4)
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
@@ -892,6 +1047,7 @@ class ScannerGui:
             return
         self.closing = True
         self.v_state.set("closing ...")
+        self._remember()
         self.session.shutdown()
         self._wait_to_quit()
 
@@ -911,14 +1067,38 @@ class ScannerGui:
         if self._session_closed or thread is None or not thread.is_alive():
             self._quit()
             return
-        self.root.after(150, self._wait_to_quit)
+        self._later(150, self._wait_to_quit)
 
     def _quit(self) -> None:
         self._alive = False
+        # Anything still scheduled is cancelled first. A callback that fires
+        # after the widgets are gone cannot do anything useful, and Tk complains
+        # about the command it can no longer find -- which is how a clean quit
+        # ends up printing errors.
+        for job in list(self._pending):
+            try:
+                self.root.after_cancel(job)
+            except (tk.TclError, ValueError):
+                pass
+        self._pending.clear()
         try:
             self.root.destroy()
         except tk.TclError:
             pass
+
+    def _later(self, milliseconds: int, call):
+        """`after`, remembered so it can be cancelled when the window closes."""
+        if not self._alive:
+            return None
+
+        def run():
+            self._pending.discard(job)
+            if self._alive:
+                call()
+
+        job = self.root.after(milliseconds, run)
+        self._pending.add(job)
+        return job
 
     # -- the event pump ----------------------------------------------------
 
@@ -937,7 +1117,7 @@ class ScannerGui:
             self._handle(event)
             if not self._alive:
                 return
-        self.root.after(POLL_MS, self._pump)
+        self._later(POLL_MS, self._pump)
 
     def _handle(self, event) -> None:
         if event.kind == "log":
@@ -946,7 +1126,7 @@ class ScannerGui:
             self.v_state.set(event.text.splitlines()[0])
             if self.session.inquiry_text and not self._asked_to_calibrate:
                 self._asked_to_calibrate = True
-                self.root.after(50, self.ask_to_calibrate)
+                self._later(50, self.ask_to_calibrate)
             if event.busy:
                 self._job = event.text
                 self.v_progress.set(event.text)
@@ -1515,12 +1695,12 @@ class ScannerGui:
         if moving:
             if self._settle_job is not None:
                 self.root.after_cancel(self._settle_job)
-            self._settle_job = self.root.after(_SETTLE_MS, self._settle)
+            self._settle_job = self._later(_SETTLE_MS, self._settle)
         since = (time.monotonic() - self._drawn_at) * 1000
         if since >= _FRAME_MS:
             self._redraw(quick=moving)
         elif self._redraw_job is None:
-            self._redraw_job = self.root.after(
+            self._redraw_job = self._later(
                 max(1, int(_FRAME_MS - since)),
                 lambda: self._redraw(quick=moving))
 
@@ -1856,6 +2036,22 @@ def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
     return (-step if delta > 0 else step), bool(event.state & 0x0001)
 
 
+def _sash_positions(pane) -> list[int]:
+    """Where a paned window's dividers sit, however many it has.
+
+    Tk gives no count, so they are read until one refuses -- a pane with two
+    panels has one sash, and asking for a second raises rather than returning
+    nothing.
+    """
+    positions: list[int] = []
+    for index in range(8):
+        try:
+            positions.append(int(pane.sashpos(index)))
+        except Exception:                                # noqa: BLE001
+            break
+    return positions
+
+
 def _sized(photo, size, width: int, height: int):
     """`photo` if it is already this size, otherwise a new one that is.
 
@@ -1913,6 +2109,10 @@ def main() -> int:
     ap.add_argument("--rolls", default=None)
     ap.add_argument("--out", default=None,
                     help="also write a TIFF of every scan here")
+    ap.add_argument("--settings", default=None,
+                    help=f"where the window remembers its setup "
+                         f"(default: {settings.DEFAULT_PATH}, or "
+                         f"${settings.PATH_ENV})")
     args = ap.parse_args()
 
     home = DEMO_ROOT if args.demo else Path(".")
@@ -1928,7 +2128,7 @@ def main() -> int:
         session._open_scanner = lambda: DemoScanner(source, entry=entry)
 
     root = tk.Tk()
-    ScannerGui(root, session, demo=args.demo)
+    ScannerGui(root, session, demo=args.demo, settings_path=args.settings)
     root.mainloop()
     return 0
 

@@ -43,3 +43,6 @@ probe/
 
 # Where `make run-demo` writes, so trying the window out leaves no trace.
 demo/
+
+# What the scanning window remembers between launches -- per machine.
+gui-settings.json
