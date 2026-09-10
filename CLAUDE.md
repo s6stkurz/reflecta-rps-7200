@@ -221,6 +221,11 @@ It needs a power cycle afterwards, so avoid these:
   measurement.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
+- **The gain field is a digital multiplier; it buys nothing.** Measured
+  2026-09-10 on a blue ladder 21→39: signal ×1.484, random noise ×1.476, a
+  shortfall of 0.53% where an analog gain would have given ~4%. It is safe to
+  write and pointless to. Blue's rail limit in RGB cannot be lifted this way —
+  scan RGBI, where blue is ~5× more sensitive. See `docs/analog-gain-plan.md`.
 - Bump `PROTOCOL_REVISION` in `rps7200/direct.py` when the commands sent to the
   device change — not for host-side work, which is re-runnable from raw bytes.
 - **There is no vignette, and no vignette correction should be added.** Measured

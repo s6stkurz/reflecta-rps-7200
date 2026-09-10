@@ -1,10 +1,12 @@
 # The analog gain register: is there anything in it?
 
-## Status: designed, not run. Needs Stefan at the scanner.
+## Status: run 2026-09-10. Answered: **the gain is a digital multiplier.**
 
-Written down before the hardware is touched so the scanner time is spent on a
-decided question rather than on working out what to ask. **Do not drive this
-without his go-ahead.**
+Do not reach for this register again. What follows is the design as written
+before the run, then the result at the end.
+
+Eight passes, about five minutes of scanner time. Nothing wedged, nothing
+moved, and 39/33/21/25 was restored and confirmed afterwards.
 
 ## The question
 
@@ -124,3 +126,59 @@ the ~212 s infrared floor.
 
 The gain experiment is worth running for what it tells us about the hardware.
 It is not the only route to a usable blue.
+
+## The result
+
+Blue gain 21 -> 25 -> 29 -> 33 -> 39 at one exposure, 300 dpi RGB, film loaded,
+blue sited at 35% of scale so the ladder had room. Nothing clipped at any rung.
+
+| blue gain | median DN | x vs 21 |
+|---|---|---|
+| 21 | 7478 | 1.000 |
+| 21 (repeat) | 7466 | 0.998 |
+| 25 | 8039 | 1.075 |
+| 29 | 8712 | 1.165 |
+| 33 | 9518 | 1.273 |
+| 39 | 11068 | 1.480 |
+
+**The field is honoured, and it is not linear in the code.** 21 -> 39 is x1.857
+in the code and x1.480 in the output. The repeat at 21 came back within 0.16%,
+so the ladder is measuring the register and not the frame.
+
+Then a second repeat pair at gain 39, which is what decides it. `noise_split`
+over the two pairs:
+
+| | gain 21 | gain 39 | ratio |
+|---|---|---|---|
+| median | 7478 | 11098 | **x1.4842** |
+| random noise | 163.0 DN | 240.6 DN | **x1.4763** |
+
+**Noise scales with the signal: a shortfall of 0.53%.** An analog gain leaves
+the read and quantisation noise behind, so the random component would grow by
+*less* than the signal -- on this sensor's numbers, by about 4%. It does not.
+The un-amplified term implied by the measurement is 23 DN, 14% of the random
+noise at gain 21, which is about what quantisation alone would give.
+
+So raising blue's gain from 21 to 39 improves its signal-to-noise ratio by
+**0.5%**. It brightens the picture and amplifies the noise with it.
+
+The measurement was made at blue median 11% of full scale, deliberately dim.
+That is the *most* favourable case for detecting an un-amplified read-noise
+term -- it is the largest that term can ever be, relative to the signal -- and
+it still showed nothing. At a normal exposure the effect would be smaller
+still.
+
+Corroborating, though on its own it was not conclusive: the occupancy of the
+output code space falls from 94.2% at gain 21 to 88.1% at gain 39. Codes go
+missing as the multiplier opens gaps between them, which is what a multiply
+after the converter does and what an analog gain would not.
+
+### What follows
+
+- **Blue's rail limit in RGB stands, and gain cannot lift it.** The answer for
+  a frame whose blue record matters is RGBI, where blue is ~5x more sensitive
+  (`BLUE_RGBI_HEADROOM`) -- at the cost of the ~212 s infrared floor.
+- **No code change.** The register stays where the device puts it, exactly as
+  the vendor leaves it in 36 of 36 captures.
+- The eight passes are filed under the tag the probe wrote, so this is
+  re-analysable without touching the scanner again.

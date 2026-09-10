@@ -44,6 +44,15 @@ to the power-on that measured it.
   exact frames that were drifting. A gap-based detector works, keying on
   columns that are both bright and flat since the inter-frame gap is unexposed
   base, and recovers the 1/10/36 px cleanly. Measured, not implemented.
+- **The gain register is a digital multiplier** (measured 2026-09-10, closed).
+  It was the only lever left for blue in plain RGB, where the exposure timer
+  runs out with blue still ~30% below red and green. It is honoured, and not
+  linear in the code — 21→39 is ×1.857 in the code and ×1.480 in the output —
+  but the noise rises with the signal: ×1.4842 against ×1.4763, a shortfall of
+  0.53% where analog gain would give ~4%. Net SNR gain 0.5%. No code change;
+  `docs/analog-gain-plan.md` has the ladder and the reasoning so nobody spends
+  the scanner time again.
+
 - **Blue is ~5x brighter in RGBI than in RGB at the same exposure**, and the
   cause is still unknown — but its *shape* is now settled, which is most of
   what was needed. Measured 4.98-5.02 on the one matched pair in the library

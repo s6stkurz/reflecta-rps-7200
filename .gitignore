@@ -39,7 +39,11 @@ walk7/
 probe/
 
 # local Claude config: machine-specific paths and permissions
-.claude/
+.claude/*
+# ...except skills, which are project knowledge and belong to everyone working
+# here. They were lost once: added on a branch that never reached main, then
+# removed by a clean because the blanket rule above made them invisible to git.
+!.claude/skills/
 
 # Where `make run-demo` writes, so trying the window out leaves no trace.
 demo/
