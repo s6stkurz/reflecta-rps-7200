@@ -70,7 +70,36 @@ python3 tools/scan.py --dpi 600                  # faster, RGB only
 python3 tools/scan.py --dpi 1800 --no-shading    # raw pixels, for comparison
 python3 tools/scan.py --dpi 1800 --reuse         # reuse the cached reference
 python3 tools/scan.py --film positive            # a slide: keeps its colour cast
+python3 tools/scan.py --film bw                  # one channel out, infrared refused
 ```
+
+### What `--film` changes
+
+It is a metering and delivery decision, not a mode the scanner has. Every pass this
+driver takes is RGB or RGBI; there is no black and white mode worth using, and CyberView
+does not use one either.
+
+| `--film` | metering | infrared | delivered |
+|---|---|---|---|
+| `negative` | per channel — takes the orange mask off before the ADC | allowed | 3 or 4 channels |
+| `bw` | per channel — silver halide has no colour record to protect | **refused** | one channel |
+| `positive` | locked — the cast *is* the picture | allowed | 3 or 4 channels |
+| `kodachrome` | locked | **refused** | 3 or 4 channels |
+
+**Infrared is refused on black and white and Kodachrome** rather than warned about.
+Silver grain blocks infrared exactly as dust does, and Kodachrome's cyan layer absorbs
+it — so the plane comes back holding the photograph instead of what is lying on top of
+it, measured here at +0.97 correlation with green, and the pass still costs its ~212 s
+floor. Chromogenic black and white (XP2, BW400CN, anything C-41) is the exception: it is
+dye-based and cleans properly, so scan it as `--film negative`.
+
+**Locking matters, and black and white is not locked.** A slide and a Kodachrome keep
+their balance because the cast is the picture. Silver halide has no dye layers, so what
+looks like a cast is the film base and the sensor's own response — holding the channels
+together to preserve it cost green and blue about half a stop each, measured on repeat
+pairs at 900 dpi. This diverges from `nkscan`, which locks monochrome; that is right for
+a Coolscan, whose exposure register is 26 bits wide with no channel that runs out, and
+wrong here, where red's ceiling is a rail the lock propagates to the other two.
 
 A whole strip or roll, unattended:
 
@@ -110,6 +139,13 @@ make run                        # the scanner
 make run-demo                   # no scanner: stored library entries drive the window
 ```
 
+The demo decodes each entry's **raw bytes**, not the TIFF beside them -- so it runs the
+same deinterleave and the same shading correction a real pass runs, and files entries
+that `library.py reconstruct` reads back as identical. It picks its picture by film type,
+answers at the resolution asked for, and refuses what the device refuses. Where it cannot
+honour a request with the bytes in hand -- asking a four-channel entry for RGB -- it drops
+the bytes and says so, rather than filing raw that decodes to a different photograph.
+
 Prescan, scan, walk a roll, and look at what came off -- the filmstrip along the
 bottom holds every pass of the session, prescans included, and clicking one puts
 it back on the canvas. The channel selector switches between RGB and R, G, B or
@@ -119,6 +155,13 @@ The preview is inverted by default so a negative can be judged by eye, and that
 inversion is display only: what reaches `library/` is the raw negative with its
 raw bytes, exactly as `tools/scan.py` files it. Inverting for real is NegPy's
 job.
+
+The film selector drives what is beside it. Set it to black and white and the
+infrared box clears and greys out, "deliver one channel" ticks, and the view
+switches to that channel -- which `preview.render` draws grey rather than
+tinted, so the prescan and the scan both come up as photographs rather than as a
+green separation. Set it back and the box returns, unchecked: silently re-arming
+a 212-second pass is not something a settings change should do.
 
 Opening the window claims the device and asks it who it is, and nothing else --
 no calibration, no lamp, no transport until a button is pressed.
@@ -236,38 +279,91 @@ to remove. Blue carries the least signal on this scanner, so its column variatio
 The reference belongs to the power-on that measured it. `calibrate_shading()` is therefore
 run once per session, exactly as the vendor software does at power-on.
 
+## Exposure
+
+`--auto-exposure` probes at 300 dpi and aims each channel's 99.5th percentile at
+**0.80** of full scale. The probe is always RGB, in two rounds, plus one further round
+only if a channel came back clipped — there the correction is a retreat rather than a
+measurement, and everything else is settled in one proportional step because the sensor
+is linear (r² = 0.9999 over a 4× range).
+
+Three things about it are worth knowing before changing anything:
+
+- **Exposure is a 16-bit timer that wraps.** Past 65535 a pass comes back *darker*, not
+  brighter. `READ GAIN/OFFSET` hands back a fixed reference — `9604, 6506, 6506, 7745` —
+  rather than what is in force, so every scan is `base × scale` and exposure cannot
+  compound. Red's base is the highest, so its ceiling is ×6.82 where green and blue get
+  ×10.07, and red is the channel that runs out first.
+- **The band above the target is tighter than the band below it.** 0.08 under, 0.02 over.
+  Landing under costs a little noise; landing over clips, and nothing downstream undoes
+  that. When the target moved from 0.70 to 0.80 with a symmetric band, the top of the
+  acceptance window went to 0.88 and a frame duly landed at 87% with samples at the rail.
+- **Blue comes back several times brighter in an RGBI pass than in the RGB probe**, so
+  its target is divided before an infrared scan. How much depends on the film —
+  4.98–5.02 on colour negative, ~9.6 on black and white, each from a matched pair minutes
+  apart with red and green confirming the mode was the only variable. One constant for
+  every film put 34% of a B&W scan's blue channel at the rail.
+
+What the probe measured is filed with the scan, so the numbers above stay checkable from
+ordinary work rather than needing a special run.
+
 ## Resolution
 
-`--dpi` accepts **25–7200**; the default is **600**. The backend's own default is 300 dpi,
-so a resolution is always set explicitly.
+`--dpi` goes straight into MODE SELECT as a 16-bit field, so the device refuses what it
+dislikes with sense `0x26/0x82` rather than the driver guessing. The default is **1800**.
 
-| `--dpi` | approx pixels | size (4ch × 16-bit) |
-|---|---|---|
-| 600 | 862 × 574 | ~4 MB |
-| 1200 | 1724 × 1148 | ~16 MB |
-| 3600 | 5172 × 3444 | ~142 MB |
-| 7200 | 10344 × 6888 | ~570 MB |
+Sizes are the geometry the device actually reports, not a calculation — it rounds its own
+way, and 600 dpi returns 573 or 574 lines depending on the pass:
 
-At 7200 dpi expect roughly double the listed figure in memory, because the backend buffers
-the whole image itself as well.
+| `--dpi` | pixels | 3ch × 16-bit | 4ch × 16-bit | seen in a capture |
+|---|---|---|---|---|
+| 300 | 428 × 286 | ~0.7 MB | ~1 MB | yes |
+| 600 | 860 × 573 | ~3 MB | ~4 MB | yes |
+| 900 | 1292 × 860 | ~7 MB | ~9 MB | yes |
+| 1200 | 1724 × 1148 | ~12 MB | ~16 MB | yes |
+| 1800 | 2584 × 1721 | ~27 MB | ~36 MB | yes |
+| 3600 | 5172 × 3443 | ~107 MB | ~142 MB | yes |
+| 7200 | 10344 × 6888 | ~427 MB | ~570 MB | no — the INQUIRY maximum only |
 
-**The prescan ignores `--dpi`.** With `preview=yes` the backend forces its fast-preview
-resolution (300 dpi on this scanner). Geometry is always read back from
-`sane_get_parameters` after the scan starts rather than computed from the request.
+Only those marked have been driven, by CyberView or by this driver. The window's ladder
+offers exactly them; the box is not a limit, but a menu of guesses reads as a menu of
+capabilities. The divisors of 7200 nobody has asked for are in
+`docs/dpi-tradeoff-plan.md` as candidates, not as claims.
+
+**Scan time is set by exposure, not only by line count.** Thirteen 3600 dpi RGB scans
+fit `ms/line = 2.60 + 4.851e-4 × sum(exposure)` at r² = 1.0000, which is why a dense
+negative can take four times as long as a slide at the same resolution. An infrared pass
+has its own floor of ~212 s whatever the resolution, so it dominates below about 1800 dpi.
+
+A prescan is a separate, cheap pass — 300 dpi, RGB, 8-bit, the whole transport — and takes
+its own resolution rather than the scan's.
 
 ## Output
 
-One TIFF per frame, `(H, W, 4)` uint16, channels in **R, G, B, IR** order, plus a JSON
-sidecar recording resolution, geometry, exposure/gain/offset and the settings used.
+One TIFF per frame, uint16, plus a JSON sidecar recording resolution, geometry,
+exposure/gain/offset, what the metering probe measured, and the settings used.
+
+The shape depends on what was asked for:
+
+| | shape | channels |
+|---|---|---|
+| `--ir` | `(H, W, 4)` | R, G, B, IR |
+| plain | `(H, W, 3)` | R, G, B |
+| `--film bw` | `(H, W)` | one, green by default |
 
 The IR plane is tagged `ExtraSamples = 0 (unspecified)` — meaning "data, not alpha".
 Some viewers (macOS Preview included) still report `hasAlpha: yes` and may composite it.
-That is a viewer convention, not a problem with the file; use `--split` when you want
-files that display normally.
+That is a viewer convention, not a problem with the file.
 
-The driver sets the mode bytes for a one-pass four-channel capture itself and applies
-shading on the host, as described above. Nothing consumes or alters the IR plane on the
-way out.
+**A black and white scan is delivered flat, as `(H, W)` and not `(H, W, 1)`.** That
+distinction decides whether a consumer recognises it: NegPy classifies by the minimum
+correlation between channels, and measured across this library, black and white spans
+0.926–0.988 while colour negative spans 0.008–0.976. They overlap, so no threshold
+separates them — a three-channel B&W scan came back from NegPy's own classifier as
+**Transparency**, processed as a slide. One channel makes it certain. The library still
+files all three; only what leaves is reduced.
+
+Nothing consumes or alters the IR plane on the way out.
 
 ### Filing every scan automatically
 
