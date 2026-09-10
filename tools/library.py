@@ -68,17 +68,28 @@ def main() -> int:
         return 1 if problems else 0
 
     elif args.action == "reconstruct":
-        changed = 0
+        # An entry with no bytes to decode is not a decode regression, and
+        # counting it as one turns this check into a metric that cries wolf --
+        # the summary read "6 entries no longer decode to what was stored"
+        # when all six simply had nothing stored to decode.
+        changed = unreadable = 0
         for r in library.entries(root):
             path = root / str(r.get("id"))
             _, verdict = library.reconstruct(path)
-            mark = " " if verdict.startswith("identical") else "!"
-            if mark == "!":
-                changed += 1
+            if verdict.startswith("identical"):
+                mark = " "
+            elif "no raw bytes" in verdict or verdict.startswith("could not"):
+                mark, unreadable = "-", unreadable + 1
+            else:
+                mark, changed = "!", changed + 1
             print(f"{mark} {path.name}: {verdict}")
         print(f"\n{changed} entr{'y' if changed == 1 else 'ies'} no longer "
               f"decode to what was stored" if changed
-              else "\nevery entry still decodes to exactly what was stored")
+              else "\nevery entry that can be decoded still decodes to exactly "
+                   "what was stored")
+        if unreadable:
+            print(f"{unreadable} had nothing to decode from -- not a "
+                  f"regression, but they cannot be re-corrected either")
         return 1 if changed else 0
 
     elif args.action == "duplicates":

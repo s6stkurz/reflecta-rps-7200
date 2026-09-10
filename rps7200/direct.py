@@ -1724,6 +1724,11 @@ class DirectScanner:
                 resolution=resolution,
                 infrared=False,
                 exposure_scale=scales,
+                # CLAUDE.md's rule is "file every scan, with its raw bytes",
+                # without an exception for throwaway passes -- and a metering
+                # probe is only throwaway until someone asks what it saw. At
+                # 300 dpi it costs about 1.3 MB.
+                keep_raw=True,
             )
             levels = [
                 float(np.percentile(image[..., c], percentile)) / full
