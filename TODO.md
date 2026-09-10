@@ -205,7 +205,11 @@ driver for Nikon Coolscans:
   the knee, and a B&W frame duly landed at 87% with samples at the rail. The
   band is asymmetric now. Raising a target is not safe unless the band above it
   is looked at too.
-- **Otsu plus morphological opening in `film_bounds`.** It currently cuts at a
+- **Otsu plus morphological opening in `film_bounds`.** Now load-bearing in a
+  second place: metering crops to it, so a bad edge would mis-expose rather
+  than only mis-report registration. It still fails safe -- an undetected edge
+  returns the whole window, which is what metering did before -- but the
+  threshold is worth improving on its own merits. It currently cuts at a
   fixed fraction of the clear level, the rule nkscan explicitly rejects because
   it "lands in the wrong population" when the proportion of film in the pass
   changes. Self-contained and testable against the prescans already stored.
