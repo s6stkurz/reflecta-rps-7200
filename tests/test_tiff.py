@@ -355,3 +355,42 @@ class TestStoredScans:
         assert by_builtin.shape == by_tifffile.shape
         assert by_builtin.dtype == by_tifffile.dtype
         assert np.array_equal(by_builtin, by_tifffile)
+
+
+def test_a_single_channel_image_is_written_as_a_flat_greyscale_tiff(tmp_path):
+    """(H, W) in, (H, W) out -- not (H, W, 1).
+
+    tifffile records the shape of the array it is handed so it can round-trip
+    it exactly, so passing (H, W, 1) puts a trailing length-1 axis on every
+    read. A consumer that recognises greyscale by `img.ndim == 2` then misses
+    it: NegPy is exactly such a consumer, and with the axis present it read a
+    black and white scan as a slide.
+    """
+    a = (np.arange(80 * 120, dtype=np.uint16) % 65535).reshape(80, 120)
+    p = tmp_path / "mono.tif"
+    tiff.write(str(p), a)
+
+    back = tiff.read(str(p))
+    assert back.ndim == 2, f"our own reader gave {back.shape}"
+    assert np.array_equal(back, a)
+
+    tf = pytest.importorskip("tifffile")
+    outside = tf.imread(str(p))
+    assert outside.ndim == 2, (
+        f"an outside reader gave {outside.shape}; a consumer keying on ndim==2 "
+        f"would not see this as greyscale"
+    )
+    with tf.TiffFile(str(p)) as f:
+        page = f.pages[0]
+        assert page.tags["SamplesPerPixel"].value == 1
+        assert page.tags["PhotometricInterpretation"].value == 1  # MinIsBlack
+
+
+def test_three_channels_still_round_trip_with_their_axis(tmp_path):
+    """The single-channel case must not reach a colour image."""
+    a = (np.arange(20 * 30 * 3, dtype=np.uint16) % 65535).reshape(20, 30, 3)
+    p = tmp_path / "rgb.tif"
+    tiff.write(str(p), a)
+    back = tiff.read(str(p))
+    assert back.shape == a.shape
+    assert np.array_equal(back, a)

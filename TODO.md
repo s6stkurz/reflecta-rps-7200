@@ -71,21 +71,20 @@ to the power-on that measured it.
   way it was dropping `metering`, so no filed entry has them either. Start
   there.
 
-- **NegPy cannot tell a black and white scan from this scanner.** It classifies
-  by minimum channel correlation over a strided 256 px crop, `> 0.99` meaning
-  monochrome (`negpy/features/process/logic.py`). Measured over the library:
-  B&W spans 0.926-0.988 and colour negative 0.008-0.976. **They overlap, so no
-  threshold separates them** -- this is not a value that needs tuning.
+- **Black and white is now delivered as one channel** (done). NegPy classifies
+  by minimum channel correlation, `> 0.99` meaning monochrome. Measured across
+  this library, B&W spans 0.926-0.988 and colour negative 0.008-0.976: they
+  overlap, so no threshold separates them and it is not a value that needs
+  tuning. Run through NegPy's own `detect_process_mode` in its own venv, a
+  three-channel B&W scan came back **Transparency** -- processed as a slide.
 
-  Two reasons the correlation is low: the red row offset above, and noise (the
-  downsample is a stride, `img[::step, ::step]`, so it decimates rather than
-  averages and keeps every bit of the per-pixel noise).
+  Its loader expands a 2-D image to three identical planes, so a genuine
+  greyscale TIFF classifies as B&W with certainty and nothing downstream has to
+  change. `rps7200/mono.py` does the reduction; `tools/scan.py --mono` is on by
+  default for `--film bw`. The library still files all three channels.
 
-  The real fix is not to make NegPy guess better. **This driver knows the film
-  type and throws it away when it writes the TIFF.** `scan.film` is in the
-  sidecar, but an exported TIFF carries nothing, and NegPy's loader reads only
-  `ExtraSamples` and `InterColorProfile`. Putting it in `ImageDescription` and
-  teaching the loader to read it would settle it on both sides.
+  What is left: the window has no equivalent, so a B&W scan saved from the GUI
+  still goes out with three channels.
 
 - **Black and white comes out as an RGB file, and nothing converts it.** The
   hardware has no black and white mode worth using -- `passes = 0x04` is the

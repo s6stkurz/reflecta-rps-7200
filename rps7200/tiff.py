@@ -110,7 +110,14 @@ def write(
         # Otherwise the Software tag says "tifffile.py" or "rps7200" depending
         # on what happened to be installed when the scan was written.
         kwargs["software"] = software
-        tifffile.imwrite(path, np.ascontiguousarray(image), **kwargs)
+        # Hand a single-channel image over as (H, W), not (H, W, 1). tifffile
+        # records the array's own shape so it can round-trip it exactly, so a
+        # trailing length-1 axis comes back on every read -- and a consumer
+        # that keys on `ndim == 2` to recognise greyscale then misses it.
+        # NegPy is exactly such a consumer, and this is what decides whether a
+        # black and white scan is processed as black and white.
+        out = image[:, :, 0] if image.shape[2] == 1 else image
+        tifffile.imwrite(path, np.ascontiguousarray(out), **kwargs)
         return
 
     with open(path, "wb") as fh:

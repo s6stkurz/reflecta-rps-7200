@@ -27,6 +27,7 @@ import numpy as np
 
 from rps7200 import library, tiff
 from rps7200.direct import DirectScanner, supports_infrared
+from rps7200.mono import MONO_CHANNEL, to_monochrome
 from rps7200.library import FilmNotes
 
 
@@ -65,6 +66,18 @@ def main() -> int:
                     help="metering only: a negative is metered per channel to "
                          "take the orange mask off before the ADC; everything "
                          "else keeps its cast")
+    ap.add_argument("--mono", dest="mono", action="store_true", default=None,
+                    help="deliver one channel instead of three. On by default "
+                         "for --film bw: a black and white scan is an RGB scan "
+                         "on this hardware, and a consumer that has to guess "
+                         "from the pixels gets it wrong -- channel correlation "
+                         "does not separate B&W from colour negative here. The "
+                         "library keeps all three regardless")
+    ap.add_argument("--no-mono", dest="mono", action="store_false",
+                    help="deliver all three channels even for --film bw")
+    ap.add_argument("--mono-channel", default=MONO_CHANNEL, choices=["R", "G", "B"],
+                    help="which channel a monochrome file carries "
+                         "(default: %(default)s, chosen by measurement)")
     ap.add_argument("--library", nargs="?", const="library", default="library",
                     metavar="DIR",
                     help="file this scan in the reusable library, with its raw "
@@ -211,9 +224,19 @@ def main() -> int:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    tiff.write(str(out), image, resolution=args.dpi)
+    delivered = image
+    if args.mono is None:
+        args.mono = args.film == "bw"
+    if args.mono:
+        # One channel, so a consumer cannot mistake this for a colour scan.
+        # The library keeps all three either way -- see rps7200/mono.py.
+        delivered = to_monochrome(image, args.mono_channel)
+        meta = dict(meta, mono_channel=args.mono_channel,
+                    channel_order=[args.mono_channel], channels=1)
+    tiff.write(str(out), delivered, resolution=args.dpi)
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2, default=str))
-    print(f"wrote {out}  {image.shape}  {image.dtype}")
+    print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
+          + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
     if meta.get("shading"):
         r = meta["shading"]
         print(f"shading: {r['columns']}/{r['width']} columns corrected, "
