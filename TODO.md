@@ -53,33 +53,26 @@ to the power-on that measured it.
   `docs/analog-gain-plan.md` has the ladder and the reasoning so nobody spends
   the scanner time again.
 
-- **Blue is ~5x brighter in RGBI than in RGB at the same exposure**, and the
-  cause is still unknown — but its *shape* is now settled, which is most of
-  what was needed. Measured 4.98-5.02 on the one matched pair in the library
-  (`20260909T103542Z` against `20260909T104022Z_ir`, same frame 4.7 min apart),
-  and the ratio is **flat across density**, 5.02 in the densest decile against
-  4.95 in the brightest. So it is a multiplicative change in blue's
-  sensitivity, not an infrared leak into the blue record — blue's excess
-  correlates +0.9985 with predicted blue and only +0.49 with the infrared
-  plane. A single constant is therefore the right model.
+- **How much brighter blue comes back in RGBI depends on the film.** Two
+  matched pairs, each the same frame in both modes minutes apart, with red and
+  green confirming the mode was the only variable: **4.98-5.02 on colour
+  negative**, **~9.6 on black and white** (8.3-10.5 across percentiles). The
+  cause is still unknown, but the shape now points somewhere: on the colour
+  negative the ratio is flat across density (5.02 densest decile against 4.95
+  brightest) while on B&W it slopes 10.2 -> 8.3, which is what an *additive*
+  leak into the blue record looks like rather than a change of gain. On a
+  colour negative the mask suppresses blue hard enough that the leak dominates
+  everywhere, which would make it look multiplicative.
 
-  This entry used to say the 4x headroom was "probably too conservative". It
-  was the opposite: too small, which put blue at 88-96% of full scale where
-  metering aimed for 70%. Now `BLUE_RGBI_HEADROOM = 5.2`.
+  A single constant was wrong and cost a scan: 5.2 applied to black and white
+  put 34% of its blue channel at the rail. `blue_rgbi_headroom(film)` now
+  carries a value per film, with unmeasured films taking the safe end.
 
-  The free tightening described here is **done**: `auto_exposure` leaves what
-  each round measured on `last_metering` and `scan` files it, so every ordinary
-  RGBI scan now yields an estimate with no extra passes. What remains is to
-  read a few back and confirm 5.2 against a second film.
+  What would settle it: a matched RGB/RGBI pair on a slide and on Kodachrome,
+  which are still unmeasured, and a clear-base frame to separate the leak from
+  the film. `last_metering` is filed with every metered scan now, so the
+  achieved blue level accumulates without a special run.
 
-  To settle the *cause* rather than work around it, one experiment closes it —
-  but every step must happen inside a single power-on, because a shading
-  reference belongs to the power-on that measured it (`docs/vignette-plan.md`,
-  "One phase, one power-on"): meter RGB on the empty transport and lock the
-  scale (~75 s); calibrate (~3-4 min); one RGB pass (~1 min); one RGBI pass at
-  the same locked exposure (~212 s infrared floor). About 10 minutes of scanner
-  time. The last pass against the one before it isolates filter transmission
-  from the gain path, because only the channel count differs.
 - **Passes sit at different column offsets and nobody knows why.** Two 3600 dpi
   passes of one frame correlate at r=0.936 only once shifted 16 columns, and a
   shading reference matched a scan best at lag -11/-12 across sessions.

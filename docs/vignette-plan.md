@@ -373,7 +373,7 @@ in IR" means an IR component differs from the RGB ones by more than the IR repea
    Meter once at the start of phase 2 with `--ir` and lock the result. Do **not**
    reach for an infrared probe: it costs the ~212 s floor per round, which is the
    ten-minute mistake 4d53901 removed.
-2. **A new exposure is required.** Blue comes back ~5× brighter in RGBI than in RGB
+2. **A new exposure is required.** Blue comes back several times brighter in RGBI than in RGB
    at the same exposure, so phase 1's locked `exposure_scale` will clip in RGBI. Phase
    2 gets its own metering round and its own locked value — and therefore its own
    shading calibration at that exposure, exactly as in phase 1.

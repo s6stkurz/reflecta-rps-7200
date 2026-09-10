@@ -13,12 +13,14 @@ from conftest import settings
 from rps7200.bracket import CLIP_START, FULL_SCALE
 from rps7200.direct import (
     BLUE_RGBI_HEADROOM,
+    BLUE_RGBI_HEADROOM_UNMEASURED,
     EXPOSURE_TARGET,
     FILM_BW,
     FILM_KODACHROME,
     FILM_NEGATIVE,
     FILM_POSITIVE,
     DirectScanner,
+    blue_rgbi_headroom,
     locks_white_balance,
 )
 
@@ -426,4 +428,92 @@ def test_the_shipped_target_is_the_measured_one():
     from rps7200.bracket import CLIP_START, FULL_SCALE
     assert EXPOSURE_TARGET <= CLIP_START / FULL_SCALE, (
         "metering must not aim above the level bracket.py stops trusting"
+    )
+
+
+# -- a locked film stays locked against the timer ceiling -------------------
+
+
+def test_the_ceiling_does_not_break_the_lock():
+    """The channels' ceilings are not equal, and that used to put a cast on
+    exactly the films the lock exists to protect.
+
+    Red's base exposure is 9604 against 6506 for green and blue, so its ceiling
+    is x6.82 where theirs is x10.07. Clamping each channel on its own left red
+    45% below the other two on any locked film that wanted more than x6.82 --
+    measured on a real B&W scan as scales [6.824, 6.905, ...] where the lock
+    promised one number.
+    """
+    for film in (FILM_BW, FILM_POSITIVE, FILM_KODACHROME):
+        s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+        scales = s.auto_exposure(target=0.8, film=film, rounds=2)
+        assert scales[0] == pytest.approx(scales[1], rel=0.01), (
+            f"{film}: red {scales[0]:.3f} against green {scales[1]:.3f} -- "
+            f"the lock was broken by the ceiling"
+        )
+        assert scales[1] == pytest.approx(scales[2], rel=0.01), film
+
+
+def test_a_held_back_locked_meter_is_reported(capsys):
+    """Under-exposing the whole scan is the right trade, but it has to be said:
+    the operator can lower nothing else to get the range back."""
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    s.verbose = True
+    s.auto_exposure(target=0.8, film=FILM_BW, rounds=2)
+    out = capsys.readouterr().out
+    assert "locked metering held" in out, out
+
+
+def test_the_lock_survives_the_infrared_blue_headroom():
+    """Blue is metered lower for an RGBI pass, and on a locked film that is
+    still the right thing: blue comes back ~5x brighter there, so a blue held
+    down by the same factor lands *in proportion* with red and green rather
+    than out of it. What must not happen is red and green drifting apart.
+    """
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=0.8, film=FILM_BW, infrared=True, rounds=2)
+    assert scales[0] == pytest.approx(scales[1], rel=0.01)
+    assert scales[2] == pytest.approx(
+        scales[1] / blue_rgbi_headroom(FILM_BW), rel=0.01)
+
+
+def test_a_negative_is_still_metered_per_channel():
+    """The fix must not reach films that are deliberately not locked."""
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=2)
+    assert scales[1] > scales[0] * 1.2, (
+        "a negative was moved as one group; the mask stays in the blue record"
+    )
+
+
+def test_the_blue_headroom_is_not_one_number_for_every_film():
+    """It was, and that put 34% of a B&W scan's blue channel at the rail.
+
+    Measured 4.98-5.02 on a colour negative and ~9.6 on black and white, each
+    from a matched pair with red and green confirming the mode was the only
+    variable. A film with no measurement of its own has to fail safe -- too
+    much headroom only darkens a noise-limited channel, too little destroys it.
+    """
+    assert blue_rgbi_headroom(FILM_NEGATIVE) == BLUE_RGBI_HEADROOM
+    assert blue_rgbi_headroom(FILM_BW) > BLUE_RGBI_HEADROOM
+    assert blue_rgbi_headroom("something nobody has measured") == (
+        BLUE_RGBI_HEADROOM_UNMEASURED
+    )
+    for film in (FILM_BW, FILM_POSITIVE, FILM_KODACHROME):
+        assert blue_rgbi_headroom(film) >= BLUE_RGBI_HEADROOM, film
+
+
+def test_a_bw_scan_no_longer_blows_its_blue_channel():
+    """The scan this came from: film=bw, RGBI, blue 34% at the rail.
+
+    Modelled with the ratio actually measured on that film, 9.6 -- not the 5.2
+    the metering assumed.
+    """
+    measured_bw_ratio = 9.6
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=EXPOSURE_TARGET, film=FILM_BW, infrared=True)
+    landed = min(1.0, 6506 * scales[2] / 65535.0 * 0.58) * measured_bw_ratio
+    assert landed < 1.0, f"blue still clips, landing at {landed:.0%}"
+    assert landed < CLIP_START / FULL_SCALE, (
+        f"blue lands at {landed:.0%}, past the knee bracket.py stops trusting"
     )

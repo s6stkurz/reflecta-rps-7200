@@ -203,6 +203,9 @@ __all__ = [
     "SUB_HIGHLIGHT_SHADOW",
     "SUB_SCAN_FRAME",
     "BLUE_RGBI_HEADROOM",
+    "BLUE_RGBI_HEADROOM_BY_FILM",
+    "BLUE_RGBI_HEADROOM_UNMEASURED",
+    "blue_rgbi_headroom",
     "EXPOSURE_TARGET",
     "ScanParameters",
     "ScanReadError",
@@ -265,32 +268,58 @@ EXPOSURE_TARGET = 0.80
 #: this when the scan that follows will be RGBI, because the probe is always
 #: RGB.
 #:
-#: **Measured 4.98-5.02**, from the one matched pair in the library:
-#: ``20260909T103542Z_unknown-film_600dpi`` (RGB) and
-#: ``20260909T104022Z_unknown-film_600dpi_ir`` (RGBI) -- the same frame 4.7
-#: minutes apart, one shading reference, red and green exposures within 0.02%
-#: and their levels within 0.3%, so the mode is the only variable. Blue's DN
-#: per exposure count went 0.3365 -> 1.6873, and the per-pixel ratio over the
-#: frame is 4.98 with an sd of 0.16.
+#: **It depends on the film, and by roughly a factor of two.** Two matched
+#: measurements, each the same frame in both modes minutes apart, with red and
+#: green confirming the mode is the only variable (they move by 0.97-1.00):
 #:
-#: It is a *multiplicative* change in blue's sensitivity, not an infrared leak
-#: into the blue record: the ratio is flat across density -- 5.02 in the
-#: densest decile against 4.95 in the brightest -- and blue's excess correlates
-#: +0.9985 with predicted blue but only +0.49 with the infrared plane. So one
-#: constant is the right model.
+#: * **colour negative: 4.98-5.02.** ``20260909T103542Z_unknown-film_600dpi``
+#:   against ``20260909T104022Z_unknown-film_600dpi_ir``. Flat across density --
+#:   5.02 in the densest decile against 4.95 in the brightest.
+#: * **black and white: ~9.6** (8.3-10.5 across percentiles).
+#:   ``20260910T120705Z_unknown-film_300dpi`` against
+#:   ``20260910T121135Z_unknown-film_600dpi_ir``. *Not* flat across density:
+#:   10.2 at the densest end against 8.3 at the brightest.
 #:
-#: Set above the measurement on purpose. The error is asymmetric: too high only
-#: darkens a channel that is already noise-limited and carries no fixed column
-#: pattern, while too low clips blue, which nothing downstream can undo. The
-#: value this replaced was 4.0, which put blue at 88-96% of full scale where
-#: metering aimed for 70% -- past :data:`rps7200.bracket.CLIP_START` -- and made
-#: an RGBI scan clip *more* blue than the RGB scan the headroom exists to
-#: protect against.
+#: An earlier reading of this file said one constant was the right model. That
+#: was measured on one colour negative and over-generalised: the flat-across-
+#: density test shows the effect is multiplicative *within* a film, not that it
+#: is the same *between* films. Using the colour-negative 5.2 on black and white
+#: put 34% of the blue channel at the rail, unrecoverable, on a scan that had
+#: already cost its 212 s infrared floor.
 #:
-#: Earlier readings of 2.0x and 3.7x are superseded. Both compared frames that
-#: differed, or measured blue where it was already clipped, which can only bias
-#: the ratio down.
+#: The density dependence on black and white points at an additive leak into the
+#: blue record rather than a change of gain -- a leak is relatively largest where
+#: the true blue signal is smallest, which is what the 10.2-to-8.3 slope says.
+#: On a colour negative the mask suppresses blue so hard that the leak dominates
+#: everywhere, which would make it *look* multiplicative. Not settled; the
+#: numbers above are.
+#:
+#: Every value here sits above its measurement on purpose. The error is
+#: asymmetric: too high only darkens a channel that is already noise-limited and
+#: carries no fixed column pattern, while too low clips blue, which nothing
+#: downstream can undo.
 BLUE_RGBI_HEADROOM = 5.2
+
+#: For film whose ratio has not been measured. The larger of the two known
+#: values plus margin, because an unmeasured film is exactly where a guess
+#: should fail safe -- and where the old single constant did not.
+BLUE_RGBI_HEADROOM_UNMEASURED = 11.0
+
+#: Per film type. Only ``negative`` has its own measurement at the low end; the
+#: rest take the safe value until someone has a matched pair for them.
+#: :attr:`DirectScanner.last_metering` records blue's achieved level on every
+#: metered scan, so these become checkable from ordinary work.
+BLUE_RGBI_HEADROOM_BY_FILM = {
+    FILM_NEGATIVE: BLUE_RGBI_HEADROOM,
+    FILM_BW: BLUE_RGBI_HEADROOM_UNMEASURED,
+    FILM_POSITIVE: BLUE_RGBI_HEADROOM_UNMEASURED,
+    FILM_KODACHROME: BLUE_RGBI_HEADROOM_UNMEASURED,
+}
+
+
+def blue_rgbi_headroom(film: str) -> float:
+    """How much to hold blue back when an RGBI pass follows an RGB probe."""
+    return BLUE_RGBI_HEADROOM_BY_FILM.get(film, BLUE_RGBI_HEADROOM_UNMEASURED)
 
 
 @dataclass
@@ -1642,7 +1671,7 @@ class DirectScanner:
         tolerance: float = 0.08,
         start: Sequence[float] | None = None,
         film: str = FILM_NEGATIVE,
-        infrared_blue_headroom: float = BLUE_RGBI_HEADROOM,
+        infrared_blue_headroom: float | None = None,
         max_rounds: int | None = None,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
@@ -1658,10 +1687,11 @@ class DirectScanner:
 
         ``infrared`` therefore does not change how the probe is taken. It says
         the scan that follows will be RGBI, which matters only for blue: blue
-        comes back about 5x brighter in an RGBI pass than in an RGB one at the
-        *same* exposure, so a blue metered to fill the range in RGB clips in
+        comes back several times brighter in an RGBI pass than in an RGB one at
+        the *same* exposure, so a blue metered to fill the range in RGB clips in
         RGBI. Blue's target is divided by ``infrared_blue_headroom`` to leave
-        room for that -- see :data:`BLUE_RGBI_HEADROOM` for the measurement.
+        room for that; passing None takes the value this ``film`` needs, which
+        is not the same for all of them -- see :data:`BLUE_RGBI_HEADROOM`.
 
         Costing blue some exposure is the right trade here, and the vendor
         makes it too: its own captures meter blue to 1475-5906 where green sits
@@ -1693,6 +1723,12 @@ class DirectScanner:
         metered per channel rather than with one global factor.
         """
         locked = locks_white_balance(film)
+        # None means "whatever this film needs" -- the ratio differs by roughly
+        # a factor of two between colour negative and black and white, and a
+        # single number blew a third of the blue channel on the latter. An
+        # explicit value still wins, so a probe can pin it.
+        if infrared_blue_headroom is None:
+            infrared_blue_headroom = blue_rgbi_headroom(film)
         # Cleared up front so a run that raises leaves no stale telemetry for
         # the next scan to file as its own.
         self.last_metering = None
@@ -1766,6 +1802,11 @@ class DirectScanner:
                 break
 
             visible = levels[:3]
+            ceilings = [
+                65535 / base.exposure[c] if base.exposure[c] else 8.0
+                for c in range(len(scales))
+            ]
+            growth = []
             for c, level in enumerate(levels):
                 if c >= len(scales):
                     break
@@ -1774,20 +1815,48 @@ class DirectScanner:
                 # the film's own cast -- survive. Infrared is metered alone.
                 measured = max(visible) if (locked and c < 3) else level
                 if measured <= 0.001:
-                    scales[c] *= 4.0            # far too dark to measure
+                    growth.append(4.0)          # far too dark to measure
                 elif measured >= 0.999:
-                    scales[c] *= 0.25           # clipped; back well off
+                    growth.append(0.25)         # clipped; back well off
                 else:
-                    scales[c] *= targets[c] / measured
+                    growth.append(targets[c] / measured)
+
+            # A locked film has to stay *locked* against the ceiling too. The
+            # per-channel clamp below cannot do that: the ceilings are not
+            # equal -- red's is x6.82 against x10.07 for green and blue,
+            # because its base exposure is higher -- so clamping each channel
+            # on its own silently pulls red 45% below the other two and puts a
+            # cast on exactly the films the lock exists to keep the cast of.
+            #
+            # So hold the whole group back by one factor instead, the tightest
+            # any of them needs. That under-exposes the scan rather than
+            # colouring it, and `limited` below says it happened.
+            held = 1.0
+            if locked:
+                for c in range(min(3, len(growth))):
+                    want = scales[c] * growth[c]
+                    if want > ceilings[c] > 0:
+                        held = min(held, ceilings[c] / want)
+
+            for c in range(len(growth)):
+                scales[c] *= growth[c] * (held if (locked and c < 3) else 1.0)
                 # Bound by what the timer can actually hold, not by a
                 # guess. A fixed cap of 8x used to stop blue short: with film
                 # loaded the device's own blue exposure sits low (6506 in one
                 # scan), leaving room for 10x, and the cap -- not the hardware
                 # -- was what kept the blue record dark.
-                ceiling = 65535 / base.exposure[c] if base.exposure[c] else 8.0
-                if scales[c] > ceiling:
+                if scales[c] > ceilings[c]:
                     limited[c] = True
-                scales[c] = max(0.01, min(ceiling, scales[c]))
+                scales[c] = max(0.01, min(ceilings[c], scales[c]))
+            if held < 1.0:
+                for c in range(min(3, len(growth))):
+                    if abs(scales[c] - ceilings[c]) < 1e-6:
+                        limited[c] = True
+                self._log(
+                    f"  locked metering held to x{held:.3f} of what it wanted, "
+                    f"so R/G/B keep their proportions; the scan lands "
+                    f"{100 * (1 - held):.0f}% under target"
+                )
 
         self._log(f"auto-exposure result: {[round(v, 3) for v in scales]}")
 
@@ -2028,6 +2097,25 @@ class DirectScanner:
         :meth:`calibrate_shading`, once per session, as the vendor does at
         power-on -- the stripes are simply left in.
         """
+        if infrared and film == FILM_BW:
+            # Traditional silver-halide black and white is opaque to infrared:
+            # the grains block it exactly as dust does, so the plane comes back
+            # holding the picture rather than what is on top of it. Measured on
+            # the one B&W scan here, the infrared plane correlated +0.97 with
+            # green -- it is a fourth copy of the image, bought for the ~212 s
+            # infrared floor.
+            #
+            # A warning and not a refusal, because chromogenic black and white
+            # -- XP2, BW400CN, anything C-41 -- is dye-based and does clean
+            # properly. The film type cannot tell the two apart, so this is the
+            # operator's call to make.
+            self._log(
+                "note: infrared on black and white film. Silver-halide stock "
+                "is opaque to infrared, so the plane will carry the picture "
+                "rather than the dust and the pass costs its ~212 s floor for "
+                "nothing. Chromogenic (C-41) black and white is the exception."
+            )
+
         if auto_exposure:
             # Probe in RGB whatever the scan will be, in at most two rounds --
             # the vendor's own sequence. Scans otherwise run at the scanner's

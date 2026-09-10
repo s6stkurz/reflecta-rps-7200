@@ -119,7 +119,8 @@ answer.
 ## The cheaper answer that already exists
 
 Worth saying plainly, because it may make the whole thing unnecessary: **RGBI
-mode already gives blue about 5× the sensitivity of RGB** (`BLUE_RGBI_HEADROOM`).
+mode already gives blue several times the sensitivity of RGB** -- about 5x on
+colour negative, ~9.6x on black and white (`blue_rgbi_headroom`).
 Blue is rail-limited in RGB and has room to spare in RGBI. If a frame's blue
 record matters, scanning it RGBI is the answer available today, at the cost of
 the ~212 s infrared floor.
@@ -176,8 +177,8 @@ after the converter does and what an analog gain would not.
 ### What follows
 
 - **Blue's rail limit in RGB stands, and gain cannot lift it.** The answer for
-  a frame whose blue record matters is RGBI, where blue is ~5x more sensitive
-  (`BLUE_RGBI_HEADROOM`) -- at the cost of the ~212 s infrared floor.
+  a frame whose blue record matters is RGBI, where blue is several times more
+  sensitive (`blue_rgbi_headroom`, film-dependent) -- at the cost of the ~212 s infrared floor.
 - **No code change.** The register stays where the device puts it, exactly as
   the vendor leaves it in 36 of 36 captures.
 - The eight passes are filed under the tag the probe wrote, so this is

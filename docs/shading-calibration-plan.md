@@ -57,8 +57,9 @@ re-decoding their stored raw bytes reproduces the stored pixels exactly.
 ### Still open
 
 - **Blue behaves differently in RGBI than RGB** at identical exposure. The
-  size and shape of it are now measured: **~5x brighter**, and *linear* in
-  between — the ratio is flat across the whole density range (5.02 in the
+  size and shape of it are now measured, and it is **film-dependent**:
+  4.98-5.02 on colour negative, ~9.6 on black and white. On the colour negative
+  it is *linear* in between — the ratio is flat across the whole density range (5.02 in the
   densest decile against 4.95 in the brightest), so the "not linear in between"
   recorded here from two scattered readings was an artefact of comparing
   different frames and of measuring blue where it was already clipped.
