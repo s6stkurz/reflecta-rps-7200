@@ -54,10 +54,12 @@ def test_the_dpi_ladder_only_offers_resolutions_with_evidence():
     resolutions the device accepts" and has not been run. A menu of guesses
     reads as a menu of capabilities.
     """
-    for driven in (300, 600, 900, 1800, 3600):
+    for driven in (300, 600, 900, 1200, 1800, 3600):
         assert driven in gui.DPI_LADDER, f"{driven} appears in the captures"
     assert gui.DPI_LADDER[-1] == 7200, "what INQUIRY calls the optical maximum"
-    for unprobed in (360, 400, 450, 480, 720, 800, 1200, 1440, 2400):
+    # 1200 joined the list when captures/slide.pcapng turned up: CyberView
+    # drives it there, which is the same evidence the others rest on.
+    for unprobed in (360, 400, 450, 480, 720, 800, 1440, 2400):
         assert unprobed not in gui.DPI_LADDER, (
             f"{unprobed} has never been asked of this scanner")
 

@@ -68,6 +68,10 @@ minutes. Candidates:
 
 - integer divisors of 7200, which is what the captures have only ever used:
   `300, 360, 400, 450, 480, 600, 720, 800, 900, 1200, 1440, 1800, 2400, 3600, 7200`
+
+  Of those, the captures now contain **300, 600, 900, 1200, 1800 and 3600** —
+  1200 from `captures/slide.pcapng`, which is why it is on the window's ladder.
+  The rest of the list is still a list of guesses.
 - deliberate non-divisors, to learn whether arbitrary values work at all:
   `1000, 2000, 3000`
 

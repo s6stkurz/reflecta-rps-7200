@@ -1716,7 +1716,16 @@ class DirectScanner:
         Costing blue some exposure is the right trade here, and the vendor
         makes it too: its own captures meter blue to 1475-5906 where green sits
         near 40000, an order of magnitude down, and reuse those values verbatim
-        for the infrared scan. Blue on this scanner carries no fixed column
+        for the infrared scan.
+
+        Worth knowing how far that goes, from the three single-stock captures
+        (`docs/protocol.md`): CyberView meters a colour negative's blue *below*
+        the device's own base -- 5834 against 6506 -- meters black and white
+        high on all three channels, and **does not meter a slide at all**,
+        scanning it at `9604, 6506, 6506` on every pass. This driver meters
+        everything. That is a deliberate divergence, not an oversight: metering
+        a negative per channel is what takes the mask off before the ADC
+        instead of quantising the blue record through it. Blue on this scanner carries no fixed column
         pattern -- it is noise-limited, not detail-limited -- so a darker blue
         costs little, while a clipped blue is unrecoverable.
 

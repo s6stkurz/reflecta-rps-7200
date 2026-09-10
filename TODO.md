@@ -181,11 +181,21 @@ to the power-on that measured it.
 From reading [nkscan](https://github.com/activexray/nkscan), a from-scratch
 driver for Nikon Coolscans:
 
-- **Metering target 0.70 -> 0.85.** No reasoning was ever recorded for 0.70.
-  `pieusb` uses 0.85 *for this sensor family*, explicitly to leave room for the
-  shading correction's per-column gain, which clips edge columns first. That
-  reasoning now applies to us. Do it together with a check that nothing clips
-  after correction, and do not go to nkscan's 0.97.
+- ~~**Metering target 0.70 -> 0.85.**~~ **Done, at 0.80**, and settled by
+  measurement rather than by copying pieusb. `tools/exposure_headroom.py`
+  simulates a higher exposure on stored raw bytes and runs the real shading
+  correction over it: clipping permits well past 0.90 (worst case 0.001% of blue
+  at 0.80 over six entries and four frames), but the sensor compresses 1.5-1.9%
+  above 75% of scale, so linearity binds before clipping does. 0.80 also matches
+  `bracket.py`'s `CLIP_START`, so metering no longer aims where another module
+  declines to follow. See `EXPOSURE_TARGET` in `rps7200/direct.py`.
+
+  What that change *cost*, and is worth remembering: the acceptance band was
+  `abs(level - target) <= 0.08`, which at 0.70 topped out at 0.78 and was
+  harmless. Moving the target to 0.80 moved the top of that band to 0.88, past
+  the knee, and a B&W frame duly landed at 87% with samples at the rail. The
+  band is asymmetric now. Raising a target is not safe unless the band above it
+  is looked at too.
 - **Otsu plus morphological opening in `film_bounds`.** It currently cuts at a
   fixed fraction of the clear level, the rule nkscan explicitly rejects because
   it "lands in the wrong population" when the proportion of film in the pass

@@ -105,6 +105,36 @@ channel count, which the table refutes — RGB passes carry `0x21` twenty-six ti
 `set_mode` takes a `byte14` override so it can be driven directly; the default is
 left alone because nothing measured yet says what it should be.
 
+**Still unexplained, but no longer uncorrelated: it tracks the line rate.**
+Comparing the three single-stock sessions at 3600 dpi RGB 16-bit — same mode,
+same depth, same geometry to 0.4% — against the rate this driver's own scans
+run at. Thirteen 3600 dpi RGB scans in the library, all of which send
+`byte14 = 0x10`, fit
+
+    ms/line = 2.60 + 4.851e-4 x sum(exposure)        r^2 = 1.0000
+
+and exactly one of the vendor's three falls on that line — the one that sends
+the same byte 14:
+
+| capture | byte 14 | sum(exposure) | predicted | measured | ratio |
+|---|---|---|---|---|---|
+| `slide.pcapng` | `0x10` | 22616 | 13.6 ms | 14.0 ms | **1.04** |
+| `bw.pcapng` | `0x30` | 143522 | 72.2 ms | 43.0 ms | **0.60** |
+| `300_3600 - Kopie` | `0x20` | 73089 | 38.1 ms | 64.4 ms | **1.69** |
+
+The B&W pass carries the **largest** exposure of the three and runs faster than
+the negative, which is what rules exposure out as the explanation on its own.
+
+`0x30` and `0x31` are new values, absent from the table above, which was written
+before `bw.pcapng` existed. The upper nibble is now seen as 1, 2 and 3.
+
+**One pass per value, so this is a correlation and not a result.** It is worth
+settling because 0.60 against 1.69 is a factor of 2.8 in how long a scan takes,
+and at 3600 dpi that is minutes a frame. `docs/byte14-plan.md` has the ladder
+that would settle it, including the half that matters most: a value that is
+faster is presumably faster for a reason, so the noise has to be measured
+beside the time.
+
 ### There is a greyscale mode, and it is not worth using
 
 `passes = 0x04` selects the green filter alone, from `pieusb_specific.h:55-75`
@@ -122,6 +152,49 @@ For black and white film the better path is the one CyberView takes: scan RGB
 and combine host-side, where three measurements of one density average to
 sqrt(3) less noise. **`captures/bw.pcapng` confirms it** — a whole black and
 white session, eight passes, every one `0x80`.
+
+### Three stocks, side by side: almost nothing differs
+
+`slide.pcapng`, `bw.pcapng` and the colour negative in `300_3600 - Kopie` are
+one session each, on one stock each. Parsed with `tools/parse_capture.py`.
+
+**The protocol does not change with the film.** Identical opcodes in an
+identical order, no stock-specific command anywhere, and `light`,
+`extra_entries` and `double_times` are 6, 0 and 0 throughout. `slide.pcapng`
+has no INQUIRY and no `0xE7` only because it continues an already-open session.
+Byte volume is the same too: the 3600 dpi RGB 16-bit pass in each reports
+5052x3360, 5052x3359 and 5040x3372 — 33.9, 33.9 and 34.0 MB.
+
+**What changes is what CyberView decides to put in the payload.**
+
+| stock | metered? | exposure R/G/B of the final pass |
+|---|---|---|
+| slide | **not at all** | `9604, 6506, 6506` — the device's own reference, unchanged, on all four passes |
+| negative | yes | `27179, 40076, 5834` — blue pushed *below* base, green high |
+| black and white | yes | `62329, 43329, 37864` — all three high |
+
+Three things follow.
+
+- **A slide is scanned at the base exposure.** CyberView meters nothing for it,
+  on any of its four passes. This driver meters everything.
+- **The vendor takes blue *down* on a colour negative** — 5834 against a 6506
+  base — where this driver takes it up to the rail, to get the orange mask off
+  before the ADC rather than quantise the blue record through it. That
+  divergence is deliberate and already recorded in `auto_exposure`; the slide
+  and B&W sessions add the third and fourth data points to it.
+- **Only the black and white session calibrates** (`quality = 0x0800`), and it
+  is the session that raises gain to do it. See `docs/analog-gain-plan.md`.
+
+**Scan time at one resolution spreads 4.6x** — 47 s, 145 s and 217 s for the
+same 3600 dpi RGB 16-bit pass. Not the geometry, not the byte volume, not
+infrared (every pass is `0x80`; the genuine `0x90` passes in `300_900_1800_ICE`
+sit at ~218 s whatever the resolution, which is the infrared floor and a
+different thing), and not the host idling — the read gaps are steady at
+295/1082/1239 ms with no stalls. Exposure accounts for the slide and for every
+scan this driver has taken, and for neither of the other two. See §4 on byte 14.
+
+**1200 dpi appears** in the slide session — a resolution nothing else here has
+asked for, and now evidence that the device accepts it.
 
 ### What a black and white session actually looks like
 
