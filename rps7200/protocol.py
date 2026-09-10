@@ -113,9 +113,31 @@ def locks_white_balance(film: str) -> bool:
     is metered per channel, which takes the mask off before the ADC instead of
     after it.
 
-    Everything else keeps its balance. A slide, a Kodachrome and a black and
-    white negative all carry their cast because that cast *is* the picture;
-    stretching each channel to the same target on its own takes it off.
+    A slide and a Kodachrome keep their balance: their cast *is* the picture,
+    and stretching each channel to the same target on its own takes it off.
+
+    **Black and white is metered per channel too**, which this used to get
+    wrong by grouping it with the slides. Silver halide has no dye layers, so
+    there is no colour record to protect -- what looks like a cast is the film
+    base plus the sensor's own response, and holding the channels together to
+    preserve it costs real exposure. Red's base exposure is 9604 against 6506
+    for the other two, so red's ceiling is x6.82 where theirs is x10.07; on a
+    B&W frame red is also the least sensitive per count, so it binds and drags
+    green and blue down with it.
+
+    Measured on one frame, 900 dpi, two repeats at each setting so the random
+    part could be separated from the grain:
+
+    ==========  ==============  ==============  =========================
+    channel     locked level    unlocked        random noise per signal
+    ==========  ==============  ==============  =========================
+    red         59.1%           59.4%           -2.2%
+    green       60.5%           87.0%           **-16.8%**
+    blue        67.8%           85.9%           **-11.0%**
+    ==========  ==============  ==============  =========================
+
+    Red is at its ceiling either way, so unlocking costs it nothing and buys
+    green and blue about half a stop each.
 
     Note what this scanner can actually deliver on the negative side. Blue sits
     near the top of the 16-bit exposure timer before any film is loaded -- the
@@ -126,7 +148,7 @@ def locks_white_balance(film: str) -> bool:
     """
     if film not in FILM_TYPES:
         raise ValueError(f"unknown film type {film!r}; expected one of {FILM_TYPES}")
-    return film != FILM_NEGATIVE
+    return film in (FILM_POSITIVE, FILM_KODACHROME)
 
 
 #: Film whose dye or grain absorbs infrared, so an infrared pass reads the

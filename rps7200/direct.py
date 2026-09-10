@@ -209,6 +209,7 @@ __all__ = [
     "BLUE_RGBI_HEADROOM_UNMEASURED",
     "blue_rgbi_headroom",
     "EXPOSURE_TARGET",
+    "OVER_TARGET_TOLERANCE",
     "ScanParameters",
     "ScanReadError",
     "Sense",
@@ -265,6 +266,16 @@ __all__ = [
 #: comparison -- pieusb 0.85, nkscan 0.97 -- which left about a fifth of a stop
 #: unused for no measured reason.
 EXPOSURE_TARGET = 0.80
+
+
+#: How far *above* its target a channel may land and still be accepted.
+#:
+#: Deliberately much tighter than the tolerance below the target. Landing under
+#: costs a little noise in the shadows; landing over clips, and a clipped
+#: highlight cannot be recovered by anything downstream. 0.02 keeps the top of
+#: the acceptance band at 0.82 for the shipped 0.80 target -- just past it, and
+#: well short of the rail.
+OVER_TARGET_TOLERANCE = 0.02
 
 
 #: How much brighter blue comes back in an RGBI pass than in an RGB one at the
@@ -1796,7 +1807,19 @@ class DirectScanner:
                 "clipped": clipped,
             })
 
-            if all(abs(v - t) <= tolerance for v, t in zip(levels, targets)):
+            # Asymmetric, and it has to be. `tolerance` is how far *under* a
+            # target is close enough to stop; going over is not symmetric with
+            # going under, because under costs a little noise and over clips,
+            # which nothing downstream can undo.
+            #
+            # This was `abs(v - t) <= tolerance`, which at the old target of
+            # 0.70 accepted up to 0.78 and was harmless. Raising the target to
+            # 0.80 moved the top of that band to 0.88 -- past the knee
+            # bracket.py stops trusting -- and a B&W frame duly landed at 87%
+            # with samples at the rail. Raising a target is not safe unless the
+            # band above it is looked at too.
+            over = OVER_TARGET_TOLERANCE
+            if all(-tolerance <= v - t <= over for v, t in zip(levels, targets)):
                 break
             # Past the normal budget only to re-measure a retreat. A level at
             # full scale says the channel is somewhere above it, so the 0.25

@@ -60,11 +60,19 @@ to the power-on that measured it.
   CyberView does the same thing: `captures/bw.pcapng` is eight passes and every
   one is `0x80` RGB.
 
-  So the conversion is a host-side step, and it is worth having here rather than
-  only downstream: three channels of one density average to sqrt(3) less noise,
-  and the driver is where the linear data lives. Not started. It must be
-  optional and must not overwrite the three-channel file -- a merged channel
-  cannot be un-merged.
+  So the conversion is a host-side step. **It is not an average**, which was
+  the obvious guess and is wrong: the grain in a silver emulsion is the same
+  grain in all three channels, so it does not average out, and a plain mean
+  measured 5.6-22.4% *worse* than the best single channel across three
+  resolutions.
+
+  **Blue is the cleanest channel**, from repeat pairs at 900 dpi -- random noise
+  per unit signal 2.7 against green 3.0 and red 3.7. A single pass says the
+  opposite, because red reads low at the dense *and* the thin end, which is
+  softness rather than cleanliness. Only the repeat pair separates them.
+
+  Not started. It must be optional and must not overwrite the three-channel
+  file -- a merged channel cannot be un-merged.
 
 - **How much brighter blue comes back in RGBI depends on the film.** Two
   matched pairs, each the same frame in both modes minutes apart, with red and
