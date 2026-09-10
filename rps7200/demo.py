@@ -12,6 +12,22 @@ nothing it reports about the device means anything. What it does model is the
 that a roll yields a prescan before each frame, and that a stop lands between
 frames rather than inside one.
 
+**Pixels come from the stored raw bytes, not from the TIFF beside them.** The
+TIFF is an output; `raw.bin.gz` is what the scanner actually sent, so decoding
+it here runs the same `_deinterleave` and the same shading correction a real
+pass runs, and `capture_record` can hand the session genuine bytes to file. An
+entry the demo files reconstructs like any other.
+
+Where a pass cannot be answered with the bytes in hand -- asking a four-channel
+entry for RGB, say -- the bytes are dropped and only the calibration is kept.
+They describe four channels and the image has three, so filing them would make
+an entry whose raw decodes to a different picture, which is the one thing the
+library exists to prevent. The log says when it happens.
+
+It refuses what the device refuses: infrared on black and white or Kodachrome.
+A stand-in that accepts what the hardware rejects teaches the window a shape
+that does not exist.
+
     python3 tools/gui.py --demo
 """
 from __future__ import annotations
@@ -24,8 +40,10 @@ from typing import Any
 import numpy as np
 
 from . import library, tiff
-from .direct import RollFrame
+from .direct import DirectScanner, RollFrame, supports_infrared
+from .protocol import ScanParameters
 from .session import estimate_seconds
+from .shading import ShadingReference, apply_shading
 from .usb_transport import UsbError
 
 #: Wall-clock is divided by this. Slow enough that the progress bar has
@@ -56,6 +74,13 @@ class DemoScanner:
     def __init__(self, root: str | Path = "library", speed: float = SPEED,
                  entry: str | Path | None = None):
         self.root = Path(root)
+        #: The bytes and calibration behind the last pass. Filled in by
+        #: :meth:`_decode`, handed to the session by :meth:`capture_record`.
+        self._capture: dict[str, Any] = {
+            "reference": None, "ccd_mask": None, "raw": None, "raw_layout": None,
+        }
+        #: What the last decode's shading correction did, or None if none ran.
+        self._shading_report: dict[str, Any] | None = None
         #: The one entry this demo is showing, when it found a good pair. Its
         #: prescan answers a prescan and its scan answers a scan, so the two
         #: are the same picture -- which is what makes the filmstrip's
@@ -134,8 +159,20 @@ class DemoScanner:
         return {"asked_mm": asked, "param": param,
                 "forward": millimetres >= 0}
 
+    def _drop_raw(self, why: str) -> None:
+        """Keep the calibration, forget the bytes."""
+        if self._capture.get("raw") is not None:
+            self._log(f"raw bytes not filed: {why}")
+        self._capture = dict(self._capture, raw=None, raw_layout=None)
+
     def capture_record(self) -> dict[str, Any]:
-        return {"reference": None, "ccd_mask": None, "raw": None, "raw_layout": None}
+        """The bytes and calibration behind the last pass, as the real one does.
+
+        Not empty any more: the demo decodes stored raw bytes, so it can hand
+        them straight back and the session files a complete entry -- one that
+        `library.reconstruct` can re-decode like any other.
+        """
+        return dict(self._capture)
 
     # -- the parts the session calls --------------------------------------
 
@@ -170,6 +207,16 @@ class DemoScanner:
         keep_raw: bool = False,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        if infrared and not supports_infrared(film):
+            # The demo refuses exactly what the device refuses. A stand-in that
+            # accepts a combination the hardware will not is worse than no
+            # stand-in: it teaches the window a shape that does not exist.
+            raise ValueError(
+                f"infrared is blind to {film}: its "
+                + ("grain" if film == "bw" else "cyan layer")
+                + " absorbs infrared, so the pass would spend its ~212 s floor "
+                "and hand back the picture rather than the dust. Scan it RGB."
+            )
         if auto_exposure:
             self._log("auto-exposure: probing in RGB")
             self._work(48.0)
@@ -184,6 +231,12 @@ class DemoScanner:
             image = self._pixels(channels=4 if infrared else 3)
         elif not infrared and image.ndim == 3 and image.shape[2] > 3:
             image = image[..., :3]
+            # The bytes described four channels and this is three, so they no
+            # longer describe what is being returned. Say so by dropping them:
+            # `ScanSession._file` compares the two and would refuse the entry
+            # anyway, and filing raw bytes that decode to a different picture
+            # is the one failure the library exists to make impossible.
+            self._drop_raw("the infrared channel was dropped from this pass")
         meta = {
             "resolution_dpi": resolution,
             "channels": image.shape[2],
@@ -192,7 +245,11 @@ class DemoScanner:
             "depth": 16,
             "width": image.shape[1],
             "height": image.shape[0],
-            "shading": {"columns": image.shape[1], "clipped": 0} if shading else None,
+            # Only where one actually happened. Claiming a correction that did
+            # not run makes the entry say it is shading-corrected while filing
+            # no reference, and `library.reconstruct` is then right to report
+            # that it cannot be reproduced.
+            "shading": self._shading_report if shading else None,
             "exposure_scale": exposure_scale,
             "duration_s": round(time.monotonic() - started, 1),
             "demo": True,
@@ -207,8 +264,19 @@ class DemoScanner:
         dry_run: bool = False,
         skip: int = 0,
         only: tuple[int, ...] | None = None,
+        film: str = "negative",
         **kw: Any,
     ):
+        # Up front, as the real one does: a roll spends minutes calibrating
+        # before the first frame, so this cannot wait until one is taken.
+        if infrared and not supports_infrared(film):
+            raise ValueError(
+                f"infrared is blind to {film}: its "
+                + ("grain" if film == "bw" else "cyan layer")
+                + " absorbs infrared, so every frame of this roll would spend "
+                "its ~212 s floor and hand back the picture rather than the "
+                "dust. Scan it RGB."
+            )
         limit = frames if frames is not None else 6
         for i in range(limit):
             self._position = skip + i
@@ -253,19 +321,83 @@ class DemoScanner:
             if lines and self.progress_hook is not None:
                 self.progress_hook(round(total * (i + 1) / steps), total)
 
-    def _pair_image(self, name: str) -> np.ndarray | None:
-        """One of the chosen entry's own files, or None if there is no pair."""
-        if self.pair is None:
-            return None
-        path = self.pair / name
-        if not path.exists():
+    def _decode(self, path: Path) -> tuple[np.ndarray, dict[str, Any]] | None:
+        """An entry's pixels from its **raw bytes**, not from its TIFF.
+
+        This is the point of the demo being backed by the library. The stored
+        `scan.tif` is an output; `raw.bin.gz` is what the scanner actually sent,
+        and decoding it here runs the same `_deinterleave` and the same shading
+        correction a real pass runs. So the demo exercises the path that can
+        break, and `capture_record` below can hand the session genuine bytes to
+        file -- which a TIFF read could never do.
+
+        Returns ``(image, capture)`` or None when the entry has no bytes.
+        """
+        raw = library.read_raw(path)
+        if raw is None:
             return None
         try:
-            image = tiff.read(str(path))
+            record = json.loads((path / "scan.json").read_text())
+            layout = (record.get("raw") or {}).get("layout") or {}
+            params = ScanParameters(
+                width=int(layout["width"]),
+                lines=int(layout["lines"]),
+                bytes_per_line=int(layout["bytes_per_line"]),
+                filter_offset1=0, filter_offset2=0, available_lines=0,
+            )
+            image = DirectScanner._deinterleave(
+                raw, params, int(layout["channels"])
+            )
         except Exception as exc:                         # noqa: BLE001
-            self._log(f"could not read {path.name}: {exc}")
+            self._log(f"could not decode {path.name}: {exc}")
             return None
-        self._log(f"{name} from {self.pair.name}  {image.shape}")
+
+        cal = record.get("calibration") or {}
+        reference = mask = None
+        ref_file, mask_file = cal.get("shading"), cal.get("ccd_mask")
+        if ref_file and (path / ref_file).exists():
+            reference = ShadingReference.load(path / ref_file)
+        if mask_file and (path / mask_file).exists():
+            mask = (path / mask_file).read_bytes()
+        # Corrected here if the stored image was, so what the demo shows is
+        # what that scan looked like rather than a striped version of it.
+        applied = (record.get("image") or {}).get("corrections_applied") or []
+        self._shading_report = None
+        if "shading" in applied and reference is not None:
+            image, self._shading_report = apply_shading(image, reference, mask)
+
+        self._log(f"{path.name}: {len(raw) / 1e6:.1f} MB of raw bytes "
+                  f"-> {image.shape}")
+        return image, {
+            "reference": reference, "ccd_mask": mask,
+            "raw": raw, "raw_layout": layout,
+        }
+
+    def _pair_image(self, name: str) -> np.ndarray | None:
+        """The chosen entry's prescan or scan.
+
+        The scan is decoded from raw bytes; the prescan is a stored TIFF,
+        because a prescan is filed without its own raw layout.
+        """
+        if self.pair is None:
+            return None
+        if name.startswith("prescan"):
+            tif = self.pair / name
+            if not tif.exists():
+                return None
+            try:
+                image = tiff.read(str(tif))
+            except Exception as exc:                     # noqa: BLE001
+                self._log(f"could not read {tif.name}: {exc}")
+                return None
+            self._log(f"{name} from {self.pair.name}  {image.shape}")
+            return image
+
+        got = self._decode(self.pair)
+        if got is None:
+            return None
+        image, capture = got
+        self._capture = capture
         return image
 
     def _pixels(self, channels: int) -> np.ndarray:
@@ -277,14 +409,18 @@ class DemoScanner:
         if wanted:
             path = wanted[self._next % len(wanted)]
             self._next += 1
-            try:
-                image, _ = library.load(path)
+            got = self._decode(path)
+            if got is not None:
+                image, capture = got
+                self._capture = capture
                 self._log(f"demo frame from {path.name}")
-                if image.ndim == 3 and image.shape[2] >= channels:
-                    return image[..., :channels]
+                if image.ndim == 3 and image.shape[2] > channels:
+                    image = image[..., :channels]
+                    self._drop_raw(
+                        f"this entry has {capture['raw_layout'].get('channels')} "
+                        f"channels and the pass wants {channels}"
+                    )
                 return image
-            except Exception as exc:                     # noqa: BLE001
-                self._log(f"could not read {path.name}: {exc}")
         self._next += 1
         return _test_card(channels, self._next)
 
