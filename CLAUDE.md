@@ -104,10 +104,19 @@ RGBI entry is ~35 MB. But **you are not ordinary use**. You write throwaway scri
 that turn out to matter, and you cannot tell in advance which scan will be the one
 somebody asks for later.
 
-Nothing is compressed while the device is open. Each scan is spooled to a temporary
-file as it is taken -- a plain sequential write, a second or two -- and the entries
-are assembled and gzipped after `close()`, because gzipping one with the scanner open
-and idle preceded a wedge once.
+**A single scan compresses nothing while the device is open.** Each is spooled to a
+temporary file as it is taken -- a plain sequential write, a second or two -- and the
+entries are assembled and gzipped after `close()`, because gzipping one with the
+scanner open and idle preceded a wedge once.
+
+**A roll is the exception, deliberately, and it is unmeasured.** `FrameWriter` in
+`rps7200/session.py` gzips each frame on its own thread *while the next one scans*,
+which is what keeps a 38-frame roll from ending in an eleven-minute wait. The
+argument is that the hazard above was open and **idle**, and here the device is
+busy -- plausible, and still an argument rather than a measurement.
+`tools/filing_load_test.py` is the measurement: alternating identical passes on a
+quiet host and one gzipping in the background, so warm-up cannot masquerade as an
+effect. Run it before trusting the roll path unattended.
 
 It is spooled rather than held in memory for a reason worth knowing: a 7200 dpi RGBI
 frame is 570 MB of pixels and about as much again of raw bytes, so keeping a
@@ -138,6 +147,12 @@ content: the same metric read 96-169% on a frame with hard vertical edges and
 **Separate sensor from picture with the library, not with a threshold.** A
 sensor defect sits at a fixed sensor column across *different film positions*;
 picture content does not. Two entries from different frames settle it.
+
+The metrics themselves -- dark masks, relative noise, the random/fixed split from
+a repeat pair, the ceiling that split implies, pass agreement in sigma, colour-
+opposed column deviation -- are in the **`measure-scan-quality` skill**, with the
+measurement that discredited each alternative. Invoke it before measuring
+anything. It has twice caught a reading that a single pass got backwards.
 
 ## Calibrate with the film loaded
 
