@@ -66,7 +66,7 @@ from rps7200.session import (                             # noqa: E402
 #: client-side validation, the value goes into MODE SELECT as a 16-bit field,
 #: and the device refuses what it dislikes with sense 0x26/0x82 before a single
 #: byte of image data moves. Guessing is cheap; offering a guess is not.
-DPI_LADDER = (300, 600, 900, 1800, 3600, 7200)
+DPI_LADDER = (300, 600, 900, 1200, 1800, 3600, 7200)
 
 #: What a prescan is worth spending. 300 dpi is the scanner's own fast-preview
 #: resolution, reported by INQUIRY and what the vendor uses before every frame,
