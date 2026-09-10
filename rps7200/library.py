@@ -215,6 +215,11 @@ def save(
                 "channels", "channel_order", "bytes_per_line", "film",
                 "exposure_scale", "exposure_metered", "duration_s",
                 "protocol_revision", "rotation",
+                # Read from GET PARAMETERS and otherwise discarded. `scan()`
+                # keeps them because they are the prime suspect for the
+                # pass-to-pass offset, and a suspicion that cannot be tested
+                # without the numbers is not worth having.
+                "filter_offsets",
             )
         },
         "device_settings": {

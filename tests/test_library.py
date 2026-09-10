@@ -375,3 +375,38 @@ def test_raw_can_be_streamed_from_a_file(tmp_path):
     assert a["sha256"] == b["sha256"], "streaming changed the bytes"
     assert a["bytes"] == b["bytes"] == len(stream)
     assert library.read_raw(from_file) == stream
+
+
+def test_the_scan_block_carries_everything_scan_records(tmp_path):
+    """The sidecar is built from a fixed list of keys, and twice now something
+    `scan()` deliberately recorded has been dropped by not being on it.
+
+    `metering` was, which is why a blown blue channel could not be diagnosed
+    from the entry. `filter_offsets` was, which is the field the pass-to-pass
+    column offset would be investigated with. Both were noticed by accident.
+    This asserts the list keeps up with what scan() puts in meta.
+    """
+    raw, image = index_stream(8, 4, 3)
+    meta = {
+        "resolution_dpi": 900, "channels": 3, "channel_order": ["R", "G", "B"],
+        "width": 8, "height": 4, "depth": 16, "bytes_per_line": 16,
+        "film": "negative", "frame": [0, 0, 10343, 6887],
+        "exposure_scale": 1.0, "exposure_metered": False, "duration_s": 1.0,
+        "protocol_revision": 1, "rotation": 0,
+        "filter_offsets": [12, 12],
+        "metering": {"target": 0.8, "rounds": []},
+    }
+    path = library.save(image, meta, root=tmp_path)
+    record = json.loads((path / "scan.json").read_text())
+
+    assert record["scan"]["filter_offsets"] == [12, 12]
+    assert record["metering"] == meta["metering"]
+
+    # Nothing scan() records about the *scan* should be silently absent.
+    scan_facts = {
+        k: v for k, v in meta.items()
+        if k not in ("metering", "shading", "shading_skipped",
+                     "exposure", "gain", "offset")
+    }
+    missing = [k for k in scan_facts if k not in record["scan"]]
+    assert not missing, f"the sidecar drops {missing} on the floor"
