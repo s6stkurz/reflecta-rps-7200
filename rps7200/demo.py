@@ -206,11 +206,18 @@ class DemoScanner:
         infrared: bool = True,
         dry_run: bool = False,
         skip: int = 0,
+        only: tuple[int, ...] | None = None,
         **kw: Any,
     ):
         limit = frames if frames is not None else 6
         for i in range(limit):
             self._position = skip + i
+            if only is not None and skip + i not in only:
+                # Advanced past, not looked at -- the whole point of picking
+                # frames off a contact sheet.
+                self._log(f"frame {i}: not chosen, advancing past it")
+                self._work(7.0)
+                continue
             self._log(f"frame {i}: contrast 0.31, offset +0.04 mm, short by 0.02 mm")
             prescan, _ = self.prescan()
             image = meta = None

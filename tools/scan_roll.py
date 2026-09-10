@@ -18,7 +18,9 @@ resumes from the manifest.
 
 Start with `--dry-run`. It prescans and advances only, so it walks the whole
 strip in a couple of minutes and shows where each picture sits before three
-hours are committed to scanning them.
+hours are committed to scanning them. Its manifest is `survey.json`, beside the
+`prescanNN.tif` it measured each frame on, so the walk survives the roll that
+follows it into the same directory.
 """
 from __future__ import annotations
 
@@ -116,7 +118,10 @@ def main() -> int:
     roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
     out = Path(args.out or f"rolls/{roll_name}")
     out.mkdir(parents=True, exist_ok=True)
-    manifest_path = out / "roll.json"
+    # A dry run and the scan that follows it share a directory, so they must
+    # not share a file: the record of what was walked is what says which frames
+    # are worth scanning, and writing the scan over it loses that.
+    manifest_path = out / ("survey.json" if args.dry_run else "roll.json")
 
     manifest = {
         "roll": roll_name,

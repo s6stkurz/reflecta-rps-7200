@@ -2207,6 +2207,7 @@ class DirectScanner:
         blank_contrast: float = BLANK_CONTRAST,
         drift_warning: int = 240,
         skip: int = 0,
+        only: tuple[int, ...] | None = None,
         keep_raw: bool = True,
         max_failures: int = 3,
         should_stop: Callable[[], bool] | None = None,
@@ -2253,6 +2254,16 @@ class DirectScanner:
             frame.
         ``"none"``
             scan at whatever the device holds.
+
+        ``only`` is the frame numbers worth scanning, in the same numbering the
+        yielded :class:`RollFrame` carries. Everything else is advanced past
+        without being prescanned or scanned, so a frame nobody chose costs its
+        ~7 s advance rather than 13 s surveyed or six minutes scanned, and the
+        roll ends after the last chosen frame instead of walking out the strip.
+        It is meant to follow a ``dry_run`` survey, which is where the numbers
+        come from; ``None`` scans every frame, and an empty selection scans
+        none. Metering, registration, failure counting and the manifest are
+        untouched by it.
         """
         if meter not in METER_MODES:
             raise ValueError(
@@ -2278,6 +2289,31 @@ class DirectScanner:
         failures = 0
         index = 0
 
+        # Past the last chosen frame there is nothing left to do, so the roll
+        # ends there rather than advancing through the rest of the strip
+        # looking for pictures the operator has already said no to.
+        wanted = frozenset(only) if only is not None else None
+        if wanted is not None and not wanted:
+            self._log("no frames were chosen, so there is nothing to scan")
+            return
+        last_wanted = max(wanted) if wanted else None
+
+        def finished(index: int) -> bool:
+            if frames is not None and index >= skip + frames:
+                return True
+            return last_wanted is not None and index > last_wanted
+
+        def keep_going() -> bool:
+            """Advance to the next frame, unless stop was asked for first."""
+            # Checked here, immediately before the film moves, because this is
+            # the last instant at which stopping is free. A caller that only
+            # checks after consuming a frame has already let this advance and
+            # the prescan after it happen.
+            if should_stop is not None and should_stop():
+                self._log("stopping before the next advance, as asked")
+                return False
+            return self.advance() is not None
+
         for _ in range(skip):
             position = self.advance()
             if position is None:
@@ -2294,6 +2330,17 @@ class DirectScanner:
             if should_stop is not None and should_stop():
                 self._log("stopping before the next frame, as asked")
                 return
+
+            if wanted is not None and index not in wanted:
+                # Surveyed and not chosen. The prescan that would decide this
+                # has already been taken and looked at, so taking another one
+                # here would only spend the operator's time re-asking.
+                self._log(f"frame {index}: not chosen, advancing past it")
+                index += 1
+                if finished(index) or not keep_going():
+                    return
+                continue
+
             started = time.monotonic()
             prescan_image = None
             marks: dict[str, Any] = {}
@@ -2406,14 +2453,7 @@ class DirectScanner:
 
             self._log(f"frame {index} took {time.monotonic() - started:.0f}s")
             index += 1
-            if frames is not None and index >= skip + frames:
+            if finished(index):
                 break
-            # Checked here, immediately before the film moves, because this is
-            # the last instant at which stopping is free. A caller that only
-            # checks after consuming a frame has already let this advance and
-            # the prescan after it happen.
-            if should_stop is not None and should_stop():
-                self._log("stopping before the next advance, as asked")
-                return
-            if self.advance() is None:
+            if not keep_going():
                 return

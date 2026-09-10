@@ -9,6 +9,7 @@ Abandoning a read mid-scan is what costs a power cycle.
 uses it. It stays here rather than in conftest because it is tuned to this loop,
 the same reason `FakeRoll` stays beside test_roll.
 """
+import json
 import queue
 import threading
 import time
@@ -63,6 +64,7 @@ class FakeScanner:
         self._frames = frames
         self._on_yield = on_yield
         self._fail_scan = fail_scan
+        self.only = None
 
     def open(self):
         self.opened = True
@@ -110,9 +112,14 @@ class FakeScanner:
         }
 
     def scan_roll(self, frames=None, resolution=1800, infrared=True,
-                  dry_run=False, skip=0, **kw):
+                  dry_run=False, skip=0, only=None, **kw):
         self.calls.append(("roll", frames, resolution, dry_run, skip))
+        self.only = only
         for i in range(frames or self._frames):
+            # The real one advances past an unchosen frame without prescanning
+            # it, which from here looks like a frame that never arrives.
+            if only is not None and skip + i not in only:
+                continue
             if self._on_yield:
                 # Stands in for the operator pressing stop while this frame is
                 # still being scanned.
@@ -235,6 +242,63 @@ def test_a_real_roll_does_not_file_its_prescans_separately(tmp_path):
     entries = library.entries(tmp_path)
     assert len(entries) == 3
     assert not any("prescan" in e["tags"] for e in entries)
+
+
+def test_only_the_chosen_frames_are_scanned(tmp_path):
+    """The whole point of surveying first: four good frames, not seventeen."""
+    _, scanner, _ = run(
+        Roll(frames=5, resolution=600, name="picked", only=(1, 4)), tmp_path
+    )
+    # The window counts pictures from 1; the driver counts them from 0.
+    assert scanner.only == (0, 3)
+    assert len(library.entries(tmp_path)) == 2
+    assert sorted(f.name for f in (tmp_path / "rolls" / "picked").glob("*.tif")) \
+        == ["frame01.tif", "frame04.tif"]
+
+
+def test_choosing_every_frame_is_not_the_same_as_choosing_none(tmp_path):
+    """`only=()` has to reach the driver as an empty set, not as None."""
+    _, scanner, _ = run(Roll(frames=3, resolution=600, name="none", only=()),
+                        tmp_path)
+    assert scanner.only == ()
+    assert library.entries(tmp_path) == []
+
+
+def test_a_roll_with_no_choice_scans_everything(tmp_path):
+    _, scanner, _ = run(Roll(frames=3, resolution=600, name="all"), tmp_path)
+    assert scanner.only is None
+    assert len(library.entries(tmp_path)) == 3
+
+
+def test_a_scan_of_chosen_frames_does_not_overwrite_the_survey(tmp_path):
+    """The walk found six; the scan took three. Both records have to survive --
+    one file for both meant the six were replaced by the three."""
+    run(Roll(frames=3, dry_run=True, name="both"), tmp_path)
+    run(Roll(frames=3, resolution=600, only=(2,), name="both"), tmp_path)
+    out = tmp_path / "rolls" / "both"
+    surveyed = json.loads((out / "survey.json").read_text())
+    scanned = json.loads((out / "roll.json").read_text())
+    assert [f["number"] for f in surveyed["frames"]] == [1, 2, 3]
+    assert [f["number"] for f in scanned["frames"]] == [2]
+
+
+def test_a_survey_leaves_its_prescans_beside_the_manifest(tmp_path):
+    """So a strip can be looked at again tomorrow instead of walked again."""
+    run(Roll(frames=3, dry_run=True, name="walk2"), tmp_path)
+    out = tmp_path / "rolls" / "walk2"
+    assert sorted(f.name for f in out.glob("prescan*.tif")) == [
+        "prescan01.tif", "prescan02.tif", "prescan03.tif"
+    ]
+    recorded = json.loads((out / "survey.json").read_text())
+    assert [f["prescan"] for f in recorded["frames"]] == [
+        "prescan01.tif", "prescan02.tif", "prescan03.tif"
+    ]
+
+
+def test_a_real_roll_leaves_no_loose_prescans(tmp_path):
+    """They ride along inside the frame's entry; a stray copy is just clutter."""
+    run(Roll(frames=2, resolution=600, name="real2"), tmp_path)
+    assert list((tmp_path / "rolls" / "real2").glob("prescan*.tif")) == []
 
 
 # -- stopping ---------------------------------------------------------------

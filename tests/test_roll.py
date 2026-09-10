@@ -262,6 +262,48 @@ def test_skip_resumes_a_part_scanned_roll():
     assert [f.index for f in out] == [3, 4]
 
 
+def test_only_scans_the_frames_that_were_chosen():
+    """The point of a survey: pay for the four good frames, not the seventeen."""
+    s = FakeRoll([picture(seed=i) for i in range(6)])
+    out = list(s.scan_roll(only=(1, 3), meter=METER_NONE))
+    assert [f.index for f in out] == [1, 3]
+    assert [f.position for f in out] == [1, 3]
+
+
+def test_a_frame_nobody_chose_is_not_even_prescanned():
+    """It costs its advance and nothing else -- 7 seconds rather than 13."""
+    s = FakeRoll([picture(seed=i) for i in range(6)])
+    list(s.scan_roll(only=(2,), meter=METER_NONE))
+    assert len(s.prescan_keep_raw) == 1      # frame 2 only
+    assert s.advances == 2                   # 0 -> 1 -> 2, then stop
+
+
+def test_the_roll_ends_after_the_last_chosen_frame():
+    """No walking out the rest of a strip the operator has already judged."""
+    s = FakeRoll([picture(seed=i) for i in range(9)])
+    out = list(s.scan_roll(only=(0, 1), meter=METER_NONE))
+    assert [f.index for f in out] == [0, 1]
+    assert s.advances == 1
+    assert s.at == 1
+
+
+def test_choosing_no_frames_scans_nothing_and_never_moves_the_film():
+    s = FakeRoll([picture(seed=i) for i in range(4)])
+    assert list(s.scan_roll(only=(), meter=METER_NONE)) == []
+    assert s.advances == 0
+    assert s.prescan_keep_raw == []
+
+
+def test_a_stop_is_looked_at_while_advancing_past_unchosen_frames():
+    """Walking past ten frames must not be ten seconds of ignoring stop."""
+    s = FakeRoll([picture(seed=i) for i in range(8)])
+    out = list(s.scan_roll(
+        only=(6,), meter=METER_NONE, should_stop=lambda: s.advances >= 2
+    ))
+    assert out == []
+    assert s.advances == 2
+
+
 def test_a_failed_frame_does_not_end_the_roll():
     """A roll takes hours; one bad frame must not cost the rest of it."""
     s = FakeRoll([picture(seed=i) for i in range(4)], fail_at={1})

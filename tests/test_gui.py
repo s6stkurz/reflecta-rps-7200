@@ -569,3 +569,36 @@ def test_infrared_is_drawn_grey():
     tinted."""
     assert gui._CHANNEL_INK[3].count(gui._CHANNEL_INK[3][1:3]) == 3, (
         f"{gui._CHANNEL_INK[3]} should be a neutral grey")
+
+
+# -- picking frames off a contact sheet --------------------------------------
+
+
+def test_the_film_goes_back_to_where_the_walk_started():
+    """A survey ends at the last picture; a roll starts where the film is."""
+    assert gui.rewind_frames([4, 5, 6, 7, 8, 9]) == 5
+
+
+def test_rewinding_counts_positions_not_frames_that_came_back():
+    """A frame can fail and still have moved the film. Counting the results
+    would leave the rewind one short for every failure, and every frame after
+    that would be the wrong photograph."""
+    # Six pictures walked, positions 0..5, but only four came back with one.
+    assert gui.rewind_frames([0, 1, 4, 5]) == 5
+
+
+def test_rewinding_falls_back_to_one_frame_a_result():
+    """A transport that will not say where it is still has to be rewound."""
+    assert gui.rewind_frames([None, None, None]) == 2
+    assert gui.rewind_frames([None]) == 0
+    assert gui.rewind_frames([]) == 0
+
+
+def test_starting_part_way_in_is_rewound_past_as_well():
+    """`start at 3` advances twice before the first picture, and the roll that
+    follows advances twice again -- so the film has to go back that far too."""
+    assert gui.rewind_frames([2, 3, 4], start_at=3) == 4
+
+
+def test_the_rewind_is_never_negative():
+    assert gui.rewind_frames([7, 7, 7]) == 0

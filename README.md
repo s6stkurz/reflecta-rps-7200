@@ -132,6 +132,16 @@ which is the only thing that actually unblocks it; the frame is lost and the
 scanner will almost certainly need a power cycle at its own switch. It asks you
 to type ABORT first.
 
+**The contact sheet.** A dry run walks the strip prescanning and advancing only
+-- about 20 seconds a frame -- and opens every picture it found in a grid, with
+its number, its contrast and how far off centre it sits. Tick what is worth
+having and only those frames are scanned: the film is rewound to where the walk
+started, and a frame nobody ticked costs its ~7 s advance instead of the three
+to six minutes a scan of it would. Seventeen frames at 3600 dpi RGBI is three
+hours, and a strip with four keepers on it should not cost the same as one with
+seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame beside
+it, so a strip can be looked at again tomorrow instead of walked again.
+
 The options are the ones the driver implements: resolution, infrared, film type,
 exposure (metered or by hand), shading (measure or reuse), and for a roll the
 frame count, a start-at for resuming, the metering mode and a dry run.
@@ -366,7 +376,8 @@ not the roll. `--start-at N` resumes.
 
 Start with `--dry-run`. It prescans and advances only, so it walks a six-frame strip in
 about two and a half minutes and shows where each picture sits before three hours are
-committed to scanning them.
+committed to scanning them. Its manifest is `survey.json`, so a walk and the roll that
+follows it into the same directory do not overwrite each other.
 
 The roll stops on whichever comes first: `--frames`, a prescan with no picture in it, an
 advance that does not move the film, or three consecutive failures. A single failed frame
