@@ -46,6 +46,8 @@ from .framing import (
     MIN_INSET_Y,
     NOMINAL_FRAME_WIDTH,
     film_bounds,
+    metering_region,
+    metering_slice,
     frame_contrast,
     gap_edges,
     registration,
@@ -228,6 +230,8 @@ __all__ = [
     "destripe",
     "dilate_defects",
     "film_bounds",
+    "metering_region",
+    "metering_slice",
     "gap_edges",
     "find_column_defects",
     "flat_defect_sigma",
@@ -1781,6 +1785,8 @@ class DirectScanner:
         # see the ``rounds``/``max_rounds`` note in the docstring.
         budget = max(rounds, rounds + 1 if max_rounds is None else max_rounds)
         probes: list[dict[str, Any]] = []
+        #: Where the film is, found on the first probe while it is still dark.
+        region: tuple[slice, slice] | None = None
 
         for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
@@ -1795,9 +1801,23 @@ class DirectScanner:
                 # 300 dpi it costs about 1.3 MB.
                 keep_raw=True,
             )
+            # Inside the film, not the whole window. The empty aperture is far
+            # brighter than any part of the picture, so metering the whole frame
+            # lets however much of it is in view decide the exposure -- measured
+            # at 5.6-10.0% short on real prescans.
+            #
+            # Measured once, on this first pass, and reused. The detector needs
+            # the aperture to be twice the median, and metering's whole job is
+            # to brighten the film until it is nearly as bright as the aperture
+            # -- so by the round that settles the exposure the contrast it
+            # depends on is gone. Detecting each round would quietly stop
+            # working exactly when it mattered.
+            if region is None:
+                region = metering_slice(image)
+            crop = image[region]
             levels = [
-                float(np.percentile(image[..., c], percentile)) / full
-                for c in range(image.shape[2])
+                float(np.percentile(crop[..., c], percentile)) / full
+                for c in range(crop.shape[2])
             ]
             self._log(
                 f"auto-exposure round {round_no}: "

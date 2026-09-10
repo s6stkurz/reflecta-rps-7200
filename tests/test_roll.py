@@ -31,6 +31,7 @@ from rps7200.direct import (
     NOMINAL_FRAME_WIDTH,
     DirectScanner,
     film_bounds,
+    metering_region,
     frame_contrast,
     registration,
 )
@@ -831,3 +832,52 @@ def test_the_smallest_nudge_is_the_smallest_the_hardware_can_do():
     assert s.param_for_mm(0.01) == 1
     assert s.param_for_mm(0.27) == 1
     assert s.param_for_mm(99.0) == DirectScanner.MAX_CORRECTION_PARAM
+
+
+# -- metering looks inside the film ----------------------------------------
+
+
+def bordered(width=200, height=120, film=40, clear=200, margin=12):
+    """A picture with clear aperture around it, as a short strip looks."""
+    img = np.full((height, width, 3), clear, np.uint16)
+    img[margin:height - margin, margin:width - margin] = film
+    # A highlight in the picture, well below the clear level.
+    img[height // 2, width // 2] = film * 2
+    return img
+
+
+def test_metering_ignores_the_clear_aperture():
+    """The aperture is far brighter than any part of the picture, so metering
+    the whole window lets however much of it is in view set the exposure."""
+    img = bordered()
+    whole = np.percentile(img[..., 1], 99.5)
+    inside = np.percentile(metering_region(img)[..., 1], 99.5)
+    assert whole >= 200, "the fixture should have clear aperture in the frame"
+    assert inside < 100, (
+        f"metering still sees the aperture: {inside} -- it should see film"
+    )
+
+
+def test_metering_keeps_the_whole_frame_when_film_fills_it():
+    """The normal case for a registered frame. No aperture, so nothing to cut
+    but the inset."""
+    img = np.full((120, 200, 3), 40, np.uint16)
+    region = metering_region(img)
+    assert region.shape[2] == 3
+    # An inset, not a rejection: most of the frame survives.
+    assert region.shape[0] * region.shape[1] > 0.7 * 120 * 200
+
+
+def test_a_degenerate_frame_falls_back_to_the_whole_image():
+    """Failing back to today's behaviour is the right failure: it is the thing
+    this improves on, not something worse."""
+    for img in (np.zeros((0, 0, 3), np.uint16),
+                np.full((2, 2, 3), 40, np.uint16)):
+        region = metering_region(img)
+        assert region.shape == img.shape
+
+
+def test_the_region_is_a_view_and_does_not_copy():
+    img = bordered()
+    region = metering_region(img)
+    assert region.base is img or region.base is not None

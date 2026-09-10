@@ -598,3 +598,76 @@ def test_the_band_above_the_target_stays_under_the_knee():
     assert OVER_TARGET_TOLERANCE < 0.08, (
         "the band above the target must be tighter than the one below it"
     )
+
+
+# -- metering looks inside the film ----------------------------------------
+
+
+class BorderedScanner(FakeScanner):
+    """A scanner whose passes have clear aperture around the picture.
+
+    That is what a short strip, or a frame that has drifted, looks like from
+    the transport: the film does not fill the window, and what is left is bare
+    lit aperture -- far brighter than any part of a negative.
+    """
+
+    def scan(self, resolution=300, infrared=False, exposure_scale=1.0, **kw):
+        image, meta = super().scan(resolution, infrared, exposure_scale, **kw)
+        h, w = image.shape[:2]
+        out = np.full_like(image, 65535)          # aperture: the rail
+        m = max(1, h // 5), max(1, w // 5)
+        out[m[0]:h - m[0], m[1]:w - m[1]] = image[m[0]:h - m[0], m[1]:w - m[1]]
+        return out, meta
+
+
+def test_the_aperture_does_not_set_the_exposure():
+    """Metering takes a high percentile, so anything brighter than the picture
+    decides it. Measured on real prescans, an aperture in view read the 99.5th
+    percentile 5.9-11.1% high and the scan came out that much short.
+
+    The test is that the two scanners agree: the same film should be metered
+    the same whether or not there is aperture beside it.
+    """
+    transmission = (0.55, 0.60, 0.58)
+    base = (9604, 6506, 6506, 7745)
+
+    filled = FakeScanner(transmission, base=base).auto_exposure(
+        target=EXPOSURE_TARGET, film=FILM_NEGATIVE)
+    bordered = BorderedScanner(transmission, base=base).auto_exposure(
+        target=EXPOSURE_TARGET, film=FILM_NEGATIVE)
+
+    assert bordered == pytest.approx(filled, rel=0.05), (
+        f"aperture in view changed the exposure: {bordered} against {filled}"
+    )
+
+
+def test_without_the_crop_the_aperture_would_have_won():
+    """Guards the guard: if metering_region ever stopped cropping, the test
+    above would still pass for the wrong reason -- so check the aperture really
+    is bright enough to have taken over."""
+    s = BorderedScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    image, _ = s.scan(exposure_scale=1.0)
+    assert np.percentile(image[..., 1], 99.5) >= 65000, (
+        "the fixture's aperture is not at the rail; it would not skew anything"
+    )
+
+
+def test_the_film_is_located_once_while_it_is_still_dark():
+    """The subtle half, and the reason this is not detected per round.
+
+    `film_bounds` needs the aperture at least CLEAR_RATIO brighter than the
+    median. Metering's whole job is to brighten the film until it is nearly as
+    bright as the aperture, so by the round that settles the exposure the
+    contrast the detector depends on is gone. Detecting each round would work
+    on the first pass and quietly stop working on the one that matters.
+    """
+    from rps7200.framing import FULL_FRAME, film_bounds
+
+    s = BorderedScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    dark, _ = s.scan(exposure_scale=1.0)
+    bright, _ = s.scan(exposure_scale=8.0)
+
+    assert film_bounds(dark) != FULL_FRAME, "the fixture has no visible edge"
+    assert film_bounds(bright) == FULL_FRAME, (
+        "the fixture does not reproduce the contrast collapse this guards"
+    )

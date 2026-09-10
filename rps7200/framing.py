@@ -136,6 +136,87 @@ def film_bounds(
     return x0, y0, x1, y1
 
 
+#: How far inside the film's own edge metering looks, as a fraction of each
+#: axis. The edge is a transition rather than a step -- a few columns of partial
+#: coverage -- and immediately beside a 35 mm frame is clear base and the
+#: sprocket margin, which are brighter than any part of the picture.
+METERING_INSET = 0.05
+
+
+def metering_region(
+    image: np.ndarray,
+    full_frame: tuple[int, int, int, int] = FULL_FRAME,
+    inset: float = METERING_INSET,
+) -> np.ndarray:
+    """The part of a prescan worth metering: inside the film, inside its edge.
+
+    Metering takes a high percentile, so anything brighter than the picture
+    decides the exposure. The empty aperture is *much* brighter than film --
+    measured on a C-41 negative, 143/153/153 against the film's 34/15/7 -- so a
+    strip that does not fill the window pulls the percentile up and the scan
+    comes out under-exposed, silently, by however much aperture happens to be in
+    view.
+
+    Measured on three prescans where an aperture was visible: the 99.5th
+    percentile read 5.9-11.1% high across all three channels, so the scan
+    exposed 5.6-10.0% short. It is not a colour shift -- every channel moves
+    together -- and it is not constant, because it depends on where the frame
+    sits, which is exactly the inconsistency `meter=once` exists to avoid.
+
+    **Take it from the first probe, at the device's base exposure, and reuse
+    it.** :func:`film_bounds` needs the aperture to be at least
+    :data:`CLEAR_RATIO` brighter than the median, and metering's whole job is to
+    brighten the film until it is nearly as bright as the aperture -- so by the
+    round that settles the exposure, the contrast this depends on is gone and
+    the bounds come back as the whole window. Detecting once, while the film is
+    still dark, is not an optimisation; it is the only time it works.
+
+    Returns a **view**, and returns the whole image rather than something tiny
+    if the bounds come back degenerate. Failing back to today's behaviour is
+    the right failure: it is the thing this improves on, not something worse.
+    """
+    return image[metering_slice(image, full_frame, inset)]
+
+
+def metering_slice(
+    image: np.ndarray,
+    full_frame: tuple[int, int, int, int] = FULL_FRAME,
+    inset: float = METERING_INSET,
+) -> tuple[slice, slice]:
+    """The rows and columns :func:`metering_region` would keep.
+
+    Separate so a caller can measure the region once, on a dark pass, and apply
+    it to later ones -- see the note there about why that is necessary rather
+    than merely cheaper.
+    """
+    whole = (slice(None), slice(None))
+    if image.ndim < 2 or image.size == 0:
+        return whole
+    x0, y0, x1, y1 = film_bounds(image, full_frame)
+    fx0, fy0, fx1, fy1 = full_frame
+    span_x, span_y = fx1 - fx0, fy1 - fy0
+    if span_x <= 0 or span_y <= 0:
+        return whole
+
+    h, w = image.shape[:2]
+    cx0 = int(round(w * (x0 - fx0) / span_x))
+    cx1 = int(round(w * (x1 - fx0) / span_x))
+    cy0 = int(round(h * (y0 - fy0) / span_y))
+    cy1 = int(round(h * (y1 - fy0) / span_y))
+
+    # Then step inside the edge itself, which is a transition and not a step.
+    pad_x = int(round((cx1 - cx0) * inset))
+    pad_y = int(round((cy1 - cy0) * inset))
+    cx0, cx1 = cx0 + pad_x, cx1 - pad_x
+    cy0, cy1 = cy0 + pad_y, cy1 - pad_y
+
+    cx0, cy0 = max(0, cx0), max(0, cy0)
+    cx1, cy1 = min(w, cx1), min(h, cy1)
+    if cx1 - cx0 < 2 or cy1 - cy0 < 2:
+        return whole
+    return slice(cy0, cy1), slice(cx0, cx1)
+
+
 def registration(
     image: np.ndarray,
     full_frame: tuple[int, int, int, int] = FULL_FRAME,

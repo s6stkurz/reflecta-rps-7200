@@ -282,7 +282,8 @@ run once per session, exactly as the vendor software does at power-on.
 ## Exposure
 
 `--auto-exposure` probes at 300 dpi and aims each channel's 99.5th percentile at
-**0.80** of full scale. The probe is always RGB, in two rounds, plus one further round
+**0.80** of full scale, measured **inside the film** rather than across the whole
+transport window. The probe is always RGB, in two rounds, plus one further round
 only if a channel came back clipped — there the correction is a retreat rather than a
 measurement, and everything else is settled in one proportional step because the sensor
 is linear (r² = 0.9999 over a 4× range).
@@ -303,6 +304,16 @@ Three things about it are worth knowing before changing anything:
   4.98–5.02 on colour negative, ~9.6 on black and white, each from a matched pair minutes
   apart with red and green confirming the mode was the only variable. One constant for
   every film put 34% of a B&W scan's blue channel at the rail.
+
+- **Metering looks inside the film, and finds it once.** The empty aperture beside a
+  strip is far brighter than any part of a negative -- 143/153/153 against the film's
+  34/15/7 on a C-41 prescan -- so metering the whole window lets however much aperture is
+  in view set the exposure. Measured on real prescans it read the percentile 5.9-11.1%
+  high, and the scan came out that much short, silently and differently for each frame.
+  The film is located on the first probe *while it is still dark*: the detector needs the
+  aperture to be twice the median, and metering's job is to brighten the film until it is
+  nearly as bright as the aperture, so by the round that settles the exposure that
+  contrast is gone.
 
 What the probe measured is filed with the scan, so the numbers above stay checkable from
 ordinary work rather than needing a special run.
