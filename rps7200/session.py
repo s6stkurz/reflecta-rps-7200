@@ -141,6 +141,12 @@ class Roll:
     meter: str = METER_EACH
     prescan_resolution: int = 300
     dry_run: bool = False
+    #: The frame numbers worth scanning, as the window numbers them -- 1 for the
+    #: first picture. Anything else is advanced past unprescanned and unscanned,
+    #: and the roll ends after the last one. This is what a survey is for: walk
+    #: the strip in four minutes, look at it, then spend the hours on the frames
+    #: that earn them. None scans every frame.
+    only: tuple[int, ...] | None = None
     correct: bool = False
     max_failures: int = 3
     name: str = ""
@@ -188,6 +194,10 @@ class Result:
     #: Where the transport was when this pass was taken. A scan can only stand
     #: in for a prescan of the same picture, and this is how that is known.
     position: int | None = None
+    #: Which picture of the roll this is, counting from 1, or 0 for a pass that
+    #: belongs to no roll. It is what a contact sheet ticks and what `Roll.only`
+    #: is then given, so it must not be recovered by parsing `label`.
+    number: int = 0
 
 
 @dataclass(frozen=True)
@@ -600,6 +610,11 @@ class ScanSession:
         name = job.name or time.strftime("%Y-%m-%d")
         out = Path(job.out) if job.out else self.rolls / name
         out.mkdir(parents=True, exist_ok=True)
+        # Two products, two files. A walk and the scan of what it found go into
+        # the same directory, and writing both into roll.json meant the record
+        # of six frames walked was replaced by the record of the three that
+        # were then scanned -- losing exactly what the walk was kept for.
+        manifest_path = out / ("survey.json" if job.dry_run else "roll.json")
         manifest: dict[str, Any] = {
             "roll": name,
             "dpi": job.resolution,
@@ -608,6 +623,7 @@ class ScanSession:
             "film": job.film,
             "dry_run": job.dry_run,
             "start_at": job.start_at,
+            "only": list(job.only) if job.only is not None else None,
             "frames": [],
         }
 
@@ -620,6 +636,9 @@ class ScanSession:
             film=job.film,
             meter=job.meter,
             skip=max(0, job.start_at - 1),
+            # The window counts pictures from 1 and the driver from 0.
+            only=(None if job.only is None
+                  else tuple(n - 1 for n in job.only)),
             max_failures=job.max_failures,
             dry_run=job.dry_run,
             correct=job.correct,
@@ -634,6 +653,7 @@ class ScanSession:
                         "prescan", f"frame {number} prescan", rf.prescan,
                         {"resolution_dpi": job.prescan_resolution},
                         registration=rf.registration, position=rf.position,
+                        number=number,
                     )
                     if job.dry_run:
                         # On a dry run the prescans are the entire product --
@@ -641,14 +661,23 @@ class ScanSession:
                         # filed in their own right. On a real roll they ride
                         # along with the frame instead, which is why this is not
                         # unconditional: that would file every one of them twice.
+                        #
+                        # One of them also goes into the roll directory beside
+                        # the manifest, the way `tools/scan_roll.py` writes it, so
+                        # a survey can be opened again tomorrow instead of being
+                        # walked again. Written by the writer thread, not here:
+                        # it is only ~370 KB, but nothing local happens on the
+                        # scanning thread with the device open.
+                        surveyed = out / f"prescan{number:02d}.tif"
                         self._file(
                             seq, number, rf.prescan,
-                            {"resolution_dpi": 300,
+                            {"resolution_dpi": job.prescan_resolution,
                              "channel_order": ["R", "G", "B"]},
                             replace(job.notes,
                                     frame=job.notes.frame or f"{name}-{number:02d}"),
                             tuple(job.tags) + ("gui", "roll", "prescan", name),
                             kind="prescan",
+                            path=surveyed,
                             roll=name,
                         )
                 if rf.error:
@@ -661,6 +690,7 @@ class ScanSession:
                     seq = self._deliver(
                         "frame", label, rf.image, rf.meta,
                         registration=rf.registration, position=rf.position,
+                        number=number,
                     )
                     notes = replace(
                         job.notes, frame=job.notes.frame or f"{name}-{number:02d}"
@@ -673,16 +703,19 @@ class ScanSession:
                         roll=name,
                     )
 
-                manifest["frames"].append({
+                record: dict[str, Any] = {
                     "number": number,
                     "index": rf.index,
                     "transport_position": rf.position,
                     "registration": rf.registration,
                     "error": rf.error,
-                })
+                }
+                if job.dry_run and rf.prescan is not None:
+                    record["prescan"] = f"prescan{number:02d}.tif"
+                manifest["frames"].append(record)
                 # Rewritten after every frame. A roll takes hours and a crash
                 # should cost the frame it was on, not the roll.
-                (out / "roll.json").write_text(json.dumps(manifest, indent=2, default=str))
+                manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
 
                 if self._stop.is_set():
                     stopped = f"stopped after frame {number}, as asked"
@@ -704,6 +737,7 @@ class ScanSession:
         meta: dict[str, Any],
         registration: dict[str, Any] | None = None,
         position: int | None = None,
+        number: int = 0,
     ) -> int:
         """Hand the UI a working copy small enough to keep.
 
@@ -719,6 +753,7 @@ class ScanSession:
         self._emit("result", result=Result(
             seq=self._seq, kind=kind, label=label, image=working, meta=dict(meta),
             registration=dict(registration or {}), position=position,
+            number=number,
         ))
         return self._seq
 
@@ -853,6 +888,9 @@ def _describe(job: Job) -> str:
                 f"{'RGBI' if job.infrared else 'RGB'}")
     if isinstance(job, Roll):
         what = "walking" if job.dry_run else "scanning"
+        if job.only is not None:
+            n = len(job.only)
+            return f"{what} {n} chosen frame{'s' if n != 1 else ''}"
         n = job.frames if job.frames else "?"
         return f"{what} a roll of {n} frames"
     if isinstance(job, Move):

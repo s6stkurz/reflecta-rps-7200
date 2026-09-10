@@ -176,6 +176,11 @@ class ScannerGui:
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
         self.rotation = 0                    # applied to new passes and files
+        self.survey: list = []               # the prescans a dry run walked
+        self._surveying = False              # a dry run is running right now
+        self._survey_start = 1               # the `start at` it was walked with
+        self._transport = None               # last frame position the device gave
+        self.sheet = None                    # the contact sheet, while it is open
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         root.geometry(self.remembered["window"].get("geometry") or "1280x860")
@@ -630,6 +635,16 @@ class ScannerGui:
                         variable=self.v_correct).pack(anchor="w")
         self.b_roll = ttk.Button(box, text="Scan roll", command=self.on_roll)
         self.b_roll.pack(fill="x", pady=(6, 0))
+        # Opens by itself when a dry run ends; this is for getting back to it
+        # after it has been closed, which is most of the time it is wanted.
+        self.b_sheet = ttk.Button(box, text="Contact sheet ...", state="disabled",
+                                  command=self.on_contact_sheet)
+        self.b_sheet.pack(fill="x", pady=(4, 0))
+        ttk.Label(box, foreground="#777", wraplength=210, justify="left",
+                  text=("A dry run walks the strip in about 20 seconds a frame "
+                        "and opens a contact sheet. Tick the frames worth "
+                        "having and only those are scanned.")).pack(
+            anchor="w", pady=(4, 0))
 
     def _build_film(self, parent: ttk.Frame) -> None:
         box = ttk.LabelFrame(parent, text="Film", padding=8)
@@ -978,11 +993,95 @@ class ScannerGui:
             "Start?",
         ):
             return
+        if dry:
+            # Only cleared here, so a survey outlives the window that showed it
+            # and the sheet can be opened again without walking the strip twice.
+            self.survey = []
+            self._surveying = True
+            self._survey_start = start_at
         self.session.submit(Roll(
             frames=frames or None, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
             correct=self.v_correct.get(),
+            name=self.fields["roll"].get().strip(),
+            notes=self._notes(), tags=self._tags(),
+        ))
+
+    def on_contact_sheet(self) -> None:
+        """The surveyed strip, all of it, with a tick against each picture."""
+        if not self.survey:
+            messagebox.showinfo(
+                "Contact sheet",
+                "Nothing has been walked yet.\n\nTick 'dry run' and press "
+                "Scan roll. It prescans and advances only -- about 20 seconds "
+                "a frame -- and opens the sheet when it reaches the end of the "
+                "strip.")
+            return
+        if self.sheet is not None and self.sheet.alive():
+            self.sheet.top.lift()
+            self.sheet.top.focus_force()
+            return
+        self.sheet = _ContactSheet(self, self.survey)
+
+    def _per_frame_seconds(self) -> float:
+        """Roughly what one frame of the roll will cost, metering included."""
+        try:
+            dpi = int(self.v_dpi.get().strip())
+        except ValueError:
+            dpi = 1800
+        return estimate_seconds(dpi, self.v_ir.get()) + 70
+
+    def on_scan_chosen(self, numbers: tuple[int, ...]) -> None:
+        """Rewind to where the survey began, then scan only what was ticked."""
+        if not numbers:
+            return
+        if self.busy:
+            # The sheet stays open and readable while the scanner is working,
+            # so this button is reachable mid-roll. Queueing a second roll
+            # behind the first is not what anyone pressing it means.
+            messagebox.showinfo(
+                "Scan chosen frames",
+                "The scanner is busy. Wait for it to finish, or stop it, then "
+                "press this again -- the ticks stay where they are.")
+            return
+        dpi, predpi = self._dpi(), self._prescan_dpi()
+        if dpi is None or predpi is None:
+            return
+        back = rewind_frames([r.position for r in self.survey],
+                             self._survey_start)
+        walked = len(self.survey)
+        per = self._per_frame_seconds()
+        moved = ""
+        expected = max((r.position for r in self.survey
+                        if r.position is not None), default=None)
+        if (expected is not None and self._transport is not None
+                and self._transport != expected):
+            # The film has been moved since the walk, so counting frames back
+            # from here lands somewhere else. Said rather than corrected: only
+            # the operator can see the transport.
+            moved = ("\n\nThe film has moved since the strip was walked (it "
+                     f"was at {expected}, it is at {self._transport}). Put it "
+                     "back, or walk the strip again -- the frame numbers below "
+                     "are counted from where the walk started.")
+        if not messagebox.askokcancel(
+            "Scan chosen frames",
+            f"Scan {len(numbers)} of the {walked} frames walked: "
+            f"{', '.join(str(n) for n in numbers)}.\n\n"
+            f"At {dpi} dpi{' with infrared' if self.v_ir.get() else ''}, "
+            f"roughly {_duration(per * len(numbers) + back * 7)} including "
+            f"rewinding {back} frame{'s' if back != 1 else ''} to the start of "
+            "the strip first. The frames nobody ticked cost their advance only."
+            + moved + "\n\nStart?",
+        ):
+            return
+        if back:
+            self.session.submit(Move(frames=-back))
+        self.session.submit(Roll(
+            frames=walked, start_at=self._survey_start, resolution=dpi,
+            prescan_resolution=predpi, infrared=self.v_ir.get(),
+            film=self.v_film.get(), meter=self.v_meter.get(), dry_run=False,
+            correct=self.v_correct.get(), only=tuple(numbers),
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),
         ))
@@ -1149,6 +1248,8 @@ class ScannerGui:
         elif event.kind == "transport":
             self.v_position.set("frame position: ?" if event.done < 0
                                 else f"frame position: {event.done}")
+            if event.done >= 0:
+                self._transport = event.done
         elif event.kind == "filed":
             for r in self.results:
                 if r.seq == event.done:
@@ -1156,6 +1257,12 @@ class ScannerGui:
         elif event.kind == "finished":
             self.v_progress.set(f"{event.text} -- done")
             self.progress.configure(value=1000)
+            if self._surveying:
+                self._surveying = False
+                self.b_sheet.configure(
+                    state="normal" if self.survey else "disabled")
+                if self.survey:
+                    self.on_contact_sheet()
         elif event.kind == "failed":
             # Reported in place, not in a modal: a modal sits inside this pump
             # and stops it, so one failed frame would freeze the window and the
@@ -1166,6 +1273,10 @@ class ScannerGui:
             self.progress.configure(value=0)
             self._set_busy(False)
             self._light("broken")
+            if self._surveying:
+                self._surveying = False
+                self.b_sheet.configure(
+                    state="normal" if self.survey else "disabled")
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
@@ -1236,6 +1347,10 @@ class ScannerGui:
                     result.supersedes = earlier.seq
                     break
         self.results.append(result)
+        if self._surveying and result.kind == "prescan" and result.number:
+            self.survey.append(result)
+        if result.position is not None:
+            self._transport = result.position
         for old in self.results[:-WORKING_COPIES]:
             if old.image is not None and max(old.image.shape[:2]) > ARCHIVE_MAX_SIDE:
                 old.image = preview.downscale(old.image, ARCHIVE_MAX_SIDE)
@@ -1998,6 +2113,29 @@ def aim_millimetres(fraction: float) -> float:
     return -(fraction - target) * APERTURE_MM
 
 
+def rewind_frames(positions, start_at: int = 1) -> int:
+    """How far back the film has to go before the chosen frames are scanned.
+
+    A survey leaves the transport at the last picture it walked, and a roll
+    always begins where the film already is -- so it has to be put back at the
+    picture the walk started from. `start_at` advances from there, so the film
+    goes back that much further again for the advance to land in the same place.
+
+    Counted from the transport's own positions rather than from how many frames
+    came back: a frame that failed still moved the film, and counting results
+    would leave it short by one for every failure.
+    """
+    seen = list(positions)
+    known = [p for p in seen if p is not None]
+    if len(known) >= 2:
+        walked = max(known) - min(known)
+    else:
+        # No positions to count, so fall back to one frame per result. It is
+        # what the transport did if nothing failed, which is the usual case.
+        walked = max(0, len(seen) - 1)
+    return max(0, walked + max(0, start_at - 1))
+
+
 def _age(hours: float) -> str:
     if hours < 1:
         return f"{int(hours * 60)} minutes"
@@ -2176,6 +2314,166 @@ class _Histogram:
                 ttk.Label(self.table, text=text,
                           foreground="#e0605a" if fraction > 0.001 else None).grid(
                     row=channel + 1, column=column, sticky="e", padx=6)
+
+
+class _ContactSheet:
+    """The whole surveyed strip at once, with a tick against each picture.
+
+    This is where a roll is decided. Seventeen frames at 3600 dpi RGBI is three
+    hours and 2.4 GB, and a strip with four keepers on it should not cost the
+    same as one with seventeen -- but until there was something to look at, the
+    only choice on offer was all of them or none of them. The walk that fills
+    this took four minutes.
+
+    Its own window, like the histogram: it wants the room, and it is looked at
+    twice a roll rather than continuously.
+    """
+
+    CELL = 210                               # the longest side of a thumbnail
+    COLUMNS = 4
+    CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
+
+    def __init__(self, gui, frames):
+        self.gui = gui
+        self.frames = [r for r in frames if r.image is not None]
+        self.ticks: dict[int, tk.BooleanVar] = {}
+        self._photos: list[tk.PhotoImage] = []
+        self._rings: dict[int, tk.Frame] = {}
+
+        self.top = tk.Toplevel(gui.root)
+        self.top.title("Contact sheet")
+        self.top.transient(gui.root)
+        self.top.geometry("980x720")
+
+        outer = ttk.Frame(self.top, padding=(10, 8))
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, font=("TkDefaultFont", 12, "bold"),
+                  text=f"{len(self.frames)} frames walked").pack(anchor="w")
+        ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
+                  text=("Tick what is worth scanning. Click a picture to tick "
+                        "it, double-click to open it in the preview. The film "
+                        "is rewound to the start of the strip first, and every "
+                        "frame nobody ticked costs its advance only.")).pack(
+            anchor="w", pady=(0, 8))
+
+        # Canvas-with-a-frame-inside, the same shape as the options column:
+        # Tk has no scrollable frame of its own.
+        host = ttk.Frame(outer)
+        host.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(host, highlightthickness=0, borderwidth=0)
+        bar = ttk.Scrollbar(host, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        grid = ttk.Frame(self.canvas, padding=4)
+        window = self.canvas.create_window((0, 0), window=grid, anchor="nw")
+        grid.bind("<Configure>", lambda _e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>",
+                         lambda e: self.canvas.itemconfigure(window, width=e.width))
+
+        for column in range(self.COLUMNS):
+            grid.columnconfigure(column, weight=1)
+        for cell, result in enumerate(self.frames):
+            self._cell(grid, result, cell // self.COLUMNS, cell % self.COLUMNS)
+
+        foot = ttk.Frame(outer)
+        foot.pack(fill="x", pady=(8, 0))
+        ttk.Button(foot, text="All", command=lambda: self._set_all(True)).pack(
+            side="left")
+        ttk.Button(foot, text="None", command=lambda: self._set_all(False)).pack(
+            side="left", padx=4)
+        self.v_count = tk.StringVar()
+        ttk.Label(foot, textvariable=self.v_count, foreground="#777").pack(
+            side="left", padx=10)
+        ttk.Button(foot, text="Close", command=self.top.destroy).pack(side="right")
+        self.b_scan = ttk.Button(foot, text="Scan chosen frames",
+                                 command=self._scan)
+        self.b_scan.pack(side="right", padx=6)
+
+        # Bound after the cells exist: `_scrolls` walks the children it finds.
+        gui._scrolls(self.canvas,
+                     lambda amount, sideways: self.canvas.yview_scroll(amount, "units"),
+                     precise=lambda dx, dy: _scroll_pixels(self.canvas, dx, dy))
+        self._changed()
+
+    # -- one picture -------------------------------------------------------
+
+    def _cell(self, grid, result, row: int, column: int) -> None:
+        number = result.number
+        var = tk.BooleanVar(value=True)      # everything ticked; untick the duds
+        self.ticks[number] = var
+
+        cell = ttk.Frame(grid, padding=6)
+        cell.grid(row=row, column=column, sticky="n")
+        ring = tk.Frame(cell, background=self.CHOSEN, padx=3, pady=3)
+        ring.pack()
+        self._rings[number] = ring
+
+        arr = preview.render(
+            preview.fit(preview.rotate(result.image, result.rotation),
+                        self.CELL, self.CELL),
+            "RGB", self.gui.v_invert.get(),
+            cuts=(preview.channel_levels(result.levels, "RGB")
+                  if getattr(result, "levels", None) is not None else None))
+        photo = tk.PhotoImage(data=preview.to_ppm(arr))
+        self._photos.append(photo)
+        picture = tk.Label(ring, image=photo, borderwidth=0)
+        picture.pack()
+        picture.bind("<Button-1>", lambda _e, n=number: self._toggle(n))
+        picture.bind("<Double-Button-1>",
+                     lambda _e, r=result: self.gui._show_seq(r.seq))
+
+        ttk.Checkbutton(cell, text=f"Frame {number}", variable=var,
+                        command=self._changed).pack(anchor="w", pady=(4, 0))
+        marks = result.registration or {}
+        detail = f"contrast {marks.get('contrast', 0):.2f}"
+        if marks.get("offset_mm") is not None:
+            detail += f"   ·   {marks['offset_mm']:+.2f} mm"
+        ttk.Label(cell, text=detail, foreground="#777").pack(anchor="w")
+        short = marks.get("shortfall_mm") or 0.0
+        if short > 0.85:
+            # The same 0.85 mm the driver calls drift. Worth saying here: a
+            # frame this far out has picture outside the aperture, and no
+            # amount of scanning it brings that back.
+            ttk.Label(cell, foreground="#e0605a",
+                      text=f"drifted -- {short:.2f} mm outside").pack(anchor="w")
+
+    # -- picking -----------------------------------------------------------
+
+    def _toggle(self, number: int) -> None:
+        self.ticks[number].set(not self.ticks[number].get())
+        self._changed()
+
+    def _set_all(self, on: bool) -> None:
+        for var in self.ticks.values():
+            var.set(on)
+        self._changed()
+
+    def chosen(self) -> tuple[int, ...]:
+        return tuple(sorted(n for n, var in self.ticks.items() if var.get()))
+
+    def _changed(self) -> None:
+        picked = self.chosen()
+        for number, ring in self._rings.items():
+            ring.configure(background=self.CHOSEN if self.ticks[number].get()
+                           else "#3a3a3a")
+        per = self.gui._per_frame_seconds()
+        self.v_count.set(
+            f"{len(picked)} of {len(self.frames)} chosen"
+            + (f"   ·   about {_duration(per * len(picked))}" if picked else ""))
+        self.b_scan.configure(state="normal" if picked else "disabled")
+
+    def _scan(self) -> None:
+        picked = self.chosen()
+        self.top.destroy()
+        self.gui.on_scan_chosen(picked)
+
+    def alive(self) -> bool:
+        try:
+            return bool(self.top.winfo_exists())
+        except tk.TclError:
+            return False
 
 
 def _sash_positions(pane) -> list[int]:
