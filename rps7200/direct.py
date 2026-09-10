@@ -202,6 +202,8 @@ __all__ = [
     "SUB_EXPOSURE",
     "SUB_HIGHLIGHT_SHADOW",
     "SUB_SCAN_FRAME",
+    "BLUE_RGBI_HEADROOM",
+    "EXPOSURE_TARGET",
     "ScanParameters",
     "ScanReadError",
     "Sense",
@@ -229,6 +231,66 @@ __all__ = [
     "registration_error_mm",
     "resample_reference",
 ]
+
+
+#: Where metering puts each channel's 99.5th percentile, as a fraction of full
+#: scale. See :meth:`DirectScanner.auto_exposure`.
+#:
+#: **0.80, chosen by measurement** with `tools/exposure_headroom.py`, which
+#: simulates a higher exposure on stored raw bytes and runs the real shading
+#: correction over it. Two things bound it, and they disagree:
+#:
+#: * *Clipping.* The correction's per-column gain exceeds 1 wherever the lamp
+#:   falls off, so edge columns reach the ceiling first -- this is why pieusb
+#:   holds its own target at 0.85. Measured here over six entries, four frames
+#:   and three resolutions, it costs almost nothing: worst case 0.001% of blue
+#:   at 0.80, 0.019% at 0.90 and 0.116% at 0.95.
+#: * *Linearity.* A CCD compresses before it saturates. Measured on the 9-pass
+#:   3600 dpi ladder, departure from linear is under 0.1% below a third of
+#:   scale and grows to 1.5-1.9% in the 75-95% band.
+#:
+#: So clipping would allow well past 0.90 and linearity argues for stopping
+#: sooner. 0.80 takes the second, which also keeps the driver consistent:
+#: :data:`rps7200.bracket.CLIP_START` already declines to trust a sample above
+#: 0.80, and metering should not aim where another module will not follow.
+#:
+#: It replaced 0.70, the most conservative figure of any driver read for
+#: comparison -- pieusb 0.85, nkscan 0.97 -- which left about a fifth of a stop
+#: unused for no measured reason.
+EXPOSURE_TARGET = 0.80
+
+
+#: How much brighter blue comes back in an RGBI pass than in an RGB one at the
+#: same exposure. :meth:`DirectScanner.auto_exposure` divides blue's target by
+#: this when the scan that follows will be RGBI, because the probe is always
+#: RGB.
+#:
+#: **Measured 4.98-5.02**, from the one matched pair in the library:
+#: ``20260909T103542Z_unknown-film_600dpi`` (RGB) and
+#: ``20260909T104022Z_unknown-film_600dpi_ir`` (RGBI) -- the same frame 4.7
+#: minutes apart, one shading reference, red and green exposures within 0.02%
+#: and their levels within 0.3%, so the mode is the only variable. Blue's DN
+#: per exposure count went 0.3365 -> 1.6873, and the per-pixel ratio over the
+#: frame is 4.98 with an sd of 0.16.
+#:
+#: It is a *multiplicative* change in blue's sensitivity, not an infrared leak
+#: into the blue record: the ratio is flat across density -- 5.02 in the
+#: densest decile against 4.95 in the brightest -- and blue's excess correlates
+#: +0.9985 with predicted blue but only +0.49 with the infrared plane. So one
+#: constant is the right model.
+#:
+#: Set above the measurement on purpose. The error is asymmetric: too high only
+#: darkens a channel that is already noise-limited and carries no fixed column
+#: pattern, while too low clips blue, which nothing downstream can undo. The
+#: value this replaced was 4.0, which put blue at 88-96% of full scale where
+#: metering aimed for 70% -- past :data:`rps7200.bracket.CLIP_START` -- and made
+#: an RGBI scan clip *more* blue than the RGB scan the headroom exists to
+#: protect against.
+#:
+#: Earlier readings of 2.0x and 3.7x are superseded. Both compared frames that
+#: differed, or measured blue where it was already clipped, which can only bias
+#: the ratio down.
+BLUE_RGBI_HEADROOM = 5.2
 
 
 @dataclass
@@ -309,6 +371,9 @@ class DirectScanner:
         # when asked: enough to rebuild the image if the decode ever changes.
         self.last_raw: bytes | None = None
         self.last_raw_layout: dict[str, Any] | None = None
+        # What the last auto_exposure() probe actually measured, filed with the
+        # scan by :meth:`scan`. See :meth:`auto_exposure`.
+        self.last_metering: dict[str, Any] | None = None
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -1569,7 +1634,7 @@ class DirectScanner:
 
     def auto_exposure(
         self,
-        target: float = 0.7,
+        target: float = EXPOSURE_TARGET,
         percentile: float = 99.5,
         resolution: int = 300,
         infrared: bool = False,
@@ -1577,7 +1642,8 @@ class DirectScanner:
         tolerance: float = 0.08,
         start: Sequence[float] | None = None,
         film: str = FILM_NEGATIVE,
-        infrared_blue_headroom: float = 4.0,
+        infrared_blue_headroom: float = BLUE_RGBI_HEADROOM,
+        max_rounds: int | None = None,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
 
@@ -1592,10 +1658,10 @@ class DirectScanner:
 
         ``infrared`` therefore does not change how the probe is taken. It says
         the scan that follows will be RGBI, which matters only for blue: blue
-        comes back brighter in an RGBI pass than in an RGB one at the *same*
-        exposure -- measured 2.0x on one frame and about 3.7x on another -- so
-        a blue metered to fill the range in RGB clips in RGBI. Blue's target is
-        divided by ``infrared_blue_headroom`` to leave room for that.
+        comes back about 5x brighter in an RGBI pass than in an RGB one at the
+        *same* exposure, so a blue metered to fill the range in RGB clips in
+        RGBI. Blue's target is divided by ``infrared_blue_headroom`` to leave
+        room for that -- see :data:`BLUE_RGBI_HEADROOM` for the measurement.
 
         Costing blue some exposure is the right trade here, and the vendor
         makes it too: its own captures meter blue to 1475-5906 where green sits
@@ -1603,6 +1669,18 @@ class DirectScanner:
         for the infrared scan. Blue on this scanner carries no fixed column
         pattern -- it is noise-limited, not detail-limited -- so a darker blue
         costs little, while a clipped blue is unrecoverable.
+
+        ``rounds`` is the normal number of probes and ``max_rounds`` the most
+        that may be spent. They differ only for a clipped channel: a level at
+        full scale says the channel is somewhere *above* it, so the retreat
+        applied there is a guess rather than a measurement and is worth
+        confirming. Everything else is settled in one proportional step,
+        because the sensor is linear in exposure -- measured r^2 = 0.9999 over
+        a 4x range on the 3600 dpi ladder in the library.
+
+        What each round measured is left on :attr:`last_metering`, and
+        :meth:`scan` files it with the entry. That is what makes the headroom
+        above checkable from ordinary scans instead of a special experiment.
 
         ``film`` decides whether the visible channels are metered together or
         apart -- see :func:`locks_white_balance`. This matters: metering a slide
@@ -1615,6 +1693,9 @@ class DirectScanner:
         metered per channel rather than with one global factor.
         """
         locked = locks_white_balance(film)
+        # Cleared up front so a run that raises leaves no stale telemetry for
+        # the next scan to file as its own.
+        self.last_metering = None
         # The probe is always three-channel; `infrared` describes the scan
         # that follows, not this pass.
         channels = 3
@@ -1631,8 +1712,14 @@ class DirectScanner:
             f"{'locked (one factor for R/G/B)' if locked else 'per channel'}"
         )
 
-        for round_no in range(1, rounds + 1):
+        # One further round is allowed, and spent only on a clipped channel --
+        # see the ``rounds``/``max_rounds`` note in the docstring.
+        budget = max(rounds, rounds + 1 if max_rounds is None else max_rounds)
+        probes: list[dict[str, Any]] = []
+
+        for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
+            asked = list(scales)
             image, _ = self.scan(
                 resolution=resolution,
                 infrared=False,
@@ -1648,14 +1735,29 @@ class DirectScanner:
                     f"{'RGBI'[c]}={levels[c]:.0%}" for c in range(len(levels))
                 )
             )
-            # Blue's target is the one that moves: it comes back 2-3.7x
+            # Blue's target is the one that moves: it comes back about 5x
             # brighter in an RGBI pass than in the RGB probe at the same
             # exposure, so a blue metered to fill the range here clips there.
             targets = [target] * len(levels)
             if infrared and len(targets) > 2:
                 targets[2] = target / max(1.0, infrared_blue_headroom)
 
+            clipped = [level >= 0.999 for level in levels]
+            probes.append({
+                "round": round_no,
+                "scales": [round(v, 4) for v in asked],
+                "levels": [round(v, 4) for v in levels],
+                "targets": [round(v, 4) for v in targets],
+                "clipped": clipped,
+            })
+
             if all(abs(v - t) <= tolerance for v, t in zip(levels, targets)):
+                break
+            # Past the normal budget only to re-measure a retreat. A level at
+            # full scale says the channel is somewhere above it, so the 0.25
+            # below is a guess; every other correction is one proportional step
+            # on a linear sensor and needs no confirming.
+            if round_no >= rounds and not any(clipped):
                 break
 
             visible = levels[:3]
@@ -1683,6 +1785,25 @@ class DirectScanner:
                 scales[c] = max(0.01, min(ceiling, scales[c]))
 
         self._log(f"auto-exposure result: {[round(v, 3) for v in scales]}")
+
+        # Left for scan() to file with the entry. Metering is the one step whose
+        # inputs are otherwise unrecoverable -- the probe is thrown away and only
+        # its conclusion survives -- so a scan that came out wrong could not be
+        # told from one metered against a frame that asked for something odd.
+        # With this, blue's RGBI headroom is measurable from ordinary scans.
+        self.last_metering = {
+            "target": target,
+            "percentile": percentile,
+            "film": film,
+            "locked": locked,
+            "infrared": infrared,
+            "blue_headroom": infrared_blue_headroom if infrared else None,
+            "resolution_dpi": resolution,
+            "base_exposure": list(base.exposure),
+            "rounds": probes,
+            "scales": [round(v, 4) for v in scales],
+            "limited": list(limited),
+        }
 
         # Exposure is a 16-bit timer count, and past full scale the firmware
         # wraps -- the pass comes out darker, not brighter. A channel that
@@ -1876,7 +1997,7 @@ class DirectScanner:
         require_media: bool = True,
         exposure_scale: float | Sequence[float] = 1.0,
         auto_exposure: bool = False,
-        exposure_target: float = 0.7,
+        exposure_target: float = EXPOSURE_TARGET,
         skip_shading: bool = True,
         shading: bool = True,
         film: str = FILM_NEGATIVE,
@@ -1909,9 +2030,10 @@ class DirectScanner:
             # 16-bit range unused.
             #
             # Blue does behave differently with infrared enabled, coming back
-            # 2-3.7x brighter at the same exposure. That is handled by metering
-            # blue lower when an RGBI scan follows, not by probing in RGBI: an
-            # infrared probe costs its own ~212 s floor per round.
+            # about 5x brighter at the same exposure (BLUE_RGBI_HEADROOM). That
+            # is handled by metering blue lower when an RGBI scan follows, not
+            # by probing in RGBI: an infrared probe costs its own ~212 s floor
+            # per round.
             self._log(f"auto-exposure: probing in RGB (scan is "
                       f"{'RGBI' if infrared else 'RGB'})")
             exposure_scale = self.auto_exposure(
@@ -2034,10 +2156,19 @@ class DirectScanner:
             )
         elif shading and self._shading is not None:
             image, shading_report = apply_shading(image, self._shading, ccd_mask)
+            # Name the channel, not just the count. Clipping here is almost
+            # always one channel -- blue -- and a total says nothing about
+            # which exposure to lower.
+            per = shading_report.get("clipped_per_channel") or []
+            worst = ""
+            if shading_report["clipped"] and per:
+                c = max(range(len(per)), key=lambda i: per[i])
+                share = per[c] / shading_report["clipped"]
+                worst = f", worst {CHANNEL_ORDER[c]} at {share:.0%} of them"
             self._log(
                 f"shading corrected: {shading_report['columns']}/"
                 f"{shading_report['width']} columns"
-                + (f", {shading_report['clipped']} samples clipped"
+                + (f", {shading_report['clipped']} samples clipped{worst}"
                    if shading_report["clipped"] else "")
             )
         elif shading:
@@ -2080,6 +2211,11 @@ class DirectScanner:
             "exposure_metered": bool(auto_exposure),
             "duration_s": round(time.monotonic() - started, 1),
         }
+        # Only for a scan that did its own metering. The probe passes inside
+        # auto_exposure() are scans too, and attaching this to them would file
+        # the *previous* frame's metering against them.
+        if auto_exposure and self.last_metering is not None:
+            meta["metering"] = self.last_metering
         self._debug_capture(image, meta)
         return image, meta
 
@@ -2202,7 +2338,7 @@ class DirectScanner:
         infrared: bool = True,
         film: str = FILM_NEGATIVE,
         meter: str = METER_EACH,
-        exposure_target: float = 0.7,
+        exposure_target: float = EXPOSURE_TARGET,
         prescan_resolution: int = 300,
         blank_contrast: float = BLANK_CONTRAST,
         drift_warning: int = 240,

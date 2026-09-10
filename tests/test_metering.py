@@ -10,7 +10,10 @@ import numpy as np
 import pytest
 
 from conftest import settings
+from rps7200.bracket import CLIP_START, FULL_SCALE
 from rps7200.direct import (
+    BLUE_RGBI_HEADROOM,
+    EXPOSURE_TARGET,
     FILM_BW,
     FILM_KODACHROME,
     FILM_NEGATIVE,
@@ -159,8 +162,13 @@ def test_the_probe_is_never_infrared(monkeypatch):
 
 
 def test_blue_is_metered_lower_when_an_ir_scan_follows():
-    """Blue returns 2-3.7x brighter in RGBI at the same exposure, so a blue
-    filling the range in RGB clips in RGBI."""
+    """Blue returns about 5x brighter in RGBI at the same exposure, so a blue
+    filling the range in RGB clips in RGBI.
+
+    Pinned at 4.0 rather than the shipped constant because this test is about
+    the mechanism -- blue moves, red and green do not -- and should not have to
+    change when the measurement does.
+    """
     t = (0.9, 0.7, 0.5)
     rgb = FakeScanner(t, base=(9000, 9000, 9000, 8000)).auto_exposure(
         target=0.6, film=FILM_NEGATIVE, infrared=False, rounds=2)
@@ -251,3 +259,171 @@ def test_a_per_channel_scale_of_ones_asks_for_no_change(scale, unity):
     from rps7200.direct import _is_unity
 
     assert _is_unity(scale) is unity
+
+
+# -- blue's RGBI headroom, and the evidence for the number ------------------
+
+#: What blue actually does, measured from the one matched pair in the library:
+#: 20260909T103542Z (RGB) and 20260909T104022Z_ir (RGBI), same frame 4.7 min
+#: apart. See BLUE_RGBI_HEADROOM.
+MEASURED_BLUE_RATIO = 4.98
+
+
+def _blue_level_after_metering(headroom, target=EXPOSURE_TARGET):
+    """Where blue lands in the RGBI scan when metering used ``headroom``.
+
+    The probe is RGB, so it aims blue at ``target / headroom``; the scan that
+    follows is RGBI, where blue is MEASURED_BLUE_RATIO brighter at the same
+    exposure. Base exposures are the device's own reference, and blue's
+    transmission is chosen so it can reach its aim without the timer clamping.
+    """
+    s = FakeScanner((0.9, 0.7, 0.5), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(
+        target=target, film=FILM_NEGATIVE, infrared=True,
+        infrared_blue_headroom=headroom, rounds=2,
+    )
+    aimed = min(1.0, 6506 * scales[2] / 65535.0 * 0.5)
+    return aimed * MEASURED_BLUE_RATIO
+
+
+def test_the_shipped_blue_headroom_keeps_blue_out_of_the_clipping_knee():
+    """The reason the constant moved from 4.0 to 5.2.
+
+    A CCD goes non-linear before it saturates, which is why bracket.py stops
+    trusting a sample at CLIP_START (0.80 of full scale). Metering must land
+    blue below that in the scan it is metering *for*, not merely in the probe.
+    """
+    landed = _blue_level_after_metering(BLUE_RGBI_HEADROOM)
+    assert landed < CLIP_START / FULL_SCALE, (
+        f"blue lands at {landed:.0%} of full scale in the RGBI scan, past the "
+        f"{CLIP_START / FULL_SCALE:.0%} knee where a sample stops being trusted"
+    )
+
+
+def test_the_old_blue_headroom_overshot_the_knee():
+    """The defect this replaced, kept as a test so it cannot come back quietly.
+
+    4.0 against a true ratio of ~5 put blue at ~87% of full scale where
+    metering aimed for 70% -- and measured on the delivered files it was worse
+    still, 88-96%, because the probe itself lands a little high.
+    """
+    landed = _blue_level_after_metering(4.0)
+    assert landed > CLIP_START / FULL_SCALE, (
+        "4.0 is being asserted to overshoot, but it did not -- if the measured "
+        "ratio has been revised, revise this test with it"
+    )
+    assert landed > _blue_level_after_metering(BLUE_RGBI_HEADROOM)
+
+
+def test_blue_headroom_defaults_to_the_measurement():
+    """The default is the measured value, not a caller's guess."""
+    s = FakeScanner((0.9, 0.7, 0.5), base=(9604, 6506, 6506, 7745))
+    explicit = FakeScanner((0.9, 0.7, 0.5), base=(9604, 6506, 6506, 7745))
+    assert s.auto_exposure(
+        target=0.7, film=FILM_NEGATIVE, infrared=True,
+    ) == pytest.approx(explicit.auto_exposure(
+        target=0.7, film=FILM_NEGATIVE, infrared=True,
+        infrared_blue_headroom=BLUE_RGBI_HEADROOM,
+    ))
+
+
+# -- what the probe measured is kept ---------------------------------------
+
+
+def test_metering_records_what_each_round_measured():
+    """Metering is the one step whose inputs are otherwise thrown away.
+
+    Without this the probe's own error and blue's RGBI ratio cannot be told
+    apart afterwards, which is exactly the position the 4.0 constant left us in.
+    """
+    s = FakeScanner((0.9, 0.7, 0.5), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=0.7, film=FILM_NEGATIVE, infrared=True)
+
+    m = s.last_metering
+    assert m is not None
+    assert m["target"] == 0.7
+    assert m["infrared"] is True
+    assert m["blue_headroom"] == BLUE_RGBI_HEADROOM
+    assert m["base_exposure"] == [9604, 6506, 6506, 7745]
+    assert m["scales"] == pytest.approx(scales, abs=1e-4)
+    assert m["rounds"], "no round was recorded"
+    for probe in m["rounds"]:
+        assert len(probe["levels"]) == 3
+        assert len(probe["targets"]) == 3
+        # Blue's target is the one that moves, and the record has to show it.
+        assert probe["targets"][2] == pytest.approx(0.7 / BLUE_RGBI_HEADROOM, abs=1e-3)
+
+
+def test_metering_telemetry_is_cleared_before_each_run():
+    """A run that raises must not leave the last frame's numbers behind."""
+    s = FakeScanner((0.9, 0.7, 0.5), base=(9604, 6506, 6506, 7745))
+    s.auto_exposure(target=0.7, film=FILM_NEGATIVE)
+    assert s.last_metering is not None
+
+    boom = FakeScanner((0.9, 0.7, 0.5), base=(9604, 6506, 6506, 7745))
+    boom.last_metering = s.last_metering
+
+    def explode(*a, **kw):
+        raise RuntimeError("the probe failed")
+
+    boom.scan = explode
+    with pytest.raises(RuntimeError):
+        boom.auto_exposure(target=0.7, film=FILM_NEGATIVE)
+    assert boom.last_metering is None, "stale metering survived a failed run"
+
+
+# -- a clipped channel is re-measured, everything else is not ---------------
+
+
+def test_a_clipped_channel_buys_one_more_round():
+    """nkscan's rule: a level at full scale says only that it is somewhere
+    above, so the retreat applied there is a guess and worth confirming.
+
+    Everything else is one proportional step on a linear sensor.
+    """
+    s = FakeScanner((20.0, 20.0, 20.0), base=(60000, 60000, 60000, 8000))
+    s.auto_exposure(target=0.4, film=FILM_NEGATIVE, rounds=2)
+    assert len(s.passes) == 3, (
+        f"a channel still clipped after two rounds took {len(s.passes)} probes"
+    )
+
+
+def test_an_unclipped_meter_stops_at_the_normal_rounds():
+    s = FakeScanner((0.9, 0.7, 0.5), base=(9604, 6506, 6506, 7745))
+    s.auto_exposure(target=0.4, film=FILM_NEGATIVE, rounds=2)
+    assert len(s.passes) == 2, (
+        f"nothing clipped, so the extra round should not have been spent "
+        f"({len(s.passes)} probes)"
+    )
+
+
+def test_the_extra_round_can_be_refused():
+    s = FakeScanner((20.0, 20.0, 20.0), base=(60000, 60000, 60000, 8000))
+    s.auto_exposure(target=0.4, film=FILM_NEGATIVE, rounds=2, max_rounds=2)
+    assert len(s.passes) == 2
+
+
+def test_blue_lands_just_below_the_others_at_any_target():
+    """The headroom divisor is a *ratio*, so blue tracks the target rather
+    than being pinned to one level.
+
+    BLUE_RGBI_HEADROOM sits slightly above the measured ratio, so blue lands a
+    little under wherever red and green land -- deliberately, and by the same
+    proportion whatever the target is.
+    """
+    for target in (0.60, EXPOSURE_TARGET, 0.90):
+        landed = _blue_level_after_metering(BLUE_RGBI_HEADROOM, target=target)
+        assert landed < target, f"blue overshot red and green at target {target}"
+        assert landed > target * 0.85, (
+            f"blue is {landed / target:.0%} of the target at {target}, which is "
+            f"further down than the safety bias intends"
+        )
+
+
+def test_the_shipped_target_is_the_measured_one():
+    """Pinned so a change to it is a deliberate act with evidence behind it."""
+    assert EXPOSURE_TARGET == 0.80
+    from rps7200.bracket import CLIP_START, FULL_SCALE
+    assert EXPOSURE_TARGET <= CLIP_START / FULL_SCALE, (
+        "metering must not aim above the level bracket.py stops trusting"
+    )

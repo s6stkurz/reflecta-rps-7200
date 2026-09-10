@@ -241,7 +241,7 @@ device default and CyberView never touches it.
 `infrared` parameter does **not** choose the probe — the docstring says so outright:
 "Always probes in RGB, never in infrared … `infrared` therefore does not change how the
 probe is taken." The flag says the *scan* will be RGBI, and what it buys is blue's
-headroom: blue returns 2-3.7x brighter in RGBI than in RGB at the same exposure, so
+headroom: blue returns ~5x brighter in RGBI than in RGB at the same exposure, so
 `aims[2]` and `targets[2]` are divided by `infrared_blue_headroom` (4.0).
 
 Passing `infrared=False` from `scan_roll` therefore saved nothing — the probe was already
