@@ -382,3 +382,83 @@ def test_every_level_is_contiguous():
     image = rgbi(200, 400)
     for _factor, array in preview.pyramid(image, 4.0):
         assert array.flags["C_CONTIGUOUS"]
+
+
+# -- counting, for the histogram --------------------------------------------
+
+
+def test_a_histogram_has_a_row_per_channel():
+    assert preview.histogram(rgbi(50, 60)).shape == (4, preview.HISTOGRAM_BINS)
+    assert preview.histogram(rgbi(50, 60)[..., 0]).shape == (1, preview.HISTOGRAM_BINS)
+
+
+def test_the_axis_is_the_range_of_the_file_not_of_the_picture():
+    """A histogram that rescaled itself to what happens to be present would put
+    every frame's brightest pixel at the right-hand edge, and an exposure
+    against the ceiling would look like one that merely used the range."""
+    dark = np.full((40, 40, 3), 1000, np.uint16)
+    counts = preview.histogram(dark)
+    assert counts[0][:8].sum() == 1600, "1000 of 65535 belongs near the left"
+    assert counts[0][-1] == 0, "and nothing belongs at the right"
+
+
+def test_everything_is_counted_once():
+    image = rgbi(40, 50)
+    counts = preview.histogram(image, max_samples=10_000_000)
+    assert counts[0].sum() == 40 * 50
+
+
+def test_an_eight_bit_prescan_is_counted_across_its_own_range():
+    prescan = np.full((20, 20, 3), 255, np.uint8)
+    counts = preview.histogram(prescan)
+    assert counts[0][-1] == 400, "255 of 255 is full scale, not a middling value"
+
+
+def test_subsampling_a_big_frame_does_not_change_its_shape():
+    """Counting a full 3600 dpi frame exactly is 541 ms and every third pixel is
+    52; the shape differs by a fraction of a percent of the tallest bin."""
+    rng = np.random.default_rng(3)
+    big = (rng.normal(30000, 6000, (2000, 2000, 1)).clip(0, 65535)).astype(np.uint16)
+    whole = preview.histogram(big, max_samples=10_000_000).astype(float)
+    sampled = preview.histogram(big, max_samples=200_000).astype(float)
+    whole /= whole.sum()
+    sampled /= sampled.sum()
+    assert np.abs(whole - sampled).max() < 0.002
+
+
+def test_clipping_counts_both_ends_and_the_approach_to_one():
+    image = np.full((10, 10, 3), 30000, np.uint16)
+    image[0, :, 0] = 0                                   # 10% of red at nothing
+    image[1, :, 2] = 65535                               # 10% of blue at full
+    image[2, :, 2] = 65000                               # 10% more of blue near it
+    at_nothing, at_full, near_full = preview.clipping(image).T
+    assert at_nothing[0] == pytest.approx(0.10)
+    assert at_full[2] == pytest.approx(0.10)
+    assert near_full[2] == pytest.approx(0.20), "near full includes what is at it"
+    assert at_full[1] == 0 and at_nothing[1] == 0
+
+
+def test_clipping_is_exact_and_not_sampled():
+    """It is the number that has to be trusted, so it looks at every pixel."""
+    image = np.full((300, 300, 1), 30000, np.uint16)
+    image[0, 0, 0] = 65535                               # one pixel in ninety thousand
+    assert preview.clipping(image)[0][1] == pytest.approx(1 / 90000)
+
+
+def test_the_two_top_end_numbers_are_different_questions():
+    """`20260828T010052Z` is kept as a record of a metering error, and TODO.md
+    puts its blue saturation at 2.07%. Exactly-full-scale on the same frame is
+    1.67%: one is information already destroyed, the other is a warning, and
+    neither number is wrong."""
+    image = np.full((1000, 100, 1), 30000, np.uint16)
+    image[:20] = 65535                                   # 2% at full scale
+    image[20:40] = 65100                                 # 2% near it
+    _, at_full, near_full = preview.clipping(image).T
+    assert at_full[0] == pytest.approx(0.02)
+    assert near_full[0] == pytest.approx(0.04)
+    assert near_full[0] > at_full[0]
+
+
+def test_full_scale_knows_the_two_kinds_of_pixel():
+    assert preview.full_scale(np.dtype(np.uint8)) == 255
+    assert preview.full_scale(np.dtype(np.uint16)) == 65535

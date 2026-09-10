@@ -179,6 +179,80 @@ def normalise(
     return out[..., 0] if flat else out
 
 
+#: Buckets a histogram is drawn with. 256 across a 16-bit range groups 256
+#: values into each, which is finer than a screen can show and coarse enough to
+#: count quickly.
+HISTOGRAM_BINS = 256
+
+
+def full_scale(dtype) -> int:
+    """The largest value this kind of pixel can hold."""
+    return 255 if dtype == np.uint8 else 65535
+
+
+#: Pixels a histogram counts per channel before it starts skipping. Counting a
+#: full 3600 dpi frame takes 541 ms and every third pixel takes 52; the shape
+#: differs by 0.028% of the tallest bin, which is nothing to look at. Clipping
+#: is *not* subsampled -- that number has to be trusted.
+HISTOGRAM_SAMPLES = 2_000_000
+
+
+def histogram(
+    image: np.ndarray,
+    bins: int = HISTOGRAM_BINS,
+    max_samples: int = HISTOGRAM_SAMPLES,
+) -> np.ndarray:
+    """Per-channel counts across the whole range of the type, shape `(C, bins)`.
+
+    Across the *type's* range, not the picture's: a histogram that rescaled
+    itself to what happens to be present would put every frame's brightest pixel
+    at the right-hand edge and make an exposure against the ceiling look like an
+    exposure that merely used the range. Where the values sit is the thing being
+    asked about.
+    """
+    planes = image if image.ndim == 3 else image[..., None]
+    step = 1
+    while planes[::step, ::step, 0].size > max_samples:
+        step += 1
+    sampled = planes[::step, ::step]
+    top = full_scale(planes.dtype)
+    shift = max(1, (top + 1) // bins)
+    return np.stack([
+        np.bincount(sampled[..., c].ravel() // shift, minlength=bins)[:bins]
+        for c in range(planes.shape[2])
+    ])
+
+
+#: How close to full scale still counts as nearly there. A pixel at 99% is not
+#: clipped and is recoverable, but a lot of them means the next frame might be.
+NEAR_FULL = 0.99
+
+
+def clipping(image: np.ndarray) -> np.ndarray:
+    """Per-channel fractions `(at nothing, at full scale, near full scale)`.
+
+    The numbers a stretched preview cannot show: a channel against its ceiling
+    looks the same on screen as one that merely filled the range, and on this
+    scanner blue reaches the ceiling first.
+
+    Two figures at the top end because they answer different questions. *At*
+    full scale is information already destroyed. *Near* it is a warning, and it
+    is the one TODO.md quotes -- the 2.07% of blue on `20260828T010052Z` is
+    pixels at or above about 65000, where exactly-65535 is 1.67%. Neither
+    number is wrong; they are not the same measurement.
+    """
+    planes = image if image.ndim == 3 else image[..., None]
+    top = full_scale(planes.dtype)
+    near = int(top * NEAR_FULL)
+    size = max(1, planes[..., 0].size)
+    return np.array([
+        [float((planes[..., c] == 0).sum()) / size,
+         float((planes[..., c] == top).sum()) / size,
+         float((planes[..., c] >= near).sum()) / size]
+        for c in range(planes.shape[2])
+    ])
+
+
 def render(
     image: np.ndarray,
     channel: str = "RGB",

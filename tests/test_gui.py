@@ -535,3 +535,37 @@ def test_only_the_overlay_is_cleared_between_frames():
     source = inspect.getsource(gui.ScannerGui._redraw)
     assert 'self.canvas.delete("note")' in source
     assert 'self.canvas.delete("all")' not in source
+
+
+def test_the_histogram_is_measured_off_the_ui_thread():
+    """Counting a full 3600 dpi frame exactly is about a third of a second, and
+    a window that locks up for that long while you wait to be told about
+    clipping is its own kind of unhelpful."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui.on_histogram)
+    assert "threading.Thread" in source
+    assert "self._measured.put" in source
+    assert "self._measured" in inspect.getsource(gui.ScannerGui._pump), (
+        "and the main loop collects it")
+
+
+def test_a_histogram_window_closed_while_measuring_is_not_drawn_into():
+    """The thread finishes whatever happens; the drawing has to notice."""
+    import inspect
+    assert "if not self.alive():" in inspect.getsource(gui._Histogram.show)
+
+
+def test_the_histogram_prefers_the_scans_own_pixels():
+    """And says which it used, because a reduced copy answers a slightly
+    different question about how much is against the ceiling."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._finest_pixels)
+    assert "self._levels" in source
+    assert "the scan's own" in source and "copy" in source
+
+
+def test_infrared_is_drawn_grey():
+    """A measurement, not a colour -- the same reason its preview is not
+    tinted."""
+    assert gui._CHANNEL_INK[3].count(gui._CHANNEL_INK[3][1:3]) == 3, (
+        f"{gui._CHANNEL_INK[3]} should be a neutral grey")
