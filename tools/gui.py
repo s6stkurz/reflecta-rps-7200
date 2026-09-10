@@ -38,7 +38,7 @@ from rps7200.direct import (                              # noqa: E402
 )
 from rps7200.framing import FULL_FRAME                    # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
-from rps7200.mono import to_monochrome                    # noqa: E402
+from rps7200.mono import MONO_CHANNEL, to_monochrome      # noqa: E402
 from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
 from rps7200.session import (                             # noqa: E402
     Calibrate,
@@ -542,8 +542,20 @@ class ScannerGui:
         self.v_mono = tk.BooleanVar(value=False)
         self.c_mono = ttk.Checkbutton(
             box, text="deliver one channel (black and white)",
-            variable=self.v_mono)
+            variable=self.v_mono, command=self._sync_mono_view)
         self.c_mono.pack(anchor="w", pady=2)
+
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=2)
+        self.l_mono_channel = ttk.Label(row, text="channel", width=10)
+        self.l_mono_channel.pack(side="left")
+        self.v_mono_channel = tk.StringVar(value=MONO_CHANNEL)
+        self.b_mono_channel = ttk.Combobox(
+            row, textvariable=self.v_mono_channel, width=6, state="readonly",
+            values=["R", "G", "B"])
+        self.b_mono_channel.pack(side="left")
+        self.b_mono_channel.bind("<<ComboboxSelected>>",
+                                 lambda _e: self._sync_mono_view())
 
         ttk.Label(box, text="exposure").pack(anchor="w", pady=(6, 0))
         self.v_expmode = tk.StringVar(value="auto")
@@ -858,8 +870,33 @@ class ScannerGui:
         cannot tell a B&W scan from a slide by looking at the pixels -- measured
         across this library the two overlap -- so the delivered file has to say
         which it is by its shape. See rps7200/mono.py.
+
+        The controls are greyed out for every other film because reducing a
+        colour negative or a slide to one channel would throw the picture away,
+        not just a redundant copy of it.
         """
-        self.v_mono.set(self.v_film.get() == FILM_BW)
+        bw = self.v_film.get() == FILM_BW
+        self.v_mono.set(bw)
+        state = "normal" if bw else "disabled"
+        self.c_mono.configure(state=state)
+        self.b_mono_channel.configure(state="readonly" if bw else "disabled")
+        self.l_mono_channel.configure(foreground="" if bw else "#999")
+        self._sync_mono_view()
+
+    def _sync_mono_view(self) -> None:
+        """Show what will be delivered.
+
+        A black and white scan goes out as one channel, so the prescan and the
+        scan on screen are that channel -- and `preview.render` draws a single
+        plane grey rather than tinted, so it looks like the photograph rather
+        than like a green separation. The view switch still works: this sets
+        where it starts, it does not take the others away.
+        """
+        if self.v_mono.get():
+            self.v_channel.set(self.v_mono_channel.get())
+        elif self.v_channel.get() != "RGB":
+            self.v_channel.set("RGB")
+        self._redraw_all()
 
     def _sync_infrared(self) -> None:
         """Infrared off and unavailable on film that absorbs it.
@@ -1030,6 +1067,7 @@ class ScannerGui:
             resolution=dpi, infrared=self.v_ir.get(), film=self.v_film.get(),
             auto_exposure=self.v_expmode.get() == "auto",
             exposure_scale=exposure, mono=self.v_mono.get(),
+            mono_channel=self.v_mono_channel.get(),
             notes=self._notes(), tags=self._tags(),
         ))
 
@@ -1064,6 +1102,7 @@ class ScannerGui:
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
             correct=self.v_correct.get(), mono=self.v_mono.get(),
+            mono_channel=self.v_mono_channel.get(),
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),
         ))
@@ -1143,6 +1182,7 @@ class ScannerGui:
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=False,
             correct=self.v_correct.get(), only=tuple(numbers),
             mono=self.v_mono.get(),
+            mono_channel=self.v_mono_channel.get(),
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),
         ))
@@ -1547,7 +1587,8 @@ class ScannerGui:
                 # shape. The entry itself is left alone.
                 full = preview.rotate(
                     tiff.read(str(result.entry / "scan.tif")), result.rotation)
-                tiff.write(path, to_monochrome(full) if mono else full)
+                tiff.write(path, to_monochrome(full, self.v_mono_channel.get())
+                           if mono else full)
                 self._say(f"saved {Path(path).name} at full resolution"
                           + (f", turned {result.rotation}\u00b0"
                              if result.rotation else "")
@@ -1559,7 +1600,8 @@ class ScannerGui:
                 self._say(f"saved {Path(path).name} at full resolution")
         elif result.image is not None:
             turned = preview.rotate(result.image, result.rotation)
-            tiff.write(path, to_monochrome(turned) if mono else turned)
+            tiff.write(path, to_monochrome(turned, self.v_mono_channel.get())
+                             if mono else turned)
             self._say(f"saved {Path(path).name} -- reduced preview, the "
                       "full-resolution file is not filed yet")
 

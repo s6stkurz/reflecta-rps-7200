@@ -602,3 +602,75 @@ def test_starting_part_way_in_is_rewound_past_as_well():
 
 def test_the_rewind_is_never_negative():
     assert gui.rewind_frames([7, 7, 7]) == 0
+
+
+# -- the window itself, where a display allows it ---------------------------
+#
+# The rest of this file tests the window's pure functions, deliberately: a
+# suite that needs a display does not run everywhere. These two need real Tk
+# widgets, because what they check is which controls are greyed out, so they
+# skip rather than fail where there is no display.
+
+
+@pytest.fixture
+def window():
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200.demo import DemoScanner
+    from rps7200.session import ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+
+    gui_mod = load_tool("gui")
+    session = ScanSession(root="/tmp/none", rolls="/tmp/none", verbose=False)
+    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
+    app = gui_mod.ScannerGui(root, session, demo=True)
+    root.update()
+    try:
+        yield app, root
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
+def test_the_monochrome_controls_follow_the_film(window):
+    """Enabled only for black and white, because reducing a colour negative or
+    a slide to one channel throws the picture away rather than a redundant copy
+    of it. And the view follows, so what is on screen is what will be written.
+    """
+    app, root = window
+
+    for film in ("negative", "positive", "kodachrome"):
+        app.v_film.set(film)
+        app._sync_film()
+        root.update()
+        assert app.v_mono.get() is False, film
+        assert str(app.c_mono.cget("state")) == "disabled", film
+        assert str(app.b_mono_channel.cget("state")) == "disabled", film
+        assert app.v_channel.get() == "RGB", film
+
+    app.v_film.set("bw")
+    app._sync_film()
+    root.update()
+    assert app.v_mono.get() is True
+    assert str(app.c_mono.cget("state")) == "normal"
+    assert str(app.b_mono_channel.cget("state")) == "readonly"
+    # A single plane renders grey, so this is what puts a black and white
+    # picture on screen for the prescan and the scan alike.
+    assert app.v_channel.get() == app.v_mono_channel.get()
+
+
+def test_changing_the_monochrome_channel_changes_the_view(window):
+    app, root = window
+    app.v_film.set("bw")
+    app._sync_film()
+    for channel in ("R", "B", "G"):
+        app.v_mono_channel.set(channel)
+        app._sync_mono_view()
+        root.update()
+        assert app.v_channel.get() == channel

@@ -157,3 +157,36 @@ def test_a_colour_scan_keeps_its_three_channels(tmp_path):
     w.finish()
     assert not w.errors, w.errors
     assert tiff.read(str(out)).shape == img.shape
+
+
+def test_the_chosen_channel_reaches_the_file(tmp_path):
+    """The picker is not decoration: each choice must land in the delivered
+    file, or someone comparing channels is comparing the same one."""
+    from rps7200 import tiff
+    from rps7200.session import FrameWriter
+
+    img = np.stack(
+        [np.full((8, 10), v, np.uint16) for v in (1000, 2000, 3000)], axis=-1
+    )
+    for channel, expected in (("R", 1000), ("G", 2000), ("B", 3000)):
+        out = tmp_path / f"{channel}.tif"
+        w = FrameWriter()
+        w.submit(seq=0, number=1, paths=[out], rotate=0, image=img, meta={},
+                 dpi=900, library=None, film=None, tags=[], prescan=None,
+                 inquiry=None, capture={}, mono=True, mono_channel=channel)
+        w.finish()
+        assert not w.errors, w.errors
+        got = tiff.read(str(out))
+        assert got.ndim == 2
+        assert got.flat[0] == expected, f"{channel} delivered {got.flat[0]}"
+
+
+def test_a_single_plane_renders_grey_not_tinted():
+    """What makes the window show a black and white picture rather than a
+    green separation: `preview.render` draws one plane grey."""
+    from rps7200 import preview
+
+    img = scene()
+    rgb = preview.render(img, "G", invert=True)
+    assert np.array_equal(rgb[..., 0], rgb[..., 1])
+    assert np.array_equal(rgb[..., 1], rgb[..., 2])
