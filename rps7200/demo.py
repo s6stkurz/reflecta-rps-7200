@@ -74,6 +74,9 @@ class DemoScanner:
     def __init__(self, root: str | Path = "library", speed: float = SPEED,
                  entry: str | Path | None = None):
         self.root = Path(root)
+        #: The entry chosen for each film, so a prescan and the scan after it
+        #: show one picture rather than two.
+        self._by_film: dict[str, Path | None] = {}
         #: The bytes and calibration behind the last pass. Filled in by
         #: :meth:`_decode`, handed to the session by :meth:`capture_record`.
         self._capture: dict[str, Any] = {
@@ -186,10 +189,11 @@ class DemoScanner:
         }
 
     def prescan(
-        self, resolution: int = 300, frame: Any = None, keep_raw: bool = False
+        self, resolution: int = 300, frame: Any = None, keep_raw: bool = False,
+        film: str = "negative",
     ) -> tuple[np.ndarray, Any]:
         self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
-        stored = self._pair_image("prescan.tif")
+        stored = self._pair_image("prescan.tif", film)
         if stored is not None:
             return stored, None
         image = self._pixels(channels=3)
@@ -226,7 +230,7 @@ class DemoScanner:
             estimate_seconds(resolution, infrared),
             lines=int(resolution * 0.957),
         )
-        image = self._pair_image("scan.tif")
+        image = self._pair_image("scan.tif", film)
         if image is None:
             image = self._pixels(channels=4 if infrared else 3)
         elif not infrared and image.ndim == 3 and image.shape[2] > 3:
@@ -321,6 +325,40 @@ class DemoScanner:
             if lines and self.progress_hook is not None:
                 self.progress_hook(round(total * (i + 1) / steps), total)
 
+    def _source_for(self, film: str) -> Path | None:
+        """The entry to show for this film.
+
+        Setting the film to black and white and being shown a colour negative
+        rendered through its green channel is not a demonstration of anything.
+        The library has real black and white scans in it; this finds one, and
+        remembers it so the prescan and the scan that follows are the same
+        picture rather than two different ones.
+
+        Falls back to the chosen pair, then to anything at all, so a library
+        with no entry of that film still drives the window.
+        """
+        if film in self._by_film:
+            return self._by_film[film]
+
+        best, best_dpi = None, -1
+        for path in self._entries:
+            try:
+                record = json.loads((path / "scan.json").read_text())
+            except (OSError, ValueError):
+                continue
+            scan = record.get("scan") or {}
+            if scan.get("film") != film or not (path / "raw.bin.gz").exists():
+                continue
+            dpi = int(scan.get("resolution_dpi") or 0)
+            # Not the largest: a 3600 dpi frame is 140 MB to decode every pass
+            # and the window is being tried out, not benchmarked.
+            if best is None or abs(dpi - 1800) < abs(best_dpi - 1800):
+                best, best_dpi = path, dpi
+        if best is not None:
+            self._log(f"{film}: showing {best.name} ({best_dpi} dpi)")
+        self._by_film[film] = best or self.pair
+        return self._by_film[film]
+
     def _decode(self, path: Path) -> tuple[np.ndarray, dict[str, Any]] | None:
         """An entry's pixels from its **raw bytes**, not from its TIFF.
 
@@ -373,27 +411,28 @@ class DemoScanner:
             "raw": raw, "raw_layout": layout,
         }
 
-    def _pair_image(self, name: str) -> np.ndarray | None:
-        """The chosen entry's prescan or scan.
+    def _pair_image(self, name: str, film: str = "negative") -> np.ndarray | None:
+        """The picture for this film: its prescan, or its scan.
 
-        The scan is decoded from raw bytes; the prescan is a stored TIFF,
-        because a prescan is filed without its own raw layout.
+        A prescan uses the entry's stored `prescan.tif` where there is one, and
+        otherwise the entry's own scan -- a framing pass and a scan are the same
+        photograph, and showing the right film matters more here than showing
+        the right resolution.
         """
-        if self.pair is None:
+        source = self._source_for(film)
+        if source is None:
             return None
         if name.startswith("prescan"):
-            tif = self.pair / name
-            if not tif.exists():
-                return None
-            try:
-                image = tiff.read(str(tif))
-            except Exception as exc:                     # noqa: BLE001
-                self._log(f"could not read {tif.name}: {exc}")
-                return None
-            self._log(f"{name} from {self.pair.name}  {image.shape}")
-            return image
+            tif = source / name
+            if tif.exists():
+                try:
+                    image = tiff.read(str(tif))
+                    self._log(f"{name} from {source.name}  {image.shape}")
+                    return image
+                except Exception as exc:                 # noqa: BLE001
+                    self._log(f"could not read {tif.name}: {exc}")
 
-        got = self._decode(self.pair)
+        got = self._decode(source)
         if got is None:
             return None
         image, capture = got

@@ -9,6 +9,8 @@ not exist.
 """
 
 
+import json
+
 import numpy as np
 import pytest
 
@@ -17,7 +19,7 @@ from rps7200.demo import DemoScanner
 from rps7200.library import FilmNotes
 
 
-def entry(root, channels=3, lines=6, width=8):
+def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900):
     """A library entry with raw bytes, its TIFF, and nothing corrected."""
     tags = "RGBI"[:channels]
     rows, raw = [], bytearray()
@@ -30,7 +32,7 @@ def entry(root, channels=3, lines=6, width=8):
         [np.array(rows[c::channels]) for c in range(channels)], axis=-1
     ).astype(np.uint16)
     meta = {
-        "resolution_dpi": 900, "channels": channels,
+        "resolution_dpi": dpi, "channels": channels, "film": film,
         "channel_order": list(tags), "width": width, "height": lines,
         "bytes_per_line": width * 2, "depth": 16,
     }
@@ -122,3 +124,50 @@ def test_an_entry_with_no_bytes_falls_back_rather_than_failing(tmp_path):
     image, _ = s.scan(resolution=900, infrared=False)
     s.close()
     assert image.ndim == 3 and image.size > 0
+
+
+def test_it_shows_the_film_that_was_asked_for(tmp_path):
+    """Setting the film to black and white and being shown a colour negative
+    through its green channel demonstrates nothing.
+
+    The library has real black and white scans; the demo has to reach for one.
+    """
+    entry(tmp_path, film="negative", dpi=1800)
+    entry(tmp_path, film="bw", dpi=1800)
+
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    for film in ("negative", "bw"):
+        source = s._source_for(film)
+        assert source is not None, film
+        record = json.loads((source / "scan.json").read_text())
+        assert record["scan"]["film"] == film, (
+            f"asked for {film}, was shown {record['scan']['film']}"
+        )
+    s.close()
+
+
+def test_the_prescan_and_the_scan_are_the_same_picture(tmp_path):
+    """Two different pictures either side of a framing pass would make the
+    frame the operator lined up meaningless."""
+    entry(tmp_path, film="negative")
+    entry(tmp_path, film="bw")
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    pre, _ = s.prescan(resolution=300, film="bw")
+    scan, meta = s.scan(resolution=900, infrared=False, film="bw")
+    s.close()
+    assert meta["film"] == "bw"
+    assert pre.shape[:2] == scan.shape[:2]
+    assert np.array_equal(pre[..., 1], scan[..., 1])
+
+
+def test_a_film_with_nothing_stored_still_drives_the_window(tmp_path):
+    """A library with no slide in it must not stop the demo working."""
+    entry(tmp_path, film="negative")
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, meta = s.scan(resolution=900, infrared=False, film="positive")
+    s.close()
+    assert image.ndim == 3 and image.size > 0
+    assert meta["film"] == "positive"

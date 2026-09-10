@@ -1056,7 +1056,8 @@ class ScannerGui:
         dpi = self._prescan_dpi()
         if dpi is None:
             return
-        self.session.submit(Prescan(resolution=dpi, notes=self._notes(),
+        self.session.submit(Prescan(resolution=dpi, film=self.v_film.get(),
+                                    notes=self._notes(),
                                     tags=self._tags()))
 
     def on_scan(self) -> None:

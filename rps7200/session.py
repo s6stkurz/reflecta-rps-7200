@@ -111,6 +111,10 @@ class Prescan:
     """A 300 dpi RGB framing pass over the whole transport, ~16 s."""
 
     resolution: int = 300
+    #: What is in the transport. A framing pass does not expose for it -- it
+    #: runs at the device's own settings -- but the entry it files should say
+    #: what it was looking at, and the demo picks its picture by it.
+    film: str = "negative"
     notes: FilmNotes = field(default_factory=FilmNotes)
     tags: tuple[str, ...] = ()
 
@@ -533,7 +537,8 @@ class ScanSession:
         self._emit("log", text=summary["summary"])
 
     def _prescan(self, job: Prescan) -> None:
-        image, _ = self._scanner.prescan(resolution=job.resolution, keep_raw=True)
+        image, _ = self._scanner.prescan(
+            resolution=job.resolution, film=job.film, keep_raw=True)
         label = f"prescan {job.resolution} dpi"
         seq = self._deliver(
             "prescan", label, image, {"resolution_dpi": job.resolution}
@@ -546,7 +551,8 @@ class ScanSession:
             number=0,
             kind="prescan",
             image=image,
-            meta={"resolution_dpi": job.resolution, "channel_order": ["R", "G", "B"]},
+            meta={"resolution_dpi": job.resolution, "film": job.film,
+                  "channel_order": ["R", "G", "B"]},
             notes=job.notes,
             tags=tuple(job.tags) + ("gui", "prescan"),
         )

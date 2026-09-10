@@ -1420,6 +1420,7 @@ class DirectScanner:
         resolution: int = 300,
         frame: tuple[int, int, int, int] | None = None,
         keep_raw: bool = False,
+        film: str = FILM_NEGATIVE,
     ) -> tuple[np.ndarray, ScanParameters]:
         """Low-resolution RGB pass over the full transport.
 
@@ -1441,6 +1442,10 @@ class DirectScanner:
             frame=frame or FULL_FRAME,
             shading=False,
             keep_raw=keep_raw,
+            # Does not change the pass -- a framing pass runs at the device's
+            # own settings and meters nothing. It is carried so the entry says
+            # what was in the transport.
+            film=film,
         )
         params = ScanParameters(
             width=meta["width"],
