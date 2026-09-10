@@ -25,6 +25,7 @@ import numpy as np
 
 from . import library, tiff
 from .direct import RollFrame
+from .framing import FULL_FRAME, frame_contrast, registration
 from .session import estimate_seconds
 from .usb_transport import UsbError
 
@@ -71,6 +72,11 @@ class DemoScanner:
         self.last_raw_layout = None
         self._inquiry = _Inquiry()
         self._entries: list[Path] = []
+        #: Entries that kept a prescan, which is what a roll walks. A demo roll
+        #: used to hand back the same picture every frame, so a contact sheet of
+        #: it was six identical thumbnails carrying six identical numbers --
+        #: nothing to pick between, and nothing that would show a wrong pick.
+        self._strip: list[Path] = []
         self._next = 0
         self._position = 0
 
@@ -80,6 +86,7 @@ class DemoScanner:
         self._entries = sorted(
             p.parent for p in self.root.glob("*/scan.json")
         ) if self.root.exists() else []
+        self._strip = sorted(p.parent for p in self.root.glob("*/prescan.tif"))
         if self.pair is None:
             self.pair = best_pair(self.root)
         if self.pair is not None:
@@ -88,6 +95,9 @@ class DemoScanner:
                       "-- the same picture, as if you had just taken both")
         elif self._entries:
             self._log(f"demo mode: {len(self._entries)} stored entries to draw on")
+        if self._strip:
+            self._log(f"a roll walks {len(self._strip)} different stored pictures, "
+                      "so a contact sheet has something to choose between")
         else:
             self._log("no library entries found; showing generated frames instead")
         return self
@@ -218,8 +228,13 @@ class DemoScanner:
                 self._log(f"frame {i}: not chosen, advancing past it")
                 self._work(7.0)
                 continue
-            self._log(f"frame {i}: contrast 0.31, offset +0.04 mm, short by 0.02 mm")
-            prescan, _ = self.prescan()
+            prescan = self._strip_prescan(skip + i)
+            marks = self._marks(prescan)
+            self._log(
+                f"frame {i}: contrast {marks['contrast']:.3f}, "
+                f"offset {marks['offset_mm']:+.2f} mm, "
+                f"short by {marks['shortfall_mm']:.2f} mm"
+            )
             image = meta = None
             if not dry_run:
                 image, meta = self.scan(
@@ -231,7 +246,7 @@ class DemoScanner:
                 image=image,
                 meta=meta or {},
                 prescan=prescan,
-                registration={"offset_mm": 0.04, "shortfall_mm": 0.02, "contrast": 0.31},
+                registration=marks,
             )
             self._work(7.0)                              # the advance
 
@@ -252,6 +267,44 @@ class DemoScanner:
             time.sleep(seconds / self.speed / steps)
             if lines and self.progress_hook is not None:
                 self.progress_hook(round(total * (i + 1) / steps), total)
+
+    def _strip_prescan(self, index: int) -> np.ndarray:
+        """The picture at `index` of the demo strip -- a different one each time.
+
+        A roll is the one place the fixed pair is wrong. Everywhere else the
+        demo shows one picture on purpose, so that a scan can visibly replace
+        the prescan of the same frame; but a strip of one picture repeated is a
+        contact sheet nobody can read, and a wrong pick would look identical to
+        a right one.
+        """
+        self._work(estimate_seconds(300, False), lines=287)
+        if self._strip:
+            entry = self._strip[index % len(self._strip)]
+            try:
+                image = tiff.read(str(entry / "prescan.tif"))
+                self._log(f"frame from {entry.name}")
+                return image
+            except Exception as exc:                     # noqa: BLE001
+                self._log(f"could not read {entry.name}: {exc}")
+        # No stored prescans: test cards, seeded per frame so they still differ.
+        return _test_card(3, index + 1)
+
+    def _marks(self, prescan: np.ndarray) -> dict[str, Any]:
+        """Measure the frame the way the driver does, not with made-up numbers.
+
+        `registration` and `frame_contrast` are the real ones. That is what
+        makes the contact sheet's captions worth reading here: they vary
+        because the pictures vary, and they are computed by the code that will
+        compute them on the hardware.
+        """
+        try:
+            marks = dict(registration(prescan, FULL_FRAME))
+            marks["contrast"] = round(float(frame_contrast(prescan)), 4)
+            return marks
+        except Exception as exc:                         # noqa: BLE001
+            # A stored prescan of an unexpected shape must not end the demo.
+            self._log(f"could not measure this frame: {exc}")
+            return {"offset_mm": 0.0, "shortfall_mm": 0.0, "contrast": 0.0}
 
     def _pair_image(self, name: str) -> np.ndarray | None:
         """One of the chosen entry's own files, or None if there is no pair."""

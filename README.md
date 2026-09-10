@@ -132,6 +132,30 @@ which is the only thing that actually unblocks it; the frame is lost and the
 scanner will almost certainly need a power cycle at its own switch. It asks you
 to type ABORT first.
 
+#### Trying the contact sheet without a scanner
+
+`make run-demo` walks a strip of real stored pictures, so the whole
+survey-and-pick sequence can be exercised and checked with nothing plugged in:
+
+1. **Roll** panel: set *frames* to 6 and tick **dry run**.
+2. Press **Scan roll**. It walks six frames -- a different stored picture each
+   time -- and the contact sheet opens by itself when it reaches the end.
+3. Every cell shows one frame with its number, its contrast and its offset in
+   millimetres. Those numbers come from the real `registration()` and
+   `frame_contrast()` measuring the real pictures, so they differ frame to
+   frame; if every caption reads the same, something is wrong.
+4. Click pictures to untick them, or use **All** / **None**. The footer counts
+   what is chosen and estimates what scanning it would cost.
+5. **Scan chosen frames** asks to rewind five frames and scan the ticked ones.
+   Accept it and watch the log: the frames nobody ticked say *"not chosen,
+   advancing past it"* and are never prescanned.
+6. Close the sheet and press **Contact sheet ...** to get it back.
+
+What is worth checking, because these are the ways it could quietly be wrong:
+the cells are six *different* pictures; the rewind in the dialog is one less
+than the number walked; and only the ticked numbers appear as `frameNN.tif`
+under `rolls/<name>/`, while `survey.json` there still lists all six.
+
 **The contact sheet.** A dry run walks the strip prescanning and advancing only
 -- about 20 seconds a frame -- and opens every picture it found in a grid, with
 its number, its contrast and how far off centre it sits. Tick what is worth
