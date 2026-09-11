@@ -243,6 +243,15 @@ It needs a power cycle afterwards, so avoid these:
   still costs its ~212 s floor. Chromogenic (C-41) B&W is the exception.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
+- **MODE SELECT byte 14, bit 0, can reverse every row of a scan with no
+  signal that it happened.** Bit 0 clear re-homes the carriage before
+  scanning, always normal; bit 0 set skips re-homing, which is free
+  bidirectional speed *except* on a pass that immediately follows another
+  bit-0-set pass, where the read comes back top-and-bottom reversed. This
+  driver sends bit 0 set (`0x21`) on every RGBI scan, unconditionally.
+  `scan_roll` and `auto_exposure` avoid triggering it only because an RGB
+  pass always precedes the RGBI one -- not by design. Confirmed in real
+  prior use, not just on the test ladder: see `docs/byte14-plan.md`.
 - **The gain field is a digital multiplier; it buys nothing.** Measured
   2026-09-10 on a blue ladder 21→39: signal ×1.484, random noise ×1.476, a
   shortfall of 0.53% where an analog gain would have given ~4%. It is safe to

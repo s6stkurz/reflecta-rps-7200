@@ -99,41 +99,52 @@ Observed pairings across all seven captures:
 | `0x80` RGB | 16-bit | `0x20` | 1 |
 | `0x90` RGBI | 16-bit | `0x21` | 9 |
 
-The whole byte is unexplained. This driver sets it as
-`0x21 if passes == ONE_PASS_RGBI else 0x10`, on the belief that it selects the
-channel count, which the table refutes — RGB passes carry `0x21` twenty-six times.
-`set_mode` takes a `byte14` override so it can be driven directly; the default is
-left alone because nothing measured yet says what it should be.
+This driver sets it as `0x21 if passes == ONE_PASS_RGBI else 0x10`, on the
+belief that it selects the channel count, which the table above refutes — RGB
+passes carry `0x21` twenty-six times. `set_mode` takes a `byte14` override so
+it can be driven directly.
 
-**Still unexplained, but no longer uncorrelated: it tracks the line rate.**
-Comparing the three single-stock sessions at 3600 dpi RGB 16-bit — same mode,
-same depth, same geometry to 0.4% — against the rate this driver's own scans
-run at. Thirteen 3600 dpi RGB scans in the library, all of which send
-`byte14 = 0x10`, fit
+**The upper nibble is decoration. Bit 0 is bidirectional scanning, and it
+reverses the frame with no signal that it happened.** Driven directly,
+600 dpi, one fixed frame, fixed exposure (`docs/byte14-plan.md`, run
+2026-09-11):
 
-    ms/line = 2.60 + 4.851e-4 x sum(exposure)        r^2 = 1.0000
+- `0x10` vs `0x20` vs `0x30`, at fixed exposure: **no timing difference at
+  all** — ms/line ratios 1.000 / 1.000 / 1.001. The three-capture correlation
+  an earlier version of this section reported (0.60 against 1.69, a 2.8x
+  spread blamed on the upper nibble) was not this; something else explains
+  those captures, and the upper nibble is cleared of it.
+- **Bit 0 set** (`0x11`/`0x21`/`0x31`) **is ~7-9% faster than bit 0 clear, but
+  only on the second such pass in a row — and that second pass comes back
+  with every row in reverse order.** The first bit-0-set pass after a
+  bit-0-clear one is normal. All six bit-0-clear passes in the ladder, two
+  full pairs and a drift check, were normal without exception. Confirmed as
+  a real reversal and not a decode artefact: flipping the affected pass
+  recovers correlation with its sibling from ~0.51 to ~0.96-0.98 in R, G and
+  B independently, and the trilinear CCD's own lead/trail tag order — R
+  first on every normal pass, B first on every reversed one — agrees with
+  the correlation check on every one of the nine passes checked.
 
-and exactly one of the vendor's three falls on that line — the one that sends
-the same byte 14:
+The mechanism this fits: bit 0 clear forces the carriage to re-home to the
+top before scanning, always a normal top-to-bottom read, at the cost of the
+return trip. Bit 0 set scans from wherever the carriage currently sits
+without re-homing — free, if it is already at the far end from the previous
+pass, which is bidirectional scanning — and the data comes back in whatever
+order it was physically captured, reversed when the carriage started at the
+bottom. This is what the "byte 14 does not control the scan direction"
+finding above already brushed against — bit 0 alternating in lockstep with
+`y0` shifting by one line across a real bidirectional-scanned roll — except
+that direction is the wrong word for what varies; *order* is what reverses,
+not merely a coordinate.
 
-| capture | byte 14 | sum(exposure) | predicted | measured | ratio |
-|---|---|---|---|---|---|
-| `slide.pcapng` | `0x10` | 22616 | 13.6 ms | 14.0 ms | **1.04** |
-| `bw.pcapng` | `0x30` | 143522 | 72.2 ms | 43.0 ms | **0.60** |
-| `300_3600 - Kopie` | `0x20` | 73089 | 38.1 ms | 64.4 ms | **1.69** |
-
-The B&W pass carries the **largest** exposure of the three and runs faster than
-the negative, which is what rules exposure out as the explanation on its own.
-
-`0x30` and `0x31` are new values, absent from the table above, which was written
-before `bw.pcapng` existed. The upper nibble is now seen as 1, 2 and 3.
-
-**One pass per value, so this is a correlation and not a result.** It is worth
-settling because 0.60 against 1.69 is a factor of 2.8 in how long a scan takes,
-and at 3600 dpi that is minutes a frame. `docs/byte14-plan.md` has the ladder
-that would settle it, including the half that matters most: a value that is
-faster is presumably faster for a reason, so the noise has to be measured
-beside the time.
+**This driver's default sends bit 0 set on every RGBI scan** (`0x21`).
+Ordinary use has avoided the reversed case so far by the shape of the code,
+not by design: `scan_roll` always prescans RGB (bit 0 clear) immediately
+before the RGBI capture, and `auto_exposure` always probes RGB first, so the
+RGBI pass is normally the *first* bit-0-set command since the last reset.
+Nothing enforces that. See `docs/byte14-plan.md` for what this means for
+real scans, including one already-filed library entry that carries the
+reversed signature.
 
 ### There is a greyscale mode, and it is not worth using
 
