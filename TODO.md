@@ -67,29 +67,38 @@ bit is not evidence, not a new problem.
   chosen changes what is sent to the device, so `PROTOCOL_REVISION` in
   `rps7200/direct.py` moves with it.
 
-- **Drift in roll scans — the blocker for unattended rolls.** The inter-frame
-  gap intrudes 1 -> 10 -> 36 px over three frames on strip3, about 0.2 mm per
-  advance, cumulative and monotonic. The cause is hardware: the transport
-  counts stepper steps rather than sprocket holes, so it is open loop and does
-  not self-correct. The aperture is 36.5 mm against a 36 mm frame, so ~0.5 mm
-  of slack is eaten in two or three frames. No fine-positioning command exists
-  in anything published — SANE's 26-command set has none and CyberView sends
-  none in 3,955 commands — yet the scanner's own Forward/Reverse keys do
-  vernier adjustment, so the firmware can do it and nothing reaches it over
-  USB. Three untried paths, ranked: (a) the `SLIDE` 0x00/0x01 actions CyberView
-  sends every session that SANE never documented, which do not move the frame
-  counter and occupy the mechanism 1.5-3 s; (b) backlash exploitation with the
-  already-verified `SLIDE_NEXT`/`SLIDE_PREV`, testing whether NEXT-then-PREV
-  returns exactly; (c) detect-and-stop, halting when drift exceeds a threshold
-  so it can be nudged by hand and resumed with `--start-at`.
-  See `docs/whole-roll-plan.md`.
+- ~~**Drift in roll scans.**~~ **Closed 2026-09-06.** The 1 -> 10 -> 36 px
+  strip3 reading that started this was itself a measurement artefact, not the
+  transport: four registration detectors were built chasing it and each was
+  confidently wrong on some frames (column variance fired on the film's own
+  skewed edge; level-vs-aperture is blind mid-strip; brightness-and-flatness
+  fired on a bright picture region; the orange-mask ratio read a cyan subject
+  as no film at all). A full unattended 17-slide pass -- same length as
+  `full_17_strip.pcapng` -- ran clean, every advance sound, judged by eye. The
+  transport counts stepper steps and is open loop, but nothing in seventeen
+  frames asked it to self-correct because nothing had drifted. **Do not add
+  drift correction on the strength of the old reading; there is nothing it
+  would be correcting.**
 
-- **`registration()` cannot see picture position mid-strip.** `film_bounds`
-  keys on film-versus-empty-aperture, so on a continuous strip it always
-  returns the full window and reports 0.00 mm — it reported "no drift" on the
-  exact frames that were drifting. A gap-based detector works, keying on
-  columns that are both bright and flat since the inter-frame gap is unexposed
-  base, and recovers the 1/10/36 px cleanly. Measured, not implemented.
+  Separately, and worth keeping distinct from the above: five `SLIDE`
+  payloads this file once called unidentified turned out to move the film
+  *without* touching the frame counter -- `00 <param> 00 04` forward,
+  `01 <param> 00 04` backward, `0.1057 x param + 0.1662` mm, repeatable to
+  ±0.02 mm. So sub-frame positioning does exist over USB, contrary to what
+  this entry used to say, and `scan_roll(correct=True)` uses it. It is
+  insurance for a roll that drifts for some other reason, not a fix for a
+  problem that turned out not to exist. See `docs/whole-roll-plan.md`'s
+  "Settled" and "Overturned" sections.
+
+- ~~**`registration()` cannot see picture position mid-strip.**~~ **Closed.**
+  `film_bounds` keys on film-versus-empty-aperture and is blind mid-strip, as
+  this entry said -- but `gap_edges` (`rps7200/framing.py`) does not have that
+  blind spot: the inter-frame gap is unexposed base, both brighter than the
+  picture *and* flatter down the column, and keying on both together is what
+  the four failed detectors above each missed by keying on one. It backs
+  `registration_error_mm`, which `_correct_registration` calls -- this is the
+  same mechanism the 17-slide roll ran on, not a standalone measurement
+  nobody wired up.
 - **The gain register is a digital multiplier** (measured 2026-09-10, closed).
   It was the only lever left for blue in plain RGB, where the exposure timer
   runs out with blue still ~30% below red and green. It is honoured, and not
@@ -182,8 +191,19 @@ bit is not evidence, not a new problem.
   nothing gross happens there, though 16 columns at 3600 dpi is only ~2.7 at
   600 and under that measurement's noise. The bar any drift claim must clear is
   1.35-1.52% peak-to-peak, the smooth-field difference between two untouched
-  passes. `filter_offsets` is now recorded on every scan (fc179a6) and is the
-  prime suspect; nobody has looked at the values yet.
+  passes.
+
+  `filter_offsets` is recorded on every real scan now (it was being dropped by
+  `library.save` until 2026-09-11, the same failure `metering` had) and 24
+  entries checked since -- every resolution from 300 to 3600 dpi, both film
+  types, three separate sessions across three days -- read exactly
+  **`[12, 12]`**, matching the one value ever seen in a capture
+  (`bw.pcapng`). **Constant rules it out as the explanation**, not in: a fixed
+  number cannot be why two passes of the *same* frame sometimes shift by 16
+  columns and sometimes by 0. The suspect has an alibi; the offset itself is
+  still unexplained. (Prescans do not carry the field yet -- `_prescan`'s meta
+  in `rps7200/session.py` does not pass it through -- but prescans are framing
+  aids, not the pixels this mystery is about.)
 - **Some library entries are deliberately kept as records of failure.**
   `20260828T010052Z` has blue saturated on 2.07% of pixels from a metering
   error, and `strip6-01..03` are tagged blue-clipped / not-a-reference. Their
