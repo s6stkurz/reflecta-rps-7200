@@ -305,7 +305,9 @@ Three things about it are worth knowing before changing anything:
   apart with red and green confirming the mode was the only variable. One constant for
   every film put 34% of a B&W scan's blue channel at the rail.
 
-- **Metering looks inside the film, and finds it once.** The empty aperture beside a
+- **Metering looks inside the film, and finds it once.** It keeps 90% of the width and
+  90% of the height — **81% of the pass** — of whatever the film detector returned, which
+  is the whole window when no aperture is in view. The empty aperture beside a
   strip is far brighter than any part of a negative -- 143/153/153 against the film's
   34/15/7 on a C-41 prescan -- so metering the whole window lets however much aperture is
   in view set the exposure. Measured on real prescans it read the percentile 5.9-11.1%

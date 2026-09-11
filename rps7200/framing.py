@@ -136,10 +136,17 @@ def film_bounds(
     return x0, y0, x1, y1
 
 
-#: How far inside the film's own edge metering looks, as a fraction of each
-#: axis. The edge is a transition rather than a step -- a few columns of partial
+#: How far inside the film's own edge metering looks, taken off **each** edge of
+#: **each** axis. 0.05 therefore keeps 90% of the width and 90% of the height,
+#: which is **81% of the pass** -- worth stating, because "5%" and "90%" and
+#: "81%" are all true of it and only the last is the area.
+#:
+#: The edge is a transition rather than a step -- a few columns of partial
 #: coverage -- and immediately beside a 35 mm frame is clear base and the
-#: sprocket margin, which are brighter than any part of the picture.
+#: sprocket margin, which are brighter than any part of the picture. So the
+#: inset is for clearing the edge, not for centre-weighting: it is applied to
+#: whatever :func:`film_bounds` returned, which is the whole window when no
+#: aperture is in view.
 METERING_INSET = 0.05
 
 
