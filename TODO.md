@@ -21,6 +21,33 @@ to the power-on that measured it.
 
 ## Known problems
 
+- **An RGBI scan can come back with every row in reverse order, and nothing
+  says so.** Found 2026-09-11 driving `docs/byte14-plan.md`'s byte 14 ladder.
+  Byte 14 bit 0 clear forces the carriage to re-home to the top before
+  scanning; bit 0 set (`0x21`, this driver's unconditional default for every
+  RGBI scan) permits scanning from wherever the carriage already sits, and
+  when that is the bottom -- because the previous pass also had bit 0 set --
+  the read comes back top-and-bottom reversed. Confirmed three separate
+  times on the ladder (every second bit-0-set pass in a row, never the
+  first, never a bit-0-clear pass) and, worse, in real prior use: the
+  tag-lead signature that identifies a reversed pass flags
+  `library/20260828T012327Z_unknown-film_1800dpi_ir` -- a `shading-test`
+  entry, not delivered work, but real and unprompted, nearly three weeks
+  before this was known to be possible. `READ_STATE`, the MODE SELECT
+  acknowledgement and `GET PARAMETERS` are all silent about it; the only
+  tell is the trilinear CCD's own R/G/B lead-trail order in the raw tags,
+  or a correlation check against a known-same frame.
+
+  `scan_roll` and `auto_exposure` avoid the trigger today by the shape of
+  the code -- an RGB prescan or probe always precedes the RGBI capture, so
+  it is normally the first bit-0-set command since the last reset -- but
+  nothing enforces that, and it has never been a designed protection.
+  Not fixed. See `docs/byte14-plan.md` for the candidates: detect the
+  tag-lead signature and correct automatically, force bit 0 clear always
+  and give up the free bidirectional speed, or something else. Whichever is
+  chosen changes what is sent to the device, so `PROTOCOL_REVISION` in
+  `rps7200/direct.py` moves with it.
+
 - **Drift in roll scans — the blocker for unattended rolls.** The inter-frame
   gap intrudes 1 -> 10 -> 36 px over three frames on strip3, about 0.2 mm per
   advance, cumulative and monotonic. The cause is hardware: the transport

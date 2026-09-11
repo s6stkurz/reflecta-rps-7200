@@ -1,10 +1,87 @@
 # Byte 14 of MODE SELECT: does it change the line rate?
 
-## Status: designed, not run. Needs Stefan at the scanner.
+## Status: run 2026-09-11. The question asked was answered "no" — and the
+## ladder found something the question never anticipated.
 
-Written down before the hardware is touched so the scanner time is spent on a
-decided question. **Do not drive this without his go-ahead**, as with
-`docs/analog-gain-plan.md`.
+**The upper nibble has no timing effect.** 0x10, 0x20 and 0x30, at fixed
+exposure, fixed frame, 600 dpi: mean ms/line ratios 1.000 / 1.000 / 1.001. The
+2.8x spread in the captures was not this. Struck from `docs/protocol.md` §4
+below.
+
+**What actually moves is bit 0 -- and it is not a speed control, it is
+bidirectional scanning, and it comes with a hazard this driver has never
+known about.**
+
+A pass sent with bit 0 set (0x11/0x21/0x31) comes back **with its rows in
+reverse order** -- but only when it immediately follows another bit-0-set
+pass. The first such pass in a run is normal; the second is reversed; a third
+in a row was not tested, but the pattern held identically across all three
+values tried (0x11, 0x21, 0x31), each showing exactly this: first rep normal,
+second rep reversed. All six bit0=0 passes, including two full pairs and a
+final drift check, were normal without exception.
+
+Confirmed as a genuine row reversal, not a decode artefact: flipping the
+second pass of each affected pair recovers correlation with its sibling from
+~0.51 (chance) to ~0.96-0.98, in all three visible channels independently
+(R 0.954, G 0.957, B 0.960 on one pair), and the raw tag order itself carries
+the signature -- the trilinear CCD's three physical rows lead and trail in a
+fixed order (R first, B last) on every normal pass and the *opposite* order
+(B first, R last) on every reversed one. Nothing in `READ_STATE`, the MODE
+SELECT acknowledgement, or `GET PARAMETERS` says which happened.
+
+**The physical picture this fits**: byte 14 bit 0 = 0 forces the carriage to
+re-home to the top before scanning, always producing a normal top-to-bottom
+read at the cost of the return trip. Bit 0 = 1 permits scanning from wherever
+the carriage currently sits without re-homing -- free, if the carriage is
+already at the far end from the previous pass, which is exactly bidirectional
+scanning. The data comes back in whatever order it was physically captured,
+which is reversed when the carriage was already at the bottom. This is what
+`docs/protocol.md` already suspected from the vendor captures -- "bit 0
+alternates on every pass in lockstep with the scan frame's y0 shifting by one
+line" -- except that note called it something CyberView *does*, not something
+the byte *causes*. It causes it. CyberView's own y0 shift is presumably
+compensating for the small offset between where a forward and a reverse read
+actually start.
+
+**Why this matters beyond the ladder**: `set_mode`'s default byte 14 is
+`0x21` for every RGBI scan -- bit 0 set, unconditionally, and has been since
+this driver's first version. Ordinary use has not been hitting the reversed
+case by accident, not by design: `scan_roll` always prescans in RGB (bit 0
+clear) immediately before the RGBI capture, and `auto_exposure` always probes
+in RGB first, so the RGBI pass is normally the *first* bit-0-set command
+since the last reset and comes back normal. But nothing enforces that. Two
+consecutive RGBI scans with nothing bit-0-clear between them -- a manual
+`scan(infrared=True)` called twice, a retry after a failure that skips the
+prescan, anything not yet imagined -- would silently deliver a reversed
+frame, with nothing in the file or the metadata to say so.
+
+**It has already happened once, for real.** A library-wide check for the
+tag-lead signature -- cheap, and needs no scanner -- flags
+`library/20260828T012327Z_unknown-film_1800dpi_ir` (tags: clean, rgbi,
+shading-test; 2026-08-28) alongside the three passes from today's ladder that
+are known-reversed by construction. Its siblings from the same session
+(`010052Z`, `011439Z`) do not carry the signature. No same-content sibling
+survives to confirm it by image correlation the way today's ladder passes
+can, so this rests on the tag-lead signature alone -- but that signature is a
+property of the physical sensor geometry, not of picture content, and it
+disagreed with every one of the six intentionally-normal passes and agreed
+with every one of the three intentionally-reversed ones in today's run
+without exception.
+
+**Nothing has been changed in the driver.** The default byte 14 is
+unchanged; the hazard was already live before today, this only found it.
+What to do about it -- detect and correct, force bit 0 clear always and give
+up the free bidirectional speed, something else -- is an open question, not
+answered here. See "What follows", rewritten below.
+
+`tools/byte14_probe.py` is the tool that found this and can reproduce it; it
+also leaves every pass filed, so the run above is fully re-analysable
+offline.
+
+---
+
+Written down before the hardware was touched so the scanner time would be
+spent on a decided question, in the original form below.
 
 ## The question
 
@@ -99,15 +176,33 @@ register looked like free brightness and turned out to be a digital multiplier,
 worth 0.5%. The same test settles this one, and it is the reason the repeats are
 in the ladder rather than being added later.
 
-## What follows from each outcome
+## What actually followed
 
-- **No timing effect.** Record it, leave the default alone, and strike the
-  correlation from `docs/protocol.md` §4 so nobody re-derives it. The finding is
-  the value.
-- **A faster value that costs noise.** Record the trade; do not change the
-  default. It belongs, if anywhere, as an explicit argument with the measurement
-  beside it — not as something metering reaches for on its own.
-- **A faster value that costs nothing.** Then the default is wrong and 3600 dpi
-  scans have been taking longer than they need to. Change it, and re-run
-  `tools/library.py reconstruct`: the byte reaches the device, so
-  `PROTOCOL_REVISION` in `rps7200/direct.py` has to move with it.
+None of the three anticipated outcomes fit. The upper nibble did nothing
+(struck above). Bit 0 is not "a faster value" in the sense the plan meant --
+it is a different scan mode with a correctness hazard, not a speed/noise
+trade to weigh. What follows is now a design question rather than a
+measurement one:
+
+- **Confirm the flagged real entry** — read it back, look at it, decide
+  whether `20260828T012327Z_unknown-film_1800dpi_ir` should be marked or
+  removed. It is tagged `shading-test`, not delivered work, which limits the
+  damage but does not erase the question of what else might carry the same
+  signature undetected in scans the tag check has not been run against yet
+  (the check above covers every entry with raw bytes; nothing outside the
+  library was checked, because nothing outside it can be).
+- **Decide on a defence.** Candidates, not a decision: (a) check the tag-lead
+  signature after every scan and flip automatically if it disagrees with the
+  expected order, cheap and specific to this hazard; (b) force `byte14`'s bit
+  0 clear on every RGBI scan, unconditionally, giving up whatever speed
+  bidirectional scanning was buying and never seeing the case at all; (c)
+  leave it, now that it is documented and `scan_roll`'s own structure already
+  avoids it in the common path. Whichever is chosen changes what the device
+  is sent, so `PROTOCOL_REVISION` in `rps7200/direct.py` moves with it and
+  `tools/library.py reconstruct` has to be re-run.
+- **Given the mechanism, more of the ladder is not obviously worth running.**
+  A third consecutive bit-0-set pass, or trying this at a resolution other
+  than 600, would sharpen the picture but the core finding -- reversal,
+  triggered by consecutive bit-0-set passes, undetectable from the response
+  -- does not need a bigger sample to be true. The open questions now are
+  about response, not about measuring more.
