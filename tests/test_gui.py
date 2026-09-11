@@ -10,6 +10,8 @@ What is tested is what would mislead the operator: the stop button saying which
 of the two things it will do, the option parsing that decides what the scanner
 is asked for, and the resolution guard.
 """
+import time
+
 import pytest
 
 from conftest import load_tool
@@ -676,3 +678,122 @@ def test_changing_the_monochrome_channel_changes_the_view(window):
         app._sync_mono_view()
         root.update()
         assert app.v_channel.get() == channel
+
+
+# -- the two live time estimates ---------------------------------------------
+#
+# _progress() and _update_roll_eta() are driven directly with controlled
+# inputs rather than through a timed demo run: the numbers are real
+# wall-clock math, and asserting on them through actual sleeps would be both
+# slow and flaky. What a live run looks like was checked by hand against the
+# demo backend before this was called done.
+
+
+def test_the_pass_eta_is_empty_until_a_line_has_landed(window):
+    """done == 0 says nothing has been measured yet -- there is no rate to
+    interpolate from, so no number is better than a fabricated one."""
+    app, root = window
+    app._progress(0, 100)
+    assert app.v_progress.get() == "0/100 lines"
+    assert app.v_pass_eta.get() == ""
+
+
+def test_the_pass_eta_appears_once_something_has_been_measured(window):
+    app, root = window
+    app._progress(0, 100)
+    time.sleep(0.05)
+    app._progress(40, 100)
+    assert "left" in app.v_pass_eta.get()
+
+
+def test_the_pass_eta_resets_for_a_new_pass(window):
+    """A different total is a different pass -- 600 dpi does not inherit
+    300's clock, or its first reading would be nonsense."""
+    app, root = window
+    app._progress(0, 300)
+    time.sleep(0.05)
+    app._progress(280, 300)               # nearly done, a slow measured rate
+    slow_start = app._pass_started_at
+
+    app._progress(10, 860)                # a new, larger pass begins
+    assert app._pass_started_at is not None
+    assert app._pass_started_at > slow_start
+    assert app._pass_total_seen == 860
+
+
+def test_the_pass_eta_resets_when_done_goes_backwards(window):
+    """Belt and braces against the same total recurring by coincidence."""
+    app, root = window
+    app._progress(0, 300)
+    app._progress(250, 300)
+    first_start = app._pass_started_at
+    time.sleep(0.02)
+    app._progress(5, 300)                 # same total, but done went backwards
+    assert app._pass_started_at > first_start
+
+
+def test_the_roll_line_is_empty_with_no_roll_running(window):
+    app, root = window
+    assert app._roll_wall_start is None
+    app._update_roll_eta()
+    assert app.v_roll_eta.get() == ""
+
+
+def test_the_roll_line_shows_the_rough_guess_before_any_frame(window):
+    """The general estimate _on_roll would have made, on screen before the
+    first line of the first frame has even come back."""
+    app, root = window
+    app._roll_wall_start = time.monotonic()
+    app._roll_dry = False
+    app._roll_frames_total = 6
+    app._roll_frames_done = 0
+    app._roll_seconds_per_frame = 90.0
+    app._update_roll_eta()
+    text = app.v_roll_eta.get()
+    assert "0/6" in text
+    assert "estimated" in text
+    assert "9m" in text or "540" in text      # 6 x 90s = 540s = 9m 00s
+
+
+def test_the_roll_line_switches_to_measured_after_a_frame(window):
+    """The point of the feature: once real frames exist, the number comes
+    from them rather than from estimate_seconds()."""
+    app, root = window
+    app._roll_wall_start = time.monotonic() - 30.0   # one frame, 30s ago
+    app._roll_dry = False
+    app._roll_frames_total = 3
+    app._roll_frames_done = 1
+    app._roll_seconds_per_frame = 30.0
+    app._update_roll_eta()
+    text = app.v_roll_eta.get()
+    assert "1/3" in text
+    assert "measured" in text
+    assert "estimated" not in text
+
+
+def test_an_open_ended_roll_states_pace_not_a_false_total(window):
+    """No frame count was given, so there is nothing to count down to --
+    saying a total anyway would be inventing one."""
+    app, root = window
+    app._roll_wall_start = time.monotonic() - 10.0
+    app._roll_dry = False
+    app._roll_frames_total = None
+    app._roll_frames_done = 2
+    app._roll_seconds_per_frame = 5.0
+    app._update_roll_eta()
+    text = app.v_roll_eta.get()
+    assert "left" not in text
+    assert "/frame" in text
+    assert "elapsed" in text
+
+
+def test_a_dry_run_says_walked_not_scanned(window):
+    app, root = window
+    app._roll_wall_start = time.monotonic()
+    app._roll_dry = True
+    app._roll_frames_total = 6
+    app._roll_frames_done = 0
+    app._roll_seconds_per_frame = 23.0
+    app._update_roll_eta()
+    assert "walked" in app.v_roll_eta.get()
+    assert "scanned" not in app.v_roll_eta.get()
