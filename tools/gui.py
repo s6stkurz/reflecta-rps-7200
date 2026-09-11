@@ -188,6 +188,21 @@ class ScannerGui:
         self._transport = None               # last frame position the device gave
         self.sheet = None                    # the contact sheet, while it is open
 
+        # -- the two live time estimates -----------------------------------
+        # One pass, interpolated from its own line count -- reset whenever the
+        # total changes (a new pass) or done goes backwards (defensive).
+        self._pass_started_at: float | None = None
+        self._pass_total_seen = 0
+        self._pass_done_seen = 0
+        # The whole roll -- rough from estimate_seconds() until the first
+        # frame lands, then recomputed from the roll's own measured pace.
+        # `_roll_wall_start` being None is what says no roll is running.
+        self._roll_wall_start: float | None = None
+        self._roll_dry = False
+        self._roll_frames_total: int | None = None
+        self._roll_frames_done = 0
+        self._roll_seconds_per_frame = 0.0
+
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         root.geometry(self.remembered["window"].get("geometry") or "1280x860")
         root.minsize(900, 600)
@@ -773,8 +788,21 @@ class ScannerGui:
         parent.add(bottom, weight=2)
         prog = ttk.Frame(bottom, padding=(6, 4))
         prog.pack(fill="x")
+        # Empty and taking no attention outside a roll -- set only from
+        # on_roll() onward, cleared when the roll ends. See _update_roll_eta.
+        self.v_roll_eta = tk.StringVar()
+        ttk.Label(prog, textvariable=self.v_roll_eta,
+                 foreground="#888").pack(anchor="w")
+        prow = ttk.Frame(prog)
+        prow.pack(fill="x")
         self.v_progress = tk.StringVar()
-        ttk.Label(prog, textvariable=self.v_progress).pack(anchor="w")
+        ttk.Label(prow, textvariable=self.v_progress).pack(side="left", anchor="w")
+        # The current pass's own ETA, interpolated from its line count -- see
+        # _progress. Separate label so it can sit flush right regardless of
+        # how long the "done/total lines" text on the left runs.
+        self.v_pass_eta = tk.StringVar()
+        ttk.Label(prow, textvariable=self.v_pass_eta,
+                 foreground="#888").pack(side="right", anchor="e")
         self.progress = ttk.Progressbar(prog, mode="determinate", maximum=1000)
         self.progress.pack(fill="x", pady=2)
         buttons = ttk.Frame(prog)
@@ -1098,6 +1126,18 @@ class ScannerGui:
             self.survey = []
             self._surveying = True
             self._survey_start = start_at
+        # Starts the whole-roll estimate at the same rough figure the dialog
+        # above just showed, so the number on screen does not jump the moment
+        # scanning begins. `frames` is already "how many this run will do" --
+        # scan_roll takes `start_at` as where to resume, not added on top.
+        # The button this handler is behind is disabled while busy, so this
+        # cannot race a job that is still running.
+        self._roll_wall_start = time.monotonic()
+        self._roll_dry = dry
+        self._roll_frames_total = frames or None
+        self._roll_frames_done = 0
+        self._roll_seconds_per_frame = per
+        self._update_roll_eta()
         self.session.submit(Roll(
             frames=frames or None, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
@@ -1328,6 +1368,10 @@ class ScannerGui:
             self._handle(event)
             if not self._alive:
                 return
+        # Ticks the roll countdown between frames, not only when one lands --
+        # cheap string formatting, and "left" that only moved at frame
+        # boundaries would sit still for minutes at a time.
+        self._update_roll_eta()
         self._later(POLL_MS, self._pump)
 
     def _handle(self, event) -> None:
@@ -1341,12 +1385,33 @@ class ScannerGui:
             if event.busy:
                 self._job = event.text
                 self.v_progress.set(event.text)
+                self.v_pass_eta.set("")
                 self.progress.configure(value=0)
+                # A new job's first pass has not reported a line yet; without
+                # this its ETA would measure against whatever pass the last
+                # job left behind, for however long a calibration or a
+                # prescan runs before the next "progress" event resets it.
+                self._pass_started_at = None
+                self._pass_total_seen = 0
+                self._pass_done_seen = 0
             self._set_busy(event.busy)
         elif event.kind == "progress":
             self._progress(event.done, event.total)
         elif event.kind == "result":
             self._add_result(event.result)
+            # One of these two kinds is the "this frame is done" signal,
+            # depending on which the roll actually produces -- a dry run
+            # never delivers a "frame" result, only "prescan". Recomputes
+            # the per-frame pace from the roll's own measured average rather
+            # than trusting the first frame alone, so it keeps refining as
+            # the roll continues rather than freezing after frame 1.
+            done_kind = "prescan" if self._roll_dry else "frame"
+            if (self._roll_wall_start is not None
+                    and event.result.number and event.result.kind == done_kind):
+                self._roll_frames_done = event.result.number
+                elapsed = time.monotonic() - self._roll_wall_start
+                self._roll_seconds_per_frame = elapsed / self._roll_frames_done
+                self._update_roll_eta()
         elif event.kind == "transport":
             self.v_position.set("frame position: ?" if event.done < 0
                                 else f"frame position: {event.done}")
@@ -1358,7 +1423,10 @@ class ScannerGui:
                     r.entry = Path(event.text)
         elif event.kind == "finished":
             self.v_progress.set(f"{event.text} -- done")
+            self.v_pass_eta.set("")
             self.progress.configure(value=1000)
+            self._roll_wall_start = None
+            self.v_roll_eta.set("")
             if self._surveying:
                 self._surveying = False
                 self.b_sheet.configure(
@@ -1371,8 +1439,11 @@ class ScannerGui:
             # rest of a roll would arrive unseen.
             self._say(event.text)
             self.v_progress.set(event.text)
+            self.v_pass_eta.set("")
             self.v_caption.set(event.text)
             self.progress.configure(value=0)
+            self._roll_wall_start = None
+            self.v_roll_eta.set("")
             self._set_busy(False)
             self._light("broken")
             if self._surveying:
@@ -1413,9 +1484,66 @@ class ScannerGui:
         self._light("busy" if busy else "idle")
 
     def _progress(self, done: int, total: int) -> None:
-        if total > 0:
-            self.progress.configure(value=int(1000 * done / total))
-            self.v_progress.set(f"{done}/{total} lines")
+        if total <= 0:
+            return
+        now = time.monotonic()
+        # A new pass, structurally rather than by reading any label: its own
+        # total-lines differs from the last one seen, or done has gone back
+        # down. Either resets the clock this pass's ETA is measured against.
+        if total != self._pass_total_seen or done < self._pass_done_seen:
+            self._pass_started_at = now
+        self._pass_total_seen = total
+        self._pass_done_seen = done
+
+        self.progress.configure(value=int(1000 * done / total))
+        self.v_progress.set(f"{done}/{total} lines")
+
+        # Linear interpolation from lines/second so far this pass. Reads think
+        # in chunks (216 lines a request here), so the first callback already
+        # has done > 0 -- the clock above starts at that callback, not at the
+        # pass's true first byte, so an estimate made in the first chunk or two
+        # runs a little fast. It settles as more chunks arrive.
+        eta = ""
+        if done > 0 and done < total:
+            elapsed = now - self._pass_started_at
+            remaining = elapsed * (total - done) / done
+            eta = f"~{_duration(remaining)} left"
+        self.v_pass_eta.set(eta)
+
+    def _update_roll_eta(self) -> None:
+        """The whole-roll line above the per-pass one.
+
+        Two regimes, per the frame count: before any frame has completed,
+        `_roll_seconds_per_frame` is the rough guess `on_roll` made from
+        `estimate_seconds()` -- the same one its own confirmation dialog
+        showed, so the number does not change the moment scanning starts.
+        From the first completed frame on, `_handle` replaces it with the
+        roll's own measured average, and this recomputes from that instead --
+        which is what folds in whatever prescans, metering and advances
+        actually cost on this strip, not an estimate of them.
+        """
+        if self._roll_wall_start is None:
+            self.v_roll_eta.set("")
+            return
+        elapsed = time.monotonic() - self._roll_wall_start
+        per = self._roll_seconds_per_frame
+        done, total = self._roll_frames_done, self._roll_frames_total
+        measured = " (measured)" if done else " (estimated)"
+        verb = "walked" if self._roll_dry else "scanned"
+        if total:
+            remaining = max(0.0, per * total - elapsed)
+            self.v_roll_eta.set(
+                f"roll: {verb} {done}/{total} frames -- about "
+                f"{_duration(per * total)} total{measured}, "
+                f"~{_duration(remaining)} left")
+        else:
+            # No frame count was given -- "as many as there are" -- so there
+            # is nothing to count down to. Say the pace instead of a false
+            # total.
+            self.v_roll_eta.set(
+                f"roll: {verb} {done} frames so far, "
+                f"{_duration(elapsed)} elapsed, ~{_duration(per)}/frame"
+                f"{measured}")
 
     def _say(self, message: str) -> None:
         self.log.configure(state="normal")
