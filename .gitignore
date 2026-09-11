@@ -13,6 +13,10 @@ venv/
 # scan output
 *.tif
 *.tiff
+# the JSON sidecar tools/scan.py writes beside a bare `--out scan.tif`
+# default (out.with_suffix(".json")) -- everything under scans/ is already
+# covered above; this is only the no-flag, throwaway-CLI-run case.
+scan.json
 
 # USB captures - these record traffic from every device on the bus,
 # including keyboard HID reports (i.e. keystrokes). Keep them local.
