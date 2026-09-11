@@ -4,20 +4,39 @@ State at 0.1.0. Grouped by what it needs, because most of the remaining work
 does **not** need the scanner — the library keeps every scan's raw bytes and
 calibration, so decode and correction changes can be re-run offline.
 
-## Waiting on the scanner
+## Confirmed on the hardware (2026-09-11)
 
-Everything here is finished, tested and merged; only a run on the hardware is
-outstanding. None of it blocks anything. One session of about twenty minutes
-covers the lot, and it has to be one session because a shading reference belongs
-to the power-on that measured it.
+All four ran in one power-on, ~15 min total, no failures, scanner healthy
+throughout (idle, unit ready, at position 7 after -- exactly what 3 roll
+advances plus 6 dry-run advances from position 0 predicts). `media_loaded`
+read `False` before the session started with film demonstrably in the gate,
+then `True` after -- another data point for the existing caveat that a clear
+bit is not evidence, not a new problem.
 
-- `tools/scan.py --dpi 600 --bracket 3` — the bracket path end to end. Film
-  loaded. ~4 min calibration plus ~3 min.
-- `tools/scan_roll.py --frames 3 --dpi 600` — the frame writer, which now files
-  each frame on its own thread rather than with the session open and idle. Strip
-  loaded, ~6 min.
-- `tools/scan_roll.py --dry-run --frames 6` — the advance path alone, ~2.5 min.
-- `tools/scan.py --dpi 600 --reuse` — that a cached reference is restored.
+- **`tools/scan.py --dpi 600 --bracket 3`.** Calibrated fresh (22s of data,
+  ~1.66 MB), then three exposures (x1.706, x3.412, x6.824), merged, filed —
+  `library/20260911T094114Z_unknown-film_600dpi` plus `-2`/`-3`, raw bytes
+  kept for all three. The top rung clipped hard on red (100% of what
+  clipped), which is expected -- it is pinned at the exposure ceiling by
+  design -- and the merge fell back to a lower pass for 32% of pixels rather
+  than trusting a clipped sample, which is `bracket.py`'s confidence gate
+  doing its job, not a fault.
+- **`tools/scan_roll.py --frames 3 --dpi 600`.** 3 scanned, 0 failed, 5.0 min.
+  Confirmed the async writer genuinely overlaps scanning rather than only
+  claiming to: the three library entries carry `created` timestamps 93 s and
+  87 s apart (09:43:12, 09:44:45, 09:46:12) -- spread across the roll as it
+  ran, not bunched at the process exit, which is what the old
+  session-held-open-and-idle path would have produced.
+- **`tools/scan_roll.py --dry-run --frames 6`.** 0 scanned (by design), 0
+  failed, 1.4 min, six real prescans with varying contrast (0.084-0.314) --
+  genuine picture content across every position, not an empty transport read
+  six times. Advanced cleanly from position 2 (where the roll above left it)
+  through position 7.
+- **`tools/scan.py --dpi 600 --reuse`.** `loaded shading from
+  calibration/shading.npz` -- no recalibration ran. Filed with 0 samples
+  clipped.
+
+`tools/library.py verify` clean on every entry this session filed.
 
 ## Known problems
 
