@@ -201,6 +201,15 @@ than 3600, which is what oversampling a blur looks like: the same optical
 unsharpness spread over twice as many pixels. It costs 149 s and 320 MB more per
 frame to record that blur in more detail.
 
+**And it cannot be shading-corrected at all**, which was established separately
+and for unrelated reasons — the device will not produce a shading reference
+wider than 5172 columns at any resolution, against a 7200 dpi pass's 10344
+(`docs/7200dpi-plan.md`). `scan()` refuses such a pass rather than ship it
+uncorrected. Two independent arguments, one from the optics and one from the
+calibration hardware, landing on the same conclusion: **do not scan at 7200
+dpi.** The vendor agrees by omission — 7200 dpi appears in none of the nine
+CyberView captures, whose highest resolution is 3600.
+
 ## The infrared floor does not move with resolution
 
 The most useful number here, and it needed no new scanning — timing does not care
