@@ -158,3 +158,79 @@ def test_a_session_that_captured_nothing_records_nothing():
     assert record == {
         "reference": None, "ccd_mask": None, "raw": None, "raw_layout": None
     }
+
+
+# --- a short response is refused, not indexed into -------------------------
+#
+# This wedged the scanner on 2026-09-13. get_gain_offset came back short
+# inside calibrate_shading's read loop -- a loop that catches ScanReadError
+# and would have carried on -- but the short buffer raised IndexError from
+# `d[66]` instead, which is not a ScanReadError, so it escaped the loop,
+# abandoned the calibration mid-read, and cost a power cycle.
+
+
+def test_a_short_gain_offset_response_is_a_scan_error_not_an_indexerror():
+    from rps7200.direct import ScanReadError
+    from rps7200.protocol import SCSI_READ_GAIN_OFFSET
+
+    s = DirectScanner(
+        transport=FakeTransport(replies={SCSI_READ_GAIN_OFFSET: b"\x00" * 40})
+    )
+    s.verbose = False
+    with pytest.raises(ScanReadError, match="expected 123"):
+        s.get_gain_offset()
+
+
+def test_a_full_length_gain_offset_response_still_decodes():
+    from rps7200.protocol import SCSI_READ_GAIN_OFFSET
+
+    blob = bytearray(123)
+    blob[60:62] = (1234).to_bytes(2, "little")
+    blob[72] = 39
+    s = DirectScanner(
+        transport=FakeTransport(replies={SCSI_READ_GAIN_OFFSET: bytes(blob)})
+    )
+    s.verbose = False
+    got = s.get_gain_offset()
+    assert got.exposure[0] == 1234
+    assert got.gain[0] == 39
+
+
+# --- 7200 dpi is refused before it costs anything --------------------------
+
+
+def test_a_7200_dpi_pass_is_refused_without_touching_the_scanner():
+    """The device will not calibrate wider than MAX_SHADING_COLUMNS at any
+    resolution (measured 2026-09-13), and a 7200 dpi frame is twice that. The
+    refusal has to land before the pass: discovering it afterwards spends 5.5
+    minutes of hardware to learn what the frame and resolution already say."""
+    from rps7200.direct import FULL_FRAME, ShadingUnavailable
+    from rps7200.protocol import SCSI_SCAN
+
+    t = FakeTransport()
+    s = DirectScanner(transport=t)
+    s.verbose = False
+    with pytest.raises(ShadingUnavailable, match="cannot be corrected at all"):
+        s.scan(resolution=7200, infrared=False, frame=FULL_FRAME,
+               require_media=False)
+
+    assert not any(op == SCSI_SCAN for op, _ in t.sent), (
+        "the refusal must come before START SCAN, or it costs scanner time"
+    )
+
+
+def test_shading_false_is_still_allowed_at_7200_dpi():
+    """Raw pixels on purpose stays available -- the refusal is about silently
+    shipping uncorrected ones, not about forbidding the resolution."""
+    from rps7200.direct import FULL_FRAME, ShadingUnavailable
+
+    t = FakeTransport()
+    s = DirectScanner(transport=t)
+    s.verbose = False
+    try:
+        s.scan(resolution=7200, infrared=False, frame=FULL_FRAME,
+               shading=False, require_media=False)
+    except ShadingUnavailable:  # pragma: no cover
+        pytest.fail("shading=False must not be refused")
+    except Exception:
+        pass  # the fake cannot serve a real pass; only the refusal matters here

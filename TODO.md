@@ -232,16 +232,17 @@ bit is not evidence, not a new problem.
   on a quiet host and one gzipping in the background, so warm-up cannot look
   like an effect. ~5 minutes, nothing touches the transport.
 
-- **Calibrating at 7200 dpi.** `calibrate_shading` used to hardcode 3600 dpi
-  because that is the only resolution any capture -- vendor or ours -- has
-  ever calibrated at; it now takes `resolution`, and `scan()` calls it
-  automatically before a pass whose width the current reference cannot cover
-  (7200 dpi against a 3600 dpi reference, the common case, but also a
-  restarted session with none at all). If it still cannot cover the pass
-  afterwards, `scan()` raises `ShadingUnavailable` rather than the old silent
-  raw-pixel return. **The 7200 dpi calibration MODE SELECT itself has never
-  been sent to the device -- this is an untested combination and needs a
-  session with Stefan before it is trusted.** See `docs/7200dpi-plan.md`.
+- **~~Calibrating at 7200 dpi~~ -- answered on the hardware 2026-09-13, and
+  the answer is no.** The device declares the same shading descriptor at
+  7200 dpi as at 3600 -- `pixels_per_line=10344` *bytes*, so 5172 columns --
+  and calibrates 5172 columns however it is asked. A 10344-column pass
+  therefore cannot be corrected from the scanner's own reference at all.
+  `MAX_SHADING_COLUMNS` records the ceiling and `scan()` refuses such a pass
+  before running it. Mapping output column *j* to calibration column *j // 2*
+  was the obvious rescue and was measured offline against both stored 7200 dpi
+  entries: it does nothing, because the artefact is a difference *between* the
+  column parities and that mapping gives both the same correction. See
+  `docs/7200dpi-plan.md`.
 
 - **~~The 7200 dpi shading guard~~ -- done, offline-verified.** Was: the CCD
   mask covers 5172 columns and a 7200 dpi pass is 10344 wide, so the
@@ -255,6 +256,17 @@ bit is not evidence, not a new problem.
 
 ## Specced but not built
 
+- **A 7200 dpi shading reference from an ordinary pass** —
+  `docs/7200dpi-plan.md`. The device caps its *calibrate-mode* reference at
+  5172 columns, but an ordinary **scan** at 7200 dpi over `CALIBRATION_FRAME`
+  — the lower transport, light path clear, film does not reach it — would
+  return 10344 columns of clear-path response through a command the device
+  will run at full width. Not the flat-through-film idea `rps7200/shading.py`
+  warns against: that one is measured through film and at the wrong exposure,
+  and this would be neither. Open: whether the clear-path level at the scan's
+  own exposure is usable, and how it interacts with the stagger realignment.
+  One ~6 minute pass answers both. **Wants Stefan's agreement before being
+  built** — it is a design change, not a fix.
 - **Lossless TIFF compression** — `docs/tiff-compression-plan.md`. Worth 16% on
   every file, lossless. Needs the built-in reader taught deflate + predictor
   first, or files written with tifffile become unreadable without it. The
