@@ -10,7 +10,7 @@ overlap.
 import numpy as np
 import pytest
 
-from rps7200.mono import MONO_CHANNEL, to_monochrome
+from rps7200.mono import MONO_AVERAGE, MONO_CHANNEL, to_monochrome
 
 
 def scene(h=32, w=48, channels=3):
@@ -31,13 +31,31 @@ def test_it_returns_one_plane():
     assert mono.dtype == img.dtype
 
 
-def test_the_default_channel_is_green():
-    """Green and blue measure the same on random noise and are comparably
-    sharp; red is worse on both. Green breaks the tie because it is the filter
-    the hardware's own single-filter mode uses."""
-    assert MONO_CHANNEL == "G"
+def test_the_default_is_the_average_of_the_visible_channels():
+    """The average uses everything the scanner captured and needs no argument
+    about which channel deserves to win. It costs a little sharpness -- red is
+    soft -- for a noise gain under 1%; see the module docstring."""
+    assert MONO_CHANNEL == MONO_AVERAGE
     img = scene()
-    assert np.array_equal(to_monochrome(img), img[..., 1])
+    expected = np.floor(img[..., :3].astype(np.float64).mean(axis=2) + 0.5)
+    assert np.array_equal(to_monochrome(img), expected.astype(img.dtype))
+
+
+def test_the_average_excludes_infrared():
+    """Infrared is the dust plane, not a record of the picture. Averaging it
+    into the photograph would be a different kind of mistake entirely."""
+    img = scene(channels=4)
+    img[..., 3] = 60000            # nothing like the visible channels
+    assert np.array_equal(to_monochrome(img, MONO_AVERAGE),
+                          to_monochrome(img[..., :3], MONO_AVERAGE))
+
+
+def test_the_average_does_not_overflow_its_dtype():
+    """uint16 channels near the ceiling must average, not wrap."""
+    img = np.full((4, 4, 3), 65000, dtype=np.uint16)
+    got = to_monochrome(img, MONO_AVERAGE)
+    assert got.dtype == np.uint16
+    assert got.max() == 65000
 
 
 @pytest.mark.parametrize("channel,index", [("R", 0), ("G", 1), ("B", 2)])
@@ -140,7 +158,10 @@ def test_a_black_and_white_scan_is_written_with_one_channel(tmp_path):
 
     back = tiff.read(str(out))
     assert back.ndim == 2, f"delivered file has shape {back.shape}"
-    assert np.array_equal(back, img[..., 1])
+    assert np.array_equal(back, to_monochrome(img, MONO_AVERAGE)), (
+        "the default reduction has to survive the whole delivery path, not "
+        "just to_monochrome"
+    )
 
 
 def test_a_colour_scan_keeps_its_three_channels(tmp_path):
@@ -168,7 +189,8 @@ def test_the_chosen_channel_reaches_the_file(tmp_path):
     img = np.stack(
         [np.full((8, 10), v, np.uint16) for v in (1000, 2000, 3000)], axis=-1
     )
-    for channel, expected in (("R", 1000), ("G", 2000), ("B", 3000)):
+    for channel, expected in (("R", 1000), ("G", 2000), ("B", 3000),
+                              (MONO_AVERAGE, 2000)):
         out = tmp_path / f"{channel}.tif"
         w = FrameWriter()
         w.submit(seq=0, number=1, paths=[out], rotate=0, image=img, meta={},
@@ -179,6 +201,21 @@ def test_the_chosen_channel_reaches_the_file(tmp_path):
         got = tiff.read(str(out))
         assert got.ndim == 2
         assert got.flat[0] == expected, f"{channel} delivered {got.flat[0]}"
+
+
+@pytest.mark.parametrize("choice,view", [
+    (MONO_AVERAGE, "MONO"), ("R", "R"), ("G", "G"), ("B", "B"),
+])
+def test_the_screen_shows_what_the_file_will_carry(choice, view):
+    """The view and the delivered file come from different code paths --
+    `preview.select` and `mono.to_monochrome`. A picker that changes one but
+    not the other looks like it works right up until someone compares two
+    files."""
+    from rps7200 import preview
+
+    img = scene()
+    assert np.array_equal(preview.select(img, view), to_monochrome(img, choice))
+    assert view in preview.channels_available(img)
 
 
 def test_a_single_plane_renders_grey_not_tinted():

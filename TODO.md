@@ -40,8 +40,24 @@ bit is not evidence, not a new problem.
 
 ## Known problems
 
-- **An RGBI scan can come back with every row in reverse order, and nothing
-  says so.** Found 2026-09-11 driving `docs/byte14-plan.md`'s byte 14 ladder.
+- ~~**An RGBI scan can come back with every row in reverse order, and nothing
+  says so.**~~ **Closed 2026-09-13 as won't-fix, by Stefan's decision:** a
+  reversed pass is visible the moment you look at it and flipping it back is
+  trivial, so it does not justify a protocol change. The measurement below
+  stays because it explains the behaviour; what is dropped is the intent to
+  correct it in the driver. Note the two candidate fixes both cost something
+  real -- forcing bit 0 clear gives up the free bidirectional speed on every
+  RGBI pass, and auto-detecting the tag-lead signature adds a decode-time
+  guess to every scan. Neither is worth it to save a flip.
+
+  If this is ever reopened, the thing to check first is whether anything
+  *automated* depends on orientation -- roll framing and `gap_edges` read the
+  picture's position -- because a human flipping a delivered file is not the
+  same as a reversed pass going through registration. It has not bitten, and
+  the trigger is avoided today by the shape of the code, but that is the edge
+  where "the user can flip it" stops being sufficient.
+
+  Found 2026-09-11 driving `docs/byte14-plan.md`'s byte 14 ladder.
   Byte 14 bit 0 clear forces the carriage to re-home to the top before
   scanning; bit 0 set (`0x21`, this driver's unconditional default for every
   RGBI scan) permits scanning from wherever the carriage already sits, and
@@ -61,11 +77,9 @@ bit is not evidence, not a new problem.
   the code -- an RGB prescan or probe always precedes the RGBI capture, so
   it is normally the first bit-0-set command since the last reset -- but
   nothing enforces that, and it has never been a designed protection.
-  Not fixed. See `docs/byte14-plan.md` for the candidates: detect the
-  tag-lead signature and correct automatically, force bit 0 clear always
-  and give up the free bidirectional speed, or something else. Whichever is
-  chosen changes what is sent to the device, so `PROTOCOL_REVISION` in
-  `rps7200/direct.py` moves with it.
+  `docs/byte14-plan.md` holds the candidate fixes, kept for the record
+  rather than as a plan: both change what is sent to the device, so either
+  would move `PROTOCOL_REVISION` in `rps7200/direct.py`.
 
 - ~~**Drift in roll scans.**~~ **Closed 2026-09-06.** The 1 -> 10 -> 36 px
   strip3 reading that started this was itself a measurement artefact, not the
@@ -142,26 +156,31 @@ bit is not evidence, not a new problem.
   channel", and that reaches the scan, the roll and Save as -- including the
   branch that used to copy the entry's three-channel file over verbatim.
 
-- **Black and white comes out as an RGB file, and nothing converts it.** The
-  hardware has no black and white mode worth using -- `passes = 0x04` is the
-  green filter alone, returns untagged PIXEL-format data our deinterleave
-  cannot read, and still costs a full colour pass (`docs/protocol.md`).
-  CyberView does the same thing: `captures/bw.pcapng` is eight passes and every
-  one is `0x80` RGB.
+- ~~**Black and white comes out as an RGB file, and nothing converts it.**~~
+  **Built.** The hardware has no black and white mode worth using -- `passes =
+  0x04` is the green filter alone, returns untagged PIXEL-format data our
+  deinterleave cannot read, and still costs a full colour pass
+  (`docs/protocol.md`). CyberView does the same: `captures/bw.pcapng` is eight
+  passes and every one is `0x80` RGB. So the conversion is a host-side step,
+  and `rps7200/mono.py` is that step.
 
-  So the conversion is a host-side step. **It is not an average**, which was
-  the obvious guess and is wrong: the grain in a silver emulsion is the same
-  grain in all three channels, so it does not average out, and a plain mean
-  measured 5.6-22.4% *worse* than the best single channel across three
-  resolutions.
+  **What is delivered is the average of the visible channels**, with R, G and
+  B offered beside it — `tools/scan.py --mono-channel`, and the picker in the
+  window. Infrared is never averaged in: it is the dust plane, not a record of
+  the picture. The library still files all three channels with the raw bytes,
+  so the choice is a delivery decision and never a destructive one.
 
-  **Blue is the cleanest channel**, from repeat pairs at 900 dpi -- random noise
-  per unit signal 2.7 against green 3.0 and red 3.7. A single pass says the
-  opposite, because red reads low at the dense *and* the thin end, which is
-  softness rather than cleanliness. Only the repeat pair separates them.
-
-  Not started. It must be optional and must not overwrite the three-channel
-  file -- a merged channel cannot be un-merged.
+  This entry used to say the conversion was "not started" and to argue for a
+  single channel; both are superseded. The measurements behind the argument
+  still stand and are in `rps7200/mono.py`'s docstring — averaging gains under
+  1% on what the eye sees, because random noise is only 12-18% of the
+  high-frequency content and grain is the same grain in all three channels;
+  and red is soft, so averaging it in costs a little real detail. The average
+  is the default anyway, because it uses everything the scanner captured and
+  needs no argument about which channel deserves to win. **If you are picking
+  one, pick green or blue** — they are indistinguishable on random noise
+  (1.548% against 1.554% in the densest tenth) while red is worse on both
+  counts.
 
 - **How much brighter blue comes back in RGBI depends on the film.** Two
   matched pairs, each the same frame in both modes minutes apart, with red and

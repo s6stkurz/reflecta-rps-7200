@@ -38,7 +38,12 @@ from rps7200.direct import (                              # noqa: E402
 )
 from rps7200.framing import FULL_FRAME                    # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
-from rps7200.mono import MONO_CHANNEL, to_monochrome      # noqa: E402
+from rps7200.mono import (                                 # noqa: E402
+    MONO_AVERAGE,
+    MONO_CHANNEL,
+    MONO_CHOICES,
+    to_monochrome,
+)
 from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
 from rps7200.session import (                             # noqa: E402
     Calibrate,
@@ -567,7 +572,7 @@ class ScannerGui:
         self.v_mono_channel = tk.StringVar(value=MONO_CHANNEL)
         self.b_mono_channel = ttk.Combobox(
             row, textvariable=self.v_mono_channel, width=6, state="readonly",
-            values=["R", "G", "B"])
+            values=list(MONO_CHOICES))
         self.b_mono_channel.pack(side="left")
         self.b_mono_channel.bind("<<ComboboxSelected>>",
                                  lambda _e: self._sync_mono_view())
@@ -921,7 +926,11 @@ class ScannerGui:
         where it starts, it does not take the others away.
         """
         if self.v_mono.get():
-            self.v_channel.set(self.v_mono_channel.get())
+            # "avg" is not a plane, so the view for it is MONO -- the same
+            # average that will be delivered, so the screen and the file
+            # agree whichever setting is chosen.
+            picked = self.v_mono_channel.get()
+            self.v_channel.set("MONO" if picked == MONO_AVERAGE else picked)
         elif self.v_channel.get() != "RGB":
             self.v_channel.set("RGB")
         self._redraw_all()
