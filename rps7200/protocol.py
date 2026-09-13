@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-PROTOCOL_REVISION = 1
+PROTOCOL_REVISION = 2
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
@@ -226,6 +226,16 @@ class NoMediaLoaded(RuntimeError):
 
 class ScanReadError(RuntimeError):
     """The scanner refused a read of image data."""
+
+
+class ShadingUnavailable(RuntimeError):
+    """A pass asked for shading correction and none could be established.
+
+    Raised rather than returning raw pixels: the scanner never corrects its
+    own output, so a silent fallback here is a silent uncorrected scan. Retry
+    with ``shading=False`` to accept raw pixels deliberately, or investigate
+    why calibrating did not produce a wide enough reference.
+    """
 
 
 class EndOfData(ScanReadError):

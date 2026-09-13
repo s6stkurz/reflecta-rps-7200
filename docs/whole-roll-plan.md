@@ -523,5 +523,7 @@ start and writes them back before each frame's metering, so a roll cannot walk s
 brighter.
 
 **Shading on an 8-bit prescan.** `prescan()` asked for shading correction on an 8-bit pass,
-with a reference measured in 16-bit units — subtracting its dark half drives every pixel to
-zero. Nothing called `prescan()` before, so it had never bitten. It is off there now.
+with a reference measured in 16-bit units — subtracting its dark half drove every pixel to
+zero. Nothing called `prescan()` before, so it had never bitten. It was off there for a
+time; `apply_shading` now scales the reference down to the pass's own depth first (see
+`docs/7200dpi-plan.md`), and `prescan()` asks for the correction like every other pass.

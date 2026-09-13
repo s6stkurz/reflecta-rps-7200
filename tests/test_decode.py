@@ -153,3 +153,54 @@ def test_a_missing_channel_is_refused_not_silently_dropped():
 def test_an_empty_stream_is_refused():
     with pytest.raises(ScanReadError):
         DirectScanner._deinterleave(b"", params(), 3)
+
+
+# --- the native 7200 dpi column stagger --------------------------------------
+#
+# Confirmed 2026-09-13 on two unrelated 7200 dpi library entries: even and odd
+# columns correlate best at a shared row lag of 4, not 0 -- the signature of a
+# staggered CCD, two rows of elements offset along the scan direction. Decoded
+# without correction this draws a zigzag, column by column. See
+# `_realign_native_column_stagger`'s docstring.
+
+
+def test_realigning_undoes_a_known_column_stagger():
+    lines = 3
+    h, w = 20, 4
+    true = np.arange(h, dtype=np.uint16)
+    raw = np.zeros((h, w, 1), dtype=np.uint16)
+    raw[:, 0::2, 0] = true[:, None]
+    # Odd columns read the same content, but `lines` rows later in the stream.
+    raw[lines:, 1::2, 0] = true[: h - lines, None]
+
+    aligned = DirectScanner._realign_native_column_stagger(raw, lines=lines)
+
+    assert aligned.shape == (h - lines, w, 1)
+    assert np.array_equal(aligned[:, 0::2, 0], aligned[:, 1::2, 0])
+    assert np.array_equal(aligned[:, 0, 0], true[: h - lines])
+
+
+def test_realigning_by_zero_lines_is_a_no_op():
+    raw = np.arange(24, dtype=np.uint16).reshape(4, 6, 1)
+    aligned = DirectScanner._realign_native_column_stagger(raw, lines=0)
+    assert np.array_equal(aligned, raw)
+
+
+def test_realigning_a_frame_too_short_for_the_stagger_is_refused():
+    raw = np.zeros((3, 4, 1), dtype=np.uint16)
+    with pytest.raises(ValueError):
+        DirectScanner._realign_native_column_stagger(raw, lines=4)
+
+
+# --- predicting a pass's column count, before taking it ----------------------
+
+
+def test_shading_columns_needed_matches_the_3600dpi_calibration():
+    from rps7200.direct import CALIBRATION_FRAME
+    assert DirectScanner._shading_columns_needed(CALIBRATION_FRAME, 3600) == 5172
+
+
+def test_shading_columns_needed_at_7200dpi_is_exactly_double():
+    from rps7200.direct import FULL_FRAME
+    assert DirectScanner._shading_columns_needed(FULL_FRAME, 3600) == 5172
+    assert DirectScanner._shading_columns_needed(FULL_FRAME, 7200) == 10344

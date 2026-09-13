@@ -116,6 +116,7 @@ from .protocol import (
     NoMediaLoaded,
     ScanParameters,
     ScanReadError,
+    ShadingUnavailable,
     Sense,
     Settings,
     State,
@@ -214,6 +215,7 @@ __all__ = [
     "OVER_TARGET_TOLERANCE",
     "ScanParameters",
     "ScanReadError",
+    "ShadingUnavailable",
     "Sense",
     "Settings",
     "ShadingReference",
@@ -1417,6 +1419,69 @@ class DirectScanner:
         height = min(len(planes[c]) for c in order)
         return np.stack([np.array(planes[c][:height]) for c in order], axis=-1)
 
+    #: The only resolution wide enough that adjacent output columns are
+    #: adjacent CCD elements rather than a subsampling of them. Below this,
+    #: one of the two staggered element rows described below is simply never
+    #: read, which is why the stagger has no visible effect at 3600 dpi and
+    #: under -- see :meth:`_realign_native_column_stagger`.
+    NATIVE_COLUMN_STAGGER_DPI = 7200
+
+    #: Measured 2026-09-13 by cross-correlating a 7200 dpi frame's even and
+    #: odd columns against each other, per channel, after removing each
+    #: column's own fixed offset (its mean) so the correlation is about
+    #: picture content and not the ordinary shading pattern. On two unrelated
+    #: entries (different frames, `20260911T103600Z` and `20260911T104244Z`)
+    #: and three crops each, correlation peaks cleanly at lag 4 -- 0.995-0.997
+    #: against 0.95-0.96 at lag 0 -- for every one of R, G and B. This is the
+    #: signature of a staggered linear CCD: two rows of elements, offset from
+    #: each other along the scan direction to pack more columns than one row's
+    #: pitch allows, so odd columns are physically reading the frame this many
+    #: lines later than even ones.
+    NATIVE_COLUMN_STAGGER_LINES = 4
+
+    @staticmethod
+    def _realign_native_column_stagger(
+        image: np.ndarray, lines: int = NATIVE_COLUMN_STAGGER_LINES
+    ) -> np.ndarray:
+        """Undo the even/odd column stagger a native 7200 dpi read comes with.
+
+        Without this, the two interleaved element rows are decoded as if they
+        shared a scan line, which draws every other column shifted up or down
+        against its neighbours -- a zigzag, column by column, that widens with
+        distance from wherever the two happen to agree.
+
+        Realigning costs the last ``lines`` rows of whichever parity leads:
+        there is no data to shift the other parity *into*, so the frame is
+        trimmed rather than padded. At 4 lines out of several thousand this is
+        not worth trading for a seam.
+        """
+        if lines <= 0:
+            return image
+        h = image.shape[0]
+        if h <= lines:
+            raise ValueError(
+                f"frame is only {h} lines; cannot realign a {lines}-line "
+                "column stagger"
+            )
+        aligned = np.empty((h - lines, *image.shape[1:]), dtype=image.dtype)
+        aligned[:, 0::2, ...] = image[: h - lines, 0::2, ...]
+        aligned[:, 1::2, ...] = image[lines:, 1::2, ...]
+        return aligned
+
+    @staticmethod
+    def _shading_columns_needed(
+        frame: tuple[int, int, int, int], resolution: int
+    ) -> int:
+        """Predicted column count for a pass at this frame and resolution.
+
+        Matches :meth:`calibrate_shading`'s own width formula, so ``scan()``
+        can decide *before* physically taking a pass whether the reference
+        already in hand will cover it, rather than discovering the mismatch
+        only after the device has been read.
+        """
+        x0, _, x1, _ = frame
+        return round((x1 - x0 + 1) * resolution / COORD_PER_INCH)
+
     # -- prescan and framing -----------------------------------------------
 
     def prescan(
@@ -1433,18 +1498,20 @@ class DirectScanner:
         infrared -- captures confirm the prescan is always ``passes=0x80`` --
         and exists to find where the picture actually sits.
 
-        Shading correction is off, and has to be: the reference is measured in
-        16-bit units and this pass is 8-bit, so subtracting its dark half would
-        drive every pixel to zero. A framing pass does not need the correction
-        anyway -- it is looking for where the picture stops, not at its
-        colour.
+        Shading is on, like every other pass: the reference is measured in
+        16-bit units and this pass is 8-bit, so applying it unscaled used to
+        drive every pixel to zero -- ``apply_shading`` now scales the whole
+        reference down to the pass's own depth before subtracting the dark
+        half, which is the fix, not skipping the correction. A raw prescan is
+        still a picture shown before calibration is applied, which is exactly
+        what this driver no longer does anywhere.
         """
         image, meta = self.scan(
             resolution=resolution,
             infrared=False,
             depth=DEPTH_8,
             frame=frame or FULL_FRAME,
-            shading=False,
+            shading=True,
             keep_raw=keep_raw,
             # Does not change the pass -- a framing pass runs at the device's
             # own settings and meters nothing. It is carried so the entry says
@@ -1492,6 +1559,7 @@ class DirectScanner:
 
     def calibrate_shading(
         self,
+        resolution: int = 3600,
         timeout: float = 300.0,
         keep_data: bool = False,
         exposure_scale: float | Sequence[float] = 1.0,
@@ -1512,12 +1580,25 @@ class DirectScanner:
         Reconstructed from a capture taken from scanner power-on: this is the
         very first thing the vendor software does once the device is ready, and
         every later scan reuses the result (mode quality 0x0008, "reuse", versus
-        0x0800 here, "calibrate now").
+        0x0800 here, "calibrate now"). The vendor always calibrates at 3600 dpi,
+        whatever resolution scans then follow, which is why that stayed the
+        default here for a long time.
+
+        ``resolution`` widens the pass so a reference can cover a scan the
+        3600 dpi calibration cannot -- 7200 dpi's 10344 columns against 3600's
+        5172. **No capture and no prior session has ever calibrated at
+        anything but 3600 dpi.** Everything below this line is reconstructed
+        from that one resolution and only verified there; a non-default value
+        is exercising an untested combination and should be watched the first
+        time it runs for real, not trusted on the strength of this docstring.
 
         Details that matter, all of which differ from an ordinary scan:
 
-        * frame ``(0, 3431, 10343, 6888)`` -- the lower part of the transport
-        * 3600 dpi, three channels, mode depth 8-bit
+        * frame ``(0, 3431, 10343, 6888)`` -- the lower part of the transport,
+          unrelated to ``resolution``: it is a physical span in the device's
+          own 1/7200" coordinates, and a higher resolution only samples it
+          more finely, the same way an ordinary scan frame does
+        * three channels, mode depth 8-bit
         * ``SLIDE INIT`` carries ``10 01 00 00`` here, not the 0x15/0x16 second
           byte seen elsewhere
         * calibration lines come back **16-bit regardless of the mode depth**:
@@ -1568,7 +1649,7 @@ class DirectScanner:
             self._log(f"calibrating at {settings.describe()}")
 
         self.set_mode(
-            resolution=3600,
+            resolution=resolution,
             passes=ONE_PASS_COLOR,
             depth=DEPTH_8,
             color_format=FORMAT_INDEX,
@@ -1586,8 +1667,14 @@ class DirectScanner:
         # easy to read as columns and be exactly twice wrong. The frame-derived
         # value is the fallback, and the two are compared so a mismatch is
         # visible rather than silent.
+        #
+        # +1: the frame is inclusive of both endpoints, so its span is
+        # x1 - x0 + 1 units. At 3600 dpi this only shows up as which way a
+        # .5 rounds (5171.5 -> 5172, either way); at 7200 dpi there is no
+        # rounding to hide behind and the off-by-one is exact -- 10343
+        # against the 10344 every 7200 dpi pass has actually reported.
         x0, _, x1, _ = CALIBRATION_FRAME
-        width = round((x1 - x0) * 3600 / COORD_PER_INCH)
+        width = round((x1 - x0 + 1) * resolution / COORD_PER_INCH)
         try:
             parms = self.get_shading_parms()
         except (CheckCondition, ScanReadError) as exc:
@@ -1653,7 +1740,10 @@ class DirectScanner:
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
-            mask = self.get_ccd_mask(CCD_MASK_SIZE)
+            # This calibration's own width, not the module constant: the two
+            # only coincide because every calibration before this one ran at
+            # 3600 dpi. A wider pass needs a wider mask read to match.
+            mask = self.get_ccd_mask(width)
         finally:
             self.finish_scan()
 
@@ -2154,9 +2244,15 @@ class DirectScanner:
 
         ``shading`` applies this session's shading reference, which is what
         removes the vertical striping. The scanner measures its per-column
-        response but returns raw pixels, so without a reference -- acquired by
-        :meth:`calibrate_shading`, once per session, as the vendor does at
-        power-on -- the stripes are simply left in.
+        response but returns raw pixels, so this method calibrates -- once
+        per session, as the vendor does at power-on, and again whenever the
+        existing reference is missing or too narrow for this pass, which is
+        every first 7200 dpi request in a session begun at a lower dpi -- and
+        never returns a pass it was asked to correct uncorrected. If it
+        cannot be corrected even after calibrating, it raises
+        :class:`~rps7200.protocol.ShadingUnavailable` rather than hand back
+        raw pixels silently. Pass ``shading=False`` to accept raw pixels on
+        purpose.
         """
         if infrared and not supports_infrared(film):
             # Refused rather than warned. This costs the ~212 s infrared floor
@@ -2225,6 +2321,21 @@ class DirectScanner:
 
         if frame is None:
             frame = FULL_FRAME
+
+        if shading:
+            # Never fall through to raw pixels for lack of a reference wide
+            # enough -- calibrate for *this* pass now rather than later
+            # discovering the mask cannot cover it.
+            needed = self._shading_columns_needed(frame, resolution)
+            if self._shading is None or needed > self._shading.pixels_per_line:
+                reason = (
+                    "no shading reference in this session" if self._shading is None
+                    else f"reference covers {self._shading.pixels_per_line} "
+                         f"columns, this pass needs {needed}"
+                )
+                self._log(f"calibrating before scanning ({reason})")
+                self.calibrate_shading(resolution=resolution)
+
         self.set_scan_frame(*frame)
 
         # Must come after the scan frame. Without it the scanner will not grant
@@ -2265,8 +2376,14 @@ class DirectScanner:
             self.wait_ready()
             # Read per pass, not once: the mask marks which CCD pixels *this*
             # pass samples, which is what keeps the shading columns aligned at
-            # reduced resolutions.
-            ccd_mask = self.get_ccd_mask(CCD_MASK_SIZE)
+            # reduced resolutions. Sized from the active calibration's own
+            # width -- they only coincide with CCD_MASK_SIZE because every
+            # calibration before this one ran at 3600 dpi.
+            mask_size = (
+                self._shading.pixels_per_line
+                if self._shading is not None else CCD_MASK_SIZE
+            )
+            ccd_mask = self.get_ccd_mask(mask_size)
             # Kept for the caller: this pass's mask, not the calibration
             # pass's. They differ -- the mask says which CCD pixels *this*
             # resolution sampled -- so correcting a saved scan later needs
@@ -2294,31 +2411,36 @@ class DirectScanner:
         if advance:
             self.advance()
 
+        if resolution == self.NATIVE_COLUMN_STAGGER_DPI:
+            before = image.shape[0]
+            image = self._realign_native_column_stagger(image)
+            self._log(
+                f"realigned {self.NATIVE_COLUMN_STAGGER_LINES}-line native "
+                f"column stagger: {before} -> {image.shape[0]} lines"
+            )
+
         shading_report = None
-        # Why a pass came back raw, when it was asked to be corrected. Kept
-        # separately from `shading_report`, which library.save reads as "a
-        # correction happened" -- and separately from `shading=False`, which is
-        # a request for raw pixels and not a shortfall at all.
-        #
-        # Six 3600 dpi RGBI frames were filed uncorrectable on 2026-09-09
+        # Set only for a deliberate `shading=False` pass -- library.save reads
+        # it as "raw on purpose", distinct from `shading_report`, which means a
+        # correction happened. `shading=True` no longer has a soft-failure
+        # path: see the raise below. It used to, and that silence was the bug
+        # -- six 3600 dpi RGBI frames were filed uncorrectable on 2026-09-09
         # because a restarted session had no reference and every scan simply
         # logged one line and carried on. Half an hour of scanning, and nothing
         # in the entries said the correction had been wanted.
         shading_skipped = None
-        if (
-            shading
-            and self._shading is not None
-            and params.width > self._shading.pixels_per_line
-        ):
-            # The mask holds one byte per calibration column, so a pass wider
-            # than the calibration cannot be mapped -- at 7200 dpi the image is
-            # 10344 columns against 5172 in the reference. Correcting half the
-            # frame is worse than correcting none.
-            shading_skipped = (
-                f"this pass is {params.width} columns but the reference covers "
-                f"{self._shading.pixels_per_line}"
+        if shading and self._shading is not None and params.width > self._shading.pixels_per_line:
+            # Calibrating for this resolution just above did not produce a
+            # wide enough reference -- an untested combination not cooperating,
+            # or a calibration that itself refused. Refusing the whole pass is
+            # the point: correcting half the frame is worse than correcting
+            # none, and returning either silently is the bug this replaced.
+            raise ShadingUnavailable(
+                f"this pass is {params.width} columns but the reference "
+                f"covers only {self._shading.pixels_per_line}, even after "
+                f"calibrating at {resolution} dpi just now. Pass "
+                "shading=False to accept raw pixels deliberately."
             )
-            self._log(f"shading skipped: {shading_skipped}; returning raw pixels")
         elif shading and self._shading is not None:
             image, shading_report = apply_shading(image, self._shading, ccd_mask)
             # Name the channel, not just the count. Clipping here is almost
@@ -2337,12 +2459,15 @@ class DirectScanner:
                    if shading_report["clipped"] else "")
             )
         elif shading:
-            shading_skipped = "no shading reference in this session"
-            self._log(
-                "*** NO SHADING REFERENCE: these pixels are RAW and can never "
-                "be corrected. Run calibrate_shading() once per session -- the "
-                "scanner does not correct its own output ***"
+            # Calibrating just above did not leave a reference at all -- the
+            # pass itself came back empty (calculate_shading returned None).
+            raise ShadingUnavailable(
+                "no shading reference could be established for this session "
+                "even after calibrating just now. Pass shading=False to "
+                "accept raw pixels deliberately."
             )
+        else:
+            shading_skipped = "shading=False (explicit)"
 
         meta = {
             "resolution_dpi": resolution,
@@ -2355,7 +2480,7 @@ class DirectScanner:
             "depth": 16 if depth == DEPTH_16 else 8,
             "frame": list(frame),
             "width": int(params.width),
-            "height": int(params.lines),
+            "height": int(image.shape[0]),
             "bytes_per_line": int(params.bytes_per_line),
             # Read by get_parameters() and otherwise discarded. Recorded
             # because two passes at an identical frame and dpi have correlated

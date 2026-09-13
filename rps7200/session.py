@@ -573,13 +573,12 @@ class ScanSession:
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
                    mono=wants_mono(job.mono, job.film),
                    mono_channel=job.mono_channel)
-        # Surface it as the job's outcome, not as one log line among hundreds.
-        # A restarted session has no reference and nothing stops it scanning:
-        # six 3600 dpi RGBI frames went out uncorrectable that way, half an
-        # hour of scanning, with the warning scrolled off the top.
-        if meta.get("shading_skipped"):
-            return (f"{label} came back RAW and can never be corrected "
-                    f"({meta['shading_skipped']}) -- calibrate, then rescan")
+        # A pass that wanted correction and could not get one no longer comes
+        # back here at all -- scan() raises ShadingUnavailable instead, which
+        # this job's dispatcher already turns into a surfaced error. There is
+        # nothing left worth flagging on a normal return: the only remaining
+        # reason meta["shading_skipped"] is set is job.shading=False, and that
+        # is the job's own choice, not a shortfall.
         return None
 
     def _move(self, job: Move) -> str | None:

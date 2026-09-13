@@ -69,8 +69,14 @@ re-decoding their stored raw bytes reproduces the stored pixels exactly.
   Metering an IR scan from an RGB probe is therefore fine, and remains what
   CyberView does; a throwaway IR pass is not needed and would cost the 212 s
   floor.
-- The 7200 dpi guard is implemented but untested: the mask covers 5172 columns
-  and a 7200 dpi pass is 10344 wide, so the correction refuses and returns raw.
+- The 7200 dpi guard no longer just refuses: `scan()` now calibrates for the
+  pass in hand before giving up, and `calibrate_shading` takes a `resolution`
+  to make that possible. Whether the device actually cooperates with a
+  calibrate-mode MODE SELECT at 7200 dpi is untested -- no capture, vendor or
+  ours, has ever sent one. See `docs/7200dpi-plan.md`, which also covers a
+  separate, confirmed-and-fixed finding from the same investigation: a native
+  7200 dpi read has its even and odd columns physically offset by 4 scan
+  lines, which is the "zigzag" a 7200 dpi scan showed before this.
 
 ## Context
 
