@@ -275,10 +275,24 @@ bit is not evidence, not a new problem.
   compressed rows to a matrix rather than writing one. No scanner needed. Note
   it will *not* make NegPy faster: it shrinks the file on disk, not the array in
   memory.
-- **The dpi trade-off measurement** — `docs/dpi-tradeoff-plan.md`. Evidence so
-  far says real detail runs out around 26 c/mm (~1340 dpi to sample) and that
-  1800 dpi aliases, pointing at 2400 dpi as the sweet spot. Needs the scanner
-  and about 45 minutes.
+- ~~**The dpi trade-off measurement**~~ — **answered 2026-09-13**, see the
+  "Results" section of `docs/dpi-tradeoff-plan.md`. **RGB: 3600 dpi for
+  quality, 1800 dpi when time matters. RGBI: 3600 dpi, because there
+  resolution is nearly free** — the ~250 s infrared floor dominates, and a
+  twelve-fold resolution increase costs about six seconds.
+
+  The old guess in this entry — "~1340 dpi to sample, 2400 as the sweet spot"
+  — was not what the measurement found, and is superseded. 3600 dpi is the
+  *least* aliased resolution measured, not an over-sample.
+
+  **7200 dpi adds nothing**: in matched 100% crops its edges come out *softer*
+  than 3600, which is what oversampling an optical blur looks like, for 149 s
+  and 320 MB more per frame. That is an independent reason to avoid 7200 dpi,
+  arrived at from the optics rather than from the shading ceiling in
+  `docs/7200dpi-plan.md` — the two agree without sharing an argument.
+
+  Re-runnable with no scanner: `tools/dpi_analysis.py` rebuilds it from stored
+  raw bytes. Worth re-running when the noise floor changes.
 
 ## Improvements identified but not applied
 
