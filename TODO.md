@@ -230,10 +230,16 @@ bit is not evidence, not a new problem.
 - **`tools/scan.py` and `tools/scan_roll.py` both write the three comparison
   TIFFs to the repo root**, so running them together clobbers one another.
 
-- **`calibrate_shading(exposure_scale=...)` is a no-op.** The device self-meters
-  the calibration pass: writing 7540-5108-5108 still produced 9604-6506-6506 on
-  all 40 blocks. Harmless in practice but the parameter looks effective and is
-  not. Delete it or wire it up.
+- ~~**`calibrate_shading(exposure_scale=...)` is a no-op.**~~ **Deleted
+  2026-09-13.** The device self-meters the calibration pass: writing
+  7540-5108-5108 still produced 9604-6506-6506 on all 40 blocks. Harmless in
+  practice, but a parameter that looks effective and is not is worse than no
+  parameter. The read-then-write of gain/offset stays — the vendor does it
+  immediately before this pass — it simply no longer pretends the host chooses
+  the values. Note this is *not* the same as exposure being irrelevant to the
+  reference: a channel calibrated 3x below its scan exposure corrected
+  13.0% -> 1.4%, 6x below 8.2% -> 2.0%, and 10x below got *worse*,
+  10.0% -> 11.2%. The device just does not let the host pick.
 
 - **`apply_shading` silently leaves trailing columns uncorrected** when the CCD
   mask yields fewer used pixels than the image width — it writes only
