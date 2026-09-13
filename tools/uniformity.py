@@ -713,11 +713,16 @@ def cmd_capture(args: argparse.Namespace) -> int:
               "scanner has been power-cycled since it was measured, this is a "
               "different sensor state -- drop --reuse and calibrate again.")
     else:
-        print("\nCalibrating shading at that exposure (3-4 minutes) ...")
+        # Not "at that exposure": the device meters the calibration pass
+        # itself and ignores what the host writes beforehand, so the
+        # exposure_scale this used to pass was a no-op and has been removed.
+        # The exposure above still governs the *scans*, which is what it is
+        # locked for.
+        print("\nCalibrating shading (3-4 minutes) ...")
         scanner = factory()
         try:
             scanner.open()
-            result = scanner.calibrate_shading(exposure_scale=exposure_scale)
+            result = scanner.calibrate_shading()
         finally:
             scanner.close()
         if result["reference"] is None:

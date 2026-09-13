@@ -40,8 +40,9 @@ re-decoding their stored raw bytes reproduces the stored pixels exactly.
   it is the more principled form and costs nothing, not because it helped.
 - Calibrating at the scan's exposure does **not** help: the device meters the
   calibration pass itself and returns the same ~48000 light level whatever is
-  written beforehand. `calibrate_shading(exposure_scale=...)` exists to make
-  that testable; the answer is no.
+  written beforehand. `calibrate_shading(exposure_scale=...)` existed to make
+  that testable; the answer is no, and the parameter has since been removed
+  rather than left looking effective.
 
 ### Three bugs the hardware found
 
@@ -69,14 +70,16 @@ re-decoding their stored raw bytes reproduces the stored pixels exactly.
   Metering an IR scan from an RGB probe is therefore fine, and remains what
   CyberView does; a throwaway IR pass is not needed and would cost the 212 s
   floor.
-- The 7200 dpi guard no longer just refuses: `scan()` now calibrates for the
-  pass in hand before giving up, and `calibrate_shading` takes a `resolution`
-  to make that possible. Whether the device actually cooperates with a
-  calibrate-mode MODE SELECT at 7200 dpi is untested -- no capture, vendor or
-  ours, has ever sent one. See `docs/7200dpi-plan.md`, which also covers a
-  separate, confirmed-and-fixed finding from the same investigation: a native
-  7200 dpi read has its even and odd columns physically offset by 4 scan
-  lines, which is the "zigzag" a 7200 dpi scan showed before this.
+- ~~The 7200 dpi guard~~ **— settled on the hardware 2026-09-13.** The device
+  declares the same descriptor at 7200 dpi as at 3600 (`pixels_per_line=10344`
+  *bytes*, so 5172 columns) and calibrates 5172 columns however it is asked,
+  so **no reference can ever cover a 10344-column pass**. `scan()` refuses such
+  a pass outright now, before spending any scanner time on it.
+  `calibrate_shading` keeps its `resolution` argument, which is what
+  established this. See `docs/7200dpi-plan.md`, which also covers a separate,
+  confirmed-and-fixed finding from the same investigation: a native 7200 dpi
+  read has its even and odd columns physically offset by 4 scan lines, which
+  is the "zigzag" a 7200 dpi scan showed before this.
 
 ## Context
 

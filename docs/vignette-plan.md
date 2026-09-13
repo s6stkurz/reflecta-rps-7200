@@ -250,8 +250,9 @@ Setup, with the transport still empty:
    new order buys: empty is the brightest subject, so anything loaded afterwards is
    darker and nothing can clip. `--film positive` keeps the channels locked together,
    so the balance does not drift between subjects.
-2. **Calibrate shading once** at that exposure (`calibrate_shading(exposure_scale=…)`,
-   `rps7200/direct.py:1720`), save it, and `--reuse` it for every pass afterwards.
+2. **Calibrate shading once** — `calibrate_shading()`, which takes no exposure
+   because the device meters that pass itself and ignores anything the host
+   writes beforehand. Save it, and `--reuse` it for every pass afterwards.
    The calibration frame is the lower transport, which is empty regardless, so this
    also happens before anything is loaded. Then check `meta["shading"]["clipped"]` is
    ~0 on every pass; if not, drop the exposure and redo this step.

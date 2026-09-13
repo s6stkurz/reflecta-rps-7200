@@ -1593,7 +1593,6 @@ class DirectScanner:
         resolution: int = 3600,
         timeout: float = 300.0,
         keep_data: bool = False,
-        exposure_scale: float | Sequence[float] = 1.0,
     ) -> dict[str, Any]:
         """Run the scanner's shading calibration, as the vendor does at startup.
 
@@ -1667,17 +1666,19 @@ class DirectScanner:
             self.cmd_17(1)
         except CheckCondition:
             pass
-        # Calibrate at the exposure the scans will use. The reference
-        # describes the sensor at one integration time and does not carry
-        # across a large change in it: measured on a real frame, a channel
-        # calibrated 3x below its scan exposure corrected 13.0% -> 1.4%, one
-        # 6x below 8.2% -> 2.0%, and one 10x below got WORSE, 10.0% -> 11.2%.
-        # The vendor writes 8277/28645/53160 immediately before this pass --
-        # scanning exposures, not the power-on defaults.
-        settings = self.get_gain_offset().scaled(exposure_scale)
-        self.set_gain_offset(settings)
-        if not _is_unity(exposure_scale):
-            self._log(f"calibrating at {settings.describe()}")
+        # Read and write it back, as the vendor does immediately before this
+        # pass. The values are not ours to choose: the device meters the
+        # calibration pass itself and returns the same ~48000 light level
+        # whatever is written here -- measured 2026-09-10, writing
+        # 7540/5108/5108 still produced 9604/6506/6506 on all 40 blocks. A
+        # `exposure_scale` parameter existed to make that testable and is gone
+        # now that the answer is in: it looked effective and was not.
+        #
+        # Which is not the same as exposure being irrelevant to the reference.
+        # It is not: a channel calibrated 3x below its scan exposure corrected
+        # 13.0% -> 1.4%, one 6x below 8.2% -> 2.0%, and one 10x below got
+        # WORSE, 10.0% -> 11.2%. The device simply does not let the host pick.
+        self.set_gain_offset(self.get_gain_offset())
 
         self.set_mode(
             resolution=resolution,
