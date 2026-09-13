@@ -137,3 +137,29 @@ def test_the_clipped_total_survives_for_stored_sidecars():
     raw = np.full((8, PPL, 3), 20000, dtype=np.uint16)
     _, report = apply_shading(raw, ref)
     assert isinstance(report["clipped"], int)
+
+
+def test_an_eight_bit_pass_is_scaled_to_the_references_own_depth():
+    """The reference is always 16-bit; applying it unscaled to an 8-bit pass
+    subtracts a ~170-count dark floor from samples that top out at 255 and
+    used to drive every one of them to zero -- exactly what happened to
+    `prescan()` before this was fixed."""
+    data, truth = block(170, 47000)
+    ref = calculate_shading(data, PPL)
+
+    scene = np.linspace(2000, 40000, PPL)[None, :, None] * np.ones((32, 1, 3))
+    raw = np.empty_like(scene)
+    for c in range(3):
+        gain = truth[("light", c)] / truth[("light", c)].mean()
+        raw[..., c] = scene[..., c] * gain + truth[("dark", c)]
+    raw16 = np.clip(raw, 0, 65535).astype(np.uint16)
+    raw8 = (raw16 // 257).astype(np.uint8)
+
+    fixed16, _ = apply_shading(raw16, ref)
+    fixed8, report8 = apply_shading(raw8, ref)
+
+    assert not np.all(fixed8 == 0)
+    assert report8["clipped"] == 0
+    # The same scene at both depths should land on the same corrected picture,
+    # once 16-bit units are brought down to 8-bit ones.
+    assert np.median(np.abs(fixed8.astype(float) - fixed16.astype(float) / 257.0)) < 2.0

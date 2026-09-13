@@ -216,6 +216,15 @@ def apply_shading(
     exceeds 1 wherever the lamp falls off, so edge columns reach the ceiling at
     a lower raw value than centre ones, and heavy clipping re-introduces
     banding in the highlights. Lower the exposure if it does.
+
+    ``reference`` is always in 16-bit sensor counts -- calibration lines come
+    back 16-bit regardless of the mode depth that requested them (see
+    ``calibrate_shading``). A pass taken at a narrower depth (an 8-bit prescan)
+    returns samples on that narrower scale, so applying the reference as-is
+    subtracts a ~170-count dark floor from 8-bit samples that top out at 255
+    and drives every one of them to zero. Scaling the whole reference down to
+    the pass's own maxval first fixes the subtraction; the gain is a ratio of
+    reference quantities and is unchanged by a uniform rescale of all of them.
     """
     h, w, nc = image.shape
     if ccd_mask is None:
@@ -225,6 +234,8 @@ def apply_shading(
 
     out = image.copy()
     maxval = np.iinfo(image.dtype).max if np.issubdtype(image.dtype, np.integer) else None
+    # 65535: the calibration pass's own scale, whatever depth this pass is.
+    depth_scale = (maxval / 65535.0) if maxval is not None else 1.0
     # `clipped` stays the total, because every stored sidecar holds a scalar
     # there and reading one back must not become a special case.
     # `clipped_per_channel` is what is actually diagnostic: blue is the only
@@ -240,14 +251,17 @@ def apply_shading(
         if c not in reference.ref:
             report["uncorrected"] += 1
             continue
-        light = reference.ref[c][loc]
+        light = reference.ref[c][loc] * depth_scale
         if c in reference.dark:
-            dark = reference.dark[c][loc]
+            dark = reference.dark[c][loc] * depth_scale
+            dark_mean = reference.dark_mean[c] * depth_scale
+            mean = reference.mean[c] * depth_scale
             span = light - dark
-            gain = np.where(span > 0, (reference.mean[c] - reference.dark_mean[c]) / np.where(span > 0, span, 1.0), 1.0)
+            gain = np.where(span > 0, (mean - dark_mean) / np.where(span > 0, span, 1.0), 1.0)
             vals = (image[:, : loc.size, c].astype(np.float64) - dark) * gain
         else:
-            gain = np.where(light > 0, reference.mean[c] / np.where(light > 0, light, 1.0), 1.0)
+            mean = reference.mean[c] * depth_scale
+            gain = np.where(light > 0, mean / np.where(light > 0, light, 1.0), 1.0)
             vals = image[:, : loc.size, c].astype(np.float64) * gain
 
         if maxval is not None:

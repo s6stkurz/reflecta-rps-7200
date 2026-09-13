@@ -232,9 +232,26 @@ bit is not evidence, not a new problem.
   on a quiet host and one gzipping in the background, so warm-up cannot look
   like an effect. ~5 minutes, nothing touches the transport.
 
-- **The 7200 dpi shading guard.** The CCD mask covers 5172 columns and a
-  7200 dpi pass is 10344 wide, so the correction refuses and returns raw
-  pixels. The code path has never been exercised.
+- **Calibrating at 7200 dpi.** `calibrate_shading` used to hardcode 3600 dpi
+  because that is the only resolution any capture -- vendor or ours -- has
+  ever calibrated at; it now takes `resolution`, and `scan()` calls it
+  automatically before a pass whose width the current reference cannot cover
+  (7200 dpi against a 3600 dpi reference, the common case, but also a
+  restarted session with none at all). If it still cannot cover the pass
+  afterwards, `scan()` raises `ShadingUnavailable` rather than the old silent
+  raw-pixel return. **The 7200 dpi calibration MODE SELECT itself has never
+  been sent to the device -- this is an untested combination and needs a
+  session with Stefan before it is trusted.** See `docs/7200dpi-plan.md`.
+
+- **~~The 7200 dpi shading guard~~ -- done, offline-verified.** Was: the CCD
+  mask covers 5172 columns and a 7200 dpi pass is 10344 wide, so the
+  correction refused and returned raw pixels, unexercised. What that
+  investigation actually found is a **hardware column stagger**: even and odd
+  columns of a native 7200 dpi read are physically offset by 4 scan lines --
+  confirmed by cross-correlating two unrelated 7200 dpi library entries, every
+  channel, correlation peaking cleanly at lag 4 rather than 0. Fixed in
+  `_realign_native_column_stagger`, exercised against the stored raw bytes of
+  both entries. See `docs/7200dpi-plan.md`.
 
 ## Specced but not built
 
