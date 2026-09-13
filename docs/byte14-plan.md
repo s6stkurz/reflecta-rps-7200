@@ -70,9 +70,20 @@ without exception.
 
 **Nothing has been changed in the driver.** The default byte 14 is
 unchanged; the hazard was already live before today, this only found it.
-What to do about it -- detect and correct, force bit 0 clear always and give
-up the free bidirectional speed, something else -- is an open question, not
-answered here. See "What follows", rewritten below.
+
+**Closed 2026-09-13 as won't-fix, by Stefan's decision.** A reversed pass is
+obvious on sight and flipping it back is trivial, so it does not justify a
+protocol change. Both candidate fixes cost something real and permanent --
+forcing bit 0 clear surrenders the free bidirectional speed on every RGBI
+pass, and detecting the tag-lead signature adds a decode-time guess to every
+scan -- to save a flip. The candidates below are kept as a record of what was
+considered, not as a plan.
+
+The one thing that would reopen it: something *automated* depending on
+orientation. Roll framing and `gap_edges` read where the picture sits, and a
+human flipping a delivered file is not the same as a reversed pass going
+through registration. It has not bitten, and `scan_roll`/`auto_exposure`
+avoid the trigger today by the shape of the code rather than by design.
 
 `tools/byte14_probe.py` is the tool that found this and can reproduce it; it
 also leaves every pass filed, so the run above is fully re-analysable

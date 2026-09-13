@@ -20,11 +20,22 @@ from functools import lru_cache
 
 import numpy as np
 
+from .mono import MONO_AVERAGE, to_monochrome
+
 #: The views a channel selector can offer. "IR" needs a four-channel pass;
 #: everything else works on any scan or prescan.
-CHANNELS = ("RGB", "R", "G", "B", "IR")
+#: "MONO" is not a plane the sensor has: it is the average of the visible
+#: three, which is what a black and white scan is *delivered* as by default
+#: (see :mod:`rps7200.mono`). It exists as a view so the screen can show what
+#: will actually come out of the file, rather than a channel standing in for
+#: it.
+CHANNELS = ("RGB", "MONO", "R", "G", "B", "IR")
 
 _PLANE = {"R": 0, "G": 1, "B": 2, "IR": 3}
+
+#: How many leading channels "MONO" averages. Kept equal to
+#: :data:`rps7200.mono._VISIBLE` by the test that pins the two together.
+_MONO_VISIBLE = 3
 
 #: Long side of the working copy a session keeps in memory per scan. Big enough
 #: to fill a canvas, small enough that a roll does not: at 3600 dpi the frame it
@@ -97,20 +108,40 @@ def channels_available(image: np.ndarray) -> tuple[str, ...]:
     the operator wonder whether the IR really came back empty.
     """
     if image.ndim == 2:
-        return ("RGB",)
-    return tuple(c for c in CHANNELS if c == "RGB" or _PLANE[c] < image.shape[2])
+        # One plane already *is* the monochrome view, and offering it keeps a
+        # MONO view from being yanked back to RGB the moment a reduced image
+        # arrives. Both render the same pixels here.
+        return ("RGB", "MONO")
+    return tuple(
+        c for c in CHANNELS
+        if c == "RGB"
+        or (c == "MONO" and image.shape[2] >= _MONO_VISIBLE)
+        or (c in _PLANE and _PLANE[c] < image.shape[2])
+    )
 
 
 def select(image: np.ndarray, channel: str = "RGB") -> np.ndarray:
-    """One view of `image`: the visible three, or a single plane as 2-D."""
+    """One view of `image`: the visible three, a single plane as 2-D, or the
+    monochrome average that a black and white scan is delivered as."""
     if channel not in CHANNELS:
         raise ValueError(f"unknown channel {channel!r}; expected one of {CHANNELS}")
     if image.ndim == 2:
-        if channel != "RGB":
+        if channel not in ("RGB", "MONO"):
             raise ValueError(f"a single-plane image has no {channel!r} channel")
+        # Already one plane: that *is* the monochrome view.
         return image
     if channel == "RGB":
         return image[..., :3]
+    if channel == "MONO":
+        # Delegated rather than reimplemented: the screen then shows the exact
+        # pixels the file will carry, rounding included, because it is the same
+        # function that produces them.
+        if image.shape[2] < _MONO_VISIBLE:
+            raise ValueError(
+                f"this scan has {image.shape[2]} channels; no monochrome "
+                "average to show"
+            )
+        return to_monochrome(image, MONO_AVERAGE)
     plane = _PLANE[channel]
     if plane >= image.shape[2]:
         raise ValueError(
@@ -143,6 +174,11 @@ def channel_levels(all_levels: np.ndarray, channel: str = "RGB") -> np.ndarray:
     """The rows of `levels()` that a given view uses."""
     if channel == "RGB":
         return all_levels[:3]
+    if channel == "MONO":
+        # The average's levels are not any one channel's. Averaging the cuts is
+        # the cheap stand-in for re-measuring the averaged plane, and it is the
+        # right one: the mean of three planes has the mean of their levels.
+        return all_levels[:_MONO_VISIBLE].mean(axis=0, keepdims=True)
     return all_levels[[_PLANE[channel]]]
 
 

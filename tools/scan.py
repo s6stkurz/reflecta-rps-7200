@@ -27,7 +27,7 @@ import numpy as np
 
 from rps7200 import library, tiff
 from rps7200.direct import DirectScanner, supports_infrared
-from rps7200.mono import MONO_CHANNEL, to_monochrome
+from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
 from rps7200.library import FilmNotes
 
 
@@ -75,9 +75,11 @@ def main() -> int:
                          "library keeps all three regardless")
     ap.add_argument("--no-mono", dest="mono", action="store_false",
                     help="deliver all three channels even for --film bw")
-    ap.add_argument("--mono-channel", default=MONO_CHANNEL, choices=["R", "G", "B"],
-                    help="which channel a monochrome file carries "
-                         "(default: %(default)s, chosen by measurement)")
+    ap.add_argument("--mono-channel", default=MONO_CHANNEL,
+                    choices=list(MONO_CHOICES),
+                    help="what a monochrome file carries: the average of "
+                         "the visible channels, or one of them alone "
+                         "(default: %(default)s)")
     ap.add_argument("--library", nargs="?", const="library", default="library",
                     metavar="DIR",
                     help="file this scan in the reusable library, with its raw "

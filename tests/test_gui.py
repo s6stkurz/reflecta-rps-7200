@@ -15,6 +15,7 @@ import time
 import pytest
 
 from conftest import load_tool
+from rps7200.mono import MONO_AVERAGE
 
 gui = load_tool("gui")
 
@@ -665,19 +666,24 @@ def test_the_monochrome_controls_follow_the_film(window):
     assert str(app.c_mono.cget("state")) == "normal"
     assert str(app.b_mono_channel.cget("state")) == "readonly"
     # A single plane renders grey, so this is what puts a black and white
-    # picture on screen for the prescan and the scan alike.
-    assert app.v_channel.get() == app.v_mono_channel.get()
+    # picture on screen for the prescan and the scan alike. The default
+    # reduction is the average, whose view is MONO -- "avg" is not a plane.
+    assert app.v_mono_channel.get() == MONO_AVERAGE
+    assert app.v_channel.get() == "MONO"
 
 
 def test_changing_the_monochrome_channel_changes_the_view(window):
+    """Every setting the picker offers has to show what it will deliver --
+    including the average, whose view is MONO rather than any one plane."""
     app, root = window
     app.v_film.set("bw")
     app._sync_film()
-    for channel in ("R", "B", "G"):
+    for channel, expected in (("R", "R"), ("B", "B"), ("G", "G"),
+                              (MONO_AVERAGE, "MONO")):
         app.v_mono_channel.set(channel)
         app._sync_mono_view()
         root.update()
-        assert app.v_channel.get() == channel
+        assert app.v_channel.get() == expected, channel
 
 
 # -- the two live time estimates ---------------------------------------------
