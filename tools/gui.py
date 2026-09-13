@@ -1590,7 +1590,15 @@ class ScannerGui:
             self.survey.append(result)
         if result.position is not None:
             self._transport = result.position
+        # Surveyed frames are exempt. The contact sheet displays these arrays
+        # and the adjuster zooms into them, so decimating one in place would
+        # quietly halve the picture the operator is deciding on -- and later,
+        # the reference his decision is checked against. A no-op at 300 dpi
+        # (431 px is already under the limit); it bites at 600 and 900.
+        surveyed = {id(r) for r in self.survey}
         for old in self.results[:-WORKING_COPIES]:
+            if id(old) in surveyed:
+                continue
             if old.image is not None and max(old.image.shape[:2]) > ARCHIVE_MAX_SIDE:
                 old.image = preview.downscale(old.image, ARCHIVE_MAX_SIDE)
         self._show(result)
@@ -2657,9 +2665,17 @@ class _ContactSheet:
         ring.pack()
         self._rings[number] = ring
 
+        # preview.sample, not preview.fit: fit decimates by whole integers
+        # only, so a 428 px prescan asked to fill a 210 px cell comes back
+        # 143 px wide -- a third of the space, and softer than it needs to be.
+        # sample scales fractionally and fills the cell.
+        turned = preview.rotate(result.image, result.rotation)
+        scale = min(self.CELL / max(turned.shape[1], 1),
+                    self.CELL / max(turned.shape[0], 1))
         arr = preview.render(
-            preview.fit(preview.rotate(result.image, result.rotation),
-                        self.CELL, self.CELL),
+            preview.sample(turned, scale, 0.0, 0.0,
+                           max(1, int(turned.shape[1] * scale)),
+                           max(1, int(turned.shape[0] * scale))),
             "RGB", self.gui.v_invert.get(),
             cuts=(preview.channel_levels(result.levels, "RGB")
                   if getattr(result, "levels", None) is not None else None))

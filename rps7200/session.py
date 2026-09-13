@@ -64,6 +64,63 @@ FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
 #: SLIDE_NEXT/SLIDE_PREV do that properly.
 MAX_FINE_STEPS = 8
 
+
+def plan_nudges(millimetres: float) -> list[float]:
+    """The sub-frame moves a request actually becomes, in order and signed.
+
+    The transport cannot travel an arbitrary distance. One `SLIDE` command
+    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in 1..8,
+    so the reachable set is a lattice starting at ``FINE_MIN_MM`` -- and
+    **nothing in ``(0, FINE_MIN_MM)`` exists at all**. Asking for 0.1 mm does
+    not get you 0.1 mm; it gets you nothing or 0.27 mm.
+
+    This exists so the three places that need that truth share it rather than
+    each modelling it: :meth:`ScanSession._move` executes the plan, the
+    contact sheet's adjuster snaps what it shows to it, and a correction loop
+    sizes its travel budget from it. A plan that predicts something the mover
+    would not do is worse than no plan.
+
+    Returns an empty list when the distance is below half the smallest
+    deliverable move -- the same "leave it alone" the mover applies. Raises
+    ``ValueError`` past :data:`MAX_FINE_STEPS`, deliberately rather than
+    clamping: `DirectScanner.param_for_mm` already clamps silently at param 8,
+    and a caller that cannot see its request was truncated will keep issuing
+    commands against a ceiling it does not know is there.
+    """
+    want = abs(float(millimetres))
+    if want < FINE_MIN_MM * 0.5:
+        return []
+    steps = max(1, -(-int(want * 1000) // int(FINE_MAX_MM * 1000)))
+    if steps > MAX_FINE_STEPS:
+        raise ValueError(
+            f"{want:.2f} mm needs {steps} sub-frame moves; past "
+            f"{MAX_FINE_STEPS} the calibration goes sub-linear and the "
+            "distance would not be what was asked for"
+        )
+
+    sign = 1.0 if millimetres > 0 else -1.0
+    out: list[float] = []
+    moved = 0.0
+    while want - moved >= FINE_MIN_MM * 0.5 and len(out) < steps:
+        # Snapped through the scanner's own param arithmetic, not a copy of
+        # it, so the plan cannot drift from what nudge() will really send.
+        asked = min(FINE_MAX_MM, want - moved)
+        param = DirectScanner.param_for_mm(asked)
+        landed = DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM
+        out.append(sign * landed)
+        moved += landed
+    return out
+
+
+def deliverable_mm(millimetres: float) -> float:
+    """What the transport will actually travel for this request.
+
+    Signed, and never more precise than the hardware: a number finer than
+    :data:`FINE_MIN_MM` is a lie, and showing one to an operator invites them
+    to aim at a position that does not exist.
+    """
+    return float(sum(plan_nudges(millimetres)))
+
 #: Where prescans go inside the operator's output folder. They are framing
 #: passes, not photographs, and mixing them in with the scans buries them.
 PRESCAN_SUBDIR = "prescans"
@@ -601,20 +658,24 @@ class ScanSession:
             # loop is what stops a request for 7 mm quietly becoming a single
             # 1.01 mm move -- which is exactly what it used to do, so every
             # click on the prescan moved the film the same distance.
-            want = abs(job.millimetres)
+            #
+            # The planning itself lives in `plan_nudges` so the adjuster and
+            # any correction loop can ask what a distance becomes without
+            # driving the transport to find out.
+            try:
+                plan = plan_nudges(job.millimetres)
+            except ValueError as exc:
+                return f"{exc} -- use the slide buttons for anything this far"
             sign = 1.0 if job.millimetres > 0 else -1.0
-            steps = max(1, -(-int(want * 1000) // int(FINE_MAX_MM * 1000)))
-            if steps > MAX_FINE_STEPS:
-                return (f"{want:.2f} mm needs {steps} sub-frame moves; past "
-                        f"{MAX_FINE_STEPS} the calibration goes sub-linear and "
-                        "the distance would not be what was asked for -- use "
-                        "the slide buttons for anything this far")
             moved = 0.0
             done = 0
-            while want - moved >= FINE_MIN_MM * 0.5 and done < steps:
+            for step in plan:
                 if self._stop.is_set():
                     break
-                out = self._scanner.nudge(sign * min(FINE_MAX_MM, want - moved))
+                # `moved` accumulates what the scanner says it did, not what
+                # the plan predicted: the plan is a forecast and this line is
+                # the report.
+                out = self._scanner.nudge(step)
                 moved += abs(out.get("asked_mm", 0.0))
                 done += 1
             # The frame counter does not see a sub-frame move, so the position

@@ -2574,7 +2574,8 @@ class DirectScanner:
         return image, meta
 
     def _correct_registration(
-        self, index: int, image: np.ndarray, prescan_resolution: int, dry_run: bool
+        self, index: int, image: np.ndarray, prescan_resolution: int,
+        dry_run: bool, keep_raw: bool = False,
     ) -> dict[str, Any]:
         """Measure the frame's registration and nudge it back, once.
 
@@ -2622,7 +2623,13 @@ class DirectScanner:
         out["moved"] = True
         time.sleep(0.4)
 
-        image, _ = self.prescan(resolution=prescan_resolution)
+        # keep_raw matters here: `last_raw` is only written when it is set
+        # and is never cleared, so a verification prescan taken without it
+        # leaves capture_record() holding the *previous* pass's bytes -- which
+        # then get filed against these pixels. Both passes are 300 dpi
+        # prescans of the same shape, so _file's disagreement guard does not
+        # catch it.
+        image, _ = self.prescan(resolution=prescan_resolution, keep_raw=keep_raw)
         after, why_after = registration_error_mm(image)
         out["after_mm"] = after
         out["after_reason"] = why_after
@@ -2656,10 +2663,18 @@ class DirectScanner:
     #: measurement is wrong rather than the film being far out.
     MAX_CORRECTION_PARAM = 8
 
-    def param_for_mm(self, millimetres: float) -> int:
-        """The `param` byte that moves the film this far. See :meth:`nudge`."""
-        n = round((abs(millimetres) - self.OVERHEAD_MM) / self.STEP_MM)
-        return max(1, min(self.MAX_CORRECTION_PARAM, n))
+    @staticmethod
+    def param_for_mm(millimetres: float) -> int:
+        """The `param` byte that moves the film this far. See :meth:`nudge`.
+
+        Static so the move planner in :mod:`rps7200.session` can ask the same
+        question without a device: the snapping has to have one home, or the
+        planner and the mover drift apart and a plan stops predicting what the
+        hardware does.
+        """
+        n = round((abs(millimetres) - DirectScanner.OVERHEAD_MM)
+                  / DirectScanner.STEP_MM)
+        return max(1, min(DirectScanner.MAX_CORRECTION_PARAM, n))
 
     def nudge(self, millimetres: float) -> dict[str, Any]:
         """Move the film a sub-frame distance, without touching the frame count.
@@ -2871,7 +2886,8 @@ class DirectScanner:
 
                 if correct or correct_dry_run:
                     fix = self._correct_registration(
-                        index, prescan_image, prescan_resolution, correct_dry_run
+                        index, prescan_image, prescan_resolution,
+                        correct_dry_run, keep_raw=keep_raw,
                     )
                     marks["correction"] = fix
                     if fix.get("prescan") is not None:

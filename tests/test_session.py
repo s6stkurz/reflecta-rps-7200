@@ -9,6 +9,7 @@ Abandoning a read mid-scan is what costs a power cycle.
 uses it. It stays here rather than in conftest because it is tuned to this loop,
 the same reason `FakeRoll` stays beside test_roll.
 """
+import inspect
 import json
 import queue
 import threading
@@ -626,7 +627,12 @@ def test_a_nudge_says_the_frame_counter_cannot_confirm_it(tmp_path):
     had changed would be the one misleading thing this control could do."""
     scanner = FakeTransportScanner(position=3)
     _, scanner, events = run(Move(millimetres=0.27), tmp_path, scanner=scanner)
-    assert scanner.moves == [("nudge", 0.27)]
+    # 0.2719, not the 0.27 asked for: the planner hands the mover the distance
+    # the hardware will actually travel rather than the one requested. Same
+    # SLIDE command either way -- param_for_mm snaps both to param 1, and the
+    # snap is idempotent -- but the number that changes hands is now the one
+    # that is true.
+    assert scanner.moves == [("nudge", pytest.approx(0.2719, abs=1e-4))]
     assert any("prescan to check it landed" in e.text
                for e in kinds(events, "finished"))
     # Position is still whatever it was; nothing pretends otherwise.
@@ -757,3 +763,76 @@ def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
         (tmp_path / str(entries[0]["id"]) / "scan.json").read_text()
     )
     assert record["scan"]["film"] == "bw"
+
+
+# --- the sub-frame move planner ---------------------------------------------
+#
+# The transport cannot travel an arbitrary distance: one SLIDE command delivers
+# STEP_MM x param + OVERHEAD_MM for an integer param in 1..8. Three callers
+# need that truth -- the mover, the contact sheet's adjuster, and any
+# correction loop -- so it lives in one function and these tests pin it.
+
+
+def test_a_plan_says_what_the_hardware_will_actually_travel():
+    from rps7200.session import deliverable_mm, plan_nudges
+
+    plan = plan_nudges(1.5)
+    assert plan == [pytest.approx(1.0118, abs=1e-4),
+                    pytest.approx(0.4833, abs=1e-4)]
+    # 0.005 mm short of the 1.5 asked for, and that is the honest answer
+    # rather than a rounded promise.
+    assert deliverable_mm(1.5) == pytest.approx(1.4951, abs=1e-4)
+
+
+def test_nothing_exists_between_zero_and_the_smallest_move():
+    """The reachable set starts at FINE_MIN_MM. Asking for less does not get
+    you less -- it gets you nothing, or a whole first step. A slider that
+    pretended otherwise would aim at positions that do not exist."""
+    from rps7200.session import FINE_MIN_MM, deliverable_mm, plan_nudges
+
+    assert plan_nudges(0.10) == []
+    assert deliverable_mm(0.10) == 0.0
+    assert plan_nudges(FINE_MIN_MM) == [pytest.approx(FINE_MIN_MM, abs=1e-4)]
+
+
+def test_the_plan_keeps_the_sign():
+    from rps7200.session import deliverable_mm, plan_nudges
+
+    assert all(v < 0 for v in plan_nudges(-1.5))
+    assert deliverable_mm(-1.5) == pytest.approx(-deliverable_mm(1.5), abs=1e-9)
+
+
+def test_too_far_is_refused_rather_than_silently_clamped():
+    """`param_for_mm` clamps at param 8 with no error, so a caller that
+    bypassed the planner would issue commands against a ceiling it could not
+    see. The planner raises instead."""
+    from rps7200.session import MAX_FINE_STEPS, plan_nudges
+
+    with pytest.raises(ValueError, match="sub-linear"):
+        plan_nudges(20.0)
+    assert len(plan_nudges(MAX_FINE_STEPS * 1.0)) <= MAX_FINE_STEPS
+
+
+def test_the_plan_is_what_the_mover_would_have_sent():
+    """The planner must not drift from the hardware it predicts: every planned
+    distance has to snap to the same SLIDE param it was derived from."""
+    from rps7200.direct import DirectScanner
+    from rps7200.session import plan_nudges
+
+    for want in (0.3, 0.5, 0.9, 1.0, 2.2, 4.7, 8.0):
+        for landed in plan_nudges(want):
+            param = DirectScanner.param_for_mm(landed)
+            again = DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM
+            assert again == pytest.approx(abs(landed), abs=1e-9)
+
+
+def test_measuring_geometry_does_not_drag_in_the_device():
+    """`rps7200.uniformity` holds the correlation primitives that framing will
+    need. It used to import MM_PER_INCH from `direct`, which imports framing --
+    so the moment framing reached for uniformity the cycle closed. The constant
+    lives in `protocol`; take it from there."""
+    import rps7200.uniformity as un
+
+    source = inspect.getsource(un)
+    assert "from .direct import" not in source
+    assert "from .protocol import MM_PER_INCH" in source
