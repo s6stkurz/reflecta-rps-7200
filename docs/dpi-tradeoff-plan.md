@@ -173,3 +173,110 @@ in time and bytes, and an explicit statement of what it depends on — this
 negative, this exposure, this noise floor. If the shading correction later
 lowers the noise floor, the measurement is re-runnable from the library with no
 scanner at all, which is the point of keeping the raw bytes.
+
+---
+
+# Results, 2026-09-13
+
+Run on the ladder Stefan scanned 2026-09-11 10:20-10:42: one frame — a wall of
+old televisions, plenty of fine detail — seven RGB passes from 300 to 7200 dpi
+with a repeat pair at the top. `tools/dpi_analysis.py` reproduces all of it from
+the library, with no scanner.
+
+## The recommendation
+
+**RGB: 3600 dpi** for quality, **1800 dpi** when time matters.
+**RGBI: 3600 dpi**, because there resolution is nearly free.
+
+| dpi | seconds | MB | verdict |
+|---|---|---|---|
+| 600 | 34.1 | 3.0 | visibly blocky |
+| 1200 | 59.9 | 11.9 | big gain over 600 |
+| 1800 | 85.5 | 26.7 | clear gain again; **the fast default** |
+| 3600 | 165.4 | 106.8 | modest gain, least aliasing; **the quality default** |
+| 7200 | 314.4 | 427.4 | **adds nothing** — softer, 2x the time, 4x the bytes |
+
+**7200 dpi is past the optics.** In matched 100% crops its edges are *softer*
+than 3600, which is what oversampling a blur looks like: the same optical
+unsharpness spread over twice as many pixels. It costs 149 s and 320 MB more per
+frame to record that blur in more detail.
+
+## The infrared floor does not move with resolution
+
+The most useful number here, and it needed no new scanning — timing does not care
+which frame it is, so existing library entries answer it:
+
+```
+RGBI  300 dpi   248.3 s        RGBI 3600 dpi   253.1 - 256.5 s  (7 passes)
+RGBI  600 dpi   231.8, 248.7   RGBI 3600 dpi   254.9, 291.2
+```
+
+A twelve-fold resolution increase costs about **six seconds**. The ~250 s
+infrared floor dominates everything. So there is no reason to scan infrared at
+low resolution — take RGBI at 3600 and it is essentially free.
+
+## What each method actually returned
+
+**B — aliasing at each pass's own Nyquist — is the one that worked.** Power
+density near each resolution's Nyquist against the 7200 dpi pass at the same
+physical frequency. 1.0 means resolving; above means folding energy back:
+
+```
+channel      600     1200     1800     3600
+    red     1.58     1.87     1.93     1.22
+  green     1.46     1.77     1.99     1.23
+   blue     1.32     1.68     1.84     1.33
+```
+
+3600 is clearly the least aliased. The method carries a **sanity band** — density
+well below Nyquist, which must already read ~1.00 — and it reads 0.75-0.98. So
+the comparison is good to roughly ±20%: enough for the trend and for 3600 being
+best, not enough to separate 1200 from 1800.
+
+That band earned its place twice. A first version reported 1.42 at 3600 where a
+resolving pass must read ~1.0, because `rfft` does not normalise and raw power
+scales with row length squared. The fix was to convert to density,
+`|X|^2 dx / (N mean(win^2))` — and the band then read exactly `dpi/7200`,
+catching a second missing factor of N. Without it both versions would have been
+reported as findings.
+
+**A — where detail meets the noise floor — did not work here.** It returned
+141.7 c/mm for every channel, which is precisely 7200 dpi's Nyquist: the spectrum
+never falls to the floor within the measured band, so the "flat top of the band is
+white noise" assumption does not hold on this frame. Grain reaches Nyquist.
+
+**C — what each step adds — is ambiguous, not wrong.** Downsampling the 7200 crop
+and restoring it leaves a residual of 3.9-22x the random noise sigma at every
+step, decreasing with resolution but never reaching 1. But the floor it compares
+against is the *random per-pass* noise from the repeat pair, and **grain is fixed
+between repeats**, so grain counts as signal. C therefore says "7200 captures
+something 3600 does not" without being able to say whether that something is
+detail or grain. The crops say grain.
+
+Noise floor at 7200 dpi, from the repeat pair (`noise_split`):
+
+```
+  red    random 262.6 DN   total 537.3 DN   random share 48.9%
+green    random 212.8 DN   total 475.9 DN   random share 44.7%
+ blue    random 129.3 DN   total 330.4 DN   random share 39.1%
+```
+
+## What this rests on
+
+- **One negative, one exposure, one noise floor.** Without a resolution target
+  this measures *this film through this scanner*, not the scanner's MTF, and is
+  not comparable with a lab figure. It is the more useful number for deciding how
+  to scan.
+- **Exposure drifted 1.3-1.4%** across the series (R 27214-27596, G 41446-41971),
+  where the plan called for it pinned. The effects measured are 9-99%, so a 1.4%
+  change in signal — 0.7% in the shot-noise floor — is an order of magnitude
+  below the smallest of them. Recorded rather than hidden; if a future result
+  turns on a margin this thin, re-scan with `exposure_scale=1.0`.
+- **Blue is a lower bound.** Its exposure sat at 65535, the 16-bit timer ceiling,
+  on every RGB pass, so blue is under-exposed (mean ~20100 against 54000-61000 for
+  red and green) though never clipped. A darker channel resolves less; blue's
+  figures above are a floor, and the fix is RGBI, where blue is ~5x more sensitive
+  and does not rail.
+- **Re-runnable.** Everything came from stored raw bytes. When the shading
+  correction lowers the noise floor, run `tools/dpi_analysis.py` again — no
+  scanner, no film, no re-shoot.
