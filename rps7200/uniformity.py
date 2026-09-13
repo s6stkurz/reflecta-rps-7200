@@ -44,7 +44,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .direct import MM_PER_INCH
+from .protocol import MM_PER_INCH
 
 #: The four ways a mounted slide goes into the transport. They form the Klein
 #: four-group: each is its own inverse, so un-rotating a pass is applying the
