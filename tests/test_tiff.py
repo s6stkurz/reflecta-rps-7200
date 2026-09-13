@@ -16,6 +16,8 @@ of exactly that kind: the built-in reader returned read-only arrays, kept a
 channel axis tifffile drops, and handed back big-endian dtypes.
 """
 
+import struct
+
 import numpy as np
 import pytest
 
@@ -73,15 +75,21 @@ class TestCrossImplementation:
     """Write with one implementation, read with the other. The regression this
     guards is a file that only opens on the machine that wrote it."""
 
+    @pytest.mark.parametrize("compress", [True, False])
     @pytest.mark.parametrize("reader", IMPLEMENTATIONS)
     @pytest.mark.parametrize("writer", IMPLEMENTATIONS)
     @pytest.mark.parametrize("shape,dtype", SHAPES)
-    def test_roundtrip(self, tmp_path, using, writer, reader, shape, dtype):
+    def test_roundtrip(self, tmp_path, using, writer, reader, shape, dtype,
+                       compress):
+        """``compress`` is on the matrix because the pairing that matters is
+        tifffile-compressed written, built-in read: writing a file the
+        dependency-free reader cannot open is the regression this whole module
+        exists to prevent."""
         image = sample(shape, dtype)
         path = str(tmp_path / "img.tif")
 
         using(writer)
-        tiff.write(path, image, resolution=600)
+        tiff.write(path, image, resolution=600, compress=compress)
 
         using(reader)
         back = tiff.read(path)
@@ -107,6 +115,75 @@ class TestCrossImplementation:
         assert by_builtin.shape == by_tifffile.shape
         assert by_builtin.dtype == by_tifffile.dtype
         assert np.array_equal(by_builtin, by_tifffile)
+
+
+class TestCompression:
+    """Compression has to be real, optional, and invisible in the pixels."""
+
+    def smooth(self, shape=(200, 300, 3)):
+        """Something that compresses, unlike `sample()`.
+
+        Random integers are incompressible by construction -- deflate on them
+        can come out *larger* -- so a size assertion against them would be
+        testing the wrong thing. Real scans are smooth plus noise; this is the
+        smooth half, which is what the predictor is for.
+        """
+        h, w, c = shape
+        ramp = np.linspace(0, 60000, w)[None, :, None] * np.ones((h, 1, c))
+        return ramp.astype(np.uint16)
+
+    def test_it_actually_shrinks_the_file(self, tmp_path, using):
+        """Guards against the compression silently not being applied -- which
+        would look exactly like success, since the pixels round-trip either
+        way."""
+        using("tifffile")
+        image = self.smooth()
+        raw_bytes = image.size * image.dtype.itemsize
+
+        small = tmp_path / "small.tif"
+        big = tmp_path / "big.tif"
+        tiff.write(str(small), image, compress=True)
+        tiff.write(str(big), image, compress=False)
+
+        assert big.stat().st_size >= raw_bytes, (
+            "compress=False must write the pixels uncompressed"
+        )
+        assert small.stat().st_size < big.stat().st_size / 2, (
+            f"compressed {small.stat().st_size} vs plain {big.stat().st_size}"
+        )
+
+    @pytest.mark.parametrize("reader", IMPLEMENTATIONS)
+    def test_the_pixels_are_untouched(self, tmp_path, using, reader):
+        """The whole point: file size changes and nothing else."""
+        image = self.smooth((64, 96, 4))
+        small = str(tmp_path / "small.tif")
+        big = str(tmp_path / "big.tif")
+
+        using("tifffile")
+        tiff.write(small, image, compress=True)
+        tiff.write(big, image, compress=False)
+
+        using(reader)
+        assert np.array_equal(tiff.read(small), tiff.read(big))
+        assert np.array_equal(tiff.read(small), image)
+
+    def test_the_predictor_wraps_rather_than_widening(self, tmp_path, using):
+        """Horizontal differencing wraps modulo 2**16, so undoing it has to
+        accumulate in the sample dtype. A widened accumulator turns every
+        wrapped difference into a huge positive number, which shows up as
+        bright streaks running right from each steep edge."""
+        using("tifffile")
+        # Steep alternating edges: every neighbouring pair differences to a
+        # value that wraps.
+        image = np.zeros((8, 64, 3), np.uint16)
+        image[:, ::2] = 65000
+        image[:, 1::2] = 200
+
+        path = str(tmp_path / "wrap.tif")
+        tiff.write(path, image, compress=True)
+
+        using("builtin")
+        assert np.array_equal(tiff.read(path), image)
 
 
 class TestReadContract:
@@ -240,11 +317,41 @@ class TestBuiltinReaderRefusals:
         )
         return image
 
-    def test_refuses_compression(self, tmp_path, using):
-        path = tmp_path / "deflate.tif"
+    def patch_short_tag(self, path, tag, old, new):
+        """Rewrite one inline SHORT tag in place.
+
+        Producing these files with tifffile needs ``imagecodecs`` -- both LZW
+        and predictor 3 do -- which is optional and not installed. What is
+        being tested is the *reader's* refusal, not whether some other package
+        can generate the thing refused, so the tag is edited directly. A SHORT
+        with count 1 sits in the first two bytes of the entry's value slot.
+        """
+        entry = struct.pack("<HHIHH", tag, 3, 1, old, 0)
+        data = bytearray(path.read_bytes())
+        at = data.find(entry)
+        assert at != -1, f"no inline SHORT tag {tag} with value {old} to patch"
+        data[at:at + len(entry)] = struct.pack("<HHIHH", tag, 3, 1, new, 0)
+        path.write_bytes(bytes(data))
+
+    def test_refuses_an_unsupported_compression(self, tmp_path, using):
+        """Deflate is read now; LZW still is not, and has to say so rather
+        than handing back the compressed bytes as if they were pixels."""
+        path = tmp_path / "lzw.tif"
         self.write_via_tifffile(path, compression="zlib")
+        self.patch_short_tag(path, 259, 8, 5)          # COMPRESSION: deflate -> LZW
         using("builtin")
-        with pytest.raises(ValueError, match="compression 8"):
+        with pytest.raises(ValueError, match="compression 5"):
+            tiff.read(str(path))
+
+    def test_refuses_the_floating_point_predictor(self, tmp_path, using):
+        """Predictor 3 goes with float samples, which this package never
+        writes. Undoing it as if it were horizontal differencing would produce
+        plausible nonsense rather than an error."""
+        path = tmp_path / "fp.tif"
+        self.write_via_tifffile(path, compression="zlib", predictor=True)
+        self.patch_short_tag(path, 317, 2, 3)          # PREDICTOR: horizontal -> fp
+        using("builtin")
+        with pytest.raises(ValueError, match="predictor 3"):
             tiff.read(str(path))
 
     def test_refuses_tiles(self, tmp_path, using):
