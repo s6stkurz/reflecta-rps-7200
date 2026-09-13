@@ -1,9 +1,42 @@
 # Lossless compression for written TIFFs
 
-## Status: deferred
+## Status: DONE — implemented 2026-09-13, pixels verified identical
 
-Agreed as worth doing, but **after the shading correction is proven on real
-scans**. Not started; nothing in the writer has changed.
+Writes go out as deflate + horizontal differencing where `tifffile` is
+installed; both readers handle compressed files, which was the mandatory half.
+`compress=False` restores the previous output exactly.
+
+### What it actually saves
+
+Measured across five real library entries, written both ways and compared:
+
+```
+entry                          shape          plain     zip    saved
+300 dpi  prescan               287x428x3       0.4 MB   0.2 MB  54.5%
+900 dpi                        860x1292x3      6.7 MB   6.1 MB   8.9%
+1800 dpi                      1721x2584x3     26.7 MB  24.1 MB   9.7%
+3600 dpi                      3443x5172x3    106.8 MB  98.0 MB   8.3%
+3600 dpi RGBI                 3443x5172x4    142.5 MB 116.9 MB  18.0%
+                                             -------- --------  -----
+total                                         283.0 MB 245.2 MB  13.4%
+```
+
+**Pixels identical in every case**, both readers, which is the only thing that
+makes the saving worth taking.
+
+**Two corrections to what this plan predicted.** It headlined −16% from one
+file, and TODO.md repeated that as "16% on every file"; the real spread is
+8–18%, averaging 13.4%. And the expectation that "a shading-corrected scan
+should do better" than −16% because raw sensor noise does not compress **did
+not hold** — these entries are corrected and the RGB ones give 8–10%. Noise
+dominates either way.
+
+The one genuinely good result is **RGBI at 18%**, which is also the largest
+file at 142 MB, so the saving lands where it is worth most. The 300 dpi
+prescan's 54.5% is real but nearly free in absolute terms.
+
+**Write cost is negligible**: 2.2 s for the 142 MB RGBI frame, against the
+217–334 s the scan itself takes.
 
 One expectation to correct before this is picked up, so the result is not a
 disappointment: **this will not make NegPy faster.** Compression changes the

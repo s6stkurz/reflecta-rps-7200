@@ -286,13 +286,21 @@ bit is not evidence, not a new problem.
   own exposure is usable, and how it interacts with the stagger realignment.
   One ~6 minute pass answers both. **Wants Stefan's agreement before being
   built** — it is a design change, not a fix.
-- **Lossless TIFF compression** — `docs/tiff-compression-plan.md`. Worth 16% on
-  every file, lossless. Needs the built-in reader taught deflate + predictor
-  first, or files written with tifffile become unreadable without it. The
-  harness for that now exists: `tests/test_tiff.py` runs every write/read
-  pairing of the two implementations, so the compression work is adding
-  compressed rows to a matrix rather than writing one. No scanner needed. Note
-  it will *not* make NegPy faster: it shrinks the file on disk, not the array in
+- ~~**Lossless TIFF compression**~~ — **done 2026-09-13**, see
+  `docs/tiff-compression-plan.md`. Deflate + horizontal differencing on the
+  `tifffile` write path, and **both** readers taught to read it, which was the
+  mandatory half: writing files the dependency-free reader cannot open would
+  have made the "the built-in one is complete" promise false.
+
+  **It is not "16% on every file"**, as this entry used to say — that came
+  from one file. Measured across five real entries the spread is 8–18%,
+  averaging 13.4%, and the plan's expectation that a shading-corrected scan
+  would beat 16% did not hold. The good case is **RGBI at 18%**, which is also
+  the biggest file at 142 MB, so the saving is where it is worth most. Write
+  cost 2.2 s on that frame against a 217–334 s scan.
+
+  Still true, and still the thing to correct if someone expects otherwise: it
+  will *not* make NegPy faster. It shrinks the file on disk, not the array in
   memory.
 - ~~**The dpi trade-off measurement**~~ — **answered 2026-09-13**, see the
   "Results" section of `docs/dpi-tradeoff-plan.md`. **RGB: 3600 dpi for
