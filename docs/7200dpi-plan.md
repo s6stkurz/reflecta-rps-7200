@@ -5,9 +5,15 @@
 **The column stagger: DONE, offline-verified.** Two independent library
 entries, every channel, confirm a 4-line stagger and the fix removes it.
 
-**Auto-calibrating at 7200 dpi: implemented, UNTESTED ON HARDWARE.** No
-capture -- vendor or ours -- has ever sent a calibrate-mode MODE SELECT at
-7200 dpi. Ask Stefan before the first real 7200 dpi scan under this code.
+**Calibrating at 7200 dpi: ANSWERED ON THE HARDWARE 2026-09-13, and the
+answer is no.** The device will not produce a shading reference wider than
+5172 columns at any resolution, so a 10344-column pass cannot be corrected
+from it. 7200 dpi with `shading=True` is now refused outright, before the
+pass runs. See "What the hardware said" below.
+
+**It cost a power cycle**, through a bug that had nothing to do with 7200 dpi
+and everything to do with error handling. Also below, because it is the more
+transferable lesson.
 
 ## The zigzag
 
@@ -127,14 +133,100 @@ been worse.
 behaviour, or anything for a session that never asks for 7200 dpi -- the
 default `resolution=3600` reproduces the exact width (5172) it always has.
 
-**What is not verified:** whether the scanner actually accepts and correctly
-answers a calibrate-mode MODE SELECT at 7200 dpi -- whether it returns a
-10344-column reference, whether the CCD mask it reports at that width is
-meaningful, whether the 4-line stagger shows up in the calibration pass itself
-(it should, being the same native readout, but that is a prediction, not a
-measurement). `PROTOCOL_REVISION` moved 1 -> 2 for this: `scan()` can now send
-a full calibration sequence it did not send before, mid-session, that no
-capture has ever exercised at this resolution.
+`PROTOCOL_REVISION` moved 1 -> 2 for this: `scan()` can now send a full
+calibration sequence it did not send before, mid-session.
+
+## What the hardware said
+
+`calibrate_shading(resolution=7200)`, run on the device 2026-09-13 with film
+loaded. The relevant three lines of the log:
+
+```
+shading parms: [{'type': 0, ..., 'pixels_per_line': 10344}, ... x4]
+note: descriptor says 5172 columns, the frame implies 10344; using the descriptor
+shading descriptor: 4 entries, 80 lines declared, 5172 columns
+```
+
+`pixels_per_line` in the descriptor is a **byte** count -- 10344 bytes = 5172
+columns -- and this is the *identical* descriptor the device declares at
+3600 dpi. **The calibration does not widen with the MODE SELECT resolution
+field.** It went on to read `10346 bytes/line (width 5172)`: asked for 7200
+dpi, it calibrated 5172 columns anyway.
+
+So the premise this feature was built on is disproved. `MAX_SHADING_COLUMNS`
+in `rps7200/direct.py` now records the ceiling, and `scan()` refuses a pass
+wider than it *before* running, rather than spending two minutes calibrating
+and 5.5 minutes scanning to arrive at the same refusal.
+
+### Could a 5172-column reference correct a 10344-column pass anyway?
+
+The obvious idea: map output column *j* to calibration column *j // 2*, so
+each calibration column serves the two output columns it covers. Measured
+offline against both stored 7200 dpi entries -- no scanner needed, which is
+the point of keeping raw bytes:
+
+| channel | even/odd alternation | parity gap |
+|---|---|---|
+| R | 0.49% -> 0.48% | 0.32% -> **0.48%** |
+| G | 1.55% -> 1.55% | 1.66% -> **1.69%** |
+| B | 5.16% -> 5.19% | 4.92% -> **5.14%** |
+
+**No, and it cannot.** The dominant 7200 dpi artefact is a difference between
+the two column parities, and a mapping that hands both parities the same gain
+and the same dark offset cannot express a difference between them -- it is
+ruled out by construction, and the measurement agrees, moving nothing and
+slightly worsening the parity gap. Blue is the worst affected at ~5%.
+
+That the alternation is the **sensor** and not the picture is settled by the
+cross-frame test, which is the only thing that settles it
+(`.claude/skills/measure-scan-quality/SKILL.md`): the even/odd component of
+two *different* frames correlates at **r = +0.9958**.
+
+### What would actually correct 7200 dpi -- not built, needs a decision
+
+The device caps its *calibrate-mode* reference at 5172 columns, but an
+ordinary **scan** at 7200 dpi over `CALIBRATION_FRAME` -- the lower transport,
+where the light path is clear and the film does not reach -- would return
+10344 columns of clear-path response. That is the same measurement the
+calibration makes, taken through a command the device is willing to run at
+full width.
+
+It is not the flat-through-film idea `rps7200/shading.py` warns against: that
+one fails because it is measured through film and at the wrong exposure, and
+this would be neither. The open questions are whether the clear-path level at
+the scan's own exposure is usable, and whether the stagger realignment
+interacts with it. Both are answerable in one ~6-minute pass, but this is a
+design change and wants Stefan's agreement first, not a quiet implementation.
+
+## The wedge, and the bug that actually caused it
+
+The 7200 dpi run above crashed partway through the calibration read loop and
+left the scanner needing a power cycle. The cause is worth separating from
+7200 dpi entirely, because it is not about resolution:
+
+```
+File "rps7200/direct.py", line 1200, in get_gain_offset
+    offset=[d[66], d[67], d[68], d[100]],
+IndexError: index out of range
+```
+
+`_query` returned a response shorter than the `read_size` it asked for and
+handed it back unchecked; every caller decodes by fixed offset, so the short
+buffer raised `IndexError` far from the cause. `calibrate_shading`'s read loop
+catches `CheckCondition` and `ScanReadError` and would have shrugged this off
+-- but an `IndexError` is neither, so it escaped the loop, **abandoned the
+calibration mid-read**, and cost a power cycle. That is precisely the hazard
+CLAUDE.md names; it arrived through an unhandled exception rather than a
+timeout.
+
+`_query` now refuses a short response with `ScanReadError`, which the loops
+that matter already tolerate. Tested in
+`tests/test_scanner_api.py::test_a_short_gain_offset_response_is_a_scan_error_not_an_indexerror`.
+
+**The transferable lesson:** on this device, an exception type that a retry
+loop does not expect is not merely a crash -- it is an abandoned read, and an
+abandoned read is a power cycle. Decoding by fixed offset without a length
+check is how you manufacture one.
 
 ## Verification
 
@@ -147,10 +239,9 @@ capture has ever exercised at this resolution.
    changes and re-running).
 3. The stagger fix needed no hardware: both entries' raw bytes already
    contained the evidence.
-4. **The auto-calibration path needs Stefan at the scanner.** First real run
-   should watch: does the calibrate-mode MODE SELECT at 7200 dpi complete at
-   all, does the resulting reference actually cover 10344 columns, and does
-   applying it remove the vertical striping the way the 3600 dpi reference
-   does at its own resolutions. If it does not, `scan()` raises rather than
-   shipping something wrong -- that failure is itself the answer to whether
-   this is safe to rely on.
+4. **The auto-calibration path was run on the scanner 2026-09-13** and
+   answered negatively; see "What the hardware said". The refusal it now
+   produces is the designed behaviour, reached without spending a pass.
+5. The `j // 2` pairing was measured offline against both stored 7200 dpi
+   entries and rejected -- `scratchpad/can_5172_correct_10344.py`, rebuilt
+   from raw bytes, so it re-runs with no scanner.

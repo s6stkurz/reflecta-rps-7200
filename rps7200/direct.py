@@ -735,15 +735,31 @@ class DirectScanner:
         The scanner queues a sense condition and reports it on whatever command
         comes next, whether or not that command is the one it relates to.
         Reading the sense clears it, so a retry generally succeeds.
+
+        A response shorter than asked for is refused here rather than handed
+        back, because every caller decodes by fixed offset -- `get_gain_offset`
+        reads d[102], `read_state` reads d[8] -- and a short buffer therefore
+        raises IndexError from somewhere far from the cause. That is not
+        theoretical: it wedged the scanner on 2026-09-13. `get_gain_offset`
+        came back short inside `calibrate_shading`'s read loop, which catches
+        ScanReadError and would have shrugged it off, but an IndexError is not
+        a ScanReadError -- it escaped the loop, abandoned the calibration
+        mid-read, and cost a power cycle.
         """
         last: Sense | str = ""
         for attempt in range(1, retries + 1):
             try:
-                return self.t.command(command, read_size=read_size)
+                data = self.t.command(command, read_size=read_size)
             except CheckCondition:
                 last = self.read_sense()
                 self._log(f"  {label}: {last}")
                 time.sleep(0.3)
+                continue
+            if len(data) < read_size:
+                raise ScanReadError(
+                    f"{label} returned {len(data)} bytes, expected {read_size}"
+                )
+            return data
         raise ScanReadError(f"{label} failed after {retries} attempts: {last}")
 
     def read_state(self, retries: int = 3) -> State:
@@ -1418,6 +1434,21 @@ class DirectScanner:
 
         height = min(len(planes[c]) for c in order)
         return np.stack([np.array(planes[c][:height]) for c in order], axis=-1)
+
+    #: The widest shading reference this device will produce, in columns.
+    #:
+    #: **Measured on the hardware 2026-09-13, and it is a ceiling, not a
+    #: default.** `calibrate_shading(resolution=7200)` was run on the device:
+    #: the shading descriptor came back declaring `pixels_per_line=10344` --
+    #: a *byte* count, so 5172 columns -- which is the identical descriptor it
+    #: declares at 3600 dpi. The calibration does not widen with the MODE
+    #: SELECT resolution field, so no resolution argument can produce a
+    #: reference for a 7200 dpi pass's 10344 columns. Asking again costs two
+    #: minutes of scanner time and returns 5172 again.
+    #:
+    #: Numerically the same as :data:`CCD_MASK_SIZE`, and for the same reason:
+    #: the mask carries one byte per calibration column.
+    MAX_SHADING_COLUMNS = CCD_MASK_SIZE
 
     #: The only resolution wide enough that adjacent output columns are
     #: adjacent CCD elements rather than a subsampling of them. Below this,
@@ -2246,13 +2277,18 @@ class DirectScanner:
         removes the vertical striping. The scanner measures its per-column
         response but returns raw pixels, so this method calibrates -- once
         per session, as the vendor does at power-on, and again whenever the
-        existing reference is missing or too narrow for this pass, which is
-        every first 7200 dpi request in a session begun at a lower dpi -- and
-        never returns a pass it was asked to correct uncorrected. If it
-        cannot be corrected even after calibrating, it raises
-        :class:`~rps7200.protocol.ShadingUnavailable` rather than hand back
-        raw pixels silently. Pass ``shading=False`` to accept raw pixels on
-        purpose.
+        existing reference is missing or too narrow for this pass -- and never
+        returns a pass it was asked to correct uncorrected. Where it cannot be
+        corrected it raises :class:`~rps7200.protocol.ShadingUnavailable`
+        rather than hand back raw pixels silently, and it raises *before*
+        running the pass, so a refusal costs no scanner time. Pass
+        ``shading=False`` to accept raw pixels on purpose.
+
+        **A 7200 dpi pass cannot be corrected at all on this hardware** and is
+        refused outright: the device's calibration will not produce a
+        reference past :data:`MAX_SHADING_COLUMNS` columns whatever resolution
+        it is asked for, and a 7200 dpi frame is twice that. See
+        `docs/7200dpi-plan.md`.
         """
         if infrared and not supports_infrared(film):
             # Refused rather than warned. This costs the ~212 s infrared floor
@@ -2325,8 +2361,22 @@ class DirectScanner:
         if shading:
             # Never fall through to raw pixels for lack of a reference wide
             # enough -- calibrate for *this* pass now rather than later
-            # discovering the mask cannot cover it.
+            # discovering the mask cannot cover it. Both checks happen before
+            # the pass, so a refusal costs nothing: finding out afterwards
+            # spends 5.5 minutes at 7200 dpi to learn what is knowable here.
             needed = self._shading_columns_needed(frame, resolution)
+            if needed > self.MAX_SHADING_COLUMNS:
+                # No resolution argument can widen the reference past this --
+                # measured on the device, see MAX_SHADING_COLUMNS. Calibrating
+                # would cost two minutes and return the same 5172 columns.
+                raise ShadingUnavailable(
+                    f"a {resolution} dpi pass over this frame is {needed} "
+                    f"columns, and this scanner's calibration will not produce "
+                    f"a reference wider than {self.MAX_SHADING_COLUMNS} at any "
+                    f"resolution -- so it cannot be corrected at all, and no "
+                    f"calibration will change that. Scan at 3600 dpi or below, "
+                    f"or pass shading=False to accept raw pixels deliberately."
+                )
             if self._shading is None or needed > self._shading.pixels_per_line:
                 reason = (
                     "no shading reference in this session" if self._shading is None
@@ -2335,6 +2385,16 @@ class DirectScanner:
                 )
                 self._log(f"calibrating before scanning ({reason})")
                 self.calibrate_shading(resolution=resolution)
+                if (self._shading is None
+                        or needed > self._shading.pixels_per_line):
+                    raise ShadingUnavailable(
+                        f"calibrating at {resolution} dpi did not produce a "
+                        f"reference this pass's {needed} columns can use "
+                        + (f"(got {self._shading.pixels_per_line})"
+                           if self._shading is not None else "(got none)")
+                        + ". Pass shading=False to accept raw pixels "
+                        "deliberately."
+                    )
 
         self.set_scan_frame(*frame)
 
@@ -2430,16 +2490,17 @@ class DirectScanner:
         # in the entries said the correction had been wanted.
         shading_skipped = None
         if shading and self._shading is not None and params.width > self._shading.pixels_per_line:
-            # Calibrating for this resolution just above did not produce a
-            # wide enough reference -- an untested combination not cooperating,
-            # or a calibration that itself refused. Refusing the whole pass is
-            # the point: correcting half the frame is worse than correcting
-            # none, and returning either silently is the bug this replaced.
+            # Belt and braces. The width was checked against the frame before
+            # the pass ran, so reaching here means the device produced a wider
+            # pass than its own frame and resolution implied. Refuse anyway:
+            # correcting half a frame is worse than correcting none, and
+            # returning either silently is the bug this replaced.
             raise ShadingUnavailable(
-                f"this pass is {params.width} columns but the reference "
-                f"covers only {self._shading.pixels_per_line}, even after "
-                f"calibrating at {resolution} dpi just now. Pass "
-                "shading=False to accept raw pixels deliberately."
+                f"this pass came back {params.width} columns, wider than the "
+                f"{self._shading_columns_needed(frame, resolution)} its frame "
+                f"and resolution implied, and past the reference's "
+                f"{self._shading.pixels_per_line}. Pass shading=False to "
+                "accept raw pixels deliberately."
             )
         elif shading and self._shading is not None:
             image, shading_report = apply_shading(image, self._shading, ccd_mask)
