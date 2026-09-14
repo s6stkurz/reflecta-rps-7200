@@ -199,6 +199,7 @@ class ScannerGui:
         self._view = [0.0, 0.0]              # the picture point at the corner
         self._reads: queue.Queue = queue.Queue()   # full-resolution reads landing
         self._measured: queue.Queue = queue.Queue()   # histograms landing
+        self._histogram_token = 0            # which measurement is still wanted
         self._shown = None                   # what was last drawn, for clicks
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
@@ -848,6 +849,12 @@ class ScannerGui:
         self.v_caption = tk.StringVar(value="nothing scanned yet")
         ttk.Label(top, textvariable=self.v_caption,
                   foreground="#777").pack(anchor="w", padx=6)
+
+        # Placed rather than packed, so it floats in the corner of the picture
+        # instead of taking width from it -- and so a canvas redraw, which
+        # clears everything the canvas is holding, cannot touch it.
+        self.histogram = _HistogramPanel(top)
+        self.histogram.place()
 
         middle = ttk.Frame(parent)
         parent.add(middle, weight=1)
@@ -1576,13 +1583,16 @@ class ScannerGui:
             self._loaded(seq, image)
         while True:
             try:
-                window, counts, clipped, problem = self._measured.get_nowait()
+                token, counts, clipped, problem = self._measured.get_nowait()
             except queue.Empty:
                 break
+            if token != self._histogram_token:
+                continue          # a later measurement is already the answer
             if problem:
                 self._say(f"could not measure: {problem}")
+                self.histogram.failed()
             else:
-                window.show(counts, clipped)
+                self.histogram.show(counts, clipped)
         for event in self.session.poll():
             self._handle(event)
             if not self._alive:
@@ -1902,6 +1912,7 @@ class ScannerGui:
         if result.supersedes:
             extra += "   ·   replaced its prescan"
         self.v_caption.set(result.label + extra)
+        self._measure_histogram()
         self._schedule_redraw()
 
     def _redraw_strip(self) -> None:
@@ -1986,9 +1997,6 @@ class ScannerGui:
         self.menu.delete(0, "end")
         self.menu.add_command(label="Save as ...",
                               command=lambda r=target: self.on_save_as(r))
-        self.menu.add_command(label="Histogram",
-                              command=lambda r=target: self.on_histogram(r))
-        self.menu.add_separator()
         for label, degrees in (("Rotate right 90\u00b0", 90),
                                ("Rotate left 90\u00b0", 270),
                                ("Rotate 180\u00b0", 180)):
@@ -2072,30 +2080,45 @@ class ScannerGui:
         self._show(result)
         self._redraw_strip()
 
-    def on_histogram(self, result) -> None:
-        """Where the values actually sit, which the preview cannot show.
+    def _measure_histogram(self) -> None:
+        """Re-read the panel against whatever is on screen now.
 
-        The picture on the canvas is stretched so a negative can be judged by
-        eye, and a stretch puts the brightest pixel at white whether it was
-        against the ceiling or merely near it. This is the unstretched answer.
+        Where the values actually sit, which the preview cannot show: the
+        picture on the canvas is stretched so a negative can be judged by eye,
+        and a stretch puts the brightest pixel at white whether it was against
+        the ceiling or merely near it.
 
-        Measured on a thread: counting a full 3600 dpi frame exactly is about a
-        third of a second, and a window that locks up for that long while you
-        wait to be told about clipping is its own kind of unhelpful.
+        Measured on a thread. `clipping` counts every pixel rather than
+        sampling, which on a full 3600 dpi frame is about a third of a second
+        -- and a window that locks up for that long each time you click along
+        the filmstrip is its own kind of unhelpful.
+
+        Called twice for one pass, deliberately: once on the working copy as
+        soon as it is shown, and again when the scan's own pixels arrive,
+        because a reduced copy understates how much is at the rail.
         """
-        if result.image is None:
+        result = self.current
+        if result is None or result.image is None:
+            self.histogram.nothing()
             return
         pixels, source = self._finest_pixels(result)
-        window = _Histogram(self.root, result.label, source)
+        # Infrared is not an exposure -- see `rgb_only`.
+        pixels = rgb_only(pixels)
+        # A plain counter, not the result's seq: one pass is measured twice,
+        # so a token that only said *which* pass would let the coarse answer
+        # land after the fine one and quietly replace it.
+        self._histogram_token += 1
+        token = self._histogram_token
+        self.histogram.waiting(source)
 
         def work():
             try:
                 counts = preview.histogram(pixels)
                 clipped = preview.clipping(pixels)
             except Exception as exc:                     # noqa: BLE001
-                self._measured.put((window, None, None, str(exc)))
+                self._measured.put((token, None, None, str(exc)))
                 return
-            self._measured.put((window, counts, clipped, None))
+            self._measured.put((token, counts, clipped, None))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -2106,8 +2129,8 @@ class ScannerGui:
             factor, array = self._levels[-1]
             return array, f"the scan's own {array.shape[1]}x{array.shape[0]} pixels"
         return (result.image,
-                f"a {result.image.shape[1]}x{result.image.shape[0]} copy "
-                "-- the scan itself is not in hand")
+                f"a {result.image.shape[1]}x{result.image.shape[0]} copy, "
+                "not the scan itself")
 
     def on_show_prescan(self, result) -> None:
         for r in self.results:
@@ -2256,8 +2279,11 @@ class ScannerGui:
         self._levels_seq = seq
         self._say(f"{self.current.label}: now showing the scan's own "
                   f"{image.shape[1]}x{image.shape[0]} pixels")
-        # Deliberately not re-measured: the levels stay the working copy's, so
-        # a 1:1 look is the same picture as the fit it came from.
+        # The levels are deliberately not re-measured -- they stay the working
+        # copy's, so a 1:1 look is the same picture as the fit it came from.
+        # The histogram is, because it is a measurement rather than a look, and
+        # a reduced copy understates how much is at the rail.
+        self._measure_histogram()
         self._redraw()
 
     def _set_zoom(self, zoom: float) -> None:
@@ -2967,53 +2993,116 @@ def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
 
 #: The colour each channel is drawn in. Infrared is grey because it is a
 #: measurement rather than a colour, the same reason its preview is not tinted.
-_CHANNEL_INK = ("#e0605a", "#5ab86a", "#5a8fe0", "#a8a8a8")
+#: One ink per visible plane. There is no fourth: see `rgb_only`.
+_CHANNEL_INK = ("#e0605a", "#5ab86a", "#5a8fe0")
+
+#: The channel names a histogram row can carry, in the order the planes sit.
+_CHANNEL_NAMES = "RGB"
 
 
-class _Histogram:
-    """Where a pass's values sit, unstretched, and how much is against the ends.
+def rgb_only(pixels):
+    """The visible planes of a pass, which is all a histogram is about.
 
-    Its own window rather than a panel: it answers a question that is asked
-    occasionally and about one pass, and the room it needs is room the picture
-    would rather have.
+    Infrared is not a colour and not an exposure. It is a dust measurement:
+    its plane holds where the film is opaque to 940 nm, so "how much of it is
+    against full scale" is not a question about whether this frame was exposed
+    well, and the answer moves with the film base rather than with anything
+    the operator can change. On traditional black and white it holds the
+    picture over again, at +0.97 correlation with green -- a fourth curve
+    tracing the third, on a chart read at a glance.
+
+    Dropped before the measurement rather than after it, so a full 3600 dpi
+    frame costs three passes over the pixels and not four.
+    """
+    if pixels.ndim == 3 and pixels.shape[2] > len(_CHANNEL_NAMES):
+        return pixels[..., :len(_CHANNEL_NAMES)]
+    return pixels
+
+
+class _HistogramPanel:
+    """Where the current pass's values sit, unstretched, always on screen.
+
+    A panel in the corner of the picture rather than a window opened from a
+    menu. What it answers -- is this against the ceiling? -- is not an
+    occasional question but the one being asked continuously while an exposure
+    is being judged, and a reading you have to go and ask for is a reading
+    nobody takes. Blue reaches the rail first on this scanner and does it
+    without looking any different on a stretched preview, which is the whole
+    reason these numbers exist.
+
+    Small, and over the picture rather than beside it: the width belongs to
+    the scan. It follows whatever is on screen, and upgrades itself from the
+    working copy to the scan's own pixels when those arrive, because a reduced
+    copy understates how much is at the rail.
     """
 
-    WIDTH, HEIGHT = 540, 260
+    WIDTH, HEIGHT = 244, 74
+    BACK = "#141414"
+    EDGE = "#333333"
 
-    def __init__(self, parent: tk.Misc, label: str, source: str):
-        self.top = tk.Toplevel(parent)
-        self.top.title(f"Histogram -- {label}")
-        self.top.transient(parent)
-        frame = ttk.Frame(self.top, padding=10)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=label, font=("TkDefaultFont", 12, "bold")).pack(
-            anchor="w")
-        ttk.Label(frame, text=f"measured on {source}", foreground="#777").pack(
-            anchor="w", pady=(0, 6))
-        self.canvas = tk.Canvas(frame, width=self.WIDTH, height=self.HEIGHT,
-                                background="#141414", highlightthickness=0)
-        self.canvas.pack()
-        self.canvas.create_text(self.WIDTH // 2, self.HEIGHT // 2,
-                                fill="#888", text="measuring ...", tags="wait")
-        ttk.Label(frame, foreground="#777", justify="left", wraplength=self.WIDTH,
-                  text="Counts on a square-root scale, so a small population "
-                       "against an end is visible beside a large one in the "
-                       "middle. The horizontal axis is the full range of the "
-                       "file, not of this picture.").pack(anchor="w", pady=(6, 8))
-        self.table = ttk.Frame(frame)
-        self.table.pack(fill="x")
-        ttk.Button(frame, text="Close", command=self.top.destroy).pack(
-            anchor="e", pady=(10, 0))
+    def __init__(self, parent: tk.Misc):
+        self.frame = tk.Frame(parent, background=self.BACK,
+                              highlightthickness=1, highlightbackground=self.EDGE)
+        self.v_source = tk.StringVar(value="nothing scanned yet")
+        # One line, clipped rather than wrapped: this is a caption, and three
+        # lines of it made the panel taller than the chart it describes.
+        tk.Label(self.frame, textvariable=self.v_source, background=self.BACK,
+                 foreground="#777", font=("TkDefaultFont", 9), anchor="w",
+                 width=1).pack(fill="x", padx=8, pady=(4, 0))
+        self.canvas = tk.Canvas(self.frame, width=self.WIDTH, height=self.HEIGHT,
+                                background=self.BACK, highlightthickness=0)
+        self.canvas.pack(padx=8, pady=(3, 0))
+        self.table = tk.Frame(self.frame, background=self.BACK)
+        self.table.pack(fill="x", padx=8, pady=(2, 6))
+        # Built once and rewritten, not destroyed and rebuilt: this runs on
+        # every pass the operator clicks through, and a panel that discards
+        # and recreates a dozen widgets each time flickers doing it.
+        self._cells: dict[tuple[int, int], tk.Label] = {}
+        for column, text in enumerate(("", "at 0", "at full", "near full")):
+            tk.Label(self.table, text=text, background=self.BACK,
+                     foreground="#666", font=("TkDefaultFont", 9)).grid(
+                row=0, column=column, sticky="e", padx=(0, 6))
+        for row, name in enumerate(_CHANNEL_NAMES, start=1):
+            tk.Label(self.table, text=name, background=self.BACK,
+                     foreground=_CHANNEL_INK[row - 1],
+                     font=("TkDefaultFont", 9)).grid(row=row, column=0,
+                                                     sticky="w", padx=(0, 6))
+            for column in range(1, 4):
+                cell = tk.Label(self.table, text="--", background=self.BACK,
+                                foreground="#999", font=("TkDefaultFont", 9))
+                cell.grid(row=row, column=column, sticky="e", padx=(0, 6))
+                self._cells[(row, column)] = cell
 
-    def alive(self) -> bool:
-        try:
-            return bool(self.top.winfo_exists())
-        except tk.TclError:
-            return False
+    def place(self) -> None:
+        """Top right of the picture, out of the way of the toolbar below it."""
+        self.frame.place(relx=1.0, x=-12, y=12, anchor="ne")
+
+    # -- what it is showing ------------------------------------------------
+
+    def waiting(self, source: str) -> None:
+        self.v_source.set(source)
+        self._note("measuring ...")
+
+    def nothing(self) -> None:
+        self.v_source.set("nothing scanned yet")
+        self._note("")
+
+    def failed(self) -> None:
+        self._note("could not measure")
+
+    def _note(self, text: str) -> None:
+        self.canvas.delete("all")
+        self._blank()
+        if text:
+            self.canvas.create_text(self.WIDTH // 2, self.HEIGHT // 2,
+                                    fill="#777", text=text)
+
+    def _blank(self) -> None:
+        for cell in self._cells.values():
+            cell.configure(text="--", foreground="#999")
 
     def show(self, counts, clipped) -> None:
-        if not self.alive():
-            return                                       # closed while measuring
+        self.v_source.set(self.v_source.get())
         self.canvas.delete("all")
         import numpy as np
 
@@ -3025,37 +3114,31 @@ class _Histogram:
         for edge in (0.25, 0.5, 0.75):
             x = 1 + edge * (self.WIDTH - 2)
             self.canvas.create_line(x, 0, x, self.HEIGHT, fill="#2a2a2a")
-        for channel in range(counts.shape[0]):
-            ink = _CHANNEL_INK[channel] if channel < len(_CHANNEL_INK) else "#ccc"
+        for channel in range(min(counts.shape[0], len(_CHANNEL_INK))):
             points = []
             for b in range(bins):
                 x = 1 + b * (self.WIDTH - 2) / max(1, bins - 1)
                 y = self.HEIGHT - 1 - shown[channel][b] / tallest * (self.HEIGHT - 6)
                 points.extend((x, y))
-            self.canvas.create_line(*points, fill=ink, width=1)
-        self.canvas.create_text(4, self.HEIGHT - 8, anchor="w", fill="#666",
-                                text="nothing")
-        self.canvas.create_text(self.WIDTH - 4, self.HEIGHT - 8, anchor="e",
-                                fill="#666", text="full scale")
+            self.canvas.create_line(*points, fill=_CHANNEL_INK[channel], width=1)
+        self.canvas.create_text(3, self.HEIGHT - 7, anchor="w", fill="#555",
+                                text="0", font=("TkDefaultFont", 9))
+        self.canvas.create_text(self.WIDTH - 3, self.HEIGHT - 7, anchor="e",
+                                fill="#555", text="full scale",
+                                font=("TkDefaultFont", 9))
 
-        for child in self.table.winfo_children():
-            child.destroy()
-        headings = ("", "at nothing", "at full scale", "near full")
-        for column, text in enumerate(headings):
-            ttk.Label(self.table, text=text, foreground="#777").grid(
-                row=0, column=column, sticky="e", padx=6)
-        for channel in range(clipped.shape[0]):
-            name = "RGBI"[channel] if channel < 4 else str(channel)
-            ttk.Label(self.table, text=name).grid(row=channel + 1, column=0,
-                                                  sticky="w", padx=6)
+        self._blank()
+        for channel in range(min(clipped.shape[0], len(_CHANNEL_NAMES))):
             for column, fraction in enumerate(clipped[channel], start=1):
+                cell = self._cells.get((channel + 1, column))
+                if cell is None:
+                    continue
                 # A tenth of a percent of a frame is thousands of pixels, so
                 # anything that rounds to zero is said to be zero rather than
                 # shown as a very small number that invites squinting.
-                text = "--" if fraction == 0 else f"{fraction * 100:.3f}%"
-                ttk.Label(self.table, text=text,
-                          foreground="#e0605a" if fraction > 0.001 else None).grid(
-                    row=channel + 1, column=column, sticky="e", padx=6)
+                cell.configure(
+                    text="--" if fraction == 0 else f"{fraction * 100:.2f}%",
+                    foreground="#e0605a" if fraction > 0.001 else "#999")
 
 
 class _FrameAdjuster:

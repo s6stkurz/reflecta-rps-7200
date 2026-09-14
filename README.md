@@ -209,6 +209,17 @@ hours, and a strip with four keepers on it should not cost the same as one with
 seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame beside
 it, so a strip can be looked at again tomorrow instead of walked again.
 
+**The histogram is always on screen**, in the top right corner of the picture:
+where the values actually sit, unstretched, with how much of each channel is at
+nothing, at full scale and near it. The preview is stretched so a negative can
+be judged by eye, and a stretch puts the brightest pixel at white whether it was
+against the ceiling or merely near it -- on this scanner blue reaches the rail
+first and looks no different for it. It follows whatever is on screen and
+re-reads itself on the scan's own pixels when those arrive, because a reduced
+copy understates how much is at the rail. Infrared is not in it: it is a dust
+measurement rather than an exposure, and on traditional black and white it
+merely traces green.
+
 **Right-click turns a picture, wherever it is shown** -- the big preview, the
 filmstrip, or a cell of the contact sheet -- and a frame is scanned the way up
 it was left. The sheet keeps a turn per frame, so a portrait among landscapes

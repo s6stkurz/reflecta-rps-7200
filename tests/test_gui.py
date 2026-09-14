@@ -547,20 +547,43 @@ def test_only_the_overlay_is_cleared_between_frames():
 
 def test_the_histogram_is_measured_off_the_ui_thread():
     """Counting a full 3600 dpi frame exactly is about a third of a second, and
-    a window that locks up for that long while you wait to be told about
-    clipping is its own kind of unhelpful."""
+    a window that locks up for that long each time you click along the
+    filmstrip is its own kind of unhelpful."""
     import inspect
-    source = inspect.getsource(gui.ScannerGui.on_histogram)
+    source = inspect.getsource(gui.ScannerGui._measure_histogram)
     assert "threading.Thread" in source
     assert "self._measured.put" in source
     assert "self._measured" in inspect.getsource(gui.ScannerGui._pump), (
         "and the main loop collects it")
 
 
-def test_a_histogram_window_closed_while_measuring_is_not_drawn_into():
-    """The thread finishes whatever happens; the drawing has to notice."""
+def test_the_histogram_is_always_on_screen():
+    """Not a window opened from a menu. "Is this against the ceiling" is the
+    question being asked continuously while an exposure is judged, and a
+    reading you have to go and ask for is a reading nobody takes."""
     import inspect
-    assert "if not self.alive():" in inspect.getsource(gui._Histogram.show)
+    assert not hasattr(gui, "_Histogram"), "the separate window is gone"
+    assert not hasattr(gui.ScannerGui, "on_histogram")
+    assert "Histogram" not in inspect.getsource(gui.ScannerGui._fill_result_menu)
+    built = inspect.getsource(gui.ScannerGui._build_preview)
+    assert "_HistogramPanel(top)" in built and "self.histogram.place()" in built
+    # Placed, not packed: it floats over the picture rather than taking width
+    # from it, and a canvas redraw cannot clear it.
+    assert ".place(" in inspect.getsource(gui._HistogramPanel.place)
+
+
+def test_a_measurement_overtaken_by_a_later_one_is_dropped():
+    """One pass is measured twice -- the working copy, then the scan's own
+    pixels. Without a token the coarse answer can land second and quietly
+    replace the fine one, and clicking quickly along the filmstrip leaves the
+    wrong frame's numbers on screen."""
+    import inspect
+    pump = inspect.getsource(gui.ScannerGui._pump)
+    assert "if token != self._histogram_token:" in pump
+    assert "continue" in pump
+    # A counter, not the result's seq, which cannot tell the two apart.
+    assert "self._histogram_token += 1" in inspect.getsource(
+        gui.ScannerGui._measure_histogram)
 
 
 def test_the_histogram_prefers_the_scans_own_pixels():
@@ -570,13 +593,38 @@ def test_the_histogram_prefers_the_scans_own_pixels():
     source = inspect.getsource(gui.ScannerGui._finest_pixels)
     assert "self._levels" in source
     assert "the scan's own" in source and "copy" in source
+    # Which is why the arrival of those pixels measures again.
+    assert "_measure_histogram" in inspect.getsource(gui.ScannerGui._loaded)
 
 
-def test_infrared_is_drawn_grey():
-    """A measurement, not a colour -- the same reason its preview is not
-    tinted."""
-    assert gui._CHANNEL_INK[3].count(gui._CHANNEL_INK[3][1:3]) == 3, (
-        f"{gui._CHANNEL_INK[3]} should be a neutral grey")
+def test_infrared_is_not_in_the_histogram():
+    """It is a dust measurement, not an exposure: how much of it sits at full
+    scale says nothing about whether this frame was exposed well, and on
+    traditional black and white it holds the picture over again at +0.97
+    correlation with green -- a fourth curve tracing the third."""
+    rgbi = np.zeros((4, 4, 4), np.uint16)
+    assert gui.rgb_only(rgbi).shape[2] == 3
+    assert len(gui._CHANNEL_INK) == 3, "and there is no ink for a fourth"
+    assert gui._CHANNEL_NAMES == "RGB"
+
+
+def test_dropping_infrared_leaves_every_other_shape_alone():
+    """A prescan is RGB and a monochrome scan is one plane. Neither has an
+    infrared plane to lose, and slicing one that is not there would be a
+    silent change of picture."""
+    rgb = np.zeros((4, 4, 3), np.uint16)
+    assert gui.rgb_only(rgb) is rgb
+    mono = np.zeros((4, 4), np.uint16)
+    assert gui.rgb_only(mono) is mono
+
+
+def test_infrared_is_dropped_before_it_is_counted_not_after():
+    """`clipping` counts every pixel of every plane. Measuring a plane that is
+    then thrown away is a quarter of the work for nothing, on the measurement
+    that already costs a third of a second."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._measure_histogram)
+    assert source.index("rgb_only(pixels)") < source.index("preview.histogram")
 
 
 # -- picking frames off a contact sheet --------------------------------------
@@ -1069,7 +1117,7 @@ def test_both_menus_are_filled_by_the_same_method():
     for handler in (gui.ScannerGui.on_strip_menu, gui.ScannerGui.on_canvas_menu):
         assert "_fill_result_menu" in inspect.getsource(handler)
     filled = inspect.getsource(gui.ScannerGui._fill_result_menu)
-    for item in ("Save as", "Histogram", "Rotate right", "Straighten",
+    for item in ("Save as", "Rotate right", "Straighten",
                  "Show prescan", "Delete"):
         assert item in filled, item
 
