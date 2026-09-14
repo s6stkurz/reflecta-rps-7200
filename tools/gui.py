@@ -1347,19 +1347,24 @@ class ScannerGui:
         """
         if not approved:
             return
-        name = _safe(self.fields["roll"].get().strip())
-        folder = Path(self.session.rolls) / name
         try:
+            name = _safe(self.fields["roll"].get().strip())
+            folder = Path(self.session.rolls) / name
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "approved.json").write_text(json.dumps({
                 "roll": name,
                 "frames": [{"number": a.number,
                             "offset_mm": round(a.offset_mm, 4),
-                            "reference_entry": a.reference_entry}
+                            "reference_entry": str(a.reference_entry or "")}
                            for a in approved],
-            }, indent=2))
-        except OSError as exc:
-            self._say(f"could not write approved.json: {exc}")
+            }, indent=2, default=str))
+        except Exception as exc:                          # noqa: BLE001
+            # Broad on purpose. This file is a note about what was asked for;
+            # the scan is the work. Losing the note must never cost the roll,
+            # and it did once -- a Path where a str was expected raised inside
+            # json.dumps, took the Tk callback with it, and the operator saw
+            # a button that did nothing at all.
+            self._say(f"could not write approved.json ({exc}); scanning anyway")
             return
         told = ", ".join(f"{a.number}:{a.offset_mm:+.2f}mm"
                          for a in approved if a.offset_mm) or "none moved"
@@ -2655,7 +2660,10 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
             number=number,
             offset_mm=snap_offset(offsets.get(number, 0.0)),
             reference=getattr(result, "image", None),
-            reference_entry=getattr(result, "entry", "") or "",
+            # str, not the Path the GUI carries: Approved declares a str,
+            # and a Path here reaches json.dumps in _write_approved and
+            # raises -- which used to take the whole commission down with it.
+            reference_entry=str(getattr(result, "entry", "") or ""),
         ))
     return tuple(out)
 
