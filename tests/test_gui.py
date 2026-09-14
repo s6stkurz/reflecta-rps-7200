@@ -10,6 +10,7 @@ What is tested is what would mislead the operator: the stop button saying which
 of the two things it will do, the option parsing that decides what the scanner
 is asked for, and the resolution guard.
 """
+import json
 import time
 
 import numpy as np
@@ -856,3 +857,85 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
     assert out[0].reference is frames[0].image, "carries the pixels he saw"
     assert out[0].reference_entry == "library/a"
     assert out[1].reference_entry == ""
+
+
+# -- reopening a survey ------------------------------------------------------
+#
+# survey.json has been written since rolls existed and was never read back, so
+# a strip walked before closing the window had to be walked again -- four
+# minutes of transport for nothing.
+
+
+def _write_survey(folder, rotation=0, frames=3, offsets=None):
+    """A survey folder shaped exactly as `ScanSession._roll` writes one."""
+    from rps7200 import preview, tiff
+
+    folder.mkdir(parents=True, exist_ok=True)
+    records, images = [], {}
+    for number in range(1, frames + 1):
+        rng = np.random.default_rng(number)
+        image = rng.integers(0, 255, (40, 60, 3), dtype=np.uint16).astype(np.uint8)
+        images[number] = image
+        # written turned, as the writer does
+        tiff.write(str(folder / f"prescan{number:02d}.tif"),
+                   preview.rotate(image, rotation))
+        records.append({"number": number, "index": number - 1,
+                        "transport_position": number - 1,
+                        "registration": {"contrast": 0.3}, "error": None,
+                        "prescan": f"prescan{number:02d}.tif"})
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "a-strip", "start_at": 1, "prescan_resolution": 300,
+        "rotation": rotation, "frames": records,
+    }))
+    if offsets:
+        (folder / "approved.json").write_text(json.dumps({
+            "roll": "a-strip",
+            "frames": [{"number": n, "offset_mm": v,
+                        "reference_entry": f"library/frame{n}"}
+                       for n, v in offsets.items()],
+        }))
+    return images
+
+
+def test_a_survey_written_yesterday_opens_again(tmp_path):
+    _write_survey(tmp_path / "roll")
+    out = gui.read_survey(tmp_path / "roll")
+
+    assert len(out["results"]) == 3
+    assert [r.number for r in out["results"]] == [1, 2, 3]
+    assert out["start_at"] == 1
+    assert out["prescan_resolution"] == 300
+    assert all(r.kind == "prescan" and r.levels is not None
+               for r in out["results"])
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_a_reopened_prescan_comes_back_in_the_films_own_orientation(tmp_path,
+                                                                    rotation):
+    """prescanNN.tif is written turned the way the screen had it. A reference
+    has to be the film's own orientation or it will not correlate against a
+    fresh pass -- and the turn is carried on the result instead, exactly as a
+    live pass does it."""
+    images = _write_survey(tmp_path / "roll", rotation=rotation)
+    out = gui.read_survey(tmp_path / "roll")
+
+    for result in out["results"]:
+        assert np.array_equal(result.image, images[result.number]), (
+            f"a {rotation} degree survey did not come back unturned")
+        assert result.rotation == rotation
+
+
+def test_positions_already_approved_come_back_with_it(tmp_path):
+    _write_survey(tmp_path / "roll", offsets={2: 0.4833})
+    out = gui.read_survey(tmp_path / "roll")
+
+    assert out["offsets"] == {2: pytest.approx(0.4833)}
+    entry = {r.number: r.entry for r in out["results"]}[2]
+    assert entry is not None and entry.name == "frame2"
+
+
+def test_a_survey_whose_prescans_are_gone_yields_nothing_rather_than_half(tmp_path):
+    _write_survey(tmp_path / "roll")
+    for stale in (tmp_path / "roll").glob("prescan*.tif"):
+        stale.unlink()
+    assert gui.read_survey(tmp_path / "roll")["results"] == []
