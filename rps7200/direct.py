@@ -52,6 +52,10 @@ from .framing import (
     gap_edges,
     registration,
     registration_error_mm,
+    HOLD_HEADROOM_MM,
+    HOLD_TOLERANCE_MM,
+    hold_plan,
+    measure_shift_mm,
 )
 from .protocol import (
     ASC_END_OF_DATA,
@@ -2573,6 +2577,109 @@ class DirectScanner:
         self._debug_capture(image, meta)
         return image, meta
 
+    #: Consecutive frames that fail to reach their approved position before
+    #: the loop stops trying for the rest of the roll. The same shape as
+    #: `max_failures`: a fault that repeats is a fault with the setup.
+    HOLD_GIVE_UP_FRAMES = 3
+
+    def _hold_to_approved(
+        self,
+        index: int,
+        image: np.ndarray,
+        prescan_resolution: int,
+        approved: Any,
+        keep_raw: bool = False,
+        reverse: bool = False,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Move the film until this frame sits where the operator put it.
+
+        The reference is not a measurement -- it is the picture he looked at in
+        the contact sheet and accepted. So this never decides where the frame
+        *should* be; it only asks whether it is still where he left it, and
+        closes the gap if not.
+
+        Unlike :meth:`_correct_registration` this iterates, because a backward
+        offset spends its first command on backlash: the transport advances
+        forward between frames, so it enters each one loaded forward, and a
+        move the other way loses two to three commands before anything happens.
+        One shot would report that as a failure. Two converge.
+
+        It never reverses within a frame, never exceeds a travel budget, and
+        caps at :data:`~rps7200.framing.MAX_HOLD_MOVES` moves. Whatever
+        happens, the frame is scanned: the outcome is recorded, not enforced.
+        """
+        target = -approved.offset_mm if reverse else approved.offset_mm
+        budget_mm = abs(target) + HOLD_HEADROOM_MM
+        out: dict[str, Any] = {
+            "target_mm": round(target, 4), "outcome": "held", "moves": 0,
+            "spent_mm": 0.0, "reverse_applied": bool(reverse),
+            "history": [], "prescan": None, "roll_abort": None,
+        }
+
+        measured, detail = measure_shift_mm(
+            approved.reference, image, budget_mm=budget_mm)
+        out["history"].append(detail)
+        spent = 0.0
+        direction = 0
+
+        while True:
+            want, outcome = hold_plan(target, measured, spent, direction,
+                                      out["moves"])
+            out["outcome"] = outcome
+            if want is None:
+                break
+            if should_stop is not None and should_stop():
+                out["outcome"] = "stopped"
+                break
+
+            before = measured
+            asked = self.nudge(want)
+            delivered_mm = asked["asked_mm"] * (1 if want > 0 else -1)
+            spent += abs(delivered_mm)
+            direction = 1 if want > 0 else -1
+            out["moves"] += 1
+            out["spent_mm"] = round(spent, 4)
+
+            time.sleep(0.4)
+            image, _ = self.prescan(resolution=prescan_resolution,
+                                    keep_raw=keep_raw)
+            out["prescan"] = image
+            measured, detail = measure_shift_mm(
+                approved.reference, image, budget_mm=budget_mm)
+            out["history"].append(detail)
+
+            if out["moves"] == 1 and measured is not None and before is not None:
+                # The one free check on direction. If the film went the other
+                # way, the transport's sense is not what this roll assumed and
+                # every frame after this would be driven wrong -- so this stops
+                # the roll correcting, not just this frame. It is a measurement
+                # of direction, not a second opinion about his number.
+                went = measured - before
+                if abs(went) > HOLD_TOLERANCE_MM and (went > 0) != (want > 0):
+                    out["outcome"] = "wrong_way"
+                    out["roll_abort"] = (
+                        f"frame {index}: asked for {want:+.2f} mm and the film "
+                        f"went {went:+.2f} mm. The direction is inverted, so "
+                        "every frame would be driven the wrong way -- holding "
+                        "is off for the rest of this roll."
+                    )
+                    self._log(out["roll_abort"])
+                    break
+
+        final = measured
+        out["final_mm"] = None if final is None else round(final, 4)
+        out["residual_mm"] = (None if final is None
+                              else round(target - final, 4))
+        out["confidence"] = out["history"][-1].get("confidence")
+        out["dy"] = out["history"][-1].get("dy")
+        self._log(
+            f"frame {index}: approved {target:+.3f} mm -> {out['outcome']}"
+            + (f", now {final:+.3f} mm after {out['moves']} move(s)"
+               if final is not None else ", not verified")
+        )
+        return out
+
     def _correct_registration(
         self, index: int, image: np.ndarray, prescan_resolution: int,
         dry_run: bool, keep_raw: bool = False,
@@ -2720,6 +2827,8 @@ class DirectScanner:
         dry_run: bool = False,
         correct: bool = False,
         correct_dry_run: bool = False,
+        approved: dict[int, Any] | None = None,
+        reverse_hold: bool = False,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -2803,6 +2912,11 @@ class DirectScanner:
         scales: float | Sequence[float] = 1.0
         metered = False
         failures = 0
+        #: Holding stays on until something says it should not: the direction
+        #: came back inverted, or several frames running would not reach the
+        #: position asked for. Scanning continues either way.
+        holding = True
+        misses = 0
         index = 0
 
         # Past the last chosen frame there is nothing left to do, so the roll
@@ -2884,7 +2998,49 @@ class DirectScanner:
                     )
                     return
 
-                if correct or correct_dry_run:
+                # An approved position beats the automatic detector outright.
+                # That is the whole point of it: the operator looked at this
+                # frame and said where it goes, and a gap measurement that has
+                # been wrong before must not overrule him. A frame he did not
+                # adjust still gets the old behaviour, so a mixed roll is
+                # coherent and a roll with no approvals is unchanged.
+                held = approved.get(index) if approved else None
+                if held is not None and holding:
+                    fix = self._hold_to_approved(
+                        index, prescan_image, prescan_resolution, held,
+                        keep_raw=keep_raw, reverse=reverse_hold,
+                        should_stop=should_stop,
+                    )
+                    if fix.get("roll_abort"):
+                        holding = False
+                    if fix.get("outcome") != "held":
+                        misses += 1
+                        if misses >= self.HOLD_GIVE_UP_FRAMES:
+                            holding = False
+                            self._log(
+                                f"{misses} frames in a row did not reach the "
+                                "approved position; holding is off for the "
+                                "rest of this roll. Frames are still scanned."
+                            )
+                    else:
+                        misses = 0
+                    marks["approved"] = {k: v for k, v in fix.items()
+                                         if k != "prescan"}
+                    if fix.get("prescan") is not None:
+                        prescan_image = fix["prescan"]
+                        marks.update(
+                            {k: v for k, v in registration(
+                                prescan_image, window).items()}
+                        )
+                        marks["contrast"] = round(
+                            frame_contrast(prescan_image), 4)
+                elif held is not None:
+                    marks["approved"] = {
+                        "target_mm": round(held.offset_mm, 4),
+                        "outcome": "off",
+                        "reason": "holding was switched off earlier in this roll",
+                    }
+                elif correct or correct_dry_run:
                     fix = self._correct_registration(
                         index, prescan_image, prescan_resolution,
                         correct_dry_run, keep_raw=keep_raw,

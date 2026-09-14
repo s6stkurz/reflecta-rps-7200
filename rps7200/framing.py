@@ -10,6 +10,8 @@ Everything here measures. Nothing here moves the film.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from .protocol import COORD_PER_INCH, MM_PER_INCH
@@ -352,3 +354,164 @@ def registration_error_mm(
             "allows -- detector error, not film movement"
         )
     return mm, f"{px:+d} px of gap"
+
+
+# --- holding a frame to the position an operator approved -------------------
+#
+# A different footing from everything above. `film_bounds` and `gap_edges`
+# decide where a frame *should* be; these two only ask whether it is still
+# where somebody looked at it and said yes. That matters, because every
+# automatic detector built for this scanner has been confidently wrong on some
+# frames -- and on real film `film_bounds` abstains on 97% of prescans, so
+# there is nothing to be confidently wrong *with*.
+
+#: The whole transport window, in millimetres. 10344 units at 7200 dpi.
+APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
+
+#: Correlation peak height, over the surface mean, below which a match is not
+#: believed. Measured over a real 21-frame survey: true matches -- including a
+#: 300 dpi prescan against a 900 dpi scan of the same frame, which is harder
+#: than anything this will meet -- scored 61 to 96, while twenty pairs of
+#: *different* photographs scored 4.3 to 28.8. 40 sits in the gap.
+CONFIDENCE_FLOOR = 40.0
+
+#: How far off the film axis a match may sit. The transport moves only in x,
+#: so a match that claims the picture also moved vertically has found
+#: something else. True matches gave 0 to 1; the nulls ranged +-61.
+MAX_DY_PX = 2
+
+
+def measure_shift_mm(
+    reference: np.ndarray,
+    now: np.ndarray,
+    *,
+    budget_mm: float = 8.1,
+    aperture_mm: float = APERTURE_MM,
+) -> tuple[float | None, dict[str, Any]]:
+    """How far the film has moved since ``reference`` was taken, in mm.
+
+    Positive means the picture sits further along +x than it did. ``None``
+    means the question could not be answered, and the caller must not move on
+    a measurement that is not believed -- refusing is the whole reason this
+    returns an option rather than a number.
+
+    **The sign is the easiest thing here to invert.** :func:`register` returns
+    ``dx`` defined so ``a[i, j]`` matches ``b[i, j - dx]``, so content that has
+    moved right by *s* pixels gives ``dx = -s``. Content displacement is
+    therefore ``-dx``, verified at every shift from -60 to +60.
+
+    ``budget_mm`` sizes the search. :func:`register`'s own default of 64 px is
+    5.5 mm at 300 dpi, which is less than the transport can travel, so a frame
+    at the far end of the range would be measured as something nearer.
+
+    This never consults :func:`gap_edges`. That counts gap runs anchored at the
+    window's edges, so a frame drifted far enough that the gap sits in the
+    middle returns ``(0, 0)`` and :func:`registration_error_mm` then reports
+    ``0.0, "no gap in view -- registered"`` -- a positive assertion of
+    correctness for a badly misregistered frame. Under a loop that would be
+    fail-silent rather than fail-safe.
+    """
+    from .uniformity import register
+
+    detail: dict[str, Any] = {"confidence": None, "dy": None, "dx": None,
+                              "px": None, "resampled": False}
+    if reference is None or now is None or reference.size == 0 or now.size == 0:
+        detail["reason"] = "nothing to compare"
+        return None, detail
+
+    if reference.shape[:2] != now.shape[:2]:
+        # The survey and the scan ran at different prescan resolutions. Match
+        # the reference to what is in hand rather than refusing: the operator's
+        # decision is still about this picture.
+        reference = _resample_to(reference, now.shape[:2])
+        detail["resampled"] = True
+
+    width = max(now.shape[1], 1)
+    mm_per_px = aperture_mm / width
+    reach = int(abs(budget_mm) / max(mm_per_px, 1e-9)) + 8
+
+    dy, dx, confidence = register(reference, now, max_shift=reach)
+    detail.update(confidence=round(float(confidence), 2), dy=int(dy),
+                  dx=int(dx), px=int(-dx))
+
+    if confidence < CONFIDENCE_FLOOR:
+        detail["reason"] = (f"correlation too weak ({confidence:.1f} below "
+                            f"{CONFIDENCE_FLOOR:.0f})")
+        return None, detail
+    if abs(dy) > MAX_DY_PX:
+        detail["reason"] = (f"matched {dy:+d} px off the film axis, which the "
+                            "transport cannot do")
+        return None, detail
+
+    detail["reason"] = "matched"
+    return float(-dx) * mm_per_px, detail
+
+
+def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Nearest-neighbour resize onto ``shape``. Enough for correlation."""
+    rows = np.clip((np.arange(shape[0]) * image.shape[0] // max(shape[0], 1)),
+                   0, image.shape[0] - 1)
+    columns = np.clip((np.arange(shape[1]) * image.shape[1] // max(shape[1], 1)),
+                      0, image.shape[1] - 1)
+    return np.take(np.take(image, rows, axis=0), columns, axis=1)
+
+
+#: How close counts as arrived. **The smallest move the hardware can make** --
+#: one SLIDE command at param 1, `STEP_MM + OVERHEAD_MM` on `DirectScanner`.
+#: That value and not a smaller one is what makes a limit cycle impossible: the
+#: loop can never ask for a correction it cannot deliver, so it cannot chatter
+#: between two positions either side of the target. Duplicated rather than
+#: imported because `direct` imports this module; a test pins the two together,
+#: which is the same arrangement `tools/gui.py`'s FINE_STEP_MM already has.
+HOLD_TOLERANCE_MM = 0.2719
+
+#: Moves per frame. Four prescans is already 70 s added to a frame.
+MAX_HOLD_MOVES = 3
+
+#: On top of the operator's own offset, how far one frame may travel before
+#: the loop decides the film is not where anybody thinks it is.
+HOLD_HEADROOM_MM = 2.0
+
+
+def hold_plan(
+    target_mm: float,
+    measured_mm: float | None,
+    spent_mm: float = 0.0,
+    direction: int = 0,
+    moves: int = 0,
+) -> tuple[float | None, str]:
+    """Whether to move, how far, and if not why not.
+
+    ``target_mm`` is the operator's number and is a constant of the frame: this
+    only ever computes a residual against it, so his decision cannot be
+    overwritten by a measurement. ``measured_mm`` is where the film actually
+    sits relative to the same reference, or ``None`` when that could not be
+    established.
+
+    Returns ``(millimetres, outcome)``. A distance means move that far;
+    ``None`` means stop, and the outcome says why. The frame is scanned either
+    way -- nothing here refuses to produce a picture.
+
+    ``direction`` is the sign of the previous move within this frame, and a
+    reversal is refused rather than performed. Backlash swallows two to three
+    commands after a direction change and releases the distance later, so a
+    loop that reverses is reasoning from a position the mechanism has not
+    finished delivering. Overshoot is accepted and reported instead.
+    """
+    if measured_mm is None:
+        return None, "unverified"
+
+    residual = target_mm - measured_mm
+    if abs(residual) < HOLD_TOLERANCE_MM:
+        return None, "held"
+    if moves >= MAX_HOLD_MOVES:
+        return None, "not_converged"
+
+    way = 1 if residual > 0 else -1
+    if direction and way != direction:
+        return None, "would_reverse"
+
+    budget = abs(target_mm) + HOLD_HEADROOM_MM
+    if spent_mm + abs(residual) > budget:
+        return None, "budget"
+    return residual, "move"

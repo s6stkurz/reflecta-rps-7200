@@ -1241,6 +1241,7 @@ class ScannerGui:
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=False,
             correct=self.v_correct.get(), only=tuple(numbers),
+            approved=tuple(approved), reverse_hold=self.v_reverse.get(),
             mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
             name=self.fields["roll"].get().strip(),
@@ -1498,6 +1499,8 @@ class ScannerGui:
                     state="normal" if self.survey else "disabled")
                 if self.survey:
                     self.on_contact_sheet()
+            else:
+                self._report_held()
         elif event.kind == "failed":
             # Reported in place, not in a modal: a modal sits inside this pump
             # and stops it, so one failed frame would freeze the window and the
@@ -1523,6 +1526,44 @@ class ScannerGui:
             self.v_state.set("scanner closed")
             if self.closing:
                 self._quit()
+
+    def _report_held(self) -> None:
+        """Say, once and by name, which frames did not reach their position.
+
+        A line in the log scrolls away -- six frames of a roll went out
+        uncorrectable once because the warning was above the fold. This is the
+        last thing seen when a roll ends, and it names frames rather than
+        outcome codes, because "not_converged" is not what anyone needs to
+        read at the end of an hour.
+        """
+        said = {
+            "not_converged": "did not get close enough",
+            "unverified": "could not be verified against your picture",
+            "would_reverse": "overshot, and reversing was refused",
+            "budget": "would have travelled further than allowed",
+            "wrong_way": "moved the wrong way -- the direction is inverted",
+            "stopped": "was interrupted",
+            "off": "was left alone; holding had been switched off",
+        }
+        missed = []
+        for result in self.results:
+            held = (result.registration or {}).get("approved")
+            if not held or held.get("outcome") == "held":
+                continue
+            number = getattr(result, "number", None)
+            why = said.get(held.get("outcome"), held.get("outcome", "?"))
+            residual = held.get("residual_mm")
+            short = f" ({abs(residual):.2f} mm out)" if residual else ""
+            missed.append(f"frame {number} {why}{short}")
+        if not missed:
+            return
+        messagebox.showwarning(
+            "Positions not reached",
+            f"{len(missed)} frame{'s' if len(missed) != 1 else ''} "
+            "were scanned without reaching the position you approved:\n\n"
+            + "\n".join(missed)
+            + "\n\nThe scans are filed and usable; the frames above are the "
+              "ones to look at first.")
 
     def _light(self, state: str) -> None:
         self.light.itemconfigure(self._bulb, fill=LIGHT[state])

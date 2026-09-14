@@ -293,6 +293,7 @@ class DemoScanner:
         skip: int = 0,
         only: tuple[int, ...] | None = None,
         film: str = "negative",
+        approved: dict | None = None,
         **kw: Any,
     ):
         # Up front, as the real one does: a roll spends minutes calibrating
@@ -327,6 +328,9 @@ class DemoScanner:
                     f"offset {marks['offset_mm']:+.2f} mm, "
                     f"short by {marks['shortfall_mm']:.2f} mm"
                 )
+                held = (approved or {}).get(skip + i)
+                if held is not None:
+                    marks["approved"] = self._pretend_to_hold(i, held)
                 image = meta = None
                 if not dry_run:
                     image, meta = self.scan(
@@ -344,6 +348,31 @@ class DemoScanner:
                 registration=marks,
             )
             self._work(7.0)                              # the advance
+
+    def _pretend_to_hold(self, index: int, held: Any) -> dict[str, Any]:
+        """What holding a frame to its approved position looks like.
+
+        Converges after one move, except on the third frame, which reports
+        `not_converged` on purpose. A demo where everything succeeds cannot
+        show the end-of-roll warning, and a flag nobody has ever seen fire is
+        a flag nobody trusts.
+        """
+        target = float(getattr(held, "offset_mm", 0.0))
+        if not target:
+            return {"target_mm": 0.0, "outcome": "held", "moves": 0,
+                    "spent_mm": 0.0, "final_mm": 0.0, "residual_mm": 0.0,
+                    "confidence": 88.0, "dy": 0, "history": []}
+        self._work(1.5)
+        if index == 2:
+            return {"target_mm": round(target, 4), "outcome": "not_converged",
+                    "moves": 3, "spent_mm": round(abs(target) * 1.4, 4),
+                    "final_mm": round(target * 0.4, 4),
+                    "residual_mm": round(target * 0.6, 4),
+                    "confidence": 71.5, "dy": 0, "history": []}
+        return {"target_mm": round(target, 4), "outcome": "held", "moves": 1,
+                "spent_mm": round(abs(target), 4),
+                "final_mm": round(target, 4), "residual_mm": 0.0,
+                "confidence": 84.2, "dy": 0, "history": []}
 
     # -- internals ---------------------------------------------------------
 
