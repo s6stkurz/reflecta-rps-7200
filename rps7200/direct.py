@@ -2389,7 +2389,13 @@ class DirectScanner:
                          f"columns, this pass needs {needed}"
                 )
                 self._log(f"calibrating before scanning ({reason})")
-                self.calibrate_shading(resolution=resolution)
+                # At the default 3600 dpi, not this pass's resolution. The
+                # device caps its reference at MAX_SHADING_COLUMNS whatever it
+                # is asked for, and 3600 is what reaches that cap -- so a
+                # narrower calibration buys nothing and costs a second one as
+                # soon as a wider pass follows. It is also the only resolution
+                # any calibration, vendor or ours, has ever run at.
+                self.calibrate_shading()
                 if (self._shading is None
                         or needed > self._shading.pixels_per_line):
                     raise ShadingUnavailable(

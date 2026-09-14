@@ -16,6 +16,8 @@ came back empty every time, so the poll has to survive a failed read rather than
 read it as the end of the film.
 """
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -1156,3 +1158,15 @@ def test_every_prescan_through_a_hold_keeps_its_raw_bytes():
     _roll_once(scanner, {0: _approved(1, 0.5, reference)}, keep_raw=True)
 
     assert scanner.prescan_keep_raw == [True, True]
+
+
+def test_an_automatic_calibration_runs_at_the_resolution_that_reaches_the_cap():
+    """Not the resolution of the pass that triggered it. The device will not
+    produce a reference wider than MAX_SHADING_COLUMNS whatever it is asked
+    for, and 3600 dpi is what reaches that cap -- so calibrating at a 300 dpi
+    prescan's own resolution would buy a 431-column reference, and a second
+    calibration the moment a real scan followed. 3600 is also the only
+    resolution any calibration, vendor or ours, has ever run at."""
+    source = inspect.getsource(DirectScanner.scan)
+    assert "self.calibrate_shading()" in source
+    assert "self.calibrate_shading(resolution=resolution)" not in source
