@@ -22,6 +22,7 @@ from rps7200 import library, session
 from rps7200.direct import RollFrame
 from rps7200.library import FilmNotes
 from rps7200.session import (
+    Approved,
     Calibrate,
     Move,
     Prescan,
@@ -716,6 +717,85 @@ def test_no_turn_leaves_both_alone(tmp_path):
     s.join(timeout=15)
     from rps7200 import tiff
     assert tiff.read(str(sorted(out.rglob("*.tif"))[0])).shape[:2] == (24, 36)
+
+
+def test_one_frame_of_a_roll_can_be_turned_without_turning_the_rest(tmp_path):
+    """A strip is not one orientation.
+
+    A portrait among landscapes is the ordinary case, and one number for the
+    whole roll can only ever get one of them right -- so the contact sheet's
+    turn is per frame, and this is the check that it stays per frame all the
+    way to the files.
+    """
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, infrared=False, name="mixed",
+                  approved=(Approved(number=1),
+                            Approved(number=2, rotation=90))))
+    s.shutdown()
+    s.join(timeout=20)
+
+    from rps7200 import tiff
+    first = tiff.read(str(tmp_path / "r" / "mixed" / "frame01.tif"))
+    second = tiff.read(str(tmp_path / "r" / "mixed" / "frame02.tif"))
+    assert first.shape[:2] == (24, 36), "frame 1 was not turned"
+    assert second.shape[:2] == (36, 24), "frame 2 was"
+
+
+def test_each_entry_records_the_turn_its_own_file_got(tmp_path):
+    """The library keeps raw pixels either way; the record says what was
+    delivered. One session-wide number there would be a lie about one of the
+    two frames as soon as they disagree."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, infrared=False, name="mixed",
+                  approved=(Approved(number=1),
+                            Approved(number=2, rotation=270))))
+    s.shutdown()
+    s.join(timeout=20)
+
+    turns = {}
+    for meta in library.entries(tmp_path / "lib"):
+        stored, record = library.load(tmp_path / "lib" / meta["id"])
+        assert stored.shape[:2] == (24, 36), "no entry is ever turned"
+        turns[record["film"]["frame"]] = record["scan"]["rotation"]
+    assert turns == {"mixed-01": 0, "mixed-02": 270}, turns
+
+
+def test_a_frames_turn_does_not_reach_the_prescan_beside_it(tmp_path):
+    """`read_survey` un-rotates `prescanNN.tif` by the manifest's single
+    `rotation`. A per-frame turn applied here would make that arithmetic wrong
+    -- the reference would come back at an orientation the film was never at,
+    and it would no longer correlate against a fresh pass of the same frame."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.rotation = 180
+    s._frame_rotation = {2: 90}
+    assert s._rotation_for(2, "frame") == 90, "the frame gets its own"
+    assert s._rotation_for(2, "prescan") == 180, "its prescan does not"
+    assert s._rotation_for(1, "frame") == 180, "an unturned frame falls back"
+
+
+def test_a_rolls_orientations_do_not_outlive_it(tmp_path):
+    """A single scan afterwards is not frame 3 of anything, and inheriting
+    frame 3's turn would be a silent wrong answer."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(tmp_path / "out"), open_scanner=FakeScanner,
+                    verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, infrared=False, name="mixed",
+                  approved=(Approved(number=2, rotation=90),)))
+    s.submit(Scan(resolution=600, infrared=False))
+    s.shutdown()
+    s.join(timeout=20)
+    assert s._frame_rotation == {}
+    from rps7200 import tiff
+    loose = [f for f in (tmp_path / "out").glob("*.tif") if "frame" not in f.name]
+    assert len(loose) == 1
+    assert tiff.read(str(loose[0])).shape[:2] == (24, 36)
 
 
 # -- what the files are called ----------------------------------------------

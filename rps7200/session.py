@@ -172,12 +172,21 @@ class Approved:
     pixels on his screen -- which is what "check it against the frame I
     approved" has to mean. `reference_entry` is the library path to the same
     pass, for the case where the array did not survive.
+
+    `rotation` is which way up that picture is, in degrees clockwise, as it was
+    turned in the contact sheet. It is per frame rather than per session because
+    a strip is not one orientation -- a portrait among landscapes is ordinary,
+    and one number for the roll can only get one of them right. A frame without
+    one falls back to :attr:`ScanSession.rotation`. It reaches the delivered
+    files only; the library entry keeps the scanner's own orientation, for the
+    reason :class:`FrameWriter` gives.
     """
 
     number: int                              # 1-based, as the contact sheet counts
     offset_mm: float = 0.0
     reference: Any = field(default=None, compare=False, repr=False)
     reference_entry: str = ""
+    rotation: int = 0
 
 
 @dataclass(frozen=True)
@@ -461,6 +470,11 @@ class ScanSession:
         #: Set from the UI, so a picture rotated on screen is rotated in the
         #: files that follow it.
         self.rotation = 0
+        #: The same thing for one picture of a roll, keyed by frame number --
+        #: `Approved.rotation` for the frames that carry one. Filled at the top
+        #: of a roll and emptied when it ends, so it only ever describes the roll
+        #: in flight. Read and written on the scanner thread alone, so no lock.
+        self._frame_rotation: dict[int, int] = {}
         #: What the output folder's copy is written as -- "tiff" or "jpeg".
         #: Only that copy: a roll's own files under `rolls/` stay TIFF whatever
         #: this says, because they are machinery rather than deliverables and
@@ -789,6 +803,16 @@ class ScanSession:
             "frames": [],
         }
 
+        # Which way up each chosen picture is. Every approved frame appears,
+        # zeros included: the contact sheet knows each frame's orientation
+        # outright, so an approval is the answer for that frame rather than a
+        # deviation from `self.rotation`. Dropping the zeros meant a frame
+        # deliberately straightened after a "rotate all" fell back to the
+        # default that rotate-all had just moved, and was scanned sideways.
+        # Frames with no approval at all -- a roll commissioned without a
+        # sheet -- still fall through to `self.rotation`.
+        self._frame_rotation = {a.number: a.rotation for a in job.approved}
+
         frames = self._scanner.scan_roll(
             should_stop=self._stop.is_set,
             prescan_resolution=job.prescan_resolution,
@@ -898,6 +922,10 @@ class ScanSession:
             # Ends the generator at its yield rather than leaving it suspended
             # with the device half-way through a roll.
             frames.close()
+            # This roll's orientations die with it. A single scan taken
+            # afterwards is not frame 3 of anything, and letting it inherit
+            # frame 3's turn would be a silent wrong answer.
+            self._frame_rotation = {}
         return stopped
 
     # -- shared ------------------------------------------------------------
@@ -936,6 +964,25 @@ class ScanSession:
             return self._scanner.position()
         except Exception:                                # noqa: BLE001
             return None
+
+    def _rotation_for(self, number: int, kind: str) -> int:
+        """Which way up this picture's delivered file should be.
+
+        The frame's own turn if the contact sheet gave it one, the session's
+        otherwise.
+
+        **Prescans are exempt, deliberately.** `prescanNN.tif` is a reference
+        rather than a deliverable: `read_survey` un-rotates it by the single
+        `rotation` the manifest carries, and a per-frame turn here would make
+        that un-rotation wrong -- the reference would come back at an
+        orientation the film was never at, and it would no longer correlate
+        against a fresh pass of the same frame.
+        """
+        if kind != "prescan":
+            turn = self._frame_rotation.get(number)
+            if turn is not None:
+                return turn
+        return self.rotation
 
     def _file(
         self,
@@ -991,7 +1038,10 @@ class ScanSession:
                     f"raw bytes do not describe this image ({detail}); "
                     "filing it without them rather than filing the wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
-        meta = dict(meta, rotation=self.rotation)
+        # One value, recorded and applied, so the entry's record says what the
+        # delivered file actually got rather than what the session default was.
+        turn = self._rotation_for(number, kind)
+        meta = dict(meta, rotation=turn)
         # Only if it really is this picture. A raw array of another shape is a
         # different pass, and filing it here is exactly the failure the guard
         # above exists to prevent -- better to file the corrected pixels and
@@ -1006,7 +1056,7 @@ class ScanSession:
             seq=seq,
             number=number,
             paths=paths,
-            rotate=self.rotation,
+            rotate=turn,
             image=image,
             raw_image=raw_image,
             quality=self.jpeg_quality,

@@ -209,6 +209,15 @@ hours, and a strip with four keepers on it should not cost the same as one with
 seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame beside
 it, so a strip can be looked at again tomorrow instead of walked again.
 
+**Right-click turns a picture, wherever it is shown** -- the big preview, the
+filmstrip, or a cell of the contact sheet -- and a frame is scanned the way up
+it was left. The sheet keeps a turn per frame, so a portrait among landscapes
+comes out right; "rotate all" turns the whole strip and sets what everything
+scanned afterwards follows. The turn reaches the files you get -- the output
+folder's copy and the roll's own `frameNN.tif` -- and never the library entry,
+whose pixels have to keep matching the raw bytes filed beside them. Turns
+survive closing the window, in `approved.json` beside the positions.
+
 The options are the ones the driver implements: resolution, infrared, film type,
 exposure (metered or by hand), shading (measure or reuse), and for a roll the
 frame count, a start-at for resuming, the metering mode and a dry run.

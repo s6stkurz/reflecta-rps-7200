@@ -867,7 +867,7 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
 # minutes of transport for nothing.
 
 
-def _write_survey(folder, rotation=0, frames=3, offsets=None):
+def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None):
     """A survey folder shaped exactly as `ScanSession._roll` writes one."""
     from rps7200 import preview, tiff
 
@@ -888,12 +888,15 @@ def _write_survey(folder, rotation=0, frames=3, offsets=None):
         "roll": "a-strip", "start_at": 1, "prescan_resolution": 300,
         "rotation": rotation, "frames": records,
     }))
-    if offsets:
+    if offsets or rotations:
+        numbers = sorted(set(offsets or {}) | set(rotations or {}))
         (folder / "approved.json").write_text(json.dumps({
             "roll": "a-strip",
-            "frames": [{"number": n, "offset_mm": v,
+            "frames": [{"number": n,
+                        "offset_mm": (offsets or {}).get(n, 0.0),
+                        "rotation": (rotations or {}).get(n, 0),
                         "reference_entry": f"library/frame{n}"}
-                       for n, v in offsets.items()],
+                       for n in numbers],
         }))
     return images
 
@@ -1051,3 +1054,175 @@ def test_the_output_label_stops_promising_a_tiff_when_it_is_a_jpeg():
     assert "JPEG" in jpeg
     assert "infrared" in jpeg, "the one thing the format cannot carry"
     assert "negative" in jpeg, "it is not the inverted picture"
+
+
+# -- turning a picture from wherever it is shown ----------------------------
+#
+# The menu used to live on the filmstrip alone, so the picture you were
+# actually looking at -- full size in the middle, or laid out in the contact
+# sheet -- was the one you could not turn.
+
+
+def test_both_menus_are_filled_by_the_same_method():
+    """One list, one place. A second copy would be wrong the first time an
+    item was added to either."""
+    for handler in (gui.ScannerGui.on_strip_menu, gui.ScannerGui.on_canvas_menu):
+        assert "_fill_result_menu" in inspect.getsource(handler)
+    filled = inspect.getsource(gui.ScannerGui._fill_result_menu)
+    for item in ("Save as", "Histogram", "Rotate right", "Straighten",
+                 "Show prescan", "Delete"):
+        assert item in filled, item
+
+
+def test_the_menu_over_the_picture_does_not_leave_a_drag_running():
+    """Control-click is still Button-1 as far as `<B1-Motion>` is concerned,
+    so a menu opened that way over a live drag pans the picture underneath it.
+    The "break" matters too: without it the same click reaches `on_press`,
+    which in aim mode moves film."""
+    import types
+
+    stub = types.SimpleNamespace(_drag=(1, 2, [0.0, 0.0]), current=None)
+    assert gui.ScannerGui.on_canvas_menu(stub, None) == "break"
+    assert stub._drag is None
+
+
+def test_every_surface_asks_for_a_menu_the_same_three_ways():
+    """X11 sends Button-3, a Mac trackpad's two-finger tap arrives as
+    Button-2, and Control-click is for people with neither."""
+    assert gui.MENU_EVENTS == ("<Button-3>", "<Button-2>", "<Control-Button-1>")
+    for source in (inspect.getsource(gui.ScannerGui._build_preview),
+                   inspect.getsource(gui._ContactSheet._cell)):
+        assert "MENU_EVENTS" in source
+
+
+class _Surveyed:
+    """A surveyed frame, as much of one as `approved_from_sheet` reads."""
+
+    def __init__(self, number, rotation=0):
+        self.number = number
+        self.rotation = rotation
+        self.image = np.zeros((2, 2, 3), np.uint8)
+        self.entry = None
+
+
+def test_a_turn_in_the_sheet_reaches_the_scan():
+    """The whole point of turning a frame there: it is scanned that way up."""
+    approved = gui.approved_from_sheet(
+        [_Surveyed(1), _Surveyed(2, 90)], (1, 2), {})
+    turns = {a.number: a.rotation for a in approved}
+    assert turns == {1: 0, 2: 90}, "one frame turned, the other untouched"
+
+
+def test_a_frame_straightened_after_a_rotate_all_stays_straight():
+    """Zero is a decision, not an absence.
+
+    "Rotate all" moves the session default. A frame turned back to upright
+    afterwards therefore cannot be recorded as "no turn set" and left to fall
+    back on that default -- it would be scanned sideways, which is what
+    happened the first time this was driven: four frames turned to 90, one
+    straightened, and all four came out portrait.
+    """
+    approved = gui.approved_from_sheet(
+        [_Surveyed(1, 0), _Surveyed(2, 90)], (1, 2), {})
+    assert {a.number: a.rotation for a in approved} == {1: 0, 2: 90}
+    # And the sheet keeps the zero rather than popping it, which is what makes
+    # the record above say zero instead of saying nothing.
+    assert "self.rotations[number] = turn" in inspect.getsource(
+        gui._ContactSheet._turn)
+    assert ".pop(" not in inspect.getsource(gui._ContactSheet._turn)
+
+
+def test_a_frame_nobody_turned_still_carries_the_orientation_it_is_shown_at():
+    """A rotate in the filmstrip before the sheet was opened is just as much
+    the operator's decision, and it is on the result already."""
+    approved = gui.approved_from_sheet([_Surveyed(1, 270)], (1,), {})
+    assert approved[0].rotation == 270
+
+
+def test_a_turn_survives_closing_the_window(tmp_path):
+    """A position set by hand already survives a reopen. An orientation is the
+    same kind of decision and costs the same to make again."""
+    _write_survey(tmp_path / "roll", offsets={2: 0.4833}, rotations={2: 270})
+    out = gui.read_survey(tmp_path / "roll")
+
+    assert out["rotations"] == {2: 270}
+    assert out["offsets"] == {2: pytest.approx(0.4833)}
+
+
+def test_a_frame_turned_by_itself_is_not_confused_with_the_rolls_turn(tmp_path):
+    """`prescanNN.tif` is un-rotated by the manifest's single `rotation`, so
+    that number has to keep describing the file on disk. A per-frame turn is
+    recorded separately and laid over the results afterwards."""
+    images = _write_survey(tmp_path / "roll", rotation=90, rotations={2: 180})
+    out = gui.read_survey(tmp_path / "roll")
+
+    for result in out["results"]:
+        assert np.array_equal(result.image, images[result.number]), (
+            "the pixels still come back in the film's own orientation")
+        assert result.rotation == 90, "and every result carries the roll's turn"
+    assert out["rotations"] == {2: 180}, "the frame's own turn arrives beside it"
+    assert "self.rotations[result.number]" in inspect.getsource(
+        gui._ContactSheet.__init__), "which the sheet then lays over the result"
+
+
+def test_a_cell_is_drawn_by_the_same_code_that_redraws_it():
+    """Two ways to build one thumbnail is two ways for it to disagree with
+    what will be scanned."""
+    assert "self._render(result)" in inspect.getsource(gui._ContactSheet._cell)
+    assert "self._render(result)" in inspect.getsource(gui._ContactSheet._turn)
+
+
+def test_turning_every_frame_is_one_redraw_and_one_line_in_the_log():
+    """Seventeen of each for a seventeen-frame strip is a stutter and a log
+    nobody can read."""
+    every = inspect.getsource(gui._ContactSheet._rotate_all)
+    assert every.count("_redraw_strip") == 1
+    assert every.count("_say") == 1
+    assert "_redraw_strip" not in inspect.getsource(gui._ContactSheet._turn)
+
+
+def test_turning_every_frame_also_sets_what_the_next_scan_follows():
+    """A whole roll one way up is the ordinary case; saying it once should be
+    enough for anything scanned outside the sheet too."""
+    every = inspect.getsource(gui._ContactSheet._rotate_all)
+    assert "self.gui.rotation = turn" in every
+    assert "self.gui.session.rotation = turn" in every
+    assert "rotation" not in inspect.getsource(gui._ContactSheet._rotate)
+
+
+def test_a_frame_comes_back_shown_the_way_it_was_written():
+    """A roll that returns a picture the filmstrip draws one way up and the
+    file on disk holds another is saying the file is something it is not."""
+    import types
+
+    stub = types.SimpleNamespace(
+        rotation=0, _frame_rotations={2: 90}, results=[], survey=[],
+        _surveying=False, _transport=None,
+        _show=lambda _r: None, _redraw_strip=lambda: None,
+    )
+
+    def result(kind, number):
+        return types.SimpleNamespace(
+            kind=kind, number=number, seq=number, image=None, position=None)
+
+    turned = result("frame", 2)
+    gui.ScannerGui._add_result(stub, turned)
+    assert turned.rotation == 90
+
+    plain = result("frame", 1)
+    gui.ScannerGui._add_result(stub, plain)
+    assert plain.rotation == 0, "a frame nobody turned follows the session"
+
+    # A prescan of the same picture is a reference, not a deliverable, and the
+    # session files it unturned -- so showing it turned would be a lie too.
+    reference = result("prescan", 2)
+    gui.ScannerGui._add_result(stub, reference)
+    assert reference.rotation == 0
+
+
+def test_a_new_strip_does_not_inherit_the_last_ones_orientations():
+    """The numbers start again at 1 for a different film. Keeping them would
+    turn whatever happens to land on frame 2 of the next roll."""
+    walk = inspect.getsource(gui.ScannerGui.on_roll)
+    assert "self._frame_rotations = {}" in walk
+    assert walk.index("self.survey = []") < walk.index("self._surveying = True")

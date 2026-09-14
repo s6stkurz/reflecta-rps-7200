@@ -133,6 +133,12 @@ MAX_TRAVEL_MM = MAX_FINE_MM * MAX_FINE_STEPS
 THUMB_H = 76
 POLL_MS = 120
 
+#: The three ways a context menu gets asked for, bound together everywhere one
+#: is offered. X11 and a two-button mouse send Button-3, a Mac trackpad's
+#: two-finger tap arrives as Button-2, and Control-click is the Mac convention
+#: for people without either.
+MENU_EVENTS = ("<Button-3>", "<Button-2>", "<Control-Button-1>")
+
 #: How often the picture may be redrawn, in milliseconds. One frame at 60 Hz.
 _FRAME_MS = 16
 
@@ -197,6 +203,11 @@ class ScannerGui:
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
         self.rotation = 0                    # applied to new passes and files
+        #: The same, for one picture of the roll being scanned, keyed by frame
+        #: number -- what the contact sheet was left holding when the scan was
+        #: commissioned. Only the frames turned individually appear; the rest
+        #: fall back to `self.rotation`.
+        self._frame_rotations: dict[int, int] = {}
         self.survey: list = []               # the prescans a dry run walked
         self._surveying = False              # a dry run is running right now
         self._survey_start = 1               # the `start at` it was walked with
@@ -798,6 +809,12 @@ class ScannerGui:
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
         self.canvas.bind("<Double-Button-1>", self.on_double_click)
+        # The picture on screen is the one an operator wants to turn, and until
+        # now it was the only one that could not be: the menu lived on the
+        # filmstrip alone, so turning what you were looking at meant finding its
+        # thumbnail first.
+        for seq in MENU_EVENTS:
+            self.canvas.bind(seq, self.on_canvas_menu)
         # Two fingers zoom, because that is the gesture people reach for on
         # a picture; panning is the drag, which needs no gesture support at all.
         self._scrolls(self.canvas, self._wheel_over_picture,
@@ -844,7 +861,7 @@ class ScannerGui:
             # should walk along it.
             precise=lambda dx, dy: _scroll_pixels(self.strip, dx or dy, 0),
         )
-        for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+        for seq in MENU_EVENTS:
             self.strip.bind(seq, self.on_strip_menu)
         self.menu = tk.Menu(self.root, tearoff=0)
 
@@ -1192,6 +1209,10 @@ class ScannerGui:
             # Only cleared here, so a survey outlives the window that showed it
             # and the sheet can be opened again without walking the strip twice.
             self.survey = []
+            # A fresh strip has no orientations yet, and the last one's would
+            # be applied to whatever pictures happen to land on the same frame
+            # numbers -- a different film, shown and written sideways.
+            self._frame_rotations = {}
             self._surveying = True
             self._survey_start = start_at
             self._survey_predpi = predpi
@@ -1286,7 +1307,9 @@ class ScannerGui:
         self._redraw_strip()
         self._say(f"reopened {out['roll']}: {len(out['results'])} frames"
                   + (f", {len(out['offsets'])} with a position already set"
-                     if out["offsets"] else ""))
+                     if out["offsets"] else "")
+                  + (f", {len(out['rotations'])} already turned"
+                     if out["rotations"] else ""))
         # The film is almost certainly not where the walk left it, and only
         # Stefan can see that. Said rather than guessed at.
         messagebox.showinfo(
@@ -1297,7 +1320,8 @@ class ScannerGui:
             "anything -- nothing here can see where it is now.")
         if self.sheet is not None and self.sheet.alive():
             self.sheet.top.destroy()
-        self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"])
+        self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"],
+                                   rotations=out["rotations"])
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=()) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
@@ -1353,6 +1377,10 @@ class ScannerGui:
         ):
             return
         self._write_approved(approved)
+        # Kept so the frames that come back are shown the way they were
+        # written. Without it a roll returns pictures the filmstrip draws one
+        # way up and the file on disk holds another.
+        self._frame_rotations = {a.number: a.rotation for a in approved}
         if back:
             self.session.submit(Move(frames=-back))
         self.session.submit(Roll(
@@ -1402,6 +1430,7 @@ class ScannerGui:
                 "roll": name,
                 "frames": [{"number": a.number,
                             "offset_mm": round(a.offset_mm, 4),
+                            "rotation": int(a.rotation),
                             "reference_entry": str(a.reference_entry or "")}
                            for a in approved],
             }, indent=2, default=str))
@@ -1797,8 +1826,14 @@ class ScannerGui:
         result.supersedes = None
         # New passes arrive already turned the way the last one was, which is
         # what makes rotating a prescan carry over to the scan of it -- even a
-        # scan taken minutes later.
+        # scan taken minutes later. A frame of a roll whose cell was turned in
+        # the contact sheet arrives turned that way instead, because that is
+        # what was written to disk for it: showing it any other way would say
+        # the file is something it is not.
         result.rotation = self.rotation
+        if result.kind == "frame" and result.number:
+            result.rotation = self._frame_rotations.get(result.number,
+                                                        self.rotation)
         # Measured once, from the whole picture. Recomputing per redraw was
         # most of what made zooming feel dead, and it also meant the brightness
         # changed as you panned -- the same negative looking different
@@ -1924,6 +1959,30 @@ class ScannerGui:
         if target is None:
             return
         self._show_seq(target.seq)
+        self._fill_result_menu(target)
+        self.menu.tk_popup(event.x_root, event.y_root)
+
+    def on_canvas_menu(self, event: tk.Event) -> str:
+        """The filmstrip's menu, over the picture it is actually about.
+
+        One menu, filled by one method, so the two cannot drift apart -- a
+        second copy of this list would be wrong the first time an item was
+        added to either.
+
+        `_drag` is cleared because Control-click is still Button-1 as far as
+        `<B1-Motion>` is concerned, and a menu left open over a live drag pans
+        the picture underneath it. "break" stops the same click reaching
+        `on_press`, which in aim mode moves film.
+        """
+        self._drag = None
+        if self.current is None:
+            return "break"
+        self._fill_result_menu(self.current)
+        self.menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    def _fill_result_menu(self, target) -> None:
+        """Everything that can be done to one pass, on `self.menu`."""
         self.menu.delete(0, "end")
         self.menu.add_command(label="Save as ...",
                               command=lambda r=target: self.on_save_as(r))
@@ -1946,7 +2005,6 @@ class ScannerGui:
         self.menu.add_separator()
         self.menu.add_command(label="Delete",
                               command=lambda r=target: self.on_delete(r))
-        self.menu.tk_popup(event.x_root, event.y_root)
 
     def on_save_as(self, result) -> None:
         # The dialog starts on whatever the output folder is set to, so picking
@@ -2619,18 +2677,25 @@ def read_survey(folder) -> dict:
 
     Returns everything the sheet and a commissioned scan need: the frames as
     `Result` objects, the `start_at` the walk used, the prescan resolution it
-    used, and any positions already approved for it.
+    used, and any positions and orientations already approved for it.
 
     **The prescans are un-rotated on the way in.** `prescanNN.tif` is written
     turned the way the screen had it, and a reference has to be the film's own
     orientation or it will not correlate against a fresh pass. `rotation` is
     carried on the result instead, which is exactly how a live pass behaves.
+
+    That is also why the manifest's single `rotation` is what un-rotates them:
+    a per-frame turn is recorded in `approved.json` and never applied to a
+    `prescanNN.tif`, so this arithmetic stays true however many frames were
+    turned individually. The per-frame turns come back as `rotations`, which
+    the sheet lays over the results afterwards.
     """
     folder = Path(folder)
     manifest = json.loads((folder / "survey.json").read_text())
     turn = int(manifest.get("rotation") or 0)
 
     offsets: dict[int, float] = {}
+    rotations: dict[int, int] = {}
     entries: dict[int, str] = {}
     approved_path = folder / "approved.json"
     if approved_path.exists():
@@ -2638,6 +2703,11 @@ def read_survey(folder) -> dict:
             number = int(record["number"])
             if record.get("offset_mm"):
                 offsets[number] = float(record["offset_mm"])
+            # `is not None` rather than truthiness: an explicit zero is a
+            # decision here, and a file written before this existed has no key
+            # at all rather than a zero.
+            if record.get("rotation") is not None:
+                rotations[number] = int(record["rotation"]) % 360
             if record.get("reference_entry"):
                 entries[number] = record["reference_entry"]
 
@@ -2671,6 +2741,7 @@ def read_survey(folder) -> dict:
         "start_at": int(manifest.get("start_at") or 1),
         "prescan_resolution": manifest.get("prescan_resolution"),
         "offsets": offsets,
+        "rotations": rotations,
         "roll": manifest.get("roll") or folder.name,
         "rotation": turn,
     }
@@ -2716,6 +2787,17 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
     -- which is what lets the scan check it rather than assume. `frames` is the
     surveyed results, `ticks` the numbers chosen, `offsets` the adjustments
     made, keyed by frame number.
+
+    The orientation is read off each result rather than passed in, because
+    `result.rotation` is the one place that always knows it: a frame turned in
+    the sheet and a frame merely following the session default both carry it,
+    and both have to reach the file. A separate dictionary of turns could only
+    describe the first kind, and an absent entry would then mean "follow the
+    session" -- which is wrong the moment the session default moves under a
+    frame somebody deliberately straightened.
+
+    A turn on an unticked frame goes nowhere, which is right: there is no file
+    for it to reach. It is the same thing that happens to that frame's offset.
     """
     picked = set(ticks)
     out = []
@@ -2726,6 +2808,7 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
         out.append(Approved(
             number=number,
             offset_mm=snap_offset(offsets.get(number, 0.0)),
+            rotation=int(getattr(result, "rotation", 0) or 0) % 360,
             reference=getattr(result, "image", None),
             # str, not the Path the GUI carries: Approved declares a str,
             # and a Path here reaches json.dumps in _write_approved and
@@ -3232,7 +3315,7 @@ class _ContactSheet:
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
 
-    def __init__(self, gui, frames, offsets=None):
+    def __init__(self, gui, frames, offsets=None, rotations=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
         # A frame that was walked but cannot be shown is not a cosmetic
@@ -3249,7 +3332,30 @@ class _ContactSheet:
         #: where it was surveyed. Absent means "as surveyed" -- an explicit
         #: zero never lands here, because snap_offset returns it as absent.
         self.offsets: dict[int, float] = dict(offsets or {})
-        self._photos: list[tk.PhotoImage] = []
+        #: Which way up each frame has been *decided* to be, in degrees
+        #: clockwise. Per frame because a strip is not one orientation: a
+        #: portrait among landscapes is ordinary, and the session's single
+        #: `rotation` can only get one of them right.
+        #:
+        #: Absolute, and **zero is a decision** -- unlike `offsets`, where an
+        #: explicit zero and an absent entry mean the same thing. They cannot
+        #: mean the same thing here: "rotate all" moves the session default, so
+        #: a frame deliberately straightened afterwards would fall back to that
+        #: default and be scanned sideways. It did, on the first strip this was
+        #: driven on.
+        self.rotations: dict[int, int] = {int(n): int(t) % 360 for n, t
+                                          in dict(rotations or {}).items()}
+        # A reopened survey arrives with the manifest's one rotation on every
+        # result; a frame decided individually overrides it, so the cell is
+        # drawn the way it was left rather than the way the roll was.
+        for result in self.frames:
+            if result.number in self.rotations:
+                result.rotation = self.rotations[result.number]
+        # Keyed by frame number rather than appended, because a cell is now
+        # re-rendered when it is turned and a list would grow a PhotoImage per
+        # rotation while holding every superseded one alive.
+        self._photos: dict[int, tk.PhotoImage] = {}
+        self._pictures: dict[int, tk.Label] = {}
         self._rings: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
@@ -3259,6 +3365,9 @@ class _ContactSheet:
         self.top.title("Contact sheet")
         self.top.transient(gui.root)
         self.top.geometry("980x720")
+        # Its own menu, parented on this window, so closing the sheet takes it
+        # with it rather than leaving one attached to the main window.
+        self.menu = tk.Menu(self.top, tearoff=0)
 
         outer = ttk.Frame(self.top, padding=(10, 8))
         outer.pack(fill="both", expand=True)
@@ -3267,12 +3376,13 @@ class _ContactSheet:
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
                   text=("Tick what is worth scanning. Click a picture to tick "
                         "it, double-click to open it and set where the film "
-                        "should sit. Positions you set are used as given -- "
-                        "nothing moves until you commission the scan, and the "
-                        "automatic nudge does not apply to frames you adjust. "
-                        "The film is rewound to the start of the strip first, "
-                        "and every frame nobody ticked costs its advance "
-                        "only.")).pack(
+                        "should sit, right-click it to turn it. A frame is "
+                        "scanned the way up you leave it here. Positions you "
+                        "set are used as given -- nothing moves until you "
+                        "commission the scan, and the automatic nudge does not "
+                        "apply to frames you adjust. The film is rewound to the "
+                        "start of the strip first, and every frame nobody "
+                        "ticked costs its advance only.")).pack(
             anchor="w", pady=(0, 8))
 
         # Canvas-with-a-frame-inside, the same shape as the options column:
@@ -3330,26 +3440,15 @@ class _ContactSheet:
         ring.pack()
         self._rings[number] = ring
 
-        # preview.sample, not preview.fit: fit decimates by whole integers
-        # only, so a 428 px prescan asked to fill a 210 px cell comes back
-        # 143 px wide -- a third of the space, and softer than it needs to be.
-        # sample scales fractionally and fills the cell.
-        turned = preview.rotate(result.image, result.rotation)
-        scale = min(self.CELL / max(turned.shape[1], 1),
-                    self.CELL / max(turned.shape[0], 1))
-        arr = preview.render(
-            preview.sample(turned, scale, 0.0, 0.0,
-                           max(1, int(turned.shape[1] * scale)),
-                           max(1, int(turned.shape[0] * scale))),
-            "RGB", self.gui.v_invert.get(),
-            cuts=(preview.channel_levels(result.levels, "RGB")
-                  if getattr(result, "levels", None) is not None else None))
-        photo = tk.PhotoImage(data=preview.to_ppm(arr))
-        self._photos.append(photo)
+        photo = self._render(result)
         picture = tk.Label(ring, image=photo, borderwidth=0)
         picture.pack()
+        self._pictures[number] = picture
         picture.bind("<Button-1>", lambda _e, n=number: self._toggle(n))
         picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
+        for seq in MENU_EVENTS:
+            picture.bind(
+                seq, lambda e, i=index: self.on_cell_menu(e, i))
 
         ttk.Checkbutton(cell, text=f"Frame {number}", variable=var,
                         command=self._changed).pack(anchor="w", pady=(4, 0))
@@ -3367,6 +3466,121 @@ class _ContactSheet:
             # amount of scanning it brings that back.
             ttk.Label(cell, foreground="#e0605a",
                       text=f"drifted -- {short:.2f} mm outside").pack(anchor="w")
+
+    def _render(self, result) -> tk.PhotoImage:
+        """This frame's thumbnail, the way up it is currently turned.
+
+        Called to build a cell and again whenever one is rotated, so the two
+        cannot disagree about how a cell is drawn. The photo is kept against
+        the frame number because Tk drops an image nothing references.
+
+        preview.sample, not preview.fit: fit decimates by whole integers only,
+        so a 428 px prescan asked to fill a 210 px cell comes back 143 px wide
+        -- a third of the space, and softer than it needs to be. sample scales
+        fractionally and fills the cell.
+        """
+        turned = preview.rotate(result.image, result.rotation)
+        scale = min(self.CELL / max(turned.shape[1], 1),
+                    self.CELL / max(turned.shape[0], 1))
+        arr = preview.render(
+            preview.sample(turned, scale, 0.0, 0.0,
+                           max(1, int(turned.shape[1] * scale)),
+                           max(1, int(turned.shape[0] * scale))),
+            "RGB", self.gui.v_invert.get(),
+            cuts=(preview.channel_levels(result.levels, "RGB")
+                  if getattr(result, "levels", None) is not None else None))
+        photo = tk.PhotoImage(data=preview.to_ppm(arr))
+        self._photos[result.number] = photo
+        return photo
+
+    # -- turning -----------------------------------------------------------
+
+    def on_cell_menu(self, event: tk.Event, index: int) -> str:
+        """What can be done to one frame without leaving the sheet."""
+        result = self.frames[index]
+        number = result.number
+        self.menu.delete(0, "end")
+        for label, degrees in (("Rotate right 90°", 90),
+                               ("Rotate left 90°", 270),
+                               ("Rotate 180°", 180)):
+            self.menu.add_command(
+                label=label,
+                command=lambda n=number, d=degrees: self._rotate(n, d))
+        if result.rotation:
+            self.menu.add_command(
+                label=f"Straighten (now {result.rotation}°)",
+                command=lambda n=number, r=result: self._rotate(n, -r.rotation))
+        self.menu.add_separator()
+        self.menu.add_command(
+            label="Rotate all right 90°",
+            command=lambda: self._rotate_all(90))
+        self.menu.add_command(
+            label="Rotate all left 90°",
+            command=lambda: self._rotate_all(270))
+        self.menu.add_separator()
+        self.menu.add_checkbutton(
+            label="Scan this frame", variable=self.ticks[number],
+            command=self._changed)
+        self.menu.add_command(label="Set position ...",
+                              command=lambda i=index: self.adjust(i))
+        self.menu.add_command(
+            label="Show in preview",
+            command=lambda s=result.seq: self.gui._show_seq(s))
+        self.menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    def _turn(self, result, degrees: int) -> int:
+        """Record one frame's new orientation and redraw its cell.
+
+        Recorded against the number rather than applied to pixels: a prescan is
+        the reference a scan is checked against, and it has to stay in the
+        film's own orientation. `approved_from_sheet` carries this into the
+        roll, where it reaches that frame's delivered file alone.
+
+        Says nothing and leaves the filmstrip alone -- the two callers below do
+        that once each, so turning seventeen frames costs one redraw and one
+        line in the log rather than seventeen of both.
+        """
+        number = result.number
+        turn = (result.rotation + degrees) % 360
+        result.rotation = turn
+        # Recorded even when it comes back to zero: see `self.rotations`.
+        self.rotations[number] = turn
+        picture = self._pictures.get(number)
+        if picture is not None:
+            picture.configure(image=self._render(result))
+        return turn
+
+    def _rotate(self, number: int, degrees: int) -> None:
+        """Turn one frame. The others keep whatever they were."""
+        result = next((r for r in self.frames if r.number == number), None)
+        if result is None:
+            return
+        turn = self._turn(result, degrees)
+        # The same picture is in the filmstrip behind this window, and the two
+        # showing one frame two ways up is how an operator loses track of which
+        # way it will be scanned.
+        self.gui._redraw_strip()
+        self.gui._say(f"frame {number}: {turn}° -- scanned this way up; "
+                      "the other frames are unchanged")
+
+    def _rotate_all(self, degrees: int) -> None:
+        """Turn every frame, and make it the session's default too.
+
+        A whole roll one way up is the ordinary case. If the operator says it
+        here he should not have to say it again for everything scanned outside
+        the sheet, so this sets the same carry-over a rotate in the filmstrip
+        sets. Each frame still gets its own recorded turn, so one of them can
+        be put back afterwards without disturbing the rest.
+        """
+        turn = 0
+        for result in self.frames:
+            turn = self._turn(result, degrees)
+        self.gui.rotation = turn
+        self.gui.session.rotation = turn
+        self.gui._redraw_strip()
+        self.gui._say(f"every frame: {turn}° -- and new scans follow this "
+                      "until something says otherwise")
 
     # -- adjusting ---------------------------------------------------------
 
