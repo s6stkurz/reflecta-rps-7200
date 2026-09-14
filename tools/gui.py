@@ -1186,6 +1186,8 @@ class ScannerGui:
             self.sheet.top.lift()
             self.sheet.top.focus_force()
             return
+        self._say(f"contact sheet: {len(self.survey)} walked "
+                  f"{[getattr(r, 'number', '?') for r in self.survey]}")
         self.sheet = _ContactSheet(self, self.survey)
 
     def _per_frame_seconds(self) -> float:
@@ -3126,10 +3128,20 @@ class _ContactSheet:
     CELL = 210                               # the longest side of a thumbnail
     COLUMNS = 4
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
+    SKIPPED = "#7a3b3b"                      # unmistakably not amber
 
     def __init__(self, gui, frames, offsets=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
+        # A frame that was walked but cannot be shown is not a cosmetic
+        # problem: it cannot be ticked, so it silently does not get scanned.
+        # It used to drop out with nothing said anywhere.
+        dropped = [getattr(r, "number", "?") for r in frames
+                   if r.image is None]
+        if dropped:
+            gui._say(f"contact sheet: {len(dropped)} walked frame(s) have no "
+                     f"picture and are not shown -- {dropped}. They cannot be "
+                     f"ticked, so they will not be scanned.")
         self.ticks: dict[int, tk.BooleanVar] = {}
         #: Where the operator says each frame should sit, in mm, relative to
         #: where it was surveyed. Absent means "as surveyed" -- an explicit
@@ -3138,6 +3150,7 @@ class _ContactSheet:
         self._photos: list[tk.PhotoImage] = []
         self._rings: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
+        self._skips: dict[int, ttk.Label] = {}
         self._adjuster = None
 
         self.top = tk.Toplevel(gui.root)
@@ -3243,6 +3256,8 @@ class _ContactSheet:
         caption.bind("<Button-1>", lambda _e, i=index: self.adjust(i))
         self._captions[number] = caption
         self._refresh_caption(number)
+        skip = ttk.Label(cell, foreground="#e0605a", text="not scanning")
+        self._skips[number] = skip        # packed by _changed when unticked
         short = (result.registration or {}).get("shortfall_mm") or 0.0
         if short > 0.85:
             # The same 0.85 mm the driver calls drift. Worth saying here: a
@@ -3308,8 +3323,20 @@ class _ContactSheet:
     def _changed(self) -> None:
         picked = self.chosen()
         for number, ring in self._rings.items():
-            ring.configure(background=self.CHOSEN if self.ticks[number].get()
-                           else "#3a3a3a")
+            on = self.ticks[number].get()
+            ring.configure(background=self.CHOSEN if on else self.SKIPPED)
+            # The ring alone is not enough to see. A prescan of a negative is
+            # very dark -- measured across real surveys, mean 16 of 255 -- so
+            # a dark ring around a nearly black picture reads as an empty
+            # space, and a frame that had merely been clicked off looked like
+            # a frame that had vanished. It cost two rolls: the operator saw
+            # the first frame "disappear" and it simply went unscanned.
+            label = self._skips.get(number)
+            if label is not None:
+                if on:
+                    label.pack_forget()
+                else:
+                    label.pack(anchor="w")
         per = self.gui._per_frame_seconds()
         self.v_count.set(
             f"{len(picked)} of {len(self.frames)} chosen"

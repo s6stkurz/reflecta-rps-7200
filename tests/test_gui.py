@@ -10,6 +10,7 @@ What is tested is what would mislead the operator: the stop button saying which
 of the two things it will do, the option parsing that decides what the scanner
 is asked for, and the resolution guard.
 """
+import inspect
 import json
 import time
 
@@ -993,3 +994,22 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
 
     assert said and "scanning anyway" in said[0]
     assert "went missing" in said[0]
+
+
+def test_an_unticked_frame_says_so_in_words():
+    """A prescan of a negative is very dark -- mean 16 of 255 across real
+    surveys -- so a ring turning from amber to dark grey around a nearly black
+    picture reads as an empty space. A frame that had merely been clicked off
+    looked like a frame that had vanished, and went unscanned twice."""
+    source = inspect.getsource(gui._ContactSheet._changed)
+    assert "not scanning" in inspect.getsource(gui._ContactSheet._cell)
+    assert "pack_forget" in source and "self._skips" in source
+    # and the two states must not be a pair of dark greys
+    assert gui._ContactSheet.CHOSEN != gui._ContactSheet.SKIPPED
+
+
+def test_a_walked_frame_with_no_picture_is_reported_not_swallowed():
+    """It cannot be ticked, so it silently does not get scanned. Saying
+    nothing about that is how a roll comes back short."""
+    source = inspect.getsource(gui._ContactSheet.__init__)
+    assert "will not be scanned" in source
