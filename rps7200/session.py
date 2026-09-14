@@ -43,7 +43,7 @@ from typing import Any
 
 import numpy as np
 
-from . import library, preview, tiff
+from . import export, library, preview
 from .direct import METER_EACH, DirectScanner
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
@@ -348,6 +348,10 @@ class FrameWriter:
     def __init__(self, depth: int = 2, on_done: Any = None):
         self.queue: queue.Queue = queue.Queue(maxsize=depth)
         self.errors: list[str] = []
+        # Not failures: things the chosen format could not carry, like the
+        # infrared plane in a JPEG. Drained per frame by `_filed` so they are
+        # read while the roll is running, not at the end of it.
+        self.notes: list[str] = []
         self.done: list[tuple[int, Path | None]] = []
         # Called with (number, entry_path, error) as each job lands, so a UI can
         # show where a frame went without polling `done`.
@@ -384,7 +388,14 @@ class FrameWriter:
                      if job.get("mono") else turned)
         for path in job.get("paths") or ():
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            tiff.write(str(path), delivered, resolution=job["dpi"])
+            # The format comes from the name, so one call covers both: a roll's
+            # own `rolls/...tif` and an output folder set to JPEG are written
+            # correctly side by side without this having to know the setting.
+            note = export.write(str(path), delivered, resolution=job["dpi"],
+                                quality=job.get("quality")
+                                or export.DEFAULT_QUALITY)
+            if note:
+                self.notes.append(f"{Path(path).name}: {note}")
         entry = None
         if job["library"]:
             entry = library.save(
@@ -450,6 +461,13 @@ class ScanSession:
         #: Set from the UI, so a picture rotated on screen is rotated in the
         #: files that follow it.
         self.rotation = 0
+        #: What the output folder's copy is written as -- "tiff" or "jpeg".
+        #: Only that copy: a roll's own files under `rolls/` stay TIFF whatever
+        #: this says, because they are machinery rather than deliverables and
+        #: `prescanNN.tif` is what reopening a survey reads back.
+        self.out_format = "tiff"
+        #: Quality for the JPEG path, ignored by the TIFF one.
+        self.jpeg_quality = export.DEFAULT_QUALITY
         # The seam that lets tests and `--demo` run with nothing on the bus.
         self._open_scanner = open_scanner or self._default_scanner
         self._jobs: queue.Queue = queue.Queue()
@@ -596,6 +614,9 @@ class ScanSession:
 
     def _filed(self, seq: int, number: int, entry: Path | None, err: str | None) -> None:
         """Called on the writer thread as each frame lands."""
+        if self._writer is not None:
+            while self._writer.notes:
+                self._emit("log", text=self._writer.notes.pop(0))
         if entry is None:
             self._emit("log", text=f"picture {number} could not be filed: {err}")
             return
@@ -988,6 +1009,7 @@ class ScanSession:
             rotate=self.rotation,
             image=image,
             raw_image=raw_image,
+            quality=self.jpeg_quality,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
             library=self.root,
@@ -1016,11 +1038,15 @@ class ScanSession:
         dpi = meta.get("resolution_dpi") or 0
         channels = meta.get("channels") or len(meta.get("channel_order") or "")
         ir = "_ir" if channels and int(channels) >= 4 else ""
+        # `_ir` still names a pass that *was* infrared even when the format
+        # cannot carry the plane: it says what was scanned, and the JPEG's own
+        # note says what arrived. Renaming it would lose the first.
+        end = export.suffix_for(self.out_format)
         if roll and number:
-            return f"{_safe(roll)}_frame{number:02d}_{dpi}dpi{ir}.tif"
+            return f"{_safe(roll)}_frame{number:02d}_{dpi}dpi{ir}{end}"
         if roll:
-            return f"{_safe(roll)}_{time.strftime('%H%M%S')}_{dpi}dpi{ir}.tif"
-        return f"{time.strftime('%Y%m%dT%H%M%S')}_{dpi}dpi{ir}.tif"
+            return f"{_safe(roll)}_{time.strftime('%H%M%S')}_{dpi}dpi{ir}{end}"
+        return f"{time.strftime('%Y%m%dT%H%M%S')}_{dpi}dpi{ir}{end}"
 
 
 def _safe(name: str) -> str:

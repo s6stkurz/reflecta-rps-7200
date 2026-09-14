@@ -557,6 +557,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+jpeg = [
+    { name = "pillow" },
+]
 tifffile = [
     { name = "tifffile", version = "2025.5.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "tifffile", version = "2026.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
@@ -578,9 +581,10 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
+    { name = "pillow", marker = "extra == 'jpeg'", specifier = ">=9" },
     { name = "tifffile", marker = "extra == 'tifffile'", specifier = ">=2021.7.2" },
 ]
-provides-extras = ["tifffile"]
+provides-extras = ["tifffile", "jpeg"]
 
 [package.metadata.requires-dev]
 dev = [

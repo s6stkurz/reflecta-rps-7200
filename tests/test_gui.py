@@ -1013,3 +1013,41 @@ def test_a_walked_frame_with_no_picture_is_reported_not_swallowed():
     nothing about that is how a roll comes back short."""
     source = inspect.getsource(gui._ContactSheet.__init__)
     assert "will not be scanned" in source
+
+
+def test_a_quality_typed_by_hand_can_never_lose_a_scan():
+    """The spinbox hands back a string and an operator can type in it. Clamped
+    rather than refused: a scan is minutes of hardware and must not be lost to
+    a typo in a quality field."""
+    jpeg_quality = gui.jpeg_quality
+
+    assert jpeg_quality("95") == 95
+    assert jpeg_quality(80) == 80
+    assert jpeg_quality("") == 95, "an empty box means the default"
+    assert jpeg_quality("abc") == 95
+    assert jpeg_quality(None) == 95
+    assert jpeg_quality("5000") == 100, "clamped, not refused"
+    assert jpeg_quality("-3") == 60
+
+
+def test_the_save_dialog_opens_on_the_format_already_in_use():
+    """Order is the point: the first entry is what the dialog offers, so an
+    operator working in JPEG is not asked to pick it again every time."""
+    save_as_types = gui.save_as_types
+
+    assert save_as_types("jpeg")[0] == ("JPEG", "*.jpg")
+    assert save_as_types("tiff")[0] == ("TIFF", "*.tif")
+    for fmt in ("tiff", "jpeg"):
+        assert len(save_as_types(fmt)) == 2, "both are always offered"
+
+
+def test_the_output_label_stops_promising_a_tiff_when_it_is_a_jpeg():
+    """The label is the only place the infrared cost is visible before a scan
+    is taken, so it has to name it."""
+    output_note = gui.output_note
+
+    assert "TIFF" in output_note("tiff")
+    jpeg = output_note("jpeg")
+    assert "JPEG" in jpeg
+    assert "infrared" in jpeg, "the one thing the format cannot carry"
+    assert "negative" in jpeg, "it is not the inverted picture"

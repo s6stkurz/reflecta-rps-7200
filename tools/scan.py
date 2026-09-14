@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import library, tiff
+from rps7200 import export, library
 from rps7200.direct import DirectScanner, supports_infrared
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
 from rps7200.library import FilmNotes
@@ -35,7 +35,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dpi", type=int, default=1800)
-    ap.add_argument("--out", default="scan.tif")
+    ap.add_argument("--out", default="scan.tif",
+                    help="the delivered file. Its extension picks the format: "
+                         ".tif or .jpg. A JPEG is the same picture at 8 bits, "
+                         "still a negative, and cannot carry infrared")
+    ap.add_argument("--quality", type=int, default=export.DEFAULT_QUALITY,
+                    metavar="N", help="JPEG quality 60-100 (default "
+                                      f"{export.DEFAULT_QUALITY}); ignored for TIFF")
     ap.add_argument("--ir", action="store_true", help="capture the infrared plane too")
     ap.add_argument("--reference", default="calibration/shading.npz",
                     help="where to cache the shading reference")
@@ -235,10 +241,13 @@ def main() -> int:
         delivered = to_monochrome(image, args.mono_channel)
         meta = dict(meta, mono_channel=args.mono_channel,
                     channel_order=[args.mono_channel], channels=1)
-    tiff.write(str(out), delivered, resolution=args.dpi)
+    note = export.write(out, delivered, resolution=args.dpi,
+                        quality=args.quality)
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2, default=str))
     print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
           + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
+    if note:
+        print(note)
     if meta.get("shading"):
         r = meta["shading"]
         print(f"shading: {r['columns']}/{r['width']} columns corrected, "

@@ -356,6 +356,14 @@ its own resolution rather than the scan's.
 One TIFF per frame, uint16, plus a JSON sidecar recording resolution, geometry,
 exposure/gain/offset, what the metering probe measured, and the settings used.
 
+A delivered file can be a **JPEG** instead — `--out frame.jpg` on `tools/scan.py`,
+or the TIFF/JPEG choice beside the output folder in the window. The extension is
+what picks the format. A JPEG is the same picture at eight bits and is still an
+uninverted negative, so it looks orange; it cannot carry the infrared plane, and
+whatever writes it says so. It needs Pillow (`uv sync --extra jpeg`), and without
+it the file is written as a TIFF rather than lost. Library entries and a roll's
+own files under `rolls/` are always TIFF.
+
 The shape depends on what was asked for:
 
 | | shape | channels |
