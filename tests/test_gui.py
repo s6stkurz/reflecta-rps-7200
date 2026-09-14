@@ -1274,3 +1274,134 @@ def test_a_new_strip_does_not_inherit_the_last_ones_orientations():
     walk = inspect.getsource(gui.ScannerGui.on_roll)
     assert "self._frame_rotations = {}" in walk
     assert walk.index("self.survey = []") < walk.index("self._surveying = True")
+
+
+# -- the picture and the panel share the canvas ------------------------------
+
+
+class _FakeCanvas:
+    def __init__(self, w, h):
+        self._w, self._h = w, h
+
+    def winfo_width(self):
+        return self._w
+
+    def winfo_height(self):
+        return self._h
+
+
+def _area(width, footprint, height=400):
+    import types
+    stub = types.SimpleNamespace(
+        canvas=_FakeCanvas(width, height),
+        histogram=types.SimpleNamespace(footprint=lambda: footprint))
+    return gui.ScannerGui._picture_area(stub)
+
+
+def test_the_picture_is_laid_out_beside_the_histogram_not_under_it():
+    """The panel floats over the canvas, so without this the top right of
+    every frame sits behind a chart."""
+    assert _area(1000, 286) == (714, 400)
+
+
+def test_a_pane_too_narrow_to_share_is_overlapped_rather_than_emptied():
+    """A picture too small to judge anything by is worse than one with a
+    chart in the corner of it."""
+    assert _area(400, 286) == (200, 400), "at most half is ever given up"
+    assert _area(2, 286)[0] >= 1, "and never all of it"
+
+
+def test_nothing_lays_out_a_picture_against_the_raw_canvas():
+    """One place decides how big the picture may be. A size read straight off
+    the canvas is one that has not heard about the panel, and the picture
+    would go back under it for that one operation -- a zoom that pivots on a
+    point the redraw puts somewhere else."""
+    import inspect
+    for name in ("_redraw", "_source_at", "_zoom_by", "_set_zoom",
+                 "on_double_click"):
+        source = inspect.getsource(getattr(gui.ScannerGui, name))
+        assert "canvas.winfo_width()" not in source, name
+        assert "_picture_area()" in source, name
+
+
+def test_the_panel_leaves_the_same_gap_on_both_sides_of_itself():
+    """It is inset from the corner, and the picture stops the same distance
+    short of it -- otherwise the two touch and read as one object."""
+    import inspect
+    assert "self.MARGIN * 2" in inspect.getsource(gui._HistogramPanel.footprint)
+    placed = inspect.getsource(gui._HistogramPanel.place)
+    assert "x=-self.MARGIN" in placed and "y=self.MARGIN" in placed
+
+
+# -- the filmstrip stays where it was put ------------------------------------
+
+
+class _FakeStrip:
+    """Enough of a canvas for `_keep_in_strip`, recording where it was sent."""
+
+    def __init__(self, width, left=0.0):
+        self._width, self._left = width, left
+        self.moved = []
+
+    def update_idletasks(self):
+        pass
+
+    def winfo_width(self):
+        return self._width
+
+    def canvasx(self, _x):
+        return self._left
+
+    def xview_moveto(self, fraction):
+        self.moved.append(fraction)
+
+
+def _scroll(span, total, width, left=0.0):
+    import types
+    strip = _FakeStrip(width, left)
+    gui.ScannerGui._keep_in_strip(types.SimpleNamespace(strip=strip), span, total)
+    return strip.moved
+
+
+def test_clicking_a_frame_already_in_view_does_not_scroll():
+    """The bug this replaces: every redraw jumped to the end, so clicking the
+    first frame of a long strip showed you the last one -- the picture changed
+    to the frame asked for and the strip scrolled away from it, leaving the
+    highlight off screen and no sign of what had been chosen."""
+    assert _scroll((100, 250), 2700, 900, left=0.0) == []
+    assert _scroll((1000, 1150), 2700, 900, left=950.0) == []
+
+
+def test_a_frame_off_to_the_left_is_scrolled_back_to():
+    moved = _scroll((100, 250), 2700, 900, left=900.0)
+    assert len(moved) == 1 and 0 <= moved[0] < 900 / 2700
+
+
+def test_a_frame_off_to_the_right_is_scrolled_forward_to():
+    moved = _scroll((2500, 2650), 2700, 900, left=0.0)
+    assert len(moved) == 1
+    # Far enough that its end is in view, and no further.
+    assert moved[0] * 2700 + 900 >= 2650
+    assert moved[0] * 2700 <= 2500
+
+
+def test_a_new_pass_still_brings_the_end_of_the_strip_into_view():
+    """It falls out of the same rule: a pass that has just arrived is the
+    selected one and it is off the right-hand end."""
+    moved = _scroll((2600, 2750), 2760, 900, left=0.0)
+    assert moved and moved[0] * 2760 + 900 >= 2750
+
+
+def test_a_strip_that_fits_is_shown_from_the_start():
+    assert _scroll((100, 250), 600, 900) == [0.0]
+
+
+def test_a_strip_with_nothing_selected_is_left_alone():
+    assert _scroll(None, 2700, 900) == []
+
+
+def test_the_strip_no_longer_jumps_to_the_end_on_every_redraw():
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._redraw_strip)
+    assert "xview_moveto(1.0)" not in source
+    assert "_keep_in_strip" in source

@@ -1919,6 +1919,7 @@ class ScannerGui:
         self.strip.delete("all")
         self._thumbs = []
         x = 6
+        here = None                          # where the selected frame ended up
         for r in self._visible():
             if r.image is None:
                 continue
@@ -1933,6 +1934,7 @@ class ScannerGui:
             tag = f"r{r.seq}"
             self.strip.create_image(x, 6, image=photo, anchor="nw", tags=tag)
             if r is self.current:
+                here = (x, x + photo.width())
                 self.strip.create_rectangle(
                     x - 2, 4, x + photo.width() + 1, 8 + photo.height(),
                     outline="#e8b64c", width=2)
@@ -1940,7 +1942,36 @@ class ScannerGui:
                                 lambda _e, s=r.seq: self._show_seq(s))
             x += photo.width() + 8
         self.strip.configure(scrollregion=(0, 0, x, THUMB_H + 12))
-        self.strip.xview_moveto(1.0)
+        self._keep_in_strip(here, x)
+
+    def _keep_in_strip(self, span, total: int) -> None:
+        """Scroll only as far as it takes to have the selected frame in view.
+
+        This used to be `xview_moveto(1.0)` -- jump to the end, on every
+        redraw. A redraw happens when a pass is *selected* as well as when one
+        arrives, so on a strip longer than the window, clicking the first
+        frame showed you the last one: the picture changed to the frame you
+        asked for and the strip scrolled away from it, leaving the highlight
+        off screen and no sign of what had been chosen.
+
+        Following the newest still falls out of this, because a pass that has
+        just arrived is the selected one and it is off the right-hand end.
+        """
+        if span is None or total <= 0:
+            return
+        # The scrollregion was set a moment ago and Tk works out what that
+        # means for the view at idle, so asking before then reads the old one.
+        self.strip.update_idletasks()
+        width = max(1, self.strip.winfo_width())
+        if total <= width:
+            self.strip.xview_moveto(0.0)
+            return
+        left = self.strip.canvasx(0)
+        start, end = span
+        if start < left:
+            self.strip.xview_moveto(max(0.0, (start - 6) / total))
+        elif end > left + width:
+            self.strip.xview_moveto(min(1.0, (end + 6 - width) / total))
 
     def _show_seq(self, seq: int) -> None:
         for r in self.results:
@@ -2290,8 +2321,7 @@ class ScannerGui:
         """Fit, or a scale about the middle of what is on screen."""
         src = self._source()
         if zoom > 0 and src is not None:
-            w = max(1, self.canvas.winfo_width())
-            h = max(1, self.canvas.winfo_height())
+            w, h = self._picture_area()
             middle = self._source_at(w / 2, h / 2)
             self._view = [middle[0] - (w / 2) / zoom, middle[1] - (h / 2) / zoom]
         self._zoom = zoom
@@ -2312,8 +2342,7 @@ class ScannerGui:
         src = self._source()
         if src is None:
             return
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
+        w, h = self._picture_area()
         fit = min(w / src.shape[1], h / src.shape[0])
 
         focus = self._source_at(*anchor) if anchor is not None else None
@@ -2335,6 +2364,26 @@ class ScannerGui:
                       focus[1] - anchor[1] / target]
         self._zoom = target
         self._schedule_redraw(moving=moving)
+
+    def _picture_area(self) -> tuple[int, int]:
+        """The canvas, less the corner the histogram is standing in.
+
+        The panel floats over the canvas, so without this a picture is laid
+        out underneath it and the top right of every frame sits behind a
+        chart. Moved and re-fitted rather than clipped, because "do not
+        overlap" for a picture that is centred means giving it a smaller
+        space to be centred in.
+
+        The whole height of that column is given up, not just the panel's own
+        rows. The alternative -- reserve it while the picture is tall enough
+        to reach the panel, release it when it is not -- makes the picture
+        jump sideways part way through a zoom.
+        """
+        w = max(1, self.canvas.winfo_width())
+        h = max(1, self.canvas.winfo_height())
+        # Never more than half of it: a pane this narrow is better overlapped
+        # than given a picture too small to judge anything by.
+        return max(1, w - min(self.histogram.footprint(), w // 2)), h
 
     def _geometry(self, src, w: int, h: int):
         """Where the picture sits on the canvas: `(scale, x0, y0, width, height)`.
@@ -2389,8 +2438,7 @@ class ScannerGui:
         src = self._source()
         if src is None:
             return None
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
+        w, h = self._picture_area()
         scale, x0, y0, dw, dh, left, top = self._geometry(src, w, h)
         ix = min(max(x - left, 0.0), float(dw))
         iy = min(max(y - top, 0.0), float(dh))
@@ -2472,8 +2520,7 @@ class ScannerGui:
         self.canvas.delete("note")
         self._shown = None
         src = self._source()
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
+        w, h = self._picture_area()
         if src is None:
             self.canvas.delete("picture")
             self._item = None
@@ -2596,8 +2643,7 @@ class ScannerGui:
             # point that stays put.
             src = self._source()
             if src is not None:
-                w = max(1, self.canvas.winfo_width())
-                h = max(1, self.canvas.winfo_height())
+                w, h = self._picture_area()
                 fit = min(w / src.shape[1], h / src.shape[0])
                 want = self._finest()
                 self._zoom_by(want / fit if fit else 1.0, anchor=self._pointer)
@@ -3039,6 +3085,7 @@ class _HistogramPanel:
     WIDTH, HEIGHT = 244, 74
     BACK = "#141414"
     EDGE = "#333333"
+    MARGIN = 12                              # from the corner, and from the picture
 
     def __init__(self, parent: tk.Misc):
         self.frame = tk.Frame(parent, background=self.BACK,
@@ -3075,7 +3122,19 @@ class _HistogramPanel:
 
     def place(self) -> None:
         """Top right of the picture, out of the way of the toolbar below it."""
-        self.frame.place(relx=1.0, x=-12, y=12, anchor="ne")
+        self.frame.place(relx=1.0, x=-self.MARGIN, y=self.MARGIN, anchor="ne")
+
+    def footprint(self) -> int:
+        """How much of the canvas's width this is standing on.
+
+        Its own width, the gap to the edge, and the same gap again so the
+        picture stops short of it rather than up against it.
+
+        `winfo_reqwidth`, not `winfo_width`: the requested width is right
+        before the panel has been mapped, and the first picture is laid out
+        before that has happened.
+        """
+        return self.frame.winfo_reqwidth() + self.MARGIN * 2
 
     # -- what it is showing ------------------------------------------------
 
