@@ -958,18 +958,40 @@ def test_the_search_reaches_as_far_as_the_transport_can_travel():
 
     image = _lit()
     far = np.roll(image, 80, axis=1)             # past the 64 px default
-    millimetres, detail = measure_shift_mm(image, far, budget_mm=8.1)
+    millimetres, detail = measure_shift_mm(image, far)
     assert millimetres is not None and detail["px"] == 80
 
 
-def test_a_reference_from_another_resolution_still_matches():
+def test_the_search_window_does_not_vary_with_the_frame():
+    """`confidence` is the peak over the mean of the *searched* surface, so it
+    is a property of the match and of the window together -- the same pair
+    scores 23.8 at a 16 px reach and 129.7 at 200 px. A reach that varied per
+    frame would make CONFIDENCE_FLOOR mean something different every time, and
+    on the scanner that came within 1.5 points of refusing a good frame."""
     from rps7200.framing import measure_shift_mm
+
+    source = inspect.getsource(measure_shift_mm)
+    assert "SEARCH_MM" in source
+    assert "budget_mm" not in source
+
+
+def test_a_reference_from_another_resolution_still_lands_geometrically():
+    """Resampling recovers the shift, but costs about half the confidence --
+    93.5 against 47.4 on real passes -- which can drop a good match below the
+    floor. So the geometry is what is pinned here, and the window pins a
+    commissioned scan to the survey's own prescan resolution rather than
+    relying on this path."""
+    from rps7200.framing import APERTURE_MM, SEARCH_MM, _resample_to
+    from rps7200.uniformity import register
 
     image = _lit()
     coarse = image[::2, ::2]                     # a 600 -> 300 dpi survey
-    millimetres, detail = measure_shift_mm(coarse, image)
-    assert millimetres is not None
-    assert detail["resampled"] is True
+    grown = _resample_to(coarse, image.shape[:2])
+    assert grown.shape[:2] == image.shape[:2]
+
+    reach = int(SEARCH_MM / (APERTURE_MM / image.shape[1]))
+    _, dx, _ = register(grown, np.roll(image, 5, axis=1), max_shift=reach)
+    assert -dx == 5, "the shift survives resampling even where the peak softens"
 
 
 def test_the_tolerance_is_the_smallest_move_the_hardware_can_make():
@@ -1170,3 +1192,18 @@ def test_an_automatic_calibration_runs_at_the_resolution_that_reaches_the_cap():
     source = inspect.getsource(DirectScanner.scan)
     assert "self.calibrate_shading()" in source
     assert "self.calibrate_shading(resolution=resolution)" not in source
+
+
+def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
+    """Both numbers were fitted together on the scanner, 2026-09-14: same-frame
+    repeats scored 80.9-168.9 and adjacent frames of one strip up to 29.9, at
+    SEARCH_MM. Changing the reach without re-fitting the floor silently changes
+    what "believed" means -- which is how a true match came within 1.5 points
+    of being refused."""
+    from rps7200.framing import CONFIDENCE_FLOOR, SEARCH_MM
+
+    assert SEARCH_MM == pytest.approx(9.0)
+    assert CONFIDENCE_FLOOR == pytest.approx(55.0)
+    # Comfortably past what the transport can travel, so any displacement it
+    # can produce is inside the window.
+    assert SEARCH_MM > 8.08

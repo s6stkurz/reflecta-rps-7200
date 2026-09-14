@@ -368,12 +368,37 @@ def registration_error_mm(
 #: The whole transport window, in millimetres. 10344 units at 7200 dpi.
 APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 
+#: How far the match is searched, in millimetres of film travel. Fixed, and
+#: **not** derived from what a particular frame needs.
+#:
+#: `register`'s confidence is the correlation peak over the mean of the
+#: searched surface, so it is a property of the match *and of the window it
+#: was searched in*: the same pair of prescans scores 23.8 at a 16 px reach
+#: and 129.7 at 200 px, rising almost linearly in between. A floor compared
+#: against a confidence from some other reach is comparing two different
+#: quantities. An earlier version sized the reach from each frame's travel
+#: budget, which made the floor mean something different on every frame --
+#: caught on the scanner 2026-09-14, where a true match scored 41.5 against a
+#: floor of 40 and came within 1.5 points of refusing a good frame.
+#:
+#: Just over MAX_TRAVEL_MM, so any displacement the transport can produce is
+#: inside the window. Expressed in mm rather than pixels so the figure means
+#: the same at any prescan resolution.
+SEARCH_MM = 9.0
+
 #: Correlation peak height, over the surface mean, below which a match is not
-#: believed. Measured over a real 21-frame survey: true matches -- including a
-#: 300 dpi prescan against a 900 dpi scan of the same frame, which is harder
-#: than anything this will meet -- scored 61 to 96, while twenty pairs of
-#: *different* photographs scored 4.3 to 28.8. 40 sits in the gap.
-CONFIDENCE_FLOOR = 40.0
+#: believed -- **only comparable at :data:`SEARCH_MM`**.
+#:
+#: Measured 2026-09-14 at that reach, on real scanner data: six pairs of the
+#: same frame minutes apart scored **80.9 to 168.9**, and twenty pairs of
+#: adjacent frames from one strip -- the realistic confusion, a different
+#: picture of the same film -- scored **up to 29.9**. 55 is the middle of that
+#: gap, 25 clear of the worst null and 26 clear of the weakest true match.
+#:
+#: Provisional in the sense that it rests on one frame's repeats and one
+#: strip's neighbours; every comparison records its confidence, so it can be
+#: re-fitted from real runs without re-deriving anything.
+CONFIDENCE_FLOOR = 55.0
 
 #: How far off the film axis a match may sit. The transport moves only in x,
 #: so a match that claims the picture also moved vertically has found
@@ -385,7 +410,6 @@ def measure_shift_mm(
     reference: np.ndarray,
     now: np.ndarray,
     *,
-    budget_mm: float = 8.1,
     aperture_mm: float = APERTURE_MM,
 ) -> tuple[float | None, dict[str, Any]]:
     """How far the film has moved since ``reference`` was taken, in mm.
@@ -400,9 +424,12 @@ def measure_shift_mm(
     moved right by *s* pixels gives ``dx = -s``. Content displacement is
     therefore ``-dx``, verified at every shift from -60 to +60.
 
-    ``budget_mm`` sizes the search. :func:`register`'s own default of 64 px is
-    5.5 mm at 300 dpi, which is less than the transport can travel, so a frame
-    at the far end of the range would be measured as something nearer.
+    The search reaches :data:`SEARCH_MM` whatever this frame is trying to do.
+    :func:`register`'s own default of 64 px is 5.5 mm at 300 dpi, less than
+    the transport can travel, so a frame at the far end would be measured as
+    something nearer -- but sizing the reach per frame is worse than leaving
+    it too small, because ``confidence`` is measured over the searched window
+    and a per-frame reach makes the floor mean a different thing every time.
 
     This never consults :func:`gap_edges`. That counts gap runs anchored at the
     window's edges, so a frame drifted far enough that the gap sits in the
@@ -423,12 +450,19 @@ def measure_shift_mm(
         # The survey and the scan ran at different prescan resolutions. Match
         # the reference to what is in hand rather than refusing: the operator's
         # decision is still about this picture.
+        #
+        # It costs about half the confidence, measured on real passes -- 93.5
+        # same-resolution against 47.4 resampled -- which is enough to drop a
+        # good match below the floor. The geometry survives (the shift comes
+        # back right); it is the peak that softens. So this is a fallback, and
+        # the window pins a commissioned scan to the survey's own prescan
+        # resolution rather than relying on it.
         reference = _resample_to(reference, now.shape[:2])
         detail["resampled"] = True
 
     width = max(now.shape[1], 1)
     mm_per_px = aperture_mm / width
-    reach = int(abs(budget_mm) / max(mm_per_px, 1e-9)) + 8
+    reach = int(SEARCH_MM / max(mm_per_px, 1e-9))
 
     dy, dx, confidence = register(reference, now, max_shift=reach)
     detail.update(confidence=round(float(confidence), 2), dy=int(dy),
