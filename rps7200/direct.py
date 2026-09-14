@@ -2587,6 +2587,11 @@ class DirectScanner:
     #: `max_failures`: a fault that repeats is a fault with the setup.
     HOLD_GIVE_UP_FRAMES = 3
 
+    #: How long to let the transport settle after a sub-frame move before
+    #: looking again. A class attribute so a stand-in can run this same loop
+    #: without waiting out real seconds it is only pretending to need.
+    HOLD_SETTLE_S = 0.4
+
     def _hold_to_approved(
         self,
         index: int,
@@ -2644,7 +2649,7 @@ class DirectScanner:
             out["moves"] += 1
             out["spent_mm"] = round(spent, 4)
 
-            time.sleep(0.4)
+            time.sleep(self.HOLD_SETTLE_S)
             image, _ = self.prescan(resolution=prescan_resolution,
                                     keep_raw=keep_raw)
             out["prescan"] = image

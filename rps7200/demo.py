@@ -41,7 +41,7 @@ import numpy as np
 
 from . import library, tiff
 from .direct import DirectScanner, RollFrame, supports_infrared
-from .framing import FULL_FRAME, frame_contrast, registration
+from .framing import APERTURE_MM, FULL_FRAME, frame_contrast, registration
 from .protocol import ScanParameters
 from .session import estimate_seconds
 from .shading import ShadingReference, apply_shading
@@ -105,6 +105,23 @@ class DemoScanner:
         #: "the scan replaces its prescan" behaviour visible at all.
         self.pair: Path | None = Path(entry) if entry else None
         self.speed = max(1.0, speed)
+        #: Where the film sits, in millimetres from where this frame started.
+        #: The demo moves it for real so the hold loop has something to
+        #: converge on -- before this, `nudge` reported a move and the next
+        #: prescan came back identical, so the loop could only ever be
+        #: pretended at.
+        self._film_mm = 0.0
+        #: Backlash, as the transport really has it: two to three commands are
+        #: swallowed after a direction change and the distance arrives later.
+        #: Modelled because it is the reason the loop iterates at all.
+        self._owed_mm = 0.0
+        self._last_way = 0
+        #: One frame per strip whose transport slips, so `not_converged` and
+        #: the end-of-roll warning can be seen rather than taken on trust.
+        self._slipping_index = 2
+        #: Which frame of the roll is being worked on, so the slip above has
+        #: something to key on. -1 outside a roll.
+        self._index = -1
         self.t = _FakeTransport()
         self.log_hook: Any = None
         self.progress_hook: Any = None
@@ -176,10 +193,47 @@ class DemoScanner:
         param = max(1, min(8, round((abs(millimetres) - 0.1662) / 0.1057)))
         asked = 0.1057 * param + 0.1662
         asked = asked if millimetres >= 0 else -asked
-        self._log(f"slide sub-frame: {asked:+.3f} mm (param {param})")
+        way = 1 if millimetres >= 0 else -1
+
+        delivered = asked
+        if self._index == self._slipping_index:
+            # A frame whose transport slips. The command is accepted and
+            # reports normally -- which is exactly what makes it worth
+            # simulating, because that is how the real one fails too.
+            delivered = 0.0
+            self._log("slide sub-frame: commanded, and the film did not move")
+        elif way != self._last_way and self._last_way:
+            # Backlash: the first move after a reversal mostly disappears into
+            # the gear train and comes back on the move after.
+            swallowed = min(abs(asked), 2.2 * 0.1057)
+            self._owed_mm += swallowed * way
+            delivered = asked - swallowed * way
+        else:
+            delivered += self._owed_mm
+            self._owed_mm = 0.0
+
+        self._film_mm += delivered
+        self._last_way = way
+        self._log(f"slide sub-frame: {asked:+.3f} mm (param {param}), "
+                  f"film now {self._film_mm:+.3f} mm")
         self._work(1.5)
         return {"asked_mm": asked, "param": param,
                 "forward": millimetres >= 0}
+
+    def _as_positioned(self, image: np.ndarray) -> np.ndarray:
+        """The picture as it sits in the aperture right now.
+
+        The whole point of moving the film in this stand-in: a pass has to
+        come back showing where the film actually is, or a loop that looks
+        again after moving learns nothing and the code under test is never
+        really exercised.
+        """
+        if not self._film_mm or image is None or image.ndim < 2:
+            return image
+        pixels = int(round(self._film_mm / (APERTURE_MM / max(image.shape[1], 1))))
+        if not pixels:
+            return image
+        return np.roll(image, pixels, axis=1)
 
     def _drop_raw(self, why: str) -> None:
         """Keep the calibration, forget the bytes."""
@@ -221,7 +275,7 @@ class DemoScanner:
         if image.ndim == 3 and image.shape[2] > 3:
             image = image[..., :3]
             self._drop_raw("a prescan is three channels")
-        return image, None
+        return self._as_positioned(image), None
 
     def scan(
         self,
@@ -294,6 +348,7 @@ class DemoScanner:
         only: tuple[int, ...] | None = None,
         film: str = "negative",
         approved: dict | None = None,
+        reverse_hold: bool = False,
         **kw: Any,
     ):
         # Up front, as the real one does: a roll spends minutes calibrating
@@ -307,8 +362,17 @@ class DemoScanner:
                 "dust. Scan it RGB."
             )
         limit = frames if frames is not None else 6
+        holding = True
+        misses = 0
         for i in range(limit):
             self._position = skip + i
+            self._index = skip + i
+            # Each frame starts where the advance left it, as the real one
+            # does; the offset an operator asked for is what the loop below
+            # then puts in.
+            self._film_mm = 0.0
+            self._owed_mm = 0.0
+            self._last_way = 0
             if only is not None and skip + i not in only:
                 # Advanced past, not looked at -- the whole point of picking
                 # frames off a contact sheet.
@@ -329,8 +393,31 @@ class DemoScanner:
                     f"short by {marks['shortfall_mm']:.2f} mm"
                 )
                 held = (approved or {}).get(skip + i)
-                if held is not None:
-                    marks["approved"] = self._pretend_to_hold(i, held)
+                if held is not None and holding:
+                    fix = self._hold_to_approved(
+                        i, prescan, 300, held, keep_raw=False,
+                        reverse=reverse_hold,
+                    )
+                    if fix.get("roll_abort"):
+                        holding = False
+                    if fix.get("outcome") != "held":
+                        misses += 1
+                        if misses >= self.HOLD_GIVE_UP_FRAMES:
+                            holding = False
+                            self._log("three frames in a row missed their "
+                                      "position; holding off for this roll")
+                    else:
+                        misses = 0
+                    if fix.get("prescan") is not None:
+                        prescan = fix["prescan"]
+                        marks = self._marks(prescan)
+                    marks["approved"] = {k: v for k, v in fix.items()
+                                         if k != "prescan"}
+                elif held is not None:
+                    marks["approved"] = {
+                        "target_mm": round(held.offset_mm, 4), "outcome": "off",
+                        "reason": "holding was switched off earlier in this roll",
+                    }
                 image = meta = None
                 if not dry_run:
                     image, meta = self.scan(
@@ -348,31 +435,20 @@ class DemoScanner:
                 registration=marks,
             )
             self._work(7.0)                              # the advance
+        # Outside a roll again, so a manual nudge from the window is not
+        # mistaken for the slipping frame.
+        self._index = -1
 
-    def _pretend_to_hold(self, index: int, held: Any) -> dict[str, Any]:
-        """What holding a frame to its approved position looks like.
-
-        Converges after one move, except on the third frame, which reports
-        `not_converged` on purpose. A demo where everything succeeds cannot
-        show the end-of-roll warning, and a flag nobody has ever seen fire is
-        a flag nobody trusts.
-        """
-        target = float(getattr(held, "offset_mm", 0.0))
-        if not target:
-            return {"target_mm": 0.0, "outcome": "held", "moves": 0,
-                    "spent_mm": 0.0, "final_mm": 0.0, "residual_mm": 0.0,
-                    "confidence": 88.0, "dy": 0, "history": []}
-        self._work(1.5)
-        if index == 2:
-            return {"target_mm": round(target, 4), "outcome": "not_converged",
-                    "moves": 3, "spent_mm": round(abs(target) * 1.4, 4),
-                    "final_mm": round(target * 0.4, 4),
-                    "residual_mm": round(target * 0.6, 4),
-                    "confidence": 71.5, "dy": 0, "history": []}
-        return {"target_mm": round(target, 4), "outcome": "held", "moves": 1,
-                "spent_mm": round(abs(target), 4),
-                "final_mm": round(target, 4), "residual_mm": 0.0,
-                "confidence": 84.2, "dy": 0, "history": []}
+    #: The real loop, run against the simulated film above rather than
+    #: reimplemented. It only needs `nudge`, `prescan` and `_log`, all of
+    #: which this class has -- so the demo exercises the correlation, the
+    #: decision table, the move cap, the refused reversal and the direction
+    #: check as the scanner would, instead of a hand-written imitation that
+    #: cannot disagree with it.
+    _hold_to_approved = DirectScanner._hold_to_approved
+    HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
+    #: No real settling to wait out; the film here is an array.
+    HOLD_SETTLE_S = 0.0
 
     # -- internals ---------------------------------------------------------
 

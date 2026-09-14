@@ -1625,11 +1625,19 @@ class ScannerGui:
             "off": "was left alone; holding had been switched off",
         }
         missed = []
+        counted = set()
         for result in self.results:
             held = (result.registration or {}).get("approved")
             if not held or held.get("outcome") == "held":
                 continue
             number = getattr(result, "number", None)
+            # A frame's prescan and its scan share one registration dict, so
+            # both carry the outcome and the frame would be named twice --
+            # and counted twice, which made the number in the first line
+            # disagree with the list under it.
+            if number in counted:
+                continue
+            counted.add(number)
             why = said.get(held.get("outcome"), held.get("outcome", "?"))
             residual = held.get("residual_mm")
             short = f" ({abs(residual):.2f} mm out)" if residual else ""
@@ -1638,8 +1646,9 @@ class ScannerGui:
             return
         messagebox.showwarning(
             "Positions not reached",
-            f"{len(missed)} frame{'s' if len(missed) != 1 else ''} "
-            "were scanned without reaching the position you approved:\n\n"
+            (f"{len(missed)} frames were" if len(missed) != 1
+             else "1 frame was")
+            + " scanned without reaching the position you approved:\n\n"
             + "\n".join(missed)
             + "\n\nThe scans are filed and usable; the frames above are the "
               "ones to look at first.")

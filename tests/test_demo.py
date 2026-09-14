@@ -335,3 +335,87 @@ def test_a_library_with_no_prescans_still_walks_a_strip(tmp_path):
     with DemoScanner(root=tmp_path, speed=100000.0) as s:
         frames = list(s.scan_roll(frames=3, dry_run=True))
     assert len({f.prescan.tobytes() for f in frames}) == 3
+
+
+# --- the stand-in has to behave like the thing it stands in for -------------
+#
+# Two real bugs reached the scanner because the demo diverged from it: the
+# hold loop was imitated rather than run, so nothing the loop actually does
+# was ever exercised without hardware.
+
+
+def test_the_demo_runs_the_real_hold_loop_not_an_imitation():
+    """Bound from DirectScanner, so it cannot drift from the code it stands in
+    for. An imitation can never disagree with itself."""
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    assert DemoScanner._hold_to_approved is DirectScanner._hold_to_approved
+
+
+def test_nudging_the_demo_actually_moves_the_film():
+    """It used to report a move and hand back an identical picture, so a loop
+    that looked again after moving learned nothing and could only ever be
+    pretended at."""
+    from rps7200.demo import DemoScanner
+
+    scanner = DemoScanner("library", speed=1e9)
+    before = scanner._film_mm
+    scanner.nudge(0.5)
+    assert scanner._film_mm > before
+
+
+def test_the_demo_converges_on_an_approved_position():
+    from rps7200.demo import DemoScanner
+    from rps7200.session import Approved
+
+    scanner = DemoScanner("library", speed=1e9)
+    scanner.open()
+    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
+        frames=2, resolution=300, infrared=False, dry_run=True)}
+    scanner.close()
+
+    scanner = DemoScanner("library", speed=1e9)
+    scanner.open()
+    held = {}
+    approved = {0: Approved(1, 0.5, reference=references[0]),
+                1: Approved(2, 0.0, reference=references[1])}
+    for rf in scanner.scan_roll(frames=2, resolution=300, infrared=False,
+                                dry_run=True, approved=approved):
+        held[rf.index] = rf.registration["approved"]
+    scanner.close()
+
+    assert held[0]["outcome"] == "held"
+    assert held[0]["moves"] == 1, "an offset should cost exactly one move"
+    assert held[0]["final_mm"] == pytest.approx(0.5, abs=0.05)
+    assert held[1]["outcome"] == "held"
+    assert held[1]["moves"] == 0, "no offset asked for, so nothing to do"
+
+
+def test_one_frame_is_made_to_miss_on_purpose():
+    """A flag nobody has ever seen fire is a flag nobody trusts. The demo has
+    a frame whose transport slips, so `not_converged` and the end-of-roll
+    warning can be watched rather than taken on faith."""
+    from rps7200.demo import DemoScanner
+    from rps7200.session import Approved
+
+    scanner = DemoScanner("library", speed=1e9)
+    scanner.open()
+    slipping = scanner._slipping_index
+    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
+        frames=slipping + 1, resolution=300, infrared=False, dry_run=True)}
+    scanner.close()
+
+    scanner = DemoScanner("library", speed=1e9)
+    scanner.open()
+    out = {}
+    for rf in scanner.scan_roll(
+            frames=slipping + 1, resolution=300, infrared=False, dry_run=True,
+            approved={slipping: Approved(slipping + 1, 0.8,
+                                         reference=references[slipping])}):
+        if rf.index == slipping:
+            out = rf.registration["approved"]
+    scanner.close()
+
+    assert out["outcome"] == "not_converged"
+    assert out["moves"] == 3, "it tries, and stops at the cap"
