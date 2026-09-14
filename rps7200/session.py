@@ -156,6 +156,31 @@ def estimate_seconds(resolution: int, infrared: bool) -> float:
 
 
 @dataclass(frozen=True)
+class Approved:
+    """Where the operator decided one frame should sit, and the picture he
+    decided it from.
+
+    `offset_mm` is a signed displacement **relative to where the film sat when
+    that frame was surveyed**, in the same sense `nudge` and `Move.millimetres`
+    use. It cannot be an absolute transport coordinate: the frame counter does
+    not see a sub-frame move, so there is no such coordinate to name. Zero is a
+    real answer -- "leave it exactly where I saw it" -- and is not the same as
+    having no approval at all.
+
+    `reference` is the prescan he actually looked at, carried by value. It is
+    368 KB at 300 dpi and already in memory, and it is byte-identical to the
+    pixels on his screen -- which is what "check it against the frame I
+    approved" has to mean. `reference_entry` is the library path to the same
+    pass, for the case where the array did not survive.
+    """
+
+    number: int                              # 1-based, as the contact sheet counts
+    offset_mm: float = 0.0
+    reference: Any = field(default=None, compare=False, repr=False)
+    reference_entry: str = ""
+
+
+@dataclass(frozen=True)
 class Calibrate:
     """Acquire this session's shading reference. Once per power-on."""
 

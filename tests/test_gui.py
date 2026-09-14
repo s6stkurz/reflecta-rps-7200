@@ -12,6 +12,7 @@ is asked for, and the resolution guard.
 """
 import time
 
+import numpy as np
 import pytest
 
 from conftest import load_tool
@@ -803,3 +804,55 @@ def test_a_dry_run_says_walked_not_scanned(window):
     app._update_roll_eta()
     assert "walked" in app.v_roll_eta.get()
     assert "scanned" not in app.v_roll_eta.get()
+
+
+# -- the approved-offset helpers ---------------------------------------------
+#
+# Pure module-level functions, so they are tested directly rather than through
+# a window. What they encode is that an offset shown to the operator must be a
+# position the transport can actually reach.
+
+
+def test_an_offset_snaps_to_something_the_transport_can_reach():
+    assert gui.snap_offset(0.48) == pytest.approx(0.4833, abs=1e-4)
+    assert gui.snap_offset(-0.48) == pytest.approx(-0.4833, abs=1e-4)
+
+
+def test_an_offset_inside_the_unreachable_hole_becomes_zero():
+    """Nothing exists between zero and one SLIDE command. Offering +0.14 mm
+    would invite him to aim at a place that is not there."""
+    assert gui.snap_offset(0.10) == 0.0
+    assert gui.snap_offset(-0.10) == 0.0
+
+
+def test_a_snapped_offset_can_always_be_planned_again():
+    """The adjuster stores what snap_offset returns and the mover plans from
+    it later. A value the planner would refuse on the way back is a number
+    that works in the window and fails at the scanner."""
+    from rps7200.session import plan_nudges
+
+    for want in (-99.0, -8.5, -7.0, -1.5, -0.3, 0.0, 0.3, 1.5, 7.0, 8.5, 99.0):
+        value = gui.snap_offset(want)
+        plan_nudges(value)                    # must not raise
+        assert gui.snap_offset(value) == pytest.approx(value, abs=1e-9)
+
+
+def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
+    """An untouched frame still carries "leave it where I saw it, and here is
+    the picture I saw" -- which is what lets the scan check it instead of
+    assuming."""
+    class R:
+        def __init__(self, number, image, entry=""):
+            self.number, self.image, self.entry = number, image, entry
+
+    frames = [R(1, np.zeros((4, 4, 3), np.uint8), "library/a"),
+              R(2, np.ones((4, 4, 3), np.uint8), "library/b"),
+              R(3, np.zeros((4, 4, 3), np.uint8))]
+    out = gui.approved_from_sheet(frames, (1, 3), {1: 0.48})
+
+    assert [a.number for a in out] == [1, 3]
+    assert out[0].offset_mm == pytest.approx(0.4833, abs=1e-4)
+    assert out[1].offset_mm == 0.0, "an untouched frame is still an approval"
+    assert out[0].reference is frames[0].image, "carries the pixels he saw"
+    assert out[0].reference_entry == "library/a"
+    assert out[1].reference_entry == ""

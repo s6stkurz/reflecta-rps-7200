@@ -17,6 +17,7 @@ else. Nothing moves the mechanism until a button is pressed.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import queue
 import shutil
@@ -46,6 +47,8 @@ from rps7200.mono import (                                 # noqa: E402
 )
 from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
 from rps7200.session import (                             # noqa: E402
+    Approved,
+    _safe,
     Calibrate,
     Move,
     Prescan,
@@ -53,6 +56,7 @@ from rps7200.session import (                             # noqa: E402
     Scan,
     ScanSession,
     estimate_seconds,
+    plan_nudges,
 )
 
 #: Resolutions this scanner has actually been driven at, plus the optical
@@ -1181,8 +1185,13 @@ class ScannerGui:
             dpi = 1800
         return estimate_seconds(dpi, self.v_ir.get()) + 70
 
-    def on_scan_chosen(self, numbers: tuple[int, ...]) -> None:
-        """Rewind to where the survey began, then scan only what was ticked."""
+    def on_scan_chosen(self, numbers: tuple[int, ...], approved=()) -> None:
+        """Rewind to where the survey began, then scan only what was ticked.
+
+        `approved` carries the positions set by hand in the sheet. Nothing in
+        this increment consumes them -- they are written down and logged so the
+        numbers can be read back before any of them is allowed to move film.
+        """
         if not numbers:
             return
         if self.busy:
@@ -1221,9 +1230,10 @@ class ScannerGui:
             f"roughly {_duration(per * len(numbers) + back * 7)} including "
             f"rewinding {back} frame{'s' if back != 1 else ''} to the start of "
             "the strip first. The frames nobody ticked cost their advance only."
-            + moved + "\n\nStart?",
+            + self._approved_note(approved) + moved + "\n\nStart?",
         ):
             return
+        self._write_approved(approved)
         if back:
             self.session.submit(Move(frames=-back))
         self.session.submit(Roll(
@@ -1236,6 +1246,52 @@ class ScannerGui:
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),
         ))
+
+    def _approved_note(self, approved) -> str:
+        """What the sheet's positions will do, said plainly in the dialog.
+
+        A ticked "nudge registration between frames" that silently does not
+        apply is worse than one that is not offered.
+        """
+        moved = [a for a in approved if a.offset_mm]
+        if not moved:
+            return ""
+        note = (f"\n\n{len(moved)} frame{'s' if len(moved) != 1 else ''} "
+                "carry a position you set by hand; those are used exactly as "
+                "given.")
+        if self.v_correct.get():
+            note += (" The automatic nudge stays on for the frames you did "
+                     "not adjust.")
+        return note
+
+    def _write_approved(self, approved) -> None:
+        """Record the positions beside the roll before anything is scanned.
+
+        Written from here rather than by the scan thread because it is the
+        operator's decision, made before the roll starts -- and it is the file
+        that says what was asked for, whatever the roll then does about it.
+        A kilobyte of JSON with the device idle between jobs.
+        """
+        if not approved:
+            return
+        name = _safe(self.fields["roll"].get().strip())
+        folder = Path(self.session.rolls) / name
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "approved.json").write_text(json.dumps({
+                "roll": name,
+                "frames": [{"number": a.number,
+                            "offset_mm": round(a.offset_mm, 4),
+                            "reference_entry": a.reference_entry}
+                           for a in approved],
+            }, indent=2))
+        except OSError as exc:
+            self._say(f"could not write approved.json: {exc}")
+            return
+        told = ", ".join(f"{a.number}:{a.offset_mm:+.2f}mm"
+                         for a in approved if a.offset_mm) or "none moved"
+        self._say(f"approved positions written to "
+                  f"{folder / 'approved.json'} ({told})")
 
     def on_move_frames(self, frames: int) -> None:
         self.session.submit(Move(frames=frames))
@@ -2368,6 +2424,62 @@ def aim_millimetres(fraction: float) -> float:
     return -(fraction - target) * APERTURE_MM
 
 
+def snap_offset(millimetres: float) -> float:
+    """The nearest position the transport can actually reach.
+
+    A number finer than the hardware is a lie. The reachable set starts at one
+    SLIDE command and steps by param, so there is nothing at all between zero
+    and `FINE_STEP_MM` -- showing an operator "+0.14 mm" invites him to aim at
+    a place that does not exist. Clamped to what eight commands can chain,
+    which is `MAX_TRAVEL_MM`, so the planner is never asked for a distance it
+    would refuse.
+    """
+    want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, float(millimetres)))
+    sign = -1.0 if want < 0 else 1.0
+    try:
+        plan = plan_nudges(want)
+    except ValueError:
+        plan = []
+    # The result has to be re-plannable, or the adjuster stores a number the
+    # mover would later refuse. Eight commands of the largest step sum to
+    # slightly more than eight times the nominal maximum, so the top of the
+    # range can snap to a value just past what the planner accepts back. Drop
+    # a step until it survives the round trip.
+    while plan:
+        value = sign * abs(sum(plan))
+        try:
+            plan_nudges(value)
+        except ValueError:
+            plan = plan[:-1]
+            continue
+        return value
+    return 0.0
+
+
+def approved_from_sheet(frames, ticks, offsets) -> tuple:
+    """The `Approved` records for the ticked frames, in frame order.
+
+    Every ticked frame gets one, including those left at zero: an untouched
+    frame still carries "leave it where I saw it, and here is the picture I saw"
+    -- which is what lets the scan check it rather than assume. `frames` is the
+    surveyed results, `ticks` the numbers chosen, `offsets` the adjustments
+    made, keyed by frame number.
+    """
+    picked = set(ticks)
+    out = []
+    for result in frames:
+        number = getattr(result, "number", None)
+        if number is None or number not in picked:
+            continue
+        out.append(Approved(
+            number=number,
+            offset_mm=snap_offset(offsets.get(number, 0.0)),
+            reference=getattr(result, "image", None),
+            reference_entry=getattr(result, "entry", "") or "",
+        ))
+    return tuple(out)
+
+
 def rewind_frames(positions, start_at: int = 1) -> int:
     """How far back the film has to go before the chosen frames are scanned.
 
@@ -2571,6 +2683,245 @@ class _Histogram:
                     row=channel + 1, column=column, sticky="e", padx=6)
 
 
+class _FrameAdjuster:
+    """One surveyed frame, big, with its position in the aperture set by hand.
+
+    The contact sheet says *whether* to scan a frame. This says *where it sits*
+    when the scan happens -- and that number is the operator's, not a
+    measurement. Every automatic registration detector built for this scanner
+    has been confidently wrong on some frames, and on real film the level-based
+    one abstains on 97% of prescans and reports +-0.00 mm for everything. A
+    picture somebody looked at and accepted is a different kind of evidence.
+
+    **Nothing moves while this is open.** The number is an intent, recorded
+    against the frame, applied only when the scan is commissioned.
+
+    The whole frame stays visible at about 2x rather than offering zoom and
+    pan. Drag has to mean one thing, and here it means the offset; a frame you
+    can only see a third of is also the wrong tool for judging where its edges
+    sit in the aperture. The prescan is the finest pass a surveyed frame has,
+    so 2x is most of what there is anyway.
+    """
+
+    WIDTH, HEIGHT = 900, 640
+    GUIDE = "#e8b64c"                        # the sheet's amber, reused
+
+    def __init__(self, sheet, gui, index: int):
+        self.sheet = sheet
+        self.gui = gui
+        self.index = index
+        self._photo = None
+        self._drag_from: float | None = None
+        self._drag_base = 0.0
+
+        self.top = tk.Toplevel(gui.root)
+        self.top.title("Frame position")
+        self.top.transient(gui.root)
+        self.top.geometry(f"{self.WIDTH}x{self.HEIGHT}")
+
+        outer = ttk.Frame(self.top, padding=10)
+        outer.pack(fill="both", expand=True)
+
+        self.v_title = tk.StringVar()
+        ttk.Label(outer, textvariable=self.v_title,
+                  font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+        ttk.Label(
+            outer, foreground="#777",
+            text=("Drag the picture to say where the film should sit. The "
+                  "dashed lines are the aperture -- anything you drag past "
+                  "them will not be scanned. Shown as the film sits, not "
+                  "turned.")
+        ).pack(anchor="w", pady=(0, 6))
+
+        self.canvas = tk.Canvas(outer, background="#1e1e1e",
+                                highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<ButtonPress-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._drag)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<Configure>", lambda _e: self._draw())
+
+        row = ttk.Frame(outer)
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Button(row, text="\u25c0", width=3,
+                   command=lambda: self._step(-1)).pack(side="left")
+        ttk.Button(row, text="\u25b6", width=3,
+                   command=lambda: self._step(1)).pack(side="left", padx=(2, 8))
+        ttk.Button(row, text="Centre", command=self._centre).pack(side="left")
+        self.v_read = tk.StringVar()
+        ttk.Label(row, textvariable=self.v_read,
+                  font=("TkDefaultFont", 11)).pack(side="left", padx=12)
+
+        self.v_tick = tk.BooleanVar(value=True)
+        ttk.Checkbutton(row, text="Scan this frame", variable=self.v_tick,
+                        command=self._tick_changed).pack(side="right")
+
+        nav = ttk.Frame(outer)
+        nav.pack(fill="x", pady=(8, 0))
+        ttk.Button(nav, text="\u25c0 Previous frame",
+                   command=lambda: self._go(-1)).pack(side="left")
+        ttk.Button(nav, text="Next frame \u25b6",
+                   command=lambda: self._go(1)).pack(side="left", padx=6)
+        ttk.Button(nav, text="Show in preview",
+                   command=self._show_in_preview).pack(side="left", padx=6)
+        ttk.Button(nav, text="Done", command=self.top.destroy).pack(side="right")
+
+        self.top.bind("<Left>", lambda _e: self._step(-1))
+        self.top.bind("<Right>", lambda _e: self._step(1))
+        self.top.bind("<Escape>", lambda _e: self.top.destroy())
+        self.canvas.focus_set()
+        self._load()
+
+    # -- the frame on show -------------------------------------------------
+
+    @property
+    def result(self):
+        return self.sheet.frames[self.index]
+
+    @property
+    def number(self) -> int:
+        return self.result.number
+
+    def _load(self) -> None:
+        self.v_tick.set(self.sheet.ticks[self.number].get())
+        self._refresh()
+
+    def _go(self, by: int) -> None:
+        self.index = max(0, min(len(self.sheet.frames) - 1, self.index + by))
+        self._load()
+
+    def _show_in_preview(self) -> None:
+        self.gui._show_seq(self.result.seq)
+
+    def _tick_changed(self) -> None:
+        self.sheet.ticks[self.number].set(self.v_tick.get())
+        self.sheet._changed()
+
+    # -- the offset --------------------------------------------------------
+
+    @property
+    def offset(self) -> float:
+        return self.sheet.offsets.get(self.number, 0.0)
+
+    def _set(self, millimetres: float) -> None:
+        value = snap_offset(millimetres)
+        if value:
+            self.sheet.offsets[self.number] = value
+        else:
+            self.sheet.offsets.pop(self.number, None)
+        self._refresh()
+        self.sheet._refresh_caption(self.number)
+
+    def _step(self, direction: int) -> None:
+        """One hardware step. Drag is coarse; this is how a frame is landed."""
+        self._set(self.offset + direction * FINE_STEP_MM)
+
+    def _centre(self) -> None:
+        self._set(0.0)
+
+    # -- drawing -----------------------------------------------------------
+
+    def _source(self):
+        """The prescan, unrotated. Left on screen is then left on the film.
+
+        The sheet only ever holds frames that have an image, so there is no
+        empty case to guard.
+        """
+        return self.result.image
+
+    def _size(self) -> tuple[int, int]:
+        """The canvas, falling back to its requested size before it is mapped.
+
+        `winfo_width` is 1 until Tk has laid the widget out, so the first draw
+        would otherwise scale the picture against a one-pixel canvas -- and a
+        drag measured against that maps a few pixels of hand movement onto the
+        whole travel range.
+        """
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        if width <= 1:
+            width = max(self.canvas.winfo_reqwidth(), self.WIDTH - 40)
+        if height <= 1:
+            height = max(self.canvas.winfo_reqheight(), self.HEIGHT - 160)
+        return max(1, width), max(1, height)
+
+    def _scale(self, source) -> float:
+        width, height = self._size()
+        return min(width / max(source.shape[1], 1),
+                   height / max(source.shape[0], 1))
+
+    def _refresh(self) -> None:
+        moves = len(plan_nudges(self.offset)) if self.offset else 0
+        seconds = moves * 1.1
+        self.v_title.set(
+            f"Frame {self.number} of {len(self.sheet.frames)}")
+        if not self.offset:
+            self.v_read.set("as surveyed")
+        else:
+            self.v_read.set(
+                f"{self.offset:+.2f} mm   \u00b7   {moves} "
+                f"move{'s' if moves != 1 else ''}   \u00b7   "
+                f"about {seconds:.0f} s")
+        self._draw()
+
+    def _draw(self) -> None:
+        if not self.canvas.winfo_exists():
+            return
+        source = self._source()
+        scale = self._scale(source)
+        width = max(1, int(source.shape[1] * scale))
+        height = max(1, int(source.shape[0] * scale))
+
+        arr = preview.render(
+            preview.sample(source, scale, 0.0, 0.0, width, height),
+            "RGB", self.gui.v_invert.get(),
+            cuts=(preview.channel_levels(self.result.levels, "RGB")
+                  if getattr(self.result, "levels", None) is not None else None))
+        self._photo = tk.PhotoImage(data=preview.to_ppm(arr))
+
+        canvas_width, canvas_height = self._size()
+        left = (canvas_width - width) // 2
+        top = (canvas_height - height) // 2
+        # The aperture is where the picture sits when nothing is asked for, so
+        # the guides stay put and the picture moves against them -- which is
+        # what the film will actually do.
+        shift = int(round(self.offset / APERTURE_MM * width))
+
+        self.canvas.delete("all")
+        self.canvas.create_image(left + shift, top, image=self._photo,
+                                 anchor="nw")
+        for x in (left, left + width):
+            self.canvas.create_line(x, top, x, top + height,
+                                    fill=self.GUIDE, dash=(4, 3), width=2)
+        if shift:
+            self.canvas.create_rectangle(
+                left, top, left + width, top + height,
+                outline="#6a6a6a", dash=(2, 4))
+
+    # -- dragging ----------------------------------------------------------
+
+    def _press(self, event) -> None:
+        self._drag_from = event.x
+        self._drag_base = self.offset
+
+    def _drag(self, event) -> None:
+        if self._drag_from is None:
+            return
+        source = self._source()
+        width = max(1, int(source.shape[1] * self._scale(source)))
+        moved = (event.x - self._drag_from) / width * APERTURE_MM
+        self._set(self._drag_base + moved)
+
+    def _release(self, _event) -> None:
+        self._drag_from = None
+
+    def alive(self) -> bool:
+        try:
+            return bool(self.top.winfo_exists())
+        except tk.TclError:
+            return False
+
+
 class _ContactSheet:
     """The whole surveyed strip at once, with a tick against each picture.
 
@@ -2592,8 +2943,14 @@ class _ContactSheet:
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
         self.ticks: dict[int, tk.BooleanVar] = {}
+        #: Where the operator says each frame should sit, in mm, relative to
+        #: where it was surveyed. Absent means "as surveyed" -- an explicit
+        #: zero never lands here, because snap_offset returns it as absent.
+        self.offsets: dict[int, float] = {}
         self._photos: list[tk.PhotoImage] = []
         self._rings: dict[int, tk.Frame] = {}
+        self._captions: dict[int, ttk.Label] = {}
+        self._adjuster = None
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Contact sheet")
@@ -2606,9 +2963,13 @@ class _ContactSheet:
                   text=f"{len(self.frames)} frames walked").pack(anchor="w")
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
                   text=("Tick what is worth scanning. Click a picture to tick "
-                        "it, double-click to open it in the preview. The film "
-                        "is rewound to the start of the strip first, and every "
-                        "frame nobody ticked costs its advance only.")).pack(
+                        "it, double-click to open it and set where the film "
+                        "should sit. Positions you set are used as given -- "
+                        "nothing moves until you commission the scan, and the "
+                        "automatic nudge does not apply to frames you adjust. "
+                        "The film is rewound to the start of the strip first, "
+                        "and every frame nobody ticked costs its advance "
+                        "only.")).pack(
             anchor="w", pady=(0, 8))
 
         # Canvas-with-a-frame-inside, the same shape as the options column:
@@ -2630,7 +2991,8 @@ class _ContactSheet:
         for column in range(self.COLUMNS):
             grid.columnconfigure(column, weight=1)
         for cell, result in enumerate(self.frames):
-            self._cell(grid, result, cell // self.COLUMNS, cell % self.COLUMNS)
+            self._cell(grid, result, cell // self.COLUMNS,
+                       cell % self.COLUMNS, cell)
 
         foot = ttk.Frame(outer)
         foot.pack(fill="x", pady=(8, 0))
@@ -2654,7 +3016,7 @@ class _ContactSheet:
 
     # -- one picture -------------------------------------------------------
 
-    def _cell(self, grid, result, row: int, column: int) -> None:
+    def _cell(self, grid, result, row: int, column: int, index: int) -> None:
         number = result.number
         var = tk.BooleanVar(value=True)      # everything ticked; untick the duds
         self.ticks[number] = var
@@ -2684,23 +3046,62 @@ class _ContactSheet:
         picture = tk.Label(ring, image=photo, borderwidth=0)
         picture.pack()
         picture.bind("<Button-1>", lambda _e, n=number: self._toggle(n))
-        picture.bind("<Double-Button-1>",
-                     lambda _e, r=result: self.gui._show_seq(r.seq))
+        picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
 
         ttk.Checkbutton(cell, text=f"Frame {number}", variable=var,
                         command=self._changed).pack(anchor="w", pady=(4, 0))
-        marks = result.registration or {}
-        detail = f"contrast {marks.get('contrast', 0):.2f}"
-        if marks.get("offset_mm") is not None:
-            detail += f"   ·   {marks['offset_mm']:+.2f} mm"
-        ttk.Label(cell, text=detail, foreground="#777").pack(anchor="w")
-        short = marks.get("shortfall_mm") or 0.0
+        caption = ttk.Label(cell, foreground="#777")
+        caption.pack(anchor="w")
+        caption.bind("<Button-1>", lambda _e, i=index: self.adjust(i))
+        self._captions[number] = caption
+        self._refresh_caption(number)
+        short = (result.registration or {}).get("shortfall_mm") or 0.0
         if short > 0.85:
             # The same 0.85 mm the driver calls drift. Worth saying here: a
             # frame this far out has picture outside the aperture, and no
             # amount of scanning it brings that back.
             ttk.Label(cell, foreground="#e0605a",
                       text=f"drifted -- {short:.2f} mm outside").pack(anchor="w")
+
+    # -- adjusting ---------------------------------------------------------
+
+    def adjust(self, index: int) -> None:
+        """Open the position adjuster on one frame.
+
+        One window, reused: opening a second for every double-click would
+        leave a trail of them all editing the same dictionary.
+        """
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster.index = index
+            self._adjuster._load()
+            self._adjuster.top.lift()
+            return
+        self._adjuster = _FrameAdjuster(self, self.gui, index)
+
+    def _refresh_caption(self, number: int) -> None:
+        """The cell's line under the picture.
+
+        When the operator has set a position, that is what the cell shows, in
+        the sheet's amber -- it is his number and it is the one that will be
+        acted on. The measured registration offset it replaces reads +-0.00 mm
+        on every real prescan, because film_bounds abstains on all of them.
+        """
+        caption = self._captions.get(number)
+        if caption is None:
+            return
+        offset = self.offsets.get(number)
+        if offset:
+            caption.configure(text=f"moved {offset:+.2f} mm",
+                              foreground=self.CHOSEN)
+            return
+        marks = next((r.registration or {} for r in self.frames
+                      if r.number == number), {})
+        caption.configure(text=f"contrast {marks.get('contrast', 0):.2f}",
+                          foreground="#777")
+
+    def adjusted(self) -> dict:
+        """The positions set by hand, keyed by frame number."""
+        return dict(self.offsets)
 
     # -- picking -----------------------------------------------------------
 
@@ -2729,8 +3130,11 @@ class _ContactSheet:
 
     def _scan(self) -> None:
         picked = self.chosen()
+        approved = approved_from_sheet(self.frames, picked, self.offsets)
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster.top.destroy()
         self.top.destroy()
-        self.gui.on_scan_chosen(picked)
+        self.gui.on_scan_chosen(picked, approved)
 
     def alive(self) -> bool:
         try:
