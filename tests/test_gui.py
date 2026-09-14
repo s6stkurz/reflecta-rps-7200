@@ -939,3 +939,57 @@ def test_a_survey_whose_prescans_are_gone_yields_nothing_rather_than_half(tmp_pa
     for stale in (tmp_path / "roll").glob("prescan*.tif"):
         stale.unlink()
     assert gui.read_survey(tmp_path / "roll")["results"] == []
+
+
+def test_a_filed_prescans_entry_survives_as_a_string():
+    """`Result.entry` is a Path once the prescan has been filed, and
+    `Approved.reference_entry` is declared a str. A Path reaching json.dumps
+    raised inside the Tk callback and the whole commission died silently --
+    the operator pressed 'Scan chosen frames' and nothing happened at all.
+
+    It only showed up against a real scanner: with the demo the filing had not
+    finished by the time the sheet was commissioned, so entry was still None
+    and the bug stayed hidden."""
+    from pathlib import Path
+
+    class R:
+        def __init__(self, number, entry):
+            self.number = number
+            self.image = np.zeros((2, 2, 3), np.uint8)
+            self.entry = entry
+
+    filed = gui.approved_from_sheet([R(1, Path("library/an-entry"))], (1,), {})
+    assert isinstance(filed[0].reference_entry, str)
+    json.dumps({"e": filed[0].reference_entry})          # must not raise
+
+    unfiled = gui.approved_from_sheet([R(1, None)], (1,), {})
+    assert unfiled[0].reference_entry == ""
+
+
+def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
+    """approved.json records what was asked for. The scan is the work. A
+    bookkeeping failure must not stop it -- which is exactly what happened."""
+    import types
+
+    said = []
+    stub = types.SimpleNamespace(
+        session=types.SimpleNamespace(rolls=str(tmp_path)),
+        fields={"roll": types.SimpleNamespace(get=lambda: "a-roll")},
+        _say=said.append,
+    )
+
+    class Approvedish:
+        number = 1
+        offset_mm = 0.5
+        reference_entry = ""
+
+    # Anything at all going wrong in here -- not just the Path that actually
+    # did it -- has to be contained.
+    def boom():
+        raise RuntimeError("the roll name went missing")
+
+    stub.fields["roll"].get = boom
+    gui.ScannerGui._write_approved(stub, (Approvedish(),))
+
+    assert said and "scanning anyway" in said[0]
+    assert "went missing" in said[0]
