@@ -19,6 +19,7 @@ them, and `--keep N` leaves more than one of each behind.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -32,10 +33,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action",
-                    choices=["list", "verify", "reconstruct", "reindex", "duplicates"])
+                    choices=["list", "verify", "reconstruct", "reindex",
+                             "duplicates", "migrate-raw"])
     ap.add_argument("--root", default="library")
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
+    ap.add_argument("--write", action="store_true",
+                    help="migrate-raw: actually rewrite the entries "
+                         "(default is a dry run)")
     ap.add_argument("--keep", type=int, default=1, metavar="N",
                     help="duplicates: how many of each group to keep (default 1). "
                          "Use 2 to retain a pair for pass-to-pass comparisons")
@@ -113,6 +118,86 @@ def main() -> int:
               + (" removed" if args.delete else " would be freed -- pass --delete"))
         if args.delete:
             library.reindex(root)
+
+    elif args.action == "migrate-raw":
+        # Entries hold raw pixels and recompute the correction on the way out.
+        # Ones filed before that hold corrected pixels, and two kinds of them
+        # are wrong in different ways:
+        #
+        #   labelled     `corrections_applied: ["shading"]` -- self-consistent,
+        #                but not raw, so the correction can never be improved
+        #                on them and `reconstruct` has to re-apply shading to
+        #                compare at all.
+        #   mislabelled  `corrections_applied: []` on pixels that are corrected
+        #                -- these describe themselves wrongly, and `reconstruct`
+        #                calls every one a changed decode.
+        #
+        # Both are repaired the same way and without guessing: the raw bytes
+        # are still there, so scan.tif is rewritten from them. Nothing is
+        # inferred and nothing is inverted -- a corrected image is never
+        # un-corrected, it is simply replaced by a fresh decode of the bytes it
+        # came from, which is what should have been stored.
+        import numpy as np
+
+        from rps7200 import tiff
+
+        planned, skipped, failed = [], [], []
+        for r in library.entries(root):
+            path = root / str(r.get("id"))
+            stored_shape = tuple((r.get("image") or {}).get("shape") or ())
+            applied = (r.get("image") or {}).get("corrections_applied") or []
+            decoded, verdict = library.reconstruct(path)
+            if decoded is None:
+                skipped.append((path.name, verdict))
+                continue
+            try:
+                stored = tiff.read(str(path / "scan.tif"))
+            except (OSError, ValueError) as exc:
+                failed.append((path.name, f"cannot read scan.tif: {exc}"))
+                continue
+            # `reconstruct` hands back the decode already re-corrected when the
+            # record says the pixels are corrected, so decode again plainly.
+            plain = library.decode_raw(path)
+            if plain is None:
+                skipped.append((path.name, "no raw bytes to decode"))
+                continue
+            if plain.shape != stored.shape:
+                failed.append((path.name,
+                               f"decode is {plain.shape}, stored {stored.shape}"))
+                continue
+            if np.array_equal(plain, stored) and not applied:
+                continue                       # already raw and says so
+            planned.append((path, plain, applied, stored_shape))
+
+        for path, _plain, applied, _shape in planned:
+            why = ("mislabelled: corrected pixels filed as raw" if not applied
+                   else "corrected pixels, and the correction cannot be improved")
+            print(f"{'rewriting' if args.write else 'would rewrite'}: "
+                  f"{path.name}\n    {why}")
+
+        if args.write:
+            for path, plain, _applied, _shape in planned:
+                record = json.loads((path / "scan.json").read_text())
+                resolution = ((record.get("scan") or {}).get("resolution_dpi")
+                              or None)
+                tiff.write(str(path / "scan.tif"), plain, resolution=resolution)
+                image = record.setdefault("image", {})
+                image["corrections_applied"] = []
+                image["shape"] = list(plain.shape)
+                image["dtype"] = str(plain.dtype)
+                image["sha256"] = library._sha256(path / "scan.tif")
+                (path / "scan.json").write_text(
+                    json.dumps(record, indent=2, default=str))
+            library.reindex(root)
+
+        print(f"\n{len(planned)} entr{'y' if len(planned) == 1 else 'ies'} "
+              + ("rewritten to raw pixels" if args.write
+                 else "would be rewritten to raw pixels -- pass --write"))
+        for name, why in failed:
+            print(f"! {name}: {why}")
+        if skipped:
+            print(f"{len(skipped)} could not be decoded and were left alone")
+        return 1 if failed else 0
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

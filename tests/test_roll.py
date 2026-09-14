@@ -611,6 +611,34 @@ def _debug_scanner(**kw):
     return Detached(**kw)
 
 
+def test_a_scan_files_the_raw_pixels_and_returns_the_corrected_ones():
+    """The two halves of the bargain, checked together.
+
+    `scan()` hands the caller a corrected image -- everything shown, exported
+    and saved is corrected -- and files the pixels as the scanner sent them, so
+    the correction can be redone later with better code. Filing the corrected
+    ones instead is what every entry did before, and it forecloses that on
+    every scan ever taken.
+
+    Pinned at the seam rather than end to end: `scan()` needs a device, so the
+    assertion is that the two arrays handed out are different objects and that
+    it is the *uncorrected* one that reaches the library.
+    """
+    import inspect
+
+    from rps7200.direct import DirectScanner
+
+    source = inspect.getsource(DirectScanner.scan)
+    assert "raw_pixels = image" in source, "the pre-correction pixels must be kept"
+    assert "self._debug_capture(raw_pixels, meta)" in source, \
+        "filing must take the raw pixels, not the corrected ones"
+    assert "return image, meta" in source, "callers still get the corrected image"
+    # The order matters: `raw_pixels` has to be bound before apply_shading
+    # rebinds `image`, or it is the corrected array under another name.
+    assert (source.index("raw_pixels = image")
+            < source.index("image, shading_report = apply_shading"))
+
+
 def test_filing_is_off_by_default():
     """Ordinary use is not burdened. CLAUDE.md says who must turn it on."""
     import os

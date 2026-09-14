@@ -136,13 +136,20 @@ def save(
     raw: bytes | None = None,
     raw_path: Path | str | None = None,
     raw_layout: dict[str, Any] | None = None,
+    corrections: list[str] | None = None,
 ) -> Path:
     """Write one scan and everything needed to use it again. Returns its path.
 
-    ``image`` should be the **raw** pixels. Corrections belong downstream: they
-    change, and a corrected file cannot be un-corrected. `meta["shading"]`
-    records whether any were already applied, so a file that is not raw is at
-    least labelled as such.
+    ``image`` must be the **raw** pixels -- what the scanner sent, before
+    flat-fielding. Corrections belong downstream: they change, and a corrected
+    file cannot be un-corrected. The shading reference is stored beside the
+    pixels, so :func:`corrected` recomputes the usable image at any time with
+    whatever the correction code does *today*.
+
+    That is the whole bargain of this library, and it is why everything the
+    operator sees, exports or saves is corrected while what is kept here is
+    not. `corrections` names anything a caller has nonetheless baked into
+    ``image``, so a file that is not raw is at least labelled as such.
     """
     film = film or FilmNotes()
     when = datetime.now(timezone.utc)
@@ -197,9 +204,14 @@ def save(
             "shape": list(image.shape),
             "dtype": str(image.dtype),
             "channels": meta.get("channel_order"),
-            "corrections_applied": (
-                ["shading"] if meta.get("shading") else []
-            ),
+            # What is baked into `scan.tif`, which is normally nothing: the
+            # entry stores raw pixels and `calibration.report` below records
+            # the correction that was computed for this pass, so a consumer
+            # can tell "no correction was available" from "the correction is
+            # stored beside the pixels rather than in them". `corrections`
+            # exists for the caller that really does hand over a corrected
+            # image and must say so.
+            "corrections_applied": list(corrections or []),
             "sha256": _sha256(path / "scan.tif"),
         },
         "raw": {
@@ -290,6 +302,42 @@ def load(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     return image, record
 
 
+def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
+    """The usable image: an entry's pixels with its own correction applied.
+
+    :func:`load` hands back what is stored, which is raw. This hands back what
+    a person should look at. Anything that shows, exports or saves a library
+    entry wants this one -- the raw file is for re-deriving, not for viewing,
+    and a raw frame shown to an operator is the thing this driver stopped
+    doing everywhere else.
+
+    The correction is recomputed here rather than read from disk, so an entry
+    scanned months ago gets today's correction code. `record["corrected"]`
+    says what happened, including when nothing could be done:
+
+        "applied"    the reference was there and was used
+        "already"    the stored pixels were corrected before they were filed
+                     -- legacy entries, from before the library stored raw
+        "no reference"  nothing to correct with; the pixels are returned raw
+        "deliberately raw"  the pass asked for `shading=False`
+    """
+    image, record = load(path)
+    applied = (record.get("image") or {}).get("corrections_applied") or []
+    if "shading" in applied:
+        record["corrected"] = "already"
+        return image, record
+    if (record.get("calibration") or {}).get("skipped"):
+        record["corrected"] = "deliberately raw"
+        return image, record
+    if record.get("reference") is None:
+        record["corrected"] = "no reference"
+        return image, record
+    image, report = apply_shading(image, record["reference"], record["ccd_mask"])
+    record["corrected"] = "applied"
+    record["shading_report"] = report
+    return image, record
+
+
 def read_raw(path: Path | str) -> bytes | None:
     """The scanner's own bytes for this entry, decompressed.
 
@@ -304,6 +352,34 @@ def read_raw(path: Path | str) -> bytes | None:
         with gzip.open(path, "rb") as fh:
             return fh.read()
     except (OSError, EOFError, gzip.BadGzipFile):
+        return None
+
+
+def decode_raw(path: Path | str) -> np.ndarray | None:
+    """This entry's raw bytes decoded to pixels, with nothing applied.
+
+    What `scan.tif` should hold. :func:`reconstruct` compares against it and
+    `tools/library.py migrate-raw` writes it; both want the decode alone, with
+    no correction folded in, so it lives here rather than being spelled out
+    twice. None when there are no bytes or the layout cannot drive a decode.
+    """
+    path = Path(path)
+    raw = read_raw(path)
+    if raw is None:
+        return None
+    try:
+        record = json.loads((path / "scan.json").read_text())
+        layout = (record.get("raw") or {}).get("layout") or {}
+        params = ScanParameters(
+            width=int(layout["width"]),
+            lines=int(layout["lines"]),
+            bytes_per_line=int(layout["bytes_per_line"]),
+            filter_offset1=0,
+            filter_offset2=0,
+            available_lines=0,
+        )
+        return DirectScanner._deinterleave(raw, params, int(layout["channels"]))
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError):
         return None
 
 
@@ -336,11 +412,16 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
     except (KeyError, ValueError, TypeError) as exc:
         return None, f"could not decode: {exc}"
 
-    # scan.tif may hold shading-corrected pixels, so a raw decode can never
-    # match it: every corrected entry reported ~99% of samples differing, which
-    # made a real decode regression invisible among the false alarms. Re-apply
-    # the entry's own reference before comparing, so the check tests the whole
-    # path from bytes to stored image rather than half of it.
+    # An entry stores raw pixels, so a raw decode is what should match and this
+    # is normally an exact comparison of the decode alone.
+    #
+    # Legacy entries -- filed before the library stored raw -- hold corrected
+    # pixels, and there a raw decode can never match: every one of them reported
+    # ~99% of samples differing, which made a real decode regression invisible
+    # among the false alarms. Re-apply their own reference before comparing, so
+    # the check tests the whole path from bytes to stored image rather than half
+    # of it. `tools/library.py migrate-raw` converts them and this branch then
+    # stops being reached.
     applied = (record.get("image") or {}).get("corrections_applied") or []
     if "shading" in applied:
         cal = record.get("calibration") or {}

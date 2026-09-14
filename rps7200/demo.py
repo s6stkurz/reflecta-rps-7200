@@ -599,11 +599,14 @@ class DemoScanner:
             reference = ShadingReference.load(path / ref_file)
         if mask_file and (path / mask_file).exists():
             mask = (path / mask_file).read_bytes()
-        # Corrected here if the stored image was, so what the demo shows is
-        # what that scan looked like rather than a striped version of it.
-        applied = (record.get("image") or {}).get("corrections_applied") or []
+        # Corrected whenever there is a reference to correct with, which is
+        # what a real pass does -- the demo shows the picture, not a striped
+        # version of it. It used to correct only when the entry's record said
+        # the *stored pixels* were corrected; entries hold raw pixels now, so
+        # that condition is never true and the demo would have shown every
+        # frame uncorrected.
         self._shading_report = None
-        if "shading" in applied and reference is not None:
+        if reference is not None and not (record.get("calibration") or {}).get("skipped"):
             image, self._shading_report = apply_shading(image, reference, mask)
 
         self._source_dpi = int(

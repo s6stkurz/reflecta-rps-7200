@@ -82,6 +82,26 @@ After any change to how bytes become pixels, run `tools/library.py reconstruct`:
 it re-decodes every stored pass with current code and reports what no longer
 matches.
 
+**The library holds raw pixels; everything else is corrected.** `scan.tif` in an
+entry is the decode alone, with no flat-fielding, and `shading.npz` sits beside
+it. Everything an operator sees, exports or saves is corrected — the GUI's
+full-resolution view, Save As, the roll's `frame*.tif`, the prescans in
+`rolls/` — and `library.corrected(entry)` is what computes it, with *today's*
+correction code rather than whatever ran that day.
+
+That split is load-bearing in both directions. A corrected file cannot be
+un-corrected, so storing one forecloses every later improvement on every scan
+ever taken; and a raw file shown to a person is the uncorrected picture this
+driver stopped delivering everywhere else. `library.save` takes raw pixels and
+`corrections=` is how a caller admits it is handing over something else.
+
+It drifted once and went unnoticed for a day: prescans were filed with a meta
+built by hand in `session.py`, so 26 entries held corrected pixels while their
+record said raw, and `reconstruct` called every one a changed decode — 26 false
+alarms in the one check that exists to catch a real regression. Pass the meta
+the scan returns, never a substitute. `tools/library.py migrate-raw` converts
+legacy entries and is a dry run unless given `--write`.
+
 ### Claude: always scan with debug filing on. Always.
 
 **`DirectScanner` files every scan in the library automatically when debug mode is

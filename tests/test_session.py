@@ -196,6 +196,31 @@ def test_a_prescan_is_filed_too(tmp_path):
     assert "gui" in entries[0]["tags"]
 
 
+def test_a_prescan_is_filed_with_the_pass_its_own_meta(tmp_path):
+    """It used to be filed with a meta built by hand here -- `resolution_dpi`
+    and `channel_order`, nothing else. That dropped `shading`, and with it
+    `protocol_revision` and the exposure, so 26 real entries described
+    themselves as uncorrected raw when their pixels were corrected. Every one
+    of them made `reconstruct` report a changed decode, which is the check that
+    is supposed to catch a real decode regression.
+
+    The fake scanner publishes `last_scan_meta` the way the real one does; the
+    point of the test is that the session reads it instead of inventing one."""
+    scanner_meta = {"resolution_dpi": 300, "channel_order": ["R", "G", "B"],
+                    "protocol_revision": 99, "depth": 8,
+                    "shading": {"columns": 16, "width": 16}}
+
+    def with_meta(_session, scanner):
+        scanner.last_scan_meta = scanner_meta
+        scanner.last_pixels_raw = None
+
+    _, scanner, _ = run(Prescan(), tmp_path, extra=with_meta)
+    record = library.entries(tmp_path)[0]
+    assert record["scan"]["protocol_revision"] == 99, \
+        "the pass's own meta must reach the entry, not a hand-built stand-in"
+    assert record["calibration"]["report"] == {"columns": 16, "width": 16}
+
+
 def test_a_prescan_keeps_its_raw_bytes(tmp_path):
     _, scanner, _ = run(Prescan(), tmp_path)
     assert ("prescan", 300, True) in scanner.calls

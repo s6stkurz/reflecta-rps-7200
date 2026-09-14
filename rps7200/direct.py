@@ -21,7 +21,7 @@ import tempfile
 import shutil
 import time
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -363,6 +363,17 @@ class RollFrame:
     prescan: np.ndarray | None
     registration: dict[str, Any]
     error: str | None = None
+    # The same two pictures before flat-fielding, for the library, which stores
+    # raw pixels and recomputes the correction on the way out. Carried on the
+    # frame rather than read off the scanner afterwards: a frame's prescan is
+    # taken several passes before its image, so anything like `last_raw` would
+    # hand the prescan the image's pixels.
+    raw_image: np.ndarray | None = None
+    raw_prescan: np.ndarray | None = None
+    # The prescan pass's own meta. `meta` above belongs to the frame scan, and
+    # a dry run has no frame scan at all, so without this the survey's entries
+    # had nothing to describe themselves with.
+    prescan_meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -371,6 +382,13 @@ class RollFrame:
 
 class DirectScanner:
     """Command-level control of the scanner."""
+
+    #: The last pass's pixels before flat-fielding, and that pass's meta.
+    #: Class attributes as well as instance ones, because stand-ins subclass
+    #: this without running its `__init__` -- a stand-in that never scans
+    #: should read "nothing yet", not raise AttributeError.
+    last_pixels_raw: np.ndarray | None = None
+    last_scan_meta: dict[str, Any] | None = None
 
     #: Environment variable that turns automatic filing on without touching
     #: code, so a probe script inherits it rather than having to remember.
@@ -424,6 +442,11 @@ class DirectScanner:
         # when asked: enough to rebuild the image if the decode ever changes.
         self.last_raw: bytes | None = None
         self.last_raw_layout: dict[str, Any] | None = None
+        # The last pass's pixels before flat-fielding. Unlike `last_raw` this
+        # is set on every pass, so it cannot be a leftover from an earlier one;
+        # it is what a caller files in the library, which stores raw.
+        self.last_pixels_raw = None
+        self.last_scan_meta = None
         # What the last auto_exposure() probe actually measured, filed with the
         # scan by :meth:`scan`. See :meth:`auto_exposure`.
         self.last_metering: dict[str, Any] | None = None
@@ -2489,6 +2512,12 @@ class DirectScanner:
                 f"column stagger: {before} -> {image.shape[0]} lines"
             )
 
+        # What the scanner sent, before flat-fielding. The library stores this
+        # and not the corrected pixels: the reference is stored beside it, so
+        # the corrected image is always recomputable, while a corrected file
+        # cannot be un-corrected if the correction later turns out to be wrong.
+        # Callers still get the corrected image -- see the return below.
+        raw_pixels = image
         shading_report = None
         # Set only for a deliberate `shading=False` pass -- library.save reads
         # it as "raw on purpose", distinct from `shading_report`, which means a
@@ -2579,7 +2608,20 @@ class DirectScanner:
         # the *previous* frame's metering against them.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = self.last_metering
-        self._debug_capture(image, meta)
+        # The raw pixels, not the corrected ones: see `raw_pixels` above.
+        self._debug_capture(raw_pixels, meta)
+        # For a caller that files this pass itself rather than through debug
+        # filing. Set on every pass, so it is never a stale leftover the way
+        # `last_raw` once was -- but it describes the pass that *just* ran, so
+        # read it immediately. `scan_roll` copies it onto the frame instead of
+        # reading it later, because a frame's prescan runs several passes
+        # before its image.
+        self.last_pixels_raw = raw_pixels
+        # Same contract as `last_pixels_raw`: this pass, read it now. It exists
+        # for `prescan()`, which returns ScanParameters rather than meta, and
+        # whose callers were hand-building a meta instead -- which is how every
+        # prescan came to be filed describing itself wrongly.
+        self.last_scan_meta = dict(meta)
         return image, meta
 
     #: Consecutive frames that fail to reach their approved position before
@@ -2980,6 +3022,8 @@ class DirectScanner:
 
             started = time.monotonic()
             prescan_image = None
+            raw_prescan = None
+            prescan_meta: dict[str, Any] = {}
             marks: dict[str, Any] = {}
             position = self.position()
 
@@ -2987,6 +3031,8 @@ class DirectScanner:
                 prescan_image, _ = self.prescan(
                     resolution=prescan_resolution, keep_raw=keep_raw
                 )
+                raw_prescan = self.last_pixels_raw
+                prescan_meta = dict(self.last_scan_meta or {})
                 contrast = frame_contrast(prescan_image)
                 marks = dict(registration(prescan_image, window))
                 marks["contrast"] = round(contrast, 4)
@@ -3035,6 +3081,10 @@ class DirectScanner:
                                          if k != "prescan"}
                     if fix.get("prescan") is not None:
                         prescan_image = fix["prescan"]
+                        # The replacement prescan was the helper's last pass,
+                        # so its raw pixels are the ones on hand now.
+                        raw_prescan = self.last_pixels_raw
+                        prescan_meta = dict(self.last_scan_meta or {})
                         marks.update(
                             {k: v for k, v in registration(
                                 prescan_image, window).items()}
@@ -3055,6 +3105,10 @@ class DirectScanner:
                     marks["correction"] = fix
                     if fix.get("prescan") is not None:
                         prescan_image = fix.pop("prescan")
+                        # The replacement prescan was the helper's last pass,
+                        # so its raw pixels are the ones on hand now.
+                        raw_prescan = self.last_pixels_raw
+                        prescan_meta = dict(self.last_scan_meta or {})
                         marks.update(
                             {k: v for k, v in registration(
                                 prescan_image, window).items()}
@@ -3075,7 +3129,9 @@ class DirectScanner:
                     )
 
                 if dry_run:
-                    yield RollFrame(index, position, None, {}, prescan_image, marks)
+                    yield RollFrame(index, position, None, {}, prescan_image,
+                                    marks, raw_prescan=raw_prescan,
+                                    prescan_meta=prescan_meta)
                 else:
                     if meter != METER_NONE and not (meter == METER_ONCE and metered):
                         # `infrared` here says the scan that follows is RGBI;
@@ -3114,7 +3170,10 @@ class DirectScanner:
                     meta["roll_index"] = index
                     meta["roll_position"] = position
                     meta["registration"] = marks
-                    yield RollFrame(index, position, image, meta, prescan_image, marks)
+                    yield RollFrame(index, position, image, meta, prescan_image,
+                                    marks, raw_image=self.last_pixels_raw,
+                                    raw_prescan=raw_prescan,
+                                    prescan_meta=prescan_meta)
                 failures = 0
             # UsbError covers CheckCondition and NoDataYet. ValueError is in
             # here because a roll runs for hours unattended: one frame that
@@ -3125,7 +3184,9 @@ class DirectScanner:
                 failures += 1
                 self._log(f"frame {index} failed ({failures}/{max_failures}): {exc}")
                 yield RollFrame(
-                    index, position, None, {}, prescan_image, marks, error=str(exc)
+                    index, position, None, {}, prescan_image, marks,
+                    error=str(exc), raw_prescan=raw_prescan,
+                    prescan_meta=prescan_meta,
                 )
                 if failures >= max_failures:
                     self._log(f"giving up after {failures} consecutive failures")

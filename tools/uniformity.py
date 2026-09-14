@@ -109,10 +109,11 @@ PHASE2 = [
 def rebuild(entry: Path) -> tuple[np.ndarray, dict]:
     """Decode an entry's raw bytes and correct them with the current code.
 
-    Not ``library.load``: that returns the TIFF as it was written, which was
-    corrected by whatever the pipeline looked like that day. The question here
-    is about the image the pipeline delivers *now*, so the raw bytes are
-    re-decoded and re-corrected on every run. When a correction lands, re-run
+    Not ``library.load``, which returns the stored pixels, nor
+    ``library.corrected``, which corrects them with today's code but takes the
+    stored decode as given. The question here is about the image the pipeline
+    delivers *now*, end to end, so the raw bytes are re-decoded as well as
+    re-corrected on every run. When a correction lands, re-run
     this and the answer moves -- which is the property that makes the study
     worth keeping rather than repeating.
     """

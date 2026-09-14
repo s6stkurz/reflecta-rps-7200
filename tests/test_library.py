@@ -11,7 +11,7 @@ import json
 
 import numpy as np
 
-from rps7200 import library
+from rps7200 import library, tiff
 from rps7200.direct import CHANNEL_ORDER, INDEX_HEADER
 from rps7200.library import FilmNotes
 from rps7200.shading import ShadingReference
@@ -330,11 +330,17 @@ def test_a_corrected_entry_reconstructs_without_crying_wolf(tmp_path):
         "resolution_dpi": 1800, "channels": 3,
         "channel_order": list(CHANNEL_ORDER[:3]),
         "width": 16, "height": 8, "depth": 16, "bytes_per_line": 32,
-        "shading": report,                      # marks the stored image corrected
+        "shading": report,
     }
     layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    # `corrections` is what marks the stored image corrected, and a caller has
+    # to say so deliberately: entries hold raw pixels now, so `meta["shading"]`
+    # means "this is the correction that goes with these pixels", not "it is
+    # already in them". The two were conflated, and every prescan was filed
+    # claiming to be raw when it was not.
     path = library.save(corrected, meta, root=tmp_path, film=FilmNotes(),
-                        reference=reference, raw=stream, raw_layout=layout)
+                        reference=reference, raw=stream, raw_layout=layout,
+                        corrections=["shading"])
 
     rebuilt, verdict = library.reconstruct(path)
     assert verdict == "identical to the stored image", verdict
@@ -347,7 +353,8 @@ def test_a_corrected_entry_without_its_reference_says_so(tmp_path):
             "bytes_per_line": 32, "shading": {"columns": 16, "width": 16}}
     layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
     path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
-                        reference=None, raw=stream, raw_layout=layout)
+                        reference=None, raw=stream, raw_layout=layout,
+                        corrections=["shading"])
     _, verdict = library.reconstruct(path)
     assert "reference is missing" in verdict, verdict
 
@@ -410,3 +417,70 @@ def test_the_scan_block_carries_everything_scan_records(tmp_path):
     }
     missing = [k for k in scan_facts if k not in record["scan"]]
     assert not missing, f"the sidecar drops {missing} on the floor"
+
+
+def test_an_entry_stores_raw_pixels_and_recomputes_the_correction(tmp_path):
+    """The bargain this library rests on: keep what the scanner sent, keep the
+    reference beside it, and compute the usable image on the way out.
+
+    A corrected file cannot be un-corrected, so storing one forecloses every
+    later improvement to the correction on every scan ever taken. Storing raw
+    costs nothing -- `corrected()` reproduces the image exactly."""
+    from rps7200.shading import apply_shading
+
+    stream, image = index_stream(16, 8, 3)
+    reference = ShadingReference(
+        ref={c: np.linspace(28000, 32000, 16) for c in range(3)},
+        mean={c: 30000.0 for c in range(3)},
+        pixels_per_line=16,
+    )
+    want, report = apply_shading(image, reference, None)
+    assert not np.array_equal(want, image), "fixture must actually change pixels"
+
+    meta = {
+        "resolution_dpi": 1800, "channels": 3,
+        "channel_order": list(CHANNEL_ORDER[:3]),
+        "width": 16, "height": 8, "depth": 16, "bytes_per_line": 32,
+        # The correction that goes *with* these pixels, not one baked into them.
+        "shading": report,
+    }
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
+                        reference=reference, raw=stream, raw_layout=layout)
+
+    record = json.loads((path / "scan.json").read_text())
+    assert record["image"]["corrections_applied"] == [], \
+        "a shading report describes the pass, it does not mean the pixels are corrected"
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+
+    back, info = library.corrected(path)
+    assert info["corrected"] == "applied"
+    assert np.array_equal(back, want), "the corrected image must be reproducible"
+    assert np.array_equal(library.load(path)[0], image), "load() stays raw"
+
+
+def test_a_raw_entry_reconstructs_by_plain_comparison(tmp_path):
+    """With raw pixels stored, `reconstruct` compares the decode alone. The
+    shading re-apply it had to do to avoid crying wolf is only for the legacy
+    entries `tools/library.py migrate-raw` converts."""
+    path, image, _ = make_entry(tmp_path)
+    rebuilt, verdict = library.reconstruct(path)
+    assert verdict == "identical to the stored image", verdict
+    assert np.array_equal(rebuilt, image)
+    assert np.array_equal(library.decode_raw(path), image)
+
+
+def test_a_pass_that_could_not_be_corrected_says_so_rather_than_lying(tmp_path):
+    """`corrected()` never pretends. An entry with no reference comes back raw
+    and says which, so a caller showing it can say the same."""
+    stream, image = index_stream(16, 8, 3)
+    meta = {"resolution_dpi": 300, "channels": 3,
+            "channel_order": list(CHANNEL_ORDER[:3]),
+            "width": 16, "height": 8, "depth": 16, "bytes_per_line": 32,
+            "shading_skipped": "shading=False (explicit)"}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
+                        reference=None, raw=stream, raw_layout=layout)
+    back, info = library.corrected(path)
+    assert info["corrected"] == "deliberately raw"
+    assert np.array_equal(back, image)
