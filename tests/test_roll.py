@@ -962,8 +962,23 @@ def test_the_search_reaches_as_far_as_the_transport_can_travel():
     assert millimetres is not None and detail["px"] == 80
 
 
+def test_the_floor_hoards_its_margin_on_the_side_that_matters():
+    """Measured over 3850 pairs of real film (`tools/registration_margin.py`):
+    3754 pairs that are not the same picture reach 30.2 at worst, and 96 that
+    are start at 54.9. The floor is deliberately *not* centred between them --
+    a false positive moves the film to the wrong place, while a refusal leaves
+    it alone and flags the frame, so the clearance belongs on the false-positive
+    side. Pinned because centring it is the obvious-looking change and it is
+    the wrong one."""
+    from rps7200.framing import CONFIDENCE_FLOOR
+
+    worst_null, weakest_true = 30.2, 54.9
+    assert CONFIDENCE_FLOOR > worst_null
+    assert CONFIDENCE_FLOOR - worst_null > weakest_true - CONFIDENCE_FLOOR
+
+
 def test_the_search_window_does_not_vary_with_the_frame():
-    """`confidence` is the peak over the mean of the *searched* surface, so it
+    """`confidence` is the peak's z-score over the *searched* surface, so it
     is a property of the match and of the window together -- the same pair
     scores 23.8 at a 16 px reach and 129.7 at 200 px. A reach that varied per
     frame would make CONFIDENCE_FLOOR mean something different every time, and

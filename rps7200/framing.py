@@ -371,7 +371,7 @@ APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 #: How far the match is searched, in millimetres of film travel. Fixed, and
 #: **not** derived from what a particular frame needs.
 #:
-#: `register`'s confidence is the correlation peak over the mean of the
+#: `register`'s confidence is a z-score, `(peak - mean) / std` over the
 #: searched surface, so it is a property of the match *and of the window it
 #: was searched in*: the same pair of prescans scores 23.8 at a 16 px reach
 #: and 129.7 at 200 px, rising almost linearly in between. A floor compared
@@ -386,18 +386,30 @@ APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 #: the same at any prescan resolution.
 SEARCH_MM = 9.0
 
-#: Correlation peak height, over the surface mean, below which a match is not
-#: believed -- **only comparable at :data:`SEARCH_MM`**.
+#: Correlation z-score below which a match is not believed -- **only
+#: comparable at :data:`SEARCH_MM`**.
 #:
-#: Measured 2026-09-14 at that reach, on real scanner data: six pairs of the
-#: same frame minutes apart scored **80.9 to 168.9**, and twenty pairs of
-#: adjacent frames from one strip -- the realistic confusion, a different
-#: picture of the same film -- scored **up to 29.9**. 55 is the middle of that
-#: gap, 25 clear of the worst null and 26 clear of the weakest true match.
+#: Measured 2026-09-14 at that reach over **3850 pairs** of real film -- every
+#: roll and every 300 dpi library entry. 3754 pairs that are not the same
+#: picture reach **30.2** at worst; 96 that are start at **54.9**, or 58.9
+#: restricting to passes under an hour apart, which is the comparison this
+#: actually makes.
 #:
-#: Provisional in the sense that it rests on one frame's repeats and one
-#: strip's neighbours; every comparison records its confidence, so it can be
-#: re-fitted from real runs without re-deriving anything.
+#: So the margin is **lopsided on purpose**: 24.8 points of clearance on the
+#: side that matters and 3.9 on the side that does not. A false positive moves
+#: the film to the wrong place; a refusal means the film is not moved, the
+#: frame is scanned where it lies and flagged. Genuine matches will therefore
+#: be refused occasionally, and that is the cheap error. Anything in 35-55 fits
+#: this data; 55 is its conservative end.
+#:
+#: **Self-similar frames are the best case, not the worst** -- grass and sky
+#: score *highest* (153-192), because phase correlation matches the phase
+#: spectrum rather than the look of the texture. The failure mode is a
+#: collapse, not a lie: as content fades the score falls smoothly past this
+#: floor while the answer is still right, so a wrong-and-confident match has
+#: no regime to live in. See `docs/registration-confidence-plan.md`, and
+#: re-run `tools/registration_margin.py` after any change to `register`, the
+#: prescan resolution or :data:`SEARCH_MM` -- each moves the scale.
 CONFIDENCE_FLOOR = 55.0
 
 #: How far off the film axis a match may sit. The transport moves only in x,

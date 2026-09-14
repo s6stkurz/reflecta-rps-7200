@@ -231,6 +231,16 @@ def save(
         # against a frame that asked for something odd. Absent on a scan given
         # its exposure rather than metering one.
         "metering": meta.get("metering"),
+        # Where the frame was and what was done about it: the hold loop's
+        # outcome, or the older automatic correction's. Same relationship to
+        # the scan as `metering` above -- the pixels are the conclusion, this
+        # is the evidence. Kept because `CONFIDENCE_FLOOR` is fitted from these
+        # numbers and they existed nowhere durable before: `meta` carried them
+        # this far and the record dropped them, so every confidence the driver
+        # had ever measured lived only in the roll's own `roll.json`, which is
+        # gitignored and rewritten per frame. `tools/registration_margin.py`
+        # reads them back. Absent on a scan that never looked.
+        "registration": meta.get("registration"),
         "calibration": {
             "shading": "shading.npz" if reference is not None else None,
             "ccd_mask": "ccd_mask.bin" if ccd_mask is not None else None,
