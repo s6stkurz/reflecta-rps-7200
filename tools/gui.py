@@ -194,6 +194,13 @@ class ScannerGui:
         self.survey: list = []               # the prescans a dry run walked
         self._surveying = False              # a dry run is running right now
         self._survey_start = 1               # the `start at` it was walked with
+        #: The prescan resolution the survey walked at. A commissioned scan is
+        #: held to it when approved positions are in play: checking a frame
+        #: against a reference from another resolution works geometrically but
+        #: costs about half the correlation confidence -- 93.5 against 47.4 on
+        #: real passes -- enough to drop a good match below the floor and
+        #: report a frame as unverified for no reason.
+        self._survey_predpi = None
         self._transport = None               # last frame position the device gave
         self.sheet = None                    # the contact sheet, while it is open
 
@@ -1139,6 +1146,7 @@ class ScannerGui:
             self.survey = []
             self._surveying = True
             self._survey_start = start_at
+            self._survey_predpi = predpi
         # Starts the whole-roll estimate at the same rough figure the dialog
         # above just showed, so the number on screen does not jump the moment
         # scanning begins. `frames` is already "how many this run will do" --
@@ -1206,6 +1214,11 @@ class ScannerGui:
         dpi, predpi = self._dpi(), self._prescan_dpi()
         if dpi is None or predpi is None:
             return
+        if approved and self._survey_predpi and self._survey_predpi != predpi:
+            self._say(f"prescan held at {self._survey_predpi} dpi to match the "
+                      f"survey your positions were set on (you asked for "
+                      f"{predpi})")
+            predpi = self._survey_predpi
         back = rewind_frames([r.position for r in self.survey],
                              self._survey_start)
         walked = len(self.survey)

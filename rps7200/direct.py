@@ -52,7 +52,6 @@ from .framing import (
     gap_edges,
     registration,
     registration_error_mm,
-    HOLD_HEADROOM_MM,
     HOLD_TOLERANCE_MM,
     hold_plan,
     measure_shift_mm,
@@ -2616,15 +2615,13 @@ class DirectScanner:
         happens, the frame is scanned: the outcome is recorded, not enforced.
         """
         target = -approved.offset_mm if reverse else approved.offset_mm
-        budget_mm = abs(target) + HOLD_HEADROOM_MM
         out: dict[str, Any] = {
             "target_mm": round(target, 4), "outcome": "held", "moves": 0,
             "spent_mm": 0.0, "reverse_applied": bool(reverse),
             "history": [], "prescan": None, "roll_abort": None,
         }
 
-        measured, detail = measure_shift_mm(
-            approved.reference, image, budget_mm=budget_mm)
+        measured, detail = measure_shift_mm(approved.reference, image)
         out["history"].append(detail)
         spent = 0.0
         direction = 0
@@ -2651,8 +2648,7 @@ class DirectScanner:
             image, _ = self.prescan(resolution=prescan_resolution,
                                     keep_raw=keep_raw)
             out["prescan"] = image
-            measured, detail = measure_shift_mm(
-                approved.reference, image, budget_mm=budget_mm)
+            measured, detail = measure_shift_mm(approved.reference, image)
             out["history"].append(detail)
 
             if out["moves"] == 1 and measured is not None and before is not None:
