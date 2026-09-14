@@ -740,6 +740,14 @@ class ScanSession:
             "film": job.film,
             "dry_run": job.dry_run,
             "start_at": job.start_at,
+            # Both recorded so the survey can be opened again rather than
+            # walked again. The prescan resolution because an approved
+            # position is checked against a reference at that resolution and
+            # a mismatch costs half the correlation confidence; the rotation
+            # because prescanNN.tif is written turned the way the screen had
+            # it, and a reference has to be the film's own orientation.
+            "prescan_resolution": job.prescan_resolution,
+            "rotation": self.rotation,
             "only": list(job.only) if job.only is not None else None,
             "frames": [],
         }

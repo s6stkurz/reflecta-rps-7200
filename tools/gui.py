@@ -48,6 +48,7 @@ from rps7200.mono import (                                 # noqa: E402
 from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
 from rps7200.session import (                             # noqa: E402
     Approved,
+    Result,
     _safe,
     Calibrate,
     Move,
@@ -703,6 +704,8 @@ class ScannerGui:
         self.b_sheet = ttk.Button(box, text="Contact sheet ...", state="disabled",
                                   command=self.on_contact_sheet)
         self.b_sheet.pack(fill="x", pady=(4, 0))
+        ttk.Button(box, text="Reopen a survey ...",
+                   command=self.on_reopen_survey).pack(fill="x", pady=(4, 0))
         ttk.Label(box, foreground="#777", wraplength=210, justify="left",
                   text=("A dry run walks the strip in about 20 seconds a frame "
                         "and opens a contact sheet. Tick the frames worth "
@@ -1192,6 +1195,62 @@ class ScannerGui:
         except ValueError:
             dpi = 1800
         return estimate_seconds(dpi, self.v_ir.get()) + 70
+
+    def on_reopen_survey(self) -> None:
+        """Open a strip walked earlier instead of walking it again.
+
+        A survey is four minutes of transport and it used to die with the
+        window: `survey.json` has been written since rolls existed and was
+        never read back. Closing the app between walking a strip and deciding
+        on it meant doing the walk twice.
+        """
+        if self.busy:
+            messagebox.showinfo(
+                "Reopen a survey",
+                "The scanner is working. Wait for it to finish, then try "
+                "again -- reopening replaces whatever survey is loaded now.")
+            return
+        folder = filedialog.askdirectory(
+            title="Reopen a survey", initialdir=str(self.session.rolls))
+        if not folder:
+            return
+        try:
+            out = read_survey(folder)
+        except (OSError, ValueError, KeyError) as exc:
+            messagebox.showerror(
+                "Reopen a survey",
+                f"{Path(folder).name} does not hold a survey this can read.\n\n"
+                f"{exc}\n\nA survey folder has a survey.json and the "
+                "prescanNN.tif files beside it.")
+            return
+        if not out["results"]:
+            messagebox.showerror(
+                "Reopen a survey",
+                f"{Path(folder).name} has a survey.json but none of its "
+                "prescan files -- there is nothing to show.")
+            return
+
+        self.survey = out["results"]
+        self._survey_start = out["start_at"]
+        self._survey_predpi = out["prescan_resolution"]
+        for result in out["results"]:
+            self.results.append(result)
+        self.b_sheet.configure(state="normal")
+        self._redraw_strip()
+        self._say(f"reopened {out['roll']}: {len(out['results'])} frames"
+                  + (f", {len(out['offsets'])} with a position already set"
+                     if out["offsets"] else ""))
+        # The film is almost certainly not where the walk left it, and only
+        # Stefan can see that. Said rather than guessed at.
+        messagebox.showinfo(
+            "Reopen a survey",
+            f"{len(out['results'])} frames from {out['roll']}.\n\n"
+            "The frame numbers are counted from where that walk started, so "
+            "put the film back to the start of the strip before scanning "
+            "anything -- nothing here can see where it is now.")
+        if self.sheet is not None and self.sheet.alive():
+            self.sheet.top.destroy()
+        self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"])
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=()) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
@@ -2478,6 +2537,73 @@ def aim_millimetres(fraction: float) -> float:
     return -(fraction - target) * APERTURE_MM
 
 
+def read_survey(folder) -> dict:
+    """A walked strip, read back off disk so it need not be walked again.
+
+    A survey costs four minutes of transport and is the thing the contact
+    sheet is built from, but until now it died with the window -- `survey.json`
+    has been written since rolls existed and never once read. Closing the app
+    between walking a strip and deciding on it meant walking it again.
+
+    Returns everything the sheet and a commissioned scan need: the frames as
+    `Result` objects, the `start_at` the walk used, the prescan resolution it
+    used, and any positions already approved for it.
+
+    **The prescans are un-rotated on the way in.** `prescanNN.tif` is written
+    turned the way the screen had it, and a reference has to be the film's own
+    orientation or it will not correlate against a fresh pass. `rotation` is
+    carried on the result instead, which is exactly how a live pass behaves.
+    """
+    folder = Path(folder)
+    manifest = json.loads((folder / "survey.json").read_text())
+    turn = int(manifest.get("rotation") or 0)
+
+    offsets: dict[int, float] = {}
+    entries: dict[int, str] = {}
+    approved_path = folder / "approved.json"
+    if approved_path.exists():
+        for record in json.loads(approved_path.read_text()).get("frames", []):
+            number = int(record["number"])
+            if record.get("offset_mm"):
+                offsets[number] = float(record["offset_mm"])
+            if record.get("reference_entry"):
+                entries[number] = record["reference_entry"]
+
+    results = []
+    for record in manifest.get("frames", []):
+        name = record.get("prescan")
+        if not name or not (folder / name).exists():
+            continue
+        number = int(record["number"])
+        image = tiff.read(str(folder / name))
+        result = Result(
+            seq=-number,                     # negative: never a live pass's seq
+            kind="prescan",
+            label=f"frame {number} (reopened)",
+            image=preview.rotate(image, -turn),
+            meta={"resolution_dpi": manifest.get("prescan_resolution")},
+            entry=Path(entries[number]) if number in entries else None,
+            registration=record.get("registration") or {},
+            position=record.get("transport_position"),
+            number=number,
+        )
+        result.hidden = False
+        result.supersedes = None
+        result.rotation = turn
+        result.levels = (preview.levels(result.image)
+                         if result.image is not None else None)
+        results.append(result)
+
+    return {
+        "results": results,
+        "start_at": int(manifest.get("start_at") or 1),
+        "prescan_resolution": manifest.get("prescan_resolution"),
+        "offsets": offsets,
+        "roll": manifest.get("roll") or folder.name,
+        "rotation": turn,
+    }
+
+
 def snap_offset(millimetres: float) -> float:
     """The nearest position the transport can actually reach.
 
@@ -2993,14 +3119,14 @@ class _ContactSheet:
     COLUMNS = 4
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
 
-    def __init__(self, gui, frames):
+    def __init__(self, gui, frames, offsets=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
         self.ticks: dict[int, tk.BooleanVar] = {}
         #: Where the operator says each frame should sit, in mm, relative to
         #: where it was surveyed. Absent means "as surveyed" -- an explicit
         #: zero never lands here, because snap_offset returns it as absent.
-        self.offsets: dict[int, float] = {}
+        self.offsets: dict[int, float] = dict(offsets or {})
         self._photos: list[tk.PhotoImage] = []
         self._rings: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
