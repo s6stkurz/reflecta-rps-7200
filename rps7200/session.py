@@ -370,10 +370,12 @@ class FrameWriter:
                 self.queue.task_done()
 
     def _write(self, job: dict) -> None:
-        # The delivered files carry the orientation that was asked for; the
-        # library entry below never does. Its pixels have to stay exactly what
-        # the scanner sent, or they stop matching the raw bytes beside them and
-        # `library.reconstruct` is right to call it a changed decode.
+        # The delivered files carry the orientation that was asked for and the
+        # shading correction; the library entry below carries neither. Its
+        # pixels have to stay exactly what the scanner sent, or they stop
+        # matching the raw bytes beside them and `library.reconstruct` is right
+        # to call it a changed decode. `raw_image` is that; `image` is what the
+        # operator asked to be given.
         turned = preview.rotate(job["image"], job.get("rotate") or 0)
         # One channel on the way out, three in the library. A consumer cannot
         # tell black and white from a slide by looking at the pixels -- see
@@ -386,7 +388,9 @@ class FrameWriter:
         entry = None
         if job["library"]:
             entry = library.save(
-                job["image"], job["meta"],
+                job.get("raw_image") if job.get("raw_image") is not None
+                else job["image"],
+                job["meta"],
                 root=job["library"],
                 film=job["film"],
                 tags=job["tags"],
@@ -629,8 +633,20 @@ class ScanSession:
         self._emit("log", text=summary["summary"])
 
     def _prescan(self, job: Prescan) -> None:
+        # The scanner's own meta, not a hand-built one. Substituting a short
+        # dict here is what filed every prescan claiming to be uncorrected: it
+        # dropped `shading`, and with it `protocol_revision` and the exposure,
+        # so 26 entries described themselves wrongly and `reconstruct` called
+        # every one of them a changed decode.
         image, _ = self._scanner.prescan(
             resolution=job.resolution, film=job.film, keep_raw=True)
+        # `getattr`, like `_inquiry` below: a stand-in scanner need not carry
+        # every attribute the real one publishes, and a prescan that fails to
+        # file is worse than one filed with a thinner meta.
+        meta = dict(getattr(self._scanner, "last_scan_meta", None) or {
+            "resolution_dpi": job.resolution, "film": job.film,
+            "channel_order": ["R", "G", "B"]})
+        raw_image = getattr(self._scanner, "last_pixels_raw", None)
         label = f"prescan {job.resolution} dpi"
         seq = self._deliver(
             "prescan", label, image, {"resolution_dpi": job.resolution}
@@ -643,8 +659,8 @@ class ScanSession:
             number=0,
             kind="prescan",
             image=image,
-            meta={"resolution_dpi": job.resolution, "film": job.film,
-                  "channel_order": ["R", "G", "B"]},
+            raw_image=raw_image,
+            meta=meta,
             notes=job.notes,
             tags=tuple(job.tags) + ("gui", "prescan"),
         )
@@ -799,12 +815,17 @@ class ScanSession:
                         surveyed = out / f"prescan{number:02d}.tif"
                         self._file(
                             seq, number, rf.prescan,
-                            {"resolution_dpi": job.prescan_resolution,
-                             "channel_order": ["R", "G", "B"]},
+                            # The pass's own meta. A hand-built one here is
+                            # what filed 26 prescans describing themselves as
+                            # uncorrected raw when they were neither.
+                            dict(rf.prescan_meta or {
+                                "resolution_dpi": job.prescan_resolution,
+                                "channel_order": ["R", "G", "B"]}),
                             replace(job.notes,
                                     frame=job.notes.frame or f"{name}-{number:02d}"),
                             tuple(job.tags) + ("gui", "roll", "prescan", name),
                             kind="prescan",
+                            raw_image=rf.raw_prescan,
                             path=surveyed,
                             roll=name,
                         )
@@ -826,6 +847,7 @@ class ScanSession:
                     self._file(
                         seq, number, rf.image, rf.meta, notes,
                         tuple(job.tags) + ("gui", "roll", name),
+                        raw_image=rf.raw_image,
                         prescan=rf.prescan,
                         path=out / f"frame{number:02d}.tif",
                         roll=name,
@@ -903,6 +925,7 @@ class ScanSession:
         notes: FilmNotes,
         tags: tuple[str, ...],
         prescan: np.ndarray | None = None,
+        raw_image: np.ndarray | None = None,
         path: Path | None = None,
         kind: str = "scan",
         roll: str = "",
@@ -948,12 +971,23 @@ class ScanSession:
                     "filing it without them rather than filing the wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
         meta = dict(meta, rotation=self.rotation)
+        # Only if it really is this picture. A raw array of another shape is a
+        # different pass, and filing it here is exactly the failure the guard
+        # above exists to prevent -- better to file the corrected pixels and
+        # have `reconstruct` say so than to file the wrong photograph.
+        if raw_image is not None and raw_image.shape != image.shape:
+            self._emit("log", text=(
+                "raw pixels do not match this image "
+                f"({raw_image.shape} vs {image.shape}); filing the corrected "
+                "pixels instead"))
+            raw_image = None
         self._writer.submit(
             seq=seq,
             number=number,
             paths=paths,
             rotate=self.rotation,
             image=image,
+            raw_image=raw_image,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
             library=self.root,

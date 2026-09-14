@@ -1912,23 +1912,22 @@ class ScannerGui:
             return
         mono = self.v_mono.get()
         if result.entry and (result.entry / "scan.tif").exists():
-            if result.rotation or mono:
-                # Turned and/or reduced on the way out, so the exported file
-                # matches what is on screen and says which film it is by its
-                # shape. The entry itself is left alone.
-                full = preview.rotate(
-                    tiff.read(str(result.entry / "scan.tif")), result.rotation)
-                tiff.write(path, to_monochrome(full, self.v_mono_channel.get())
-                           if mono else full)
-                self._say(f"saved {Path(path).name} at full resolution"
-                          + (f", turned {result.rotation}\u00b0"
-                             if result.rotation else "")
-                          + (", one channel" if mono else ""))
-            else:
-                # Copied rather than re-written: the entry holds the full
-                # resolution, and the working copy in memory is decimated.
-                shutil.copy2(result.entry / "scan.tif", path)
-                self._say(f"saved {Path(path).name} at full resolution")
+            # Corrected, always. The entry holds raw pixels and the reference
+            # beside them; what leaves here is what the operator saw. This used
+            # to copy scan.tif straight through when nothing was turned, which
+            # is now an uncorrected file -- so it is re-written every time, and
+            # the copy is gone deliberately rather than by oversight.
+            full, entry_record = library.corrected(result.entry)
+            full = preview.rotate(full, result.rotation)
+            if mono:
+                full = to_monochrome(full, self.v_mono_channel.get())
+            tiff.write(path, full)
+            how = entry_record.get("corrected")
+            self._say(f"saved {Path(path).name} at full resolution"
+                      + (f", turned {result.rotation}\u00b0"
+                         if result.rotation else "")
+                      + (", one channel" if mono else "")
+                      + ("" if how == "applied" else f" ({how})"))
         elif result.image is not None:
             turned = preview.rotate(result.image, result.rotation)
             tiff.write(path, to_monochrome(turned, self.v_mono_channel.get())
@@ -2115,7 +2114,10 @@ class ScannerGui:
         def work(entry: Path, seq: int) -> None:
             image = problem = None
             try:
-                image, _ = library.load(entry)
+                # Corrected, not raw: the library stores what the scanner sent
+                # and the correction beside it, and this is the full-resolution
+                # view an operator asked to look at.
+                image, _ = library.corrected(entry)
             except Exception as exc:                     # noqa: BLE001
                 problem = f"could not read {entry.name}: {exc}"
             # Through a queue, never by calling Tk. `after()` from another

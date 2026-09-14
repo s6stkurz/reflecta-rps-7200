@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent
 import numpy as np
 
 from metrics import dark_mask, noise_split
-from rps7200 import tiff
+from rps7200 import library
 
 MM_PER_INCH = 25.4
 CHANNELS = ("red", "green", "blue")
@@ -67,7 +67,7 @@ def ladder(root: Path, after: str, before: str) -> list[dict]:
 
 def plane(entry: dict, channel: int) -> np.ndarray:
     """One channel, read back from the delivered file."""
-    a = tiff.read(str(entry["dir"] / "scan.tif"))
+    a, _ = library.corrected(entry["dir"])
     return a[:, :, channel].astype(np.float64)
 
 
@@ -134,7 +134,7 @@ def main() -> int:
     print("=" * 72)
     print(f"{'dpi':>6} {'ch':>3} {'pixels':>13} {'seconds':>8} {'MB':>7}  exposure R,G,B")
     for e in series:
-        px = tiff.read(str(e["dir"] / "scan.tif")).shape if e["dpi"] <= 600 else None
+        px = (library.corrected(e["dir"])[0].shape if e["dpi"] <= 600 else None)
         shape = f"{px[1]}x{px[0]}" if px else ""
         exp = e["exposure"][:3] if e["exposure"] else None
         print(f"{e['dpi']:6d} {e['channels']:3d} {shape:>13} "
@@ -147,8 +147,8 @@ def main() -> int:
     print("=" * 72)
     floors = {}
     if len(repeats) >= 2:
-        a = tiff.read(str(repeats[0]["dir"] / "scan.tif"))
-        b = tiff.read(str(repeats[1]["dir"] / "scan.tif"))
+        a, _ = library.corrected(repeats[0]["dir"])
+        b, _ = library.corrected(repeats[1]["dir"])
         mask = dark_mask(a)
         for c, name in enumerate(CHANNELS):
             rnd, total, share = noise_split(a, b, mask, channel=c)
@@ -207,7 +207,7 @@ def main() -> int:
     print("A  where real detail meets the noise floor (from the 7200 dpi pass)")
     print("=" * 72)
     absolute = {}
-    full = tiff.read(str(top["dir"] / "scan.tif"))
+    full, _ = library.corrected(top["dir"])
     h, w, _ = full.shape
     half = args.crop // 2
     cy, cx = h // 2, w // 2

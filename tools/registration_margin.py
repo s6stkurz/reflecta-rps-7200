@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import tiff
+from rps7200 import library, tiff
 from rps7200.framing import CONFIDENCE_FLOOR, MAX_DY_PX, SEARCH_MM
 from rps7200.protocol import MM_PER_INCH
 from rps7200.uniformity import luminance, register
@@ -166,7 +166,11 @@ def cohort(folder: Path, dpi: int) -> list[tuple[str, np.ndarray]]:
             scan = json.loads(record.read_text()).get("scan") or {}
             if int(scan.get("resolution_dpi") or 0) != dpi:
                 continue
-            image = tiff.read(str(record.parent / "scan.tif"))
+            # Corrected, to match the rolls/ prescans in the other branch:
+            # those are written from the corrected pass, and comparing a
+            # corrected frame against a raw one measures the shading, not the
+            # registration.
+            image, _ = library.corrected(record.parent)
         except (OSError, ValueError, json.JSONDecodeError):
             continue
         out.append((record.parent.name, image.astype(np.float64)))
