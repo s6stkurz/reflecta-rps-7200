@@ -861,3 +861,37 @@ def test_measuring_geometry_does_not_drag_in_the_device():
     source = inspect.getsource(un)
     assert "from .direct import" not in source
     assert "from .protocol import MM_PER_INCH" in source
+
+
+def test_the_output_folder_honours_the_format_and_the_roll_does_not(tmp_path):
+    """Two files, two jobs. The folder is the operator's deliverable and takes
+    the format they chose; `rolls/` is machinery -- `prescanNN.tif` is what
+    reopening a survey reads back, and a lossy copy of a registration reference
+    is not something to introduce quietly."""
+    out = tmp_path / "out"
+    rolls = tmp_path / "r"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(rolls),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.out_format = "jpeg"
+    s.start()
+    s.submit(Roll(resolution=600, frames=1, infrared=False, meter="none"))
+    s.shutdown()
+    s.join(timeout=30)
+
+    assert sorted(p.suffix for p in out.rglob("*") if p.is_file()) == [".jpg"], \
+        "the operator's folder follows the setting"
+    assert [p.suffix for p in rolls.rglob("frame*")] == [".tif"], \
+        "a roll's own files stay TIFF whatever the setting says"
+
+
+def test_the_filename_says_which_format_it_is(tmp_path):
+    """`_out_name` is the only thing that decides, so it is pinned directly --
+    a roll of 38 frames landing on the wrong extension is a slow thing to spot."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=FakeScanner, verbose=False)
+    meta = {"resolution_dpi": 1800, "channels": 4}
+    assert s._out_name(3, meta, "roll-a").endswith("_1800dpi_ir.tif")
+    s.out_format = "jpeg"
+    # Still `_ir`: it says what was *scanned*, and the JPEG's own note says what
+    # arrived. Renaming it here would lose the first.
+    assert s._out_name(3, meta, "roll-a").endswith("_1800dpi_ir.jpg")

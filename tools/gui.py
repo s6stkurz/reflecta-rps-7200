@@ -11,6 +11,11 @@ filed in the library with their raw bytes, their shading reference and their CCD
 mask. Inverting, dust removal and colour are NegPy's job; the inversion in this
 window is for your eyes only and never reaches disk.
 
+The output folder can be set to TIFF or JPEG. That is a container choice and not
+a picture one: a JPEG holds the same negative at eight bits, uninverted, which
+is why it looks orange. It cannot carry the infrared plane, so the window says
+so per scan, and a roll's own files under `rolls/` stay TIFF regardless.
+
 Opening the window claims the device and asks it who it is, and does nothing
 else. Nothing moves the mechanism until a button is pressed.
 """
@@ -30,7 +35,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library, preview, settings, tiff      # noqa: E402
+from rps7200 import export, library, preview, settings, tiff  # noqa: E402
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
@@ -89,7 +94,7 @@ PRESCAN_LADDER = (300, 600, 900)
 #: did, because they describe the last thing looked at rather than the setup.
 REMEMBERED = ("dpi", "predpi", "ir", "film", "expmode", "exposure", "shading",
               "meter", "dryrun", "correct", "fine", "aim", "reverse",
-              "frames", "startat")
+              "frames", "startat", "outfmt", "jpegq")
 
 #: What a preset carries: the scan settings, and nothing about the film in the
 #: transport or where the files go.
@@ -310,6 +315,9 @@ class ScannerGui:
             self._set_outdir(str(self.remembered["output"]))
         elif self.session.out_dir is not None:
             self.v_outdir.set(str(self.session.out_dir))
+        # The loop above set the variables; this is what carries them into the
+        # session, which is what actually writes the files.
+        self._sync_format()
         self._sync_exposure()
         self._sync_film()
         self._show_estimate()
@@ -738,10 +746,47 @@ class ScannerGui:
                    command=self.on_choose_out).pack(side="left")
         ttk.Button(row, text="Clear",
                    command=lambda: self._set_outdir("")).pack(side="left", padx=4)
+
+        fmt = ttk.Frame(box)
+        fmt.pack(fill="x", pady=(6, 0))
+        self.v_outfmt = tk.StringVar(value=self.session.out_format)
+        for label, value in (("TIFF", "tiff"), ("JPEG", "jpeg")):
+            ttk.Radiobutton(fmt, text=label, value=value,
+                            variable=self.v_outfmt,
+                            command=self._sync_format).pack(side="left")
+        # Packed and unpacked by `_sync_format`, so the knob is only there when
+        # it does something. TIFF has no quality to set.
+        self.quality_row = ttk.Frame(box)
+        ttk.Label(self.quality_row, text="Quality").pack(side="left")
+        self.v_jpegq = tk.StringVar(value=str(export.DEFAULT_QUALITY))
+        spin = ttk.Spinbox(self.quality_row, from_=60, to=100, width=5,
+                           textvariable=self.v_jpegq,
+                           command=self._sync_format)
+        spin.pack(side="left", padx=(6, 0))
+        # On leaving the box, not on every keystroke: typing "8" on the way to
+        # "85" must not be corrected to 60 under the operator's hands.
+        spin.bind("<FocusOut>", lambda _e: self._sync_format())
+        self.v_outnote = tk.StringVar()
         ttk.Label(box, foreground="#777", wraplength=210, justify="left",
-                  text=("A TIFF of every scan is written here as it lands, "
-                        "on top of the library entry. Leave empty for the "
-                        "library only.")).pack(anchor="w", pady=(4, 0))
+                  textvariable=self.v_outnote).pack(anchor="w", pady=(4, 0))
+        self._sync_format()
+
+    def _sync_format(self) -> None:
+        """Show the quality knob only for JPEG, and say what will be written."""
+        jpeg = self.v_outfmt.get() == "jpeg"
+        self.session.out_format = "jpeg" if jpeg else "tiff"
+        quality = jpeg_quality(self.v_jpegq.get())
+        self.session.jpeg_quality = quality
+        # Put the understood value back, so what is shown, what is written and
+        # what `_remember` stores are the same number. Without this a typo is
+        # saved verbatim and read back as a typo next launch.
+        if self.v_jpegq.get() != str(quality):
+            self.v_jpegq.set(str(quality))
+        if jpeg:
+            self.quality_row.pack(fill="x", pady=(4, 0))
+        else:
+            self.quality_row.pack_forget()
+        self.v_outnote.set(output_note(self.session.out_format))
 
     def _build_preview(self, parent: ttk.PanedWindow) -> None:
         top = ttk.Frame(parent)
@@ -1904,12 +1949,17 @@ class ScannerGui:
         self.menu.tk_popup(event.x_root, event.y_root)
 
     def on_save_as(self, result) -> None:
-        name = f"{result.label.replace(' ', '_').replace('·', '')}.tif"
+        # The dialog starts on whatever the output folder is set to, so picking
+        # JPEG once covers both places -- but the type chosen *in* the dialog
+        # wins for this one file, because that is the more specific answer.
+        end = export.suffix_for(self.session.out_format)
+        name = f"{result.label.replace(' ', '_').replace('·', '')}{end}"
         path = filedialog.asksaveasfilename(
-            parent=self.root, defaultextension=".tif", initialfile=name,
-            filetypes=[("TIFF", "*.tif")])
+            parent=self.root, defaultextension=end, initialfile=name,
+            filetypes=save_as_types(self.session.out_format))
         if not path:
             return
+        quality = jpeg_quality(self.v_jpegq.get())
         mono = self.v_mono.get()
         if result.entry and (result.entry / "scan.tif").exists():
             # Corrected, always. The entry holds raw pixels and the reference
@@ -1921,19 +1971,23 @@ class ScannerGui:
             full = preview.rotate(full, result.rotation)
             if mono:
                 full = to_monochrome(full, self.v_mono_channel.get())
-            tiff.write(path, full)
+            note = export.write(path, full, quality=quality)
             how = entry_record.get("corrected")
             self._say(f"saved {Path(path).name} at full resolution"
                       + (f", turned {result.rotation}\u00b0"
                          if result.rotation else "")
                       + (", one channel" if mono else "")
-                      + ("" if how == "applied" else f" ({how})"))
+                      + ("" if how == "applied" else f" ({how})")
+                      + (f" -- {note}" if note else ""))
         elif result.image is not None:
             turned = preview.rotate(result.image, result.rotation)
-            tiff.write(path, to_monochrome(turned, self.v_mono_channel.get())
-                             if mono else turned)
+            note = export.write(
+                path,
+                to_monochrome(turned, self.v_mono_channel.get()) if mono else turned,
+                quality=quality)
             self._say(f"saved {Path(path).name} -- reduced preview, the "
-                      "full-resolution file is not filed yet")
+                      "full-resolution file is not filed yet"
+                      + (f" -- {note}" if note else ""))
 
     def on_rotate(self, result, degrees: int) -> None:
         """Turn this pass, and everything scanned after it.
@@ -2710,6 +2764,43 @@ def _age(hours: float) -> str:
     if hours < 48:
         return f"{hours:.0f} hours"
     return f"{hours / 24:.0f} days"
+
+
+def jpeg_quality(value) -> int:
+    """A quality the encoder will accept, whatever the box contains.
+
+    The spinbox hands back a string and an operator can type in it, so this is
+    the one place that decides what "" or "abc" or 5000 mean. Clamped rather
+    than refused: a scan must never be lost to a typo in a quality field.
+    """
+    try:
+        wanted = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return export.DEFAULT_QUALITY
+    return max(60, min(100, wanted))
+
+
+def save_as_types(fmt: str) -> list[tuple[str, str]]:
+    """The save dialog's file types, with the current output format first.
+
+    Order is the whole point: the first entry is what the dialog opens on, so
+    an operator working in JPEG is not asked to pick it again every time.
+    """
+    types = {"tiff": ("TIFF", "*.tif"), "jpeg": ("JPEG", "*.jpg")}
+    first = types.get(fmt, types["tiff"])
+    return [first] + [t for key, t in types.items() if t != first]
+
+
+def output_note(fmt: str) -> str:
+    """What the label under the output folder says for this format."""
+    if fmt == "jpeg":
+        return ("A JPEG of every scan is written here as it lands, on top of "
+                "the library entry. It is the same picture as the TIFF at 8 "
+                "bits -- still a negative -- and it cannot carry the infrared "
+                "plane. A roll's own files stay TIFF. Leave empty for the "
+                "library only.")
+    return ("A TIFF of every scan is written here as it lands, on top of the "
+            "library entry. Leave empty for the library only.")
 
 
 def stop_label(job: str) -> str:
