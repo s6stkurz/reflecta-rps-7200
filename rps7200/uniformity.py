@@ -352,7 +352,12 @@ def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64) -> tuple[int, in
     Phase correlation rather than a plain cross-correlation because the target
     is mostly flat patches: normalising each frequency by its magnitude weights
     the patch borders, which is where the alignment information actually lives.
-    ``confidence`` is the peak height over the mean of the correlation surface.
+    ``confidence`` is a **z-score**: how far the peak stands above the mean of
+    the searched surface, in standard deviations of that surface. Not a ratio
+    -- the division is by the spread, not by the mean -- which is why it scales
+    with the reach and is only comparable between matches searched equally far.
+    See `docs/registration-confidence-plan.md` for what it separates and by how
+    much.
     """
     fa, fb = luminance(a), luminance(b)
     h = min(fa.shape[0], fb.shape[0])
