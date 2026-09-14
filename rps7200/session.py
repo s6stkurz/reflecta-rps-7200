@@ -243,6 +243,16 @@ class Roll:
     #: that earn them. None scans every frame.
     only: tuple[int, ...] | None = None
     correct: bool = False
+    #: Positions the operator set by hand in the contact sheet, one per frame
+    #: he picked. These are authoritative: a frame carrying one is held to it
+    #: and `correct` does not apply to that frame. Frames without one are
+    #: unaffected, so a mixed roll is coherent and a roll without approvals
+    #: behaves exactly as it did before this existed.
+    approved: tuple[Approved, ...] = ()
+    #: Whether the transport's +x is the operator's +x. Mirrors the window's
+    #: "reverse the direction" tick, which exists because the physical sense
+    #: was never certain.
+    reverse_hold: bool = False
     max_failures: int = 3
     name: str = ""
     out: str = ""
@@ -749,6 +759,9 @@ class ScanSession:
             max_failures=job.max_failures,
             dry_run=job.dry_run,
             correct=job.correct,
+            # Keyed the driver's way, from 1-based as the window counts.
+            approved={a.number - 1: a for a in job.approved},
+            reverse_hold=job.reverse_hold,
             keep_raw=True,
         )
         stopped = None

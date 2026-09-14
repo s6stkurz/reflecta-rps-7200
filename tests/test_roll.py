@@ -881,3 +881,278 @@ def test_the_region_is_a_view_and_does_not_copy():
     img = bordered()
     region = metering_region(img)
     assert region.base is img or region.base is not None
+
+
+# --- holding a frame to the position an operator approved -------------------
+#
+# The reference is not a measurement -- it is the picture he looked at in the
+# contact sheet and accepted. These pin the two things that would silently
+# ruin that: an inverted sign, and a loop that trusts a match it should not.
+
+
+def _lit(width=428, height=287, seed=0):
+    """A prescan-shaped picture with enough structure to correlate on."""
+    rng = np.random.default_rng(seed)
+    base = np.linspace(20, 90, width)[None, :, None] * np.ones((height, 1, 3))
+    base = base + 30 * np.sin(np.linspace(0, 9, width))[None, :, None]
+    return np.clip(base + rng.normal(0, 5, (height, width, 3)),
+                   0, 255).astype(np.uint8)
+
+
+def test_content_that_moved_right_measures_positive():
+    """THE sign contract. `register` returns dx defined so a[i,j] matches
+    b[i, j-dx], so content moved right by s gives dx = -s -- the displacement
+    is -dx. Inverting this would drive every frame twice as far wrong."""
+    from rps7200.framing import APERTURE_MM, measure_shift_mm
+
+    image = _lit()
+    moved = np.roll(image, 8, axis=1)            # content 8 px to the right
+    millimetres, detail = measure_shift_mm(image, moved)
+
+    assert millimetres is not None
+    assert millimetres > 0, "content moved right must measure positive"
+    assert detail["px"] == 8
+    assert millimetres == pytest.approx(8 * APERTURE_MM / 428, abs=1e-6)
+
+
+@pytest.mark.parametrize("shift", [-60, -24, -8, -3, 0, 3, 8, 24, 60])
+def test_a_known_shift_is_recovered_exactly(shift):
+    from rps7200.framing import measure_shift_mm
+
+    image = _lit()
+    millimetres, detail = measure_shift_mm(image, np.roll(image, shift, axis=1))
+    assert millimetres is not None
+    assert detail["px"] == shift
+
+
+def test_a_match_it_does_not_believe_is_refused():
+    """Two different photographs correlate at 4-29 against a true match's
+    61-96. Moving the film on a measurement like that is exactly what the
+    `None` return exists to prevent."""
+    from rps7200.framing import measure_shift_mm
+
+    millimetres, detail = measure_shift_mm(_lit(seed=1), _lit(seed=99))
+    assert millimetres is None
+    assert "correlation" in detail["reason"]
+
+
+def test_a_match_off_the_film_axis_is_refused():
+    """The transport moves in x. A match claiming the picture also moved down
+    has found something that is not this frame."""
+    from rps7200.framing import MAX_DY_PX, measure_shift_mm
+
+    image = _lit()
+    millimetres, detail = measure_shift_mm(
+        image, np.roll(image, MAX_DY_PX + 6, axis=0))
+    assert millimetres is None
+    assert detail["dy"] is not None
+
+
+def test_the_search_reaches_as_far_as_the_transport_can_travel():
+    """`register`'s own default of 64 px is 5.5 mm at 300 dpi, less than the
+    8 mm the transport can move -- so a frame at the far end would be measured
+    as something nearer."""
+    from rps7200.framing import measure_shift_mm
+
+    image = _lit()
+    far = np.roll(image, 80, axis=1)             # past the 64 px default
+    millimetres, detail = measure_shift_mm(image, far, budget_mm=8.1)
+    assert millimetres is not None and detail["px"] == 80
+
+
+def test_a_reference_from_another_resolution_still_matches():
+    from rps7200.framing import measure_shift_mm
+
+    image = _lit()
+    coarse = image[::2, ::2]                     # a 600 -> 300 dpi survey
+    millimetres, detail = measure_shift_mm(coarse, image)
+    assert millimetres is not None
+    assert detail["resampled"] is True
+
+
+def test_the_tolerance_is_the_smallest_move_the_hardware_can_make():
+    """Not a smaller number. The loop can then never ask for a correction it
+    cannot deliver, so it cannot chatter between two positions either side of
+    the target -- a limit cycle is impossible by construction rather than by
+    tuning."""
+    from rps7200.framing import HOLD_TOLERANCE_MM
+
+    assert HOLD_TOLERANCE_MM == pytest.approx(
+        DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM, abs=1e-3)
+
+
+def test_the_decision_table():
+    from rps7200.framing import (
+        HOLD_TOLERANCE_MM,
+        MAX_HOLD_MOVES,
+        hold_plan,
+    )
+
+    # nothing to go on
+    assert hold_plan(0.5, None) == (None, "unverified")
+    # close enough
+    assert hold_plan(0.5, 0.5 - HOLD_TOLERANCE_MM / 2)[1] == "held"
+    # a real gap, and the move that closes it
+    want, outcome = hold_plan(0.5, 0.0)
+    assert outcome == "move" and want == pytest.approx(0.5)
+    # the operator's number is never overwritten -- only a residual against it
+    assert hold_plan(-0.8, 0.0)[0] == pytest.approx(-0.8)
+    # caps
+    assert hold_plan(0.5, 0.0, moves=MAX_HOLD_MOVES)[1] == "not_converged"
+    assert hold_plan(0.5, 1.4, direction=1)[1] == "would_reverse"
+    assert hold_plan(0.5, -9.0, spent_mm=2.0)[1] == "budget"
+
+
+# --- the loop, driven end to end with no scanner -----------------------------
+
+
+def _approved(number, offset_mm, reference):
+    from rps7200.session import Approved
+    return Approved(number=number, offset_mm=offset_mm, reference=reference)
+
+
+def _roll_once(scanner, approved, **kw):
+    """One frame, held to an approved position. Returns its RollFrame."""
+    return list(scanner.scan_roll(
+        frames=1, resolution=300, infrared=False, meter=METER_NONE,
+        approved=approved, **kw))[0]
+
+
+def test_a_frame_already_where_he_left_it_is_not_moved():
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy()]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.0, reference)})
+
+    assert frame.registration["approved"]["outcome"] == "held"
+    assert frame.registration["approved"]["moves"] == 0
+    assert scanner.slid == [], "nothing should have moved"
+    assert frame.image is not None, "and the frame is still scanned"
+
+
+def test_an_offset_is_applied_and_confirmed_by_looking_again():
+    """The loop IS how the offset gets applied -- there is no separate
+    open-loop step. The first residual is his number, and the re-prescan is
+    what tells a move that landed from one backlash swallowed."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    # as surveyed, then 6 px further along: 0.512 mm, which is the 0.5 asked
+    # for to within less than one hardware step
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    held = frame.registration["approved"]
+
+    assert held["outcome"] == "held"
+    assert held["moves"] == 1
+    assert len(scanner.slid) == 1
+    assert scanner.slid[0][0] == 0x00, "forward"
+    assert frame.image is not None
+
+
+def test_a_frame_that_will_not_move_is_scanned_anyway_and_flagged():
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy() for _ in range(6)]   # never budges
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.9, reference)})
+    held = frame.registration["approved"]
+
+    from rps7200.framing import MAX_HOLD_MOVES
+    assert held["outcome"] == "not_converged"
+    assert held["moves"] == MAX_HOLD_MOVES
+    assert frame.image is not None, "the picture is still taken"
+    assert held["residual_mm"] == pytest.approx(0.9, abs=0.05)
+
+
+def test_overshoot_is_reported_rather_than_chased_back():
+    """Reversing inside a frame would reason from a position the mechanism has
+    not finished delivering: backlash swallows 2-3 commands after a direction
+    change and releases the distance later."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    # asked to go +0.5, went most of the way to +1.4 -- now past the target
+    scanner.prescans = [reference.copy(), np.roll(reference, 17, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    held = frame.registration["approved"]
+
+    assert held["outcome"] == "would_reverse"
+    assert held["moves"] == 1, "it does not try to come back"
+    assert frame.image is not None
+
+
+def test_a_match_it_cannot_believe_moves_nothing():
+    reference = _lit(seed=1)
+    scanner = FakeRoll([reference])
+    scanner.prescans = [_lit(seed=77)]           # a different photograph
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+
+    assert frame.registration["approved"]["outcome"] == "unverified"
+    assert scanner.slid == [], "never move on a measurement not believed"
+    assert frame.image is not None
+
+
+def test_film_moving_the_wrong_way_stops_the_whole_roll_holding():
+    """If the sense is inverted, every frame after this would be driven wrong.
+    This is a measurement of direction, not a second opinion about his
+    number."""
+    reference = _lit()
+    scanner = FakeRoll([reference, reference.copy(), None])
+    scanner.prescans = [
+        reference.copy(),                  # frame 0 as surveyed
+        np.roll(reference, -14, axis=1),   # asked +, went -
+        reference.copy(),                  # frame 1's own prescan
+    ]
+    frames = list(scanner.scan_roll(
+        frames=2, resolution=300, infrared=False, meter=METER_NONE,
+        approved={0: _approved(1, 0.5, reference),
+                  1: _approved(2, 0.5, reference)}))
+
+    assert frames[0].registration["approved"]["outcome"] == "wrong_way"
+    assert frames[1].registration["approved"]["outcome"] == "off", (
+        "holding is off for the rest of the roll, not just that frame")
+    assert all(f.image is not None for f in frames)
+
+
+def test_an_approved_frame_is_never_touched_by_the_automatic_nudge():
+    """His number is authoritative. A gap measurement that has been wrong
+    before must not overrule it."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy()]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.0, reference)}, correct=True)
+
+    assert "approved" in frame.registration
+    assert "correction" not in frame.registration
+
+
+def test_a_frame_without_an_approval_still_gets_the_old_behaviour():
+    """A mixed roll has to be coherent: adjusted frames are held, the rest are
+    corrected if the tick is on."""
+    reference = _lit()
+    scanner = FakeRoll([reference, reference.copy(), None])
+    scanner.prescans = [reference.copy(), reference.copy()]
+
+    frames = list(scanner.scan_roll(
+        frames=2, resolution=300, infrared=False, meter=METER_NONE,
+        correct=True, approved={0: _approved(1, 0.0, reference)}))
+
+    assert "approved" in frames[0].registration
+    assert "correction" in frames[1].registration
+
+
+def test_every_prescan_through_a_hold_keeps_its_raw_bytes():
+    """last_raw is only written when keep_raw is set and is never cleared, so
+    a verification prescan without it leaves capture_record holding the
+    previous pass's bytes."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+
+    _roll_once(scanner, {0: _approved(1, 0.5, reference)}, keep_raw=True)
+
+    assert scanner.prescan_keep_raw == [True, True]
