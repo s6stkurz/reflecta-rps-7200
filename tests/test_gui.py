@@ -1104,7 +1104,8 @@ def test_the_output_label_stops_promising_a_tiff_when_it_is_a_jpeg():
     assert "TIFF" in output_note("tiff")
     jpeg = output_note("jpeg")
     assert "JPEG" in jpeg
-    assert "infrared" in jpeg, "the one thing the format cannot carry"
+    assert "infrared" in jpeg, "the plane the format has no room for"
+    assert "DNG" in jpeg, "and where it goes instead, which is the actionable half"
     assert "negative" in jpeg, "it is not the inverted picture"
 
 

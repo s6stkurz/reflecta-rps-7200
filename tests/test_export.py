@@ -110,15 +110,66 @@ def test_a_jpeg_is_not_inverted(tmp_path):
     assert np.asarray(Image.open(out)).mean() < 40, "inverted somewhere"
 
 
-def test_infrared_cannot_ride_along_and_the_caller_is_told(tmp_path):
-    """The one real cost of choosing JPEG. Said out loud rather than dropped
-    quietly: infrared is what dust removal runs on."""
+def test_infrared_leaves_in_a_dng_beside_the_jpeg(tmp_path):
+    """Three channels is all a JPEG has, so the fourth goes into a file of its
+    own rather than being dropped. A DNG and not a `_ir.tif` sidecar because
+    NegPy's JPEG loader reports no infrared whatever sits next to the file,
+    while its raw loader reads a four-sample LinearRaw page -- so the DNG is
+    the only container that actually reaches the consumer."""
     from PIL import Image
 
+    image = picture(channels=4)
+    out = tmp_path / "frame.jpg"
+    note = export.write(out, image)
+
+    assert np.asarray(Image.open(out)).shape[2] == 3, "the picture is the picture"
+    companion = tmp_path / "frame.dng"
+    assert companion.exists(), "the plane has to go somewhere"
+    assert companion.name in note, "and the operator has to be told where"
+
+    kept = tiff.read(str(companion))
+    assert kept.shape == image.shape
+    assert np.array_equal(kept, image), (
+        "the DNG is the full-depth copy -- if this were lossy the JPEG "
+        "delivery would be worse than a TIFF in both files, not one"
+    )
+
+
+def test_the_dng_takes_the_jpegs_own_name(tmp_path):
+    """Same stem, so the two sort together and read as one scan. The `_ir` tag
+    `_out_name` adds stays on both: it says what was scanned, and both files
+    came off that pass."""
+    assert export.infrared_path("a/b/2026-09-14_frame01_1800dpi_ir.jpg").name == (
+        "2026-09-14_frame01_1800dpi_ir.dng"
+    )
+    assert export.infrared_path("frame.jpeg").name == "frame.dng"
+
+
+def test_a_three_channel_jpeg_leaves_one_file(tmp_path):
+    """No plane, no companion. A DNG holding nothing a JPEG lacks would be a
+    second full-size copy of the same picture."""
+    assert export.write(tmp_path / "frame.jpg", picture(channels=3)) == ""
+    assert not (tmp_path / "frame.dng").exists()
+
+
+def test_a_dng_that_cannot_be_written_costs_the_plane_and_not_the_scan(
+    tmp_path, monkeypatch
+):
+    """The picture is on disk by this point and the library entry is still to
+    come, so a full disk must not turn a written scan into a failed one. The
+    note is how it stays visible instead of quiet."""
+    from PIL import Image
+
+    def refuse(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(export.dng, "write", refuse)
     out = tmp_path / "frame.jpg"
     note = export.write(out, picture(channels=4))
-    assert "infrared" in note
-    assert np.asarray(Image.open(out)).shape[2] == 3
+
+    assert np.asarray(Image.open(out)).shape[2] == 3, "the JPEG survived"
+    assert "no space left on device" in note
+    assert "library" in note, "and says where the plane can still be found"
 
 
 def test_a_monochrome_scan_stays_one_channel(tmp_path):
@@ -131,12 +182,14 @@ def test_a_monochrome_scan_stays_one_channel(tmp_path):
     assert np.asarray(Image.open(out)).ndim == 2
 
 
-def test_a_four_channel_tiff_keeps_its_infrared(tmp_path):
-    """The cost above belongs to JPEG alone."""
+def test_a_four_channel_tiff_keeps_its_infrared_in_band(tmp_path):
+    """The companion above belongs to JPEG alone: a TIFF carries the plane as a
+    fourth sample, which NegPy reads off the file itself."""
     image = picture(channels=4)
     out = tmp_path / "frame.tif"
     assert export.write(out, image) == ""
     assert tiff.read(str(out)).shape[2] == 4
+    assert not (tmp_path / "frame.dng").exists(), "nothing to rescue from a TIFF"
 
 
 def test_without_pillow_the_scan_is_written_as_a_tiff_instead(tmp_path, monkeypatch):
@@ -151,8 +204,12 @@ def test_without_pillow_the_scan_is_written_as_a_tiff_instead(tmp_path, monkeypa
         return real_import(name, *args, **kw)
 
     monkeypatch.setattr(builtins, "__import__", no_pillow)
-    image = picture()
+    image = picture(channels=4)
     note = export.write(tmp_path / "frame.jpg", image)
     assert "Pillow" in note
     assert not (tmp_path / "frame.jpg").exists()
     assert np.array_equal(tiff.read(str(tmp_path / "frame.tif")), image)
+    assert not (tmp_path / "frame.dng").exists(), (
+        "the TIFF it fell back to carries the plane itself; a DNG as well "
+        "would be a second copy of a file nobody asked for"
+    )

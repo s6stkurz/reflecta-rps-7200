@@ -419,10 +419,21 @@ exposure/gain/offset, what the metering probe measured, and the settings used.
 A delivered file can be a **JPEG** instead — `--out frame.jpg` on `tools/scan.py`,
 or the TIFF/JPEG choice beside the output folder in the window. The extension is
 what picks the format. A JPEG is the same picture at eight bits and is still an
-uninverted negative, so it looks orange; it cannot carry the infrared plane, and
-whatever writes it says so. It needs Pillow (`uv sync --extra jpeg`), and without
-it the file is written as a TIFF rather than lost. Library entries and a roll's
-own files under `rolls/` are always TIFF.
+uninverted negative, so it looks orange. It needs Pillow (`uv sync --extra jpeg`),
+and without it the file is written as a TIFF rather than lost. Library entries and
+a roll's own files under `rolls/` are always TIFF.
+
+**An infrared pass delivered as JPEG leaves a `.dng` beside it**, same stem, holding
+R, G, B and infrared at full depth. Three channels is all a JPEG has, and the plane
+is what dust removal runs on, so it goes into the one container the consumer reads it
+from: NegPy's raw loader looks for a four-sample LinearRaw page and hands the fourth
+back as infrared, while its JPEG loader reports none whatever sits next to the file.
+Nothing extra is installed for this — `rps7200/dng.py` writes the file by hand, the
+way `rps7200/tiff.py` does. Two consequences worth knowing: the DNG is uncompressed,
+because DNG blesses deflate for floating-point samples only, so JPEG *with* infrared
+uses more disk than a TIFF would (142 MB against 117 MB at 3600 dpi); and in NegPy
+the two files appear as separate assets — open the DNG, not the JPEG, to get the
+dust removal. A TIFF delivery needs none of this and carries the plane in-band.
 
 The shape depends on what was asked for:
 

@@ -17,6 +17,15 @@ inverting, and a file that had already been inverted and stretched would be a
 different kind of thing wearing the same name. The cost is that a JPEG of a
 colour negative looks like an orange negative, which is the intended trade:
 one meaning of "the scan" on disk, in two container formats.
+
+**Infrared leaves in a DNG beside the JPEG.** Three channels is all a JPEG
+has, and the fourth plane is the reason an infrared pass costs its ~212 s
+floor, so it is written as a four-sample LinearRaw DNG next to the picture --
+the container NegPy reads an infrared plane out of. That is the only place it
+can go: NegPy's JPEG loader reports no infrared whatever sits next to the
+file, and its sidecar convention wants a TIFF as the main image. A TIFF
+delivery needs none of this, carrying the plane in-band as a fourth sample.
+See :mod:`rps7200.dng`.
 """
 
 from __future__ import annotations
@@ -25,7 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import tiff
+from . import dng, tiff
 
 #: What each format is called on disk. The key is what a setting stores; the
 #: value is what a filename ends with.
@@ -40,7 +49,7 @@ FORMATS = {".tif": "tiff", ".tiff": "tiff", ".jpg": "jpeg", ".jpeg": "jpeg"}
 DEFAULT_QUALITY = 95
 
 #: Most channels a JPEG can carry. Three, or one for greyscale -- there is no
-#: fourth, which is what makes the infrared plane impossible here.
+#: fourth, which is what sends the infrared plane to a DNG of its own.
 JPEG_MAX_CHANNELS = 3
 
 
@@ -88,18 +97,21 @@ def to_8bit(image: np.ndarray) -> np.ndarray:
     return (image >> 8).astype(np.uint8)
 
 
-def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> str:
-    """Returns a note about anything the format could not carry."""
+def infrared_path(path: str | Path) -> Path:
+    """Where the infrared plane goes for a JPEG at ``path``.
+
+    The same stem, so the two files sort together and read as one scan. The
+    picture's own `_ir` tag, where `_out_name` added one, stays on both: it
+    says what was *scanned*, and both files came off that pass.
+    """
+    return Path(path).with_suffix(dng.SUFFIX)
+
+
+def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> None:
+    """The picture alone. Anything past three channels leaves in the DNG."""
     from PIL import Image                                # noqa: PLC0415
 
-    note = ""
     if image.ndim == 3 and image.shape[2] > JPEG_MAX_CHANNELS:
-        # The infrared plane, almost always. Said out loud rather than dropped
-        # quietly: infrared is what dust removal runs on, and an operator who
-        # scanned RGBI and got RGB should hear it from us and not from NegPy.
-        note = (f"the infrared plane is not in this file -- JPEG carries "
-                f"{JPEG_MAX_CHANNELS} channels, not {image.shape[2]}; the "
-                f"library entry keeps all of them")
         image = image[:, :, :JPEG_MAX_CHANNELS]
     if image.ndim == 3 and image.shape[2] == 1:
         # PIL reads (H, W, 1) as nothing it knows; greyscale is (H, W).
@@ -113,7 +125,34 @@ def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> str:
         subsampling=0,
         optimize=True,
     )
-    return note
+
+
+def _write_infrared(path: Path, image: np.ndarray, resolution: int | None) -> str:
+    """The plane the JPEG could not take, in the container NegPy reads it from.
+
+    Written *after* the JPEG and never allowed to raise, which is the same line
+    `FrameWriter` takes about a frame that cannot be filed: the picture is on
+    disk by now and the library entry is still to come, so a full disk or a
+    read-only folder must cost the infrared plane and not the scan. The
+    operator is told either way -- the note goes to the window's log and to
+    `tools/scan.py`'s output -- so nothing here is lost quietly.
+    """
+    # `preview.has_infrared` answers the same question and is deliberately not
+    # called: what matters here is not "is there infrared" but "is there a plane
+    # this container cannot hold", and the two coincide only while JPEG is the
+    # lossy format on offer.
+    if image.ndim != 3 or image.shape[2] <= JPEG_MAX_CHANNELS:
+        return ""
+    companion = infrared_path(path)
+    channels = image.shape[2]
+    try:
+        dng.write(companion, image[:, :, :dng.CHANNELS], resolution=resolution)
+    except Exception as exc:                             # noqa: BLE001
+        return (f"infrared does not fit in a JPEG and {companion.name} could not "
+                f"be written ({exc}); the library entry keeps all {channels} "
+                f"channels")
+    return (f"infrared does not fit in a JPEG, so it is in {companion.name} "
+            f"beside it -- that is the file to open for dust removal")
 
 
 def write(
@@ -129,20 +168,26 @@ def write(
     failure: it is something the chosen format could not carry, and the caller
     is expected to log it rather than swallow it.
 
+    A four-channel pass delivered as JPEG leaves **two** files -- the picture,
+    and `<stem>.dng` holding R, G, B and infrared at full depth. A TIFF
+    delivery leaves one, the plane riding along as a fourth sample.
+
     **A JPEG asked for without Pillow is written as a TIFF instead**, with a
     note saying so. A scan costs minutes of hardware and an optional package
     that is not installed is no reason to lose one -- the same line
-    `FrameWriter` takes about a frame that cannot be filed.
+    `FrameWriter` takes about a frame that cannot be filed. No DNG is written
+    in that case: the TIFF it fell back to carries the plane itself.
     """
     path = Path(path)
     fmt = format_of(path)
     if fmt == "jpeg":
         try:
-            return _write_jpeg(path, image, quality)
+            _write_jpeg(path, image, quality)
         except ImportError:
             path = path.with_suffix(SUFFIXES["tiff"])
             tiff.write(str(path), image, resolution=resolution)
             return (f"Pillow is not installed, so this was written as "
                     f"{path.name} instead. `uv sync --extra jpeg` adds it.")
+        return _write_infrared(path, image, resolution)
     tiff.write(str(path), image, resolution=resolution)
     return ""
