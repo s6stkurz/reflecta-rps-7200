@@ -229,7 +229,10 @@ subject line. The arrows are bare, because an arrow is already an arrow: they
 walk the filmstrip, move between frames in the contact sheet, and step the film
 in the position window. There Space ticks a frame and Return keeps it and goes
 to the next, which is the whole job that window exists for, done without
-reaching for the mouse. Every right-click menu carries its
+reaching for the mouse. One press moves the frame to the next position the
+transport can actually reach -- 0.27 mm off centre, 0.11 mm everywhere above
+that -- and the **step** box beside the arrows takes a coarser one when you
+want to cross the aperture rather than land on it. Every right-click menu carries its
 key beside the item, which is where anybody actually finds out these exist, and
 it shows the key as it is now rather than as it shipped. **Shortcuts ...** in
 the top bar lists every one of them: click a key to change it, × to clear it, ↺

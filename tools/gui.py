@@ -94,7 +94,7 @@ PRESCAN_LADDER = (300, 600, 900)
 #: did, because they describe the last thing looked at rather than the setup.
 REMEMBERED = ("dpi", "predpi", "ir", "film", "expmode", "exposure", "shading",
               "meter", "dryrun", "correct", "fine", "aim", "reverse",
-              "frames", "startat", "outfmt", "jpegq")
+              "frames", "startat", "outfmt", "jpegq", "adjuststep")
 
 #: What a preset carries: the scan settings, and nothing about the film in the
 #: transport or where the files go.
@@ -118,6 +118,9 @@ APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 #: The smallest move the transport can make: param 1 of the calibrated
 #: sub-frame law. Asking for less does not get you less, it gets you this.
 FINE_STEP_MM = 0.27
+#: How finely `step_offset` looks for the next reachable position. A quarter
+#: of the lattice's own spacing, so it cannot step over one.
+FINEST_PROBE_MM = 0.026
 #: The largest one SLIDE command delivers, param 8.
 MAX_FINE_MM = 1.01
 #: How many of those one move may chain, and how far that reaches.
@@ -205,6 +208,12 @@ class ScannerGui:
         self._zoom_travel = 0                # trackpad pixels not yet spent
         self.rotation = 0                    # applied to new passes and files
         self.flip = False                    # and whether they read left to right
+        #: What one arrow press moves a frame in the position window. Lives
+        #: here rather than on that window because it is a preference about
+        #: how the operator works, and that window is opened and closed all
+        #: through a roll -- a setting that died with it would be re-chosen
+        #: seventeen times.
+        self.v_adjuststep = tk.StringVar(value=ADJUST_STEPS[0])
         #: What each key does. `shortcut_overrides` is only what the operator
         #: changed -- see `shortcuts.overrides_from` for why the whole table is
         #: not stored -- and `self.keys` is that laid over the defaults.
@@ -3110,6 +3119,56 @@ def snap_offset(millimetres: float) -> float:
     return 0.0
 
 
+#: What one press of an arrow in the frame position window moves, as the
+#: operator may choose. "finest" is not a distance: it walks to the next
+#: position the transport can actually reach, which is the smallest move there
+#: is and is not a constant -- the gap is 0.27 mm off zero and 0.11 mm
+#: everywhere above that.
+ADJUST_STEPS = ("finest", "0.27 mm", "0.50 mm", "1.00 mm")
+
+
+def step_millimetres(choice: str) -> float:
+    """The chosen step as a distance, or 0.0 meaning "the next one along"."""
+    try:
+        return float(str(choice).split()[0])
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
+    """Where one press of an arrow should put the frame.
+
+    `step_mm` of zero means the finest move there is: the adjacent position on
+    the transport's own lattice. That is not a fixed distance and cannot be
+    written as one. Off zero the first reachable place is 0.27 mm away -- one
+    SLIDE command, and nothing exists below it -- while above that the
+    positions are 0.11 mm apart, because a command's distance grows by
+    `STEP_MM` per param. Adding a constant and snapping gets this wrong at
+    both ends: 0.27 steps over two thirds of the reachable positions, and
+    0.11 rounds to nothing at all and the frame never moves.
+
+    So the finest step is found rather than computed -- probe outward until
+    the snapped answer changes. It is a handful of arithmetic per keypress and
+    it cannot disagree with `snap_offset` about what is reachable, which a
+    second copy of the lattice would eventually do.
+    """
+    here = snap_offset(current)
+    if step_mm > 0:
+        return snap_offset(here + direction * step_mm)
+    probe = FINEST_PROBE_MM
+    want = here
+    # Enough to cross the widest gap in the lattice, which is the 0.27 mm off
+    # zero, several times over.
+    for _ in range(64):
+        want += direction * probe
+        if abs(want) > MAX_TRAVEL_MM:
+            break
+        landed = snap_offset(want)
+        if abs(landed - here) > 1e-9:
+            return landed
+    return here
+
+
 def _arrangement(result) -> str:
     """How a pass is arranged, in words, for a caption or a line in the log.
 
@@ -3699,10 +3758,12 @@ class _FrameAdjuster:
         ttk.Label(
             outer, foreground="#777",
             text=("Drag the picture, or use the arrow keys, to say where the "
-                  "film should sit. The dashed lines are the aperture -- "
-                  "anything past them will not be scanned. Return keeps this "
-                  "frame and moves to the next. Shown as the film sits, not "
-                  "arranged.")
+                  "film should sit. \u201cfinest\u201d moves to the next "
+                  "position the transport can reach; the others move by that "
+                  "much and land on the nearest one. The dashed lines are the "
+                  "aperture -- anything past them will not be scanned. Return "
+                  "keeps this frame and moves to the next. Shown as the film "
+                  "sits, not arranged.")
         ).pack(anchor="w", pady=(0, 6))
 
         self.canvas = tk.Canvas(outer, background="#1e1e1e",
@@ -3720,6 +3781,9 @@ class _FrameAdjuster:
         ttk.Button(row, text="\u25b6", width=3,
                    command=lambda: self._step(1)).pack(side="left", padx=(2, 8))
         ttk.Button(row, text="Centre", command=self._centre).pack(side="left")
+        ttk.Label(row, text="step").pack(side="left", padx=(12, 4))
+        ttk.Combobox(row, textvariable=gui.v_adjuststep, width=8,
+                     state="readonly", values=list(ADJUST_STEPS)).pack(side="left")
         self.v_read = tk.StringVar()
         ttk.Label(row, textvariable=self.v_read,
                   font=("TkDefaultFont", 11)).pack(side="left", padx=12)
@@ -3836,8 +3900,17 @@ class _FrameAdjuster:
         self.sheet._refresh_caption(self.number)
 
     def _step(self, direction: int) -> None:
-        """One hardware step. Drag is coarse; this is how a frame is landed."""
-        self._set(self.offset + direction * FINE_STEP_MM)
+        """One step. Drag is coarse; this is how a frame is landed.
+
+        "finest" walks to the next position the transport can reach, which is
+        the smallest move there is. What this replaced added a flat 0.27 mm
+        and snapped, and 0.27 is not the lattice's spacing -- it is the
+        distance of a single command off zero. Above that the positions are
+        0.11 mm apart, so the arrows were stepping over two out of every three
+        places the film could actually be put.
+        """
+        self._set(step_offset(self.offset, direction,
+                              step_millimetres(self.gui.v_adjuststep.get())))
 
     def _centre(self) -> None:
         self._set(0.0)

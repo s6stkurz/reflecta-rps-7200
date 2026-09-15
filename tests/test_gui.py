@@ -1783,3 +1783,90 @@ def test_the_sheet_offers_the_same_turns_the_window_does():
     for what in ("rotate_right", "rotate_left", "rotate_180", "straighten",
                  "flip"):
         assert f"sheet_{what}" in sheet, what
+
+
+# -- how far one arrow press moves a frame -----------------------------------
+
+
+def test_the_finest_step_lands_on_every_place_the_film_can_go():
+    """0.27 mm is not the lattice's spacing -- it is what a single command
+    delivers off zero. Above that the positions are 0.11 mm apart, because a
+    command's distance grows by STEP_MM per param. Adding a flat 0.27 and
+    snapping stepped over two out of every three of them."""
+    reached, offset = [], 0.0
+    for _ in range(8):
+        offset = gui.step_offset(offset, 1)
+        reached.append(round(offset, 3))
+    assert reached == [0.272, 0.378, 0.483, 0.589, 0.695, 0.800, 0.906, 1.012]
+
+
+def test_the_old_step_skipped_most_of_them():
+    """Kept as the reason this changed, not as a thing anyone should use."""
+    coarse, offset = [], 0.0
+    for _ in range(8):
+        offset = gui.snap_offset(offset + gui.FINE_STEP_MM)
+        coarse.append(round(offset, 3))
+    finest, offset = [], 0.0
+    while offset < coarse[-1] - 1e-9:
+        offset = gui.step_offset(offset, 1)
+        finest.append(round(offset, 3))
+    assert set(coarse) < set(finest), "every coarse stop is a fine one"
+    assert len(finest) > 2 * len(coarse), "and there are far more in between"
+
+
+def test_a_step_of_nothing_still_moves():
+    """A flat 0.11 mm would round to nothing off zero -- there is no such
+    position -- and the frame would never move at all. The finest step is
+    found rather than computed, so it cannot fall into that."""
+    assert gui.step_offset(0.0, 1) > 0
+    assert gui.step_offset(0.0, -1) < 0
+
+
+def test_stepping_back_walks_the_same_places_and_crosses_zero():
+    there, offset = [], 0.0
+    for _ in range(4):
+        offset = gui.step_offset(offset, 1)
+        there.append(round(offset, 3))
+    back = []
+    for _ in range(6):
+        offset = gui.step_offset(offset, -1)
+        back.append(round(offset, 3))
+    assert back[:3] == list(reversed(there[:3]))
+    assert 0.0 in back and back[-1] < 0, "and out the other side"
+
+
+@pytest.mark.parametrize("choice, first", [
+    ("finest", 0.272), ("0.27 mm", 0.272), ("0.50 mm", 0.483), ("1.00 mm", 1.012),
+])
+def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
+    """Whatever is asked for, what comes back is somewhere the film can go --
+    a number finer than the hardware is a lie."""
+    landed = gui.step_offset(0.0, 1, gui.step_millimetres(choice))
+    assert round(landed, 3) == first
+    assert landed == gui.snap_offset(landed)
+
+
+def test_the_offered_steps_read_as_distances_except_the_finest():
+    """"finest" is not a distance and cannot be written as one: the gap is
+    0.27 mm off zero and 0.11 mm everywhere above it."""
+    assert gui.ADJUST_STEPS[0] == "finest"
+    assert gui.step_millimetres("finest") == 0.0
+    for label in gui.ADJUST_STEPS[1:]:
+        assert gui.step_millimetres(label) > 0, label
+
+
+def test_a_step_never_leaves_the_reach_of_the_transport():
+    offset = 0.0
+    for _ in range(80):
+        offset = gui.step_offset(offset, 1, 1.0)
+    assert abs(offset) <= gui.MAX_TRAVEL_MM
+
+
+def test_the_chosen_step_outlives_the_window_that_uses_it():
+    """That window is opened and closed all through a roll; a setting that
+    died with it would be re-chosen seventeen times."""
+    import inspect
+    assert "self.v_adjuststep" in inspect.getsource(gui.ScannerGui.__init__)
+    assert "adjuststep" in gui.REMEMBERED
+    assert "self.gui.v_adjuststep.get()" in inspect.getsource(
+        gui._FrameAdjuster._step)
