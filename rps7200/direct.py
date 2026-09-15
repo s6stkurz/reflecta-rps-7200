@@ -2286,6 +2286,7 @@ class DirectScanner:
         film: str = FILM_NEGATIVE,
         keep_raw: bool = False,
         byte14: int | None = None,
+        fast_infrared: bool = False,
         slide_init_param: int = 0x16,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
@@ -2316,6 +2317,16 @@ class DirectScanner:
         reference past :data:`MAX_SHADING_COLUMNS` columns whatever resolution
         it is asked for, and a 7200 dpi frame is twice that. See
         `docs/7200dpi-plan.md`.
+
+        ``fast_infrared`` sets bit 0x80 of the quality field, which the
+        reference backend describes as acquiring the infrared plane "in a
+        faster, lower-quality pass". It exists so the bit can be driven and
+        measured -- like ``byte14``, nothing in normal operation passes it, and
+        for the same reason: **CyberView never sends it.** Across 33 scan cycles
+        in six captures the quality field is 0x0008 thirty-two times and 0x0800
+        once, and bit 0x80 appears in none of them. It is recorded in the
+        metadata so a pass taken with it is identifiable afterwards. See
+        `docs/fast-infrared-plan.md`.
         """
         if infrared and not supports_infrared(film):
             # Refused rather than warned. This costs the ~212 s infrared floor
@@ -2457,6 +2468,7 @@ class DirectScanner:
             color_format=FORMAT_INDEX,
             skip_shading=skip_shading,
             byte14=byte14,
+            fast_infrared=fast_infrared,
         )
         self.test_unit_ready()
 
@@ -2601,6 +2613,10 @@ class DirectScanner:
             # members of a bracket, which are otherwise the same frame at the
             # same dpi, depth and channel count.
             "exposure_metered": bool(auto_exposure),
+            # Recorded on every pass, not only the ones that set it. A ladder
+            # is six passes of one frame differing in nothing else, so an
+            # entry that does not say which side it came from is not evidence.
+            "fast_infrared": bool(fast_infrared),
             "duration_s": round(time.monotonic() - started, 1),
         }
         # Only for a scan that did its own metering. The probe passes inside

@@ -478,6 +478,14 @@ def signature(record: dict[str, Any]) -> tuple:
     ``scan.exposure_metered`` says which kind it was. Entries written before
     that field existed are treated as metered, which is what they were: it
     leaves their signatures exactly as they were.
+
+    ``scan.fast_infrared`` is included for exactly the bracket reason above. A
+    fast-infrared ladder is one frame at one dpi, depth, channel count and
+    commanded exposure, differing only in a quality bit -- so without this the
+    whole ladder collapses to a single signature and `--delete` would keep one
+    pass and destroy the comparison it was run to make. Entries written before
+    the field existed read as ``None``, which is what they were taken with, so
+    their signatures do not move.
     """
     scan, film = record.get("scan") or {}, record.get("film") or {}
 
@@ -500,6 +508,7 @@ def signature(record: dict[str, Any]) -> tuple:
         scan.get("film"),
         scan.get("protocol_revision"),
         commanded,
+        scan.get("fast_infrared"),
     )
 
 

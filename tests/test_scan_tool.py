@@ -37,6 +37,7 @@ class FakeBracketScanner(DirectScanner):
         self.last_raw = None
         self.last_raw_layout = None
         self.scans = []
+        self.kwargs = []
 
     def __enter__(self):
         return self
@@ -64,6 +65,10 @@ class FakeBracketScanner(DirectScanner):
         n = 4 if infrared else 3
         k = exposure_scale[0] if isinstance(exposure_scale, list) else exposure_scale
         self.scans.append(float(k))
+        # Everything else the tool passed, for tests about wiring rather than
+        # about pixels -- a flag dropped between the parser and the device is
+        # invisible to a fake that only records exposures.
+        self.kwargs.append(dict(kw))
         self.last_raw = f"pass-{len(self.scans)}".encode()
         self.last_raw_layout = {"format": "index", "pass": len(self.scans)}
         level = int(min(60000, 1000 * len(self.scans)))
@@ -195,3 +200,31 @@ def test_bracket_zero_is_a_single_pass(tmp_path, monkeypatch):
     scanner, code = run(tmp_path, monkeypatch, "--bracket", "0")
     assert code == 0
     assert len(scanner.scans) == 1
+
+
+# --- the fast-infrared bit reaching the device ----------------------------
+
+
+def test_fast_ir_reaches_the_scan(tmp_path, monkeypatch):
+    """An unmeasured quality bit is worth nothing if the tool drops it between
+    the parser and `scan()`, and a ladder driven through this tool would then
+    measure one value twice."""
+    s, code = run(tmp_path, monkeypatch, "--ir", "--fast-ir")
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is True
+
+
+def test_an_ordinary_run_never_sends_it(tmp_path, monkeypatch):
+    s, code = run(tmp_path, monkeypatch, "--ir")
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is False
+
+
+def test_fast_ir_without_ir_is_warned_and_dropped(tmp_path, monkeypatch, capsys):
+    """There is no infrared plane in an RGB pass, so the bit governs nothing.
+    Warned and ignored rather than refused -- the reference backend's line, and
+    failing a scan over a no-op would cost more than it saved."""
+    s, code = run(tmp_path, monkeypatch, "--fast-ir")
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is False
+    assert "no effect without --ir" in capsys.readouterr().err

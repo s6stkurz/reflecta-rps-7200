@@ -248,6 +248,21 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
+- **Fast infrared has never been sent, and might move the floor.** Quality bit
+  `0x80` is defined, reachable and unused; the reference backend calls it
+  "acquire the infrared plane in a faster, lower-quality pass". The infrared
+  floor is the dominant cost of everything here -- 69.6 s RGB against 227.2 s
+  RGBI at 1800 dpi, and it does not move with resolution -- so this is the
+  largest unexplored lever in the driver. It is also the one place a worse
+  answer might be acceptable, because the plane is a dust mask and not a
+  picture.
+
+  Wired and tested offline; **not run**. `tools/fast_ir_probe.py` is the ladder
+  (six RGBI passes, ~25 minutes, film loaded, background it, ask first) and
+  `docs/fast-infrared-plan.md` says what decides it. Note what cuts against it:
+  CyberView sends the bit in none of 3,955 captured commands, so unlike every
+  other field this driver sends there is no capture to check it against.
+
 - **Filing a roll compresses while the device is open.** `FrameWriter` gzips
   each frame on its own thread while the next one scans, which is what keeps a
   38-frame roll from ending in an eleven-minute wait. CLAUDE.md's warning is
