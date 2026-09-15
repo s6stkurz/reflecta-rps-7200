@@ -35,7 +35,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library, preview, settings, tiff  # noqa: E402
+from rps7200 import export, library, preview, settings, shortcuts, tiff  # noqa: E402
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
@@ -205,6 +205,13 @@ class ScannerGui:
         self._zoom_travel = 0                # trackpad pixels not yet spent
         self.rotation = 0                    # applied to new passes and files
         self.flip = False                    # and whether they read left to right
+        #: What each key does. `shortcut_overrides` is only what the operator
+        #: changed -- see `shortcuts.overrides_from` for why the whole table is
+        #: not stored -- and `self.keys` is that laid over the defaults.
+        self.shortcut_overrides: dict[str, str] = {}
+        self.keys: dict[str, str] = shortcuts.defaults()
+        self._bound: list[str] = []          # what is on the root right now
+        self._shortcut_editor = None
         #: The same two, for one picture of the roll being scanned, keyed by
         #: frame number -- what the contact sheet was left holding when the scan
         #: was commissioned. Frames with no entry fall back to the session's.
@@ -252,6 +259,7 @@ class ScannerGui:
             root.bind_all(sequence, self._on_wheel, add="+")
         root.bind_all("<TouchpadScroll>", self._on_touchpad, add="+")
         self.session.start()
+        self._bind_shortcuts()
         self._later(POLL_MS, self._pump)
 
     # -- layout ------------------------------------------------------------
@@ -261,6 +269,8 @@ class ScannerGui:
         head.pack(fill="x")
         ttk.Button(head, text="About the scanner",
                    command=self.on_about).pack(side="left")
+        ttk.Button(head, text="Shortcuts ...",
+                   command=self.on_shortcuts).pack(side="left", padx=6)
         self.v_state = tk.StringVar(value="opening ...")
         ttk.Label(head, textvariable=self.v_state).pack(side="right")
         self.light = tk.Canvas(head, width=14, height=14, highlightthickness=0)
@@ -320,6 +330,9 @@ class ScannerGui:
                 variable.set(value)
             except tk.TclError:
                 pass
+        stored = self.remembered.get("shortcuts")
+        self.keys = shortcuts.resolve(stored if isinstance(stored, dict) else None)
+        self.shortcut_overrides = shortcuts.overrides_from(self.keys)
         for key, value in self.remembered["film"].items():
             if key in REMEMBERED_FILM and key in self.fields:
                 self.fields[key].set(str(value))
@@ -364,9 +377,167 @@ class ScannerGui:
                 "output": self.v_outdir.get(),
                 "window": window,
                 "presets": self.presets,
+                "shortcuts": self.shortcut_overrides,
             }, self._settings_path)
         except Exception as exc:                         # noqa: BLE001
             self._say(f"could not save the settings: {exc}")
+
+    # -- the keyboard ------------------------------------------------------
+
+    def _actions(self) -> dict:
+        """What each action id does, for the main window.
+
+        A table rather than a method per key, because the editor has to be able
+        to say what every id is and the tests have to be able to check that
+        none of them reaches the scanner. The two extra windows keep their own;
+        see `_ContactSheet._actions` and `_FrameAdjuster._actions`.
+
+        Everything here is viewing or arranging. Nothing starts a scan, moves
+        film or calibrates -- `shortcuts.NEVER_BOUND` names those and a test
+        holds the line. `stop` is here because `request_stop` finishes the pass
+        already running rather than abandoning a read.
+        """
+        return {
+            "previous_pass": lambda: self._walk(-1),
+            "next_pass": lambda: self._walk(1),
+            "first_pass": lambda: self._jump(0),
+            "last_pass": lambda: self._jump(-1),
+            "rotate_right": lambda: self._on_current(self.on_rotate, 90),
+            "rotate_left": lambda: self._on_current(self.on_rotate, 270),
+            "rotate_180": lambda: self._on_current(self.on_rotate, 180),
+            "straighten": self._straighten,
+            "flip": lambda: self._on_current(self.on_flip),
+            "save_as": lambda: self._on_current(self.on_save_as),
+            "show_prescan": lambda: self._on_current(self.on_show_prescan),
+            "delete_pass": lambda: self._on_current(self.on_delete),
+            "zoom_in": lambda: self._zoom_by(2.0),
+            "zoom_out": lambda: self._zoom_by(0.5),
+            "zoom_fit": lambda: self._set_zoom(0.0),
+            "zoom_actual": lambda: self._set_zoom(self._finest()),
+            "invert": self._toggle_invert,
+            "channel_next": lambda: self._cycle_channel(1),
+            "channel_previous": lambda: self._cycle_channel(-1),
+            "contact_sheet": self.on_contact_sheet,
+            # Only when there is something to stop. `submit` clears the flag,
+            # so a stray press cannot reach the next job -- but the log is
+            # evidence, and "finishing what is already running" with nothing
+            # running is a line that will be read back one day and believed.
+            "stop": lambda: self.on_stop() if self.busy else None,
+            "shortcuts": self.on_shortcuts,
+        }
+
+    def _on_current(self, method, *args) -> None:
+        """Run a menu action against whatever is on screen, or do nothing."""
+        if self.current is not None:
+            method(self.current, *args)
+
+    def _straighten(self) -> None:
+        if self.current is not None and self.current.rotation:
+            self.on_rotate(self.current, -self.current.rotation)
+
+    def _walk(self, by: int) -> None:
+        """The pass before or after this one in the filmstrip."""
+        shown = self._visible()
+        if not shown:
+            return
+        try:
+            at = shown.index(self.current)
+        except ValueError:
+            at = 0 if by > 0 else len(shown) - 1
+            self._show_seq(shown[at].seq)
+            return
+        self._show_seq(shown[max(0, min(len(shown) - 1, at + by))].seq)
+
+    def _jump(self, at: int) -> None:
+        shown = self._visible()
+        if shown:
+            self._show_seq(shown[at].seq)
+
+    def _toggle_invert(self) -> None:
+        self.v_invert.set(not self.v_invert.get())
+        self._redraw_all()
+
+    def _cycle_channel(self, by: int) -> None:
+        """The next view this pass can actually show.
+
+        Only what `channels_available` allows: a prescan is RGB 8-bit and has
+        no infrared, and stepping onto a view that does not exist would render
+        a black rectangle and leave the operator wondering whether the IR
+        really came back empty.
+        """
+        if self.current is None or self.current.image is None:
+            return
+        offered = [c for c in preview.CHANNELS
+                   if c in preview.channels_available(self.current.image)]
+        if not offered:
+            return
+        here = offered.index(self.v_channel.get()) if self.v_channel.get() in offered else 0
+        self.v_channel.set(offered[(here + by) % len(offered)])
+        self._schedule_redraw()
+
+    def _typing(self) -> bool:
+        """Whether a key belongs to a text field rather than to the window.
+
+        Without this, typing "rotate" into the subject field turns the picture
+        four times and deletes a pass on the "e".
+        """
+        try:
+            widget = self.root.focus_get()
+        except (tk.TclError, KeyError):
+            return False
+        return isinstance(widget, (tk.Entry, ttk.Entry, tk.Text,
+                                   tk.Spinbox, ttk.Spinbox, ttk.Combobox))
+
+    def _bind_shortcuts(self) -> None:
+        """Put the current keys on the window, and take the old ones off.
+
+        Bound on the root rather than with `bind_all`: a widget's bindtags run
+        widget, class, toplevel, all -- so this catches a key pressed anywhere
+        in this window and *only* in this window. With `bind_all`, `r` in the
+        contact sheet would rotate the preview underneath it as well.
+        """
+        for sequence in self._bound:
+            try:
+                self.root.unbind(sequence)
+            except tk.TclError:
+                pass
+        self._bound = []
+        actions = self._actions()
+        for sequence, action_id in shortcuts.in_scope(self.keys, "window").items():
+            run = actions.get(action_id)
+            if run is None:
+                continue
+            self.root.bind(sequence, self._runner(run))
+            self._bound.append(sequence)
+
+    def _runner(self, run):
+        """One handler shape: skip it while typing, and stop it propagating."""
+        def handler(_event=None):
+            if self._typing():
+                return None
+            run()
+            return "break"
+        return handler
+
+    def on_shortcuts(self) -> None:
+        """The editor. One at a time, like the contact sheet."""
+        if self._shortcut_editor is not None and self._shortcut_editor.alive():
+            self._shortcut_editor.top.lift()
+            self._shortcut_editor.top.focus_force()
+            return
+        self._shortcut_editor = _ShortcutSettings(self)
+
+    def set_keys(self, keys: dict[str, str]) -> None:
+        """Take a whole new set, bind it, and write it down."""
+        self.keys = dict(keys)
+        self.shortcut_overrides = shortcuts.overrides_from(self.keys)
+        self._bind_shortcuts()
+        for window in (self.sheet, self._shortcut_editor):
+            if window is not None and window.alive():
+                rebind = getattr(window, "rebind", None)
+                if rebind is not None:
+                    rebind()
+        self._remember()
 
     # -- presets -----------------------------------------------------------
 
@@ -3259,6 +3430,188 @@ class _HistogramPanel:
                     foreground="#e0605a" if fraction > 0.001 else "#999")
 
 
+class _ShortcutSettings:
+    """Every key in the window, and what it does, changeable and restorable.
+
+    Its own window like the contact sheet: it is opened to change one thing and
+    closed again, and it wants the room to show three windows' worth of keys at
+    once. A change binds immediately -- there is no Apply -- because the thing
+    being edited is what the keyboard does, and trying a key is how anyone
+    checks they got the one they meant.
+    """
+
+    def __init__(self, gui):
+        self.gui = gui
+        self.keys = dict(gui.keys)
+        self._capturing: str | None = None   # the action id waiting for a key
+        self._buttons: dict[str, tk.Widget] = {}
+
+        self.top = tk.Toplevel(gui.root)
+        self.top.title("Shortcuts")
+        self.top.transient(gui.root)
+        self.top.geometry("620x760")
+
+        outer = ttk.Frame(self.top, padding=(12, 10))
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, font=("TkDefaultFont", 13, "bold"),
+                  text="Shortcuts").pack(anchor="w")
+        ttk.Label(
+            outer, foreground="#777", justify="left", wraplength=580,
+            text=("Click a key to change it, then press the one you want. The "
+                  "same key can be used in different windows -- the arrows walk "
+                  "the filmstrip here, move the selection in the contact sheet, "
+                  "and step the film in the position window.\n\n"
+                  "No shortcut starts a scan, calibrates, or moves film. Those "
+                  "cost minutes of the scanner or move your negative, and a "
+                  "slip on the keyboard is not a decision to do either.")
+        ).pack(anchor="w", pady=(2, 10))
+
+        host = ttk.Frame(outer)
+        host.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(host, highlightthickness=0, borderwidth=0)
+        bar = ttk.Scrollbar(host, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        table = ttk.Frame(self.canvas, padding=(0, 4))
+        window = self.canvas.create_window((0, 0), window=table, anchor="nw")
+        table.bind("<Configure>", lambda _e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>",
+                         lambda e: self.canvas.itemconfigure(window, width=e.width))
+        table.columnconfigure(0, weight=1)
+
+        row = 0
+        for scope in shortcuts.SCOPES:
+            ttk.Label(table, text=shortcuts.SCOPE_NAMES[scope],
+                      font=("TkDefaultFont", 11, "bold")).grid(
+                row=row, column=0, sticky="w", pady=(12, 2))
+            row += 1
+            for action in shortcuts.ACTIONS:
+                if action.scope == scope:
+                    self._row(table, action, row)
+                    row += 1
+
+        foot = ttk.Frame(outer)
+        foot.pack(fill="x", pady=(10, 0))
+        ttk.Button(foot, text="Restore all defaults",
+                   command=self._restore_all).pack(side="left")
+        self.v_note = tk.StringVar()
+        ttk.Label(foot, textvariable=self.v_note, foreground="#e0605a").pack(
+            side="left", padx=10)
+        ttk.Button(foot, text="Close", command=self.top.destroy).pack(side="right")
+
+        gui._scrolls(self.canvas,
+                     lambda amount, _s: self.canvas.yview_scroll(amount, "units"),
+                     precise=lambda dx, dy: _scroll_pixels(self.canvas, dx, dy))
+        self.top.bind("<Escape>", self._escape)
+
+    def _row(self, table, action, row: int) -> None:
+        line = ttk.Frame(table)
+        line.grid(row=row, column=0, sticky="ew", pady=1)
+        line.columnconfigure(0, weight=1)
+        ttk.Label(line, text=action.label).grid(row=0, column=0, sticky="w")
+        button = ttk.Button(line, width=12,
+                            command=lambda a=action.id: self._capture(a))
+        button.grid(row=0, column=1, padx=(8, 2))
+        self._buttons[action.id] = button
+        ttk.Button(line, text="\u00d7", width=2,
+                   command=lambda a=action.id: self._set(a, "")).grid(
+            row=0, column=2, padx=1)
+        ttk.Button(line, text="\u21ba", width=2,
+                   command=lambda d=action.default, a=action.id: self._set(a, d)
+                   ).grid(row=0, column=3, padx=1)
+        self._show(action.id)
+
+    # -- changing one ------------------------------------------------------
+
+    def _show(self, action_id: str) -> None:
+        button = self._buttons.get(action_id)
+        if button is None:
+            return
+        if self._capturing == action_id:
+            button.configure(text="press a key")
+            return
+        button.configure(text=shortcuts.describe(self.keys.get(action_id, "")))
+
+    def _capture(self, action_id: str) -> None:
+        """Wait for the next key press and give it to this action."""
+        was, self._capturing = self._capturing, action_id
+        if was:
+            self._show(was)
+        self._show(action_id)
+        self.v_note.set("")
+        self.top.bind("<KeyPress>", self._captured)
+        self.top.focus_set()
+
+    def _captured(self, event) -> str:
+        action_id, self._capturing = self._capturing, None
+        self.top.unbind("<KeyPress>")
+        if action_id is None:
+            return "break"
+        if event.keysym == "Escape":
+            self._show(action_id)        # cancelled, nothing changed
+            return "break"
+        sequence = shortcuts.sequence_for(event.keysym, int(event.state))
+        if sequence is None:
+            self.v_note.set("That is only a modifier -- it could never fire.")
+            self._show(action_id)
+            return "break"
+        self._set(action_id, sequence)
+        return "break"
+
+    def _escape(self, _event=None) -> str | None:
+        """Cancel a capture if one is running, otherwise close the window."""
+        if self._capturing is not None:
+            waiting, self._capturing = self._capturing, None
+            self.top.unbind("<KeyPress>")
+            self._show(waiting)
+            return "break"
+        self.top.destroy()
+        return "break"
+
+    def _set(self, action_id: str, sequence: str) -> None:
+        """Give one action a key, refusing a clash inside the same window."""
+        scope = shortcuts.scope_of(action_id)
+        if sequence:
+            held = shortcuts.in_scope(self.keys, scope).get(sequence)
+            if held and held != action_id:
+                other = shortcuts.action(held)
+                self.v_note.set(
+                    f"{shortcuts.describe(sequence)} already does "
+                    f"\u201c{other.label}\u201d in {shortcuts.SCOPE_NAMES[scope].lower()}.")
+                self._show(action_id)
+                return
+        self.keys[action_id] = sequence
+        self.v_note.set("")
+        self._show(action_id)
+        self.gui.set_keys(self.keys)
+
+    def _restore_all(self) -> None:
+        if not messagebox.askokcancel(
+            "Shortcuts", "Put every key back to what it ships as?",
+            parent=self.top,
+        ):
+            return
+        self.keys = shortcuts.defaults()
+        self.v_note.set("")
+        for action_id in self.keys:
+            self._show(action_id)
+        self.gui.set_keys(self.keys)
+
+    def rebind(self) -> None:
+        """The window changed the keys under us -- show what they are now."""
+        self.keys = dict(self.gui.keys)
+        for action_id in self.keys:
+            self._show(action_id)
+
+    def alive(self) -> bool:
+        try:
+            return bool(self.top.winfo_exists())
+        except tk.TclError:
+            return False
+
+
 class _FrameAdjuster:
     """One surveyed frame, big, with its position in the aperture set by hand.
 
@@ -3303,10 +3656,11 @@ class _FrameAdjuster:
                   font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
         ttk.Label(
             outer, foreground="#777",
-            text=("Drag the picture to say where the film should sit. The "
-                  "dashed lines are the aperture -- anything you drag past "
-                  "them will not be scanned. Shown as the film sits, not "
-                  "turned.")
+            text=("Drag the picture, or use the arrow keys, to say where the "
+                  "film should sit. The dashed lines are the aperture -- "
+                  "anything past them will not be scanned. Return keeps this "
+                  "frame and moves to the next. Shown as the film sits, not "
+                  "arranged.")
         ).pack(anchor="w", pady=(0, 6))
 
         self.canvas = tk.Canvas(outer, background="#1e1e1e",
@@ -3342,11 +3696,62 @@ class _FrameAdjuster:
                    command=self._show_in_preview).pack(side="left", padx=6)
         ttk.Button(nav, text="Done", command=self.top.destroy).pack(side="right")
 
-        self.top.bind("<Left>", lambda _e: self._step(-1))
-        self.top.bind("<Right>", lambda _e: self._step(1))
-        self.top.bind("<Escape>", lambda _e: self.top.destroy())
+        self.rebind()
         self.canvas.focus_set()
         self._load()
+
+    # -- the keyboard ------------------------------------------------------
+
+    def _actions(self) -> dict:
+        return {
+            "adjust_left": lambda: self._step(-1),
+            "adjust_right": lambda: self._step(1),
+            "adjust_accept": self._accept,
+            "adjust_previous": lambda: self._go(-1),
+            "adjust_next": lambda: self._go(1),
+            "adjust_centre": self._centre,
+            "adjust_toggle": self._toggle_tick,
+            "adjust_close": self.top.destroy,
+        }
+
+    def rebind(self) -> None:
+        for sequence in getattr(self, "_bound", []):
+            try:
+                self.top.unbind(sequence)
+            except tk.TclError:
+                pass
+        self._bound = []
+        actions = self._actions()
+        for sequence, action_id in shortcuts.in_scope(
+                self.gui.keys, "adjuster").items():
+            run = actions.get(action_id)
+            if run is not None:
+                self.top.bind(sequence, self.gui._runner(run))
+                self._bound.append(sequence)
+
+    def _accept(self) -> None:
+        """Keep this frame and move on to the next one.
+
+        The offset is already recorded -- `_set` writes it into the sheet as
+        the picture is dragged -- so there is nothing here to save. What this
+        does is say yes: tick it for scanning, and show the next frame. That
+        is the whole of the job this window exists for, done one key at a time
+        rather than one mouse round trip at a time.
+
+        The last frame closes the window, because there is nowhere further to
+        go and leaving it open invites a press that does nothing.
+        """
+        self.v_tick.set(True)
+        self._tick_changed()
+        if self.index >= len(self.sheet.frames) - 1:
+            self.gui._say("that was the last frame of the strip")
+            self.top.destroy()
+            return
+        self._go(1)
+
+    def _toggle_tick(self) -> None:
+        self.v_tick.set(not self.v_tick.get())
+        self._tick_changed()
 
     # -- the frame on show -------------------------------------------------
 
@@ -3515,6 +3920,7 @@ class _ContactSheet:
     COLUMNS = 4
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
+    SELECTED = "#ffffff"                     # the keyboard's place, not a tick
 
     def __init__(self, gui, frames, offsets=None, rotations=None, flips=None):
         self.gui = gui
@@ -3568,6 +3974,11 @@ class _ContactSheet:
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
         self._adjuster = None
+        #: Which cell the keyboard is on. Distinct from the tick: a frame can
+        #: be selected and not scanned, or scanned and not selected, and the
+        #: sheet had no notion of "this one" at all before there were keys.
+        self.selected = 0
+        self._bound: list[str] = []
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Contact sheet")
@@ -3583,10 +3994,11 @@ class _ContactSheet:
                   text=f"{len(self.frames)} frames walked").pack(anchor="w")
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
                   text=("Tick what is worth scanning. Click a picture to tick "
-                        "it, double-click to open it and set where the film "
-                        "should sit, right-click it to turn it. A frame is "
-                        "scanned the way up you leave it here. Positions you "
-                        "set are used as given -- nothing moves until you "
+                        "it, double-click or press Return to set where the film "
+                        "should sit, right-click to arrange it. The arrow keys "
+                        "move between frames and Space ticks. A frame is "
+                        "scanned the way you leave it here. Positions you set "
+                        "are used as given -- nothing moves until you "
                         "commission the scan, and the automatic nudge does not "
                         "apply to frames you adjust. The film is rewound to the "
                         "start of the strip first, and every frame nobody "
@@ -3633,7 +4045,96 @@ class _ContactSheet:
         gui._scrolls(self.canvas,
                      lambda amount, sideways: self.canvas.yview_scroll(amount, "units"),
                      precise=lambda dx, dy: _scroll_pixels(self.canvas, dx, dy))
+        self.rebind()
+        self.canvas.focus_set()
         self._changed()
+
+    # -- the keyboard ------------------------------------------------------
+
+    def _actions(self) -> dict:
+        return {
+            "sheet_left": lambda: self._move(-1),
+            "sheet_right": lambda: self._move(1),
+            "sheet_up": lambda: self._move(-self.COLUMNS),
+            "sheet_down": lambda: self._move(self.COLUMNS),
+            "sheet_toggle": lambda: self._on_selected(self._toggle),
+            "sheet_adjust": lambda: self.adjust(self.selected),
+            "sheet_all": lambda: self._set_all(True),
+            "sheet_none": lambda: self._set_all(False),
+            "sheet_rotate_right": lambda: self._on_selected(self._rotate, 90),
+            "sheet_rotate_left": lambda: self._on_selected(self._rotate, 270),
+            "sheet_flip": lambda: self._on_selected(self._flip),
+            "sheet_show": self._show_selected,
+            "sheet_close": self.top.destroy,
+        }
+
+    def rebind(self) -> None:
+        """Take the window's current keys, here and in the position window."""
+        for sequence in self._bound:
+            try:
+                self.top.unbind(sequence)
+            except tk.TclError:
+                pass
+        self._bound = []
+        actions = self._actions()
+        for sequence, action_id in shortcuts.in_scope(
+                self.gui.keys, "sheet").items():
+            run = actions.get(action_id)
+            if run is not None:
+                self.top.bind(sequence, self.gui._runner(run))
+                self._bound.append(sequence)
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster.rebind()
+
+    def _on_selected(self, method, *args) -> None:
+        if 0 <= self.selected < len(self.frames):
+            method(self.frames[self.selected].number, *args)
+
+    def _show_selected(self) -> None:
+        if 0 <= self.selected < len(self.frames):
+            self.gui._show_seq(self.frames[self.selected].seq)
+
+    def _clicked(self, number: int, index: int) -> None:
+        """A click both picks the frame and ticks it, as it always has."""
+        self._select(index)
+        self._toggle(number)
+
+    def _move(self, by: int) -> None:
+        self._select(self.selected + by)
+
+    def _select(self, index: int) -> None:
+        """Put the keyboard on one cell and make sure it can be seen."""
+        if not self.frames:
+            return
+        self.selected = max(0, min(len(self.frames) - 1, index))
+        self._paint_rings()
+        self._scroll_to(self.selected)
+
+    def _scroll_to(self, index: int) -> None:
+        """Scroll only as far as it takes to have the selected cell in view.
+
+        The same rule the filmstrip follows: a sheet that jumped somewhere on
+        every keypress would lose the operator's place rather than keep it.
+        """
+        number = self.frames[index].number
+        ring = self._rings.get(number)
+        if ring is None:
+            return
+        self.canvas.update_idletasks()
+        try:
+            total = self.canvas.bbox("all")[3]
+        except (TypeError, IndexError):
+            return
+        height = max(1, self.canvas.winfo_height())
+        if total <= height:
+            return
+        top = ring.winfo_rooty() - self.canvas.winfo_rooty() + self.canvas.canvasy(0)
+        bottom = top + ring.winfo_height()
+        seen = self.canvas.canvasy(0)
+        if top < seen:
+            self.canvas.yview_moveto(max(0.0, (top - 8) / total))
+        elif bottom > seen + height:
+            self.canvas.yview_moveto(min(1.0, (bottom + 8 - height) / total))
 
     # -- one picture -------------------------------------------------------
 
@@ -3652,7 +4153,8 @@ class _ContactSheet:
         picture = tk.Label(ring, image=photo, borderwidth=0)
         picture.pack()
         self._pictures[number] = picture
-        picture.bind("<Button-1>", lambda _e, n=number: self._toggle(n))
+        picture.bind("<Button-1>",
+                     lambda _e, n=number, i=index: self._clicked(n, i))
         picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
         for seq in MENU_EVENTS:
             picture.bind(
@@ -3887,11 +4389,32 @@ class _ContactSheet:
     def chosen(self) -> tuple[int, ...]:
         return tuple(sorted(n for n, var in self.ticks.items() if var.get()))
 
-    def _changed(self) -> None:
-        picked = self.chosen()
+    def _paint_rings(self) -> None:
+        """Ticked or not, and which one the keyboard is on.
+
+        Two different questions on one cell, so two different marks: the ring's
+        colour says whether it will be scanned, and the outline around it says
+        where the keyboard is. A cell can be either without being the other.
+        """
+        chosen = ({self.frames[self.selected].number}
+                  if 0 <= self.selected < len(self.frames) else set())
         for number, ring in self._rings.items():
             on = self.ticks[number].get()
-            ring.configure(background=self.CHOSEN if on else self.SKIPPED)
+            colour = self.CHOSEN if on else self.SKIPPED
+            ring.configure(
+                background=colour,
+                highlightthickness=2,
+                # Its own colour when it is not the selected one: invisible,
+                # and the cell keeps the same size either way, so moving the
+                # selection does not make the grid jump.
+                highlightbackground=(self.SELECTED if number in chosen
+                                     else colour))
+
+    def _changed(self) -> None:
+        picked = self.chosen()
+        self._paint_rings()
+        for number in self._rings:
+            on = self.ticks[number].get()
             # The ring alone is not enough to see. A prescan of a negative is
             # very dark -- measured across real surveys, mean 16 of 255 -- so
             # a dark ring around a nearly black picture reads as an empty

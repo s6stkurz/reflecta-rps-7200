@@ -220,6 +220,24 @@ copy understates how much is at the rail. Infrared is not in it: it is a dust
 measurement rather than an exposure, and on traditional black and white it
 merely traces green.
 
+**Everything has a key, and the keys are yours.** The arrows walk the
+filmstrip, `r` and `m` turn and flip what is on screen, `f` and `1` fit it and
+show it at one scanned pixel per screen pixel, `i` inverts, `c` steps through
+the channels. In the contact sheet the arrows move between frames, Space ticks
+one and Return opens it to set where the film sits -- and in that window the
+arrows move the film a hardware step at a time and Return keeps the frame and
+goes to the next, which is the whole job it exists for, done without reaching
+for the mouse. **Shortcuts ...** in the top bar lists every one of them: click a
+key to change it, × to clear it, ↺ to put it back, and Restore all defaults at
+the foot. Only what you changed is written to `gui-settings.json`, so a default
+improved later still reaches you.
+
+**No shortcut touches the scanner.** Nothing scans, calibrates or moves film
+from the keyboard -- those cost minutes of the hardware or move your negative,
+they submit with no confirmation, and a slip on the keyboard is not a decision
+to do either. Escape stops after the current pass, which is the one that is
+always safe.
+
 **Right-click arranges a picture, wherever it is shown** -- the big preview,
 the filmstrip, or a cell of the contact sheet -- and a frame is scanned the way
 it was left. Quarter turns and a left-right flip: a strip loaded the other way

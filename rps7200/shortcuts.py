@@ -1,0 +1,257 @@
+"""What every key in the window does, and how it is allowed to be changed.
+
+The table lives here rather than in `tools/gui.py` for the reason `settings.py`
+does: it is data with rules about it, those rules are worth testing, and none of
+them need Tk. What is in `gui.py` is the binding and the editor.
+
+**No key drives the scanner.** Not scanning, not calibrating, not moving film.
+`on_scan`, `on_prescan` and the transport buttons submit their job immediately,
+with no confirmation -- they are behind buttons that have to be reached for, and
+CLAUDE.md is explicit that presence is not permission. A slip on a keyboard is
+not a decision to spend four minutes of hardware or to move somebody's negative,
+and there is no undo for either. `stop` is the exception: `request_stop` is
+cooperative, finishes the pass already running, and is always safe.
+
+`test_shortcuts.py` holds that line as a test rather than a convention.
+
+A binding is a Tk sequence string -- `"<Key-r>"`, `"<Left>"`, `"<Command-Key-s>"`
+-- because that is what `widget.bind` takes and what a captured `<KeyPress>` can
+be turned back into. An empty string means the action has no key.
+"""
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+
+#: The modifier a platform expects for its own shortcuts. Command on a Mac,
+#: Control everywhere else. Decided once, so a settings file written on one
+#: machine does not read as a conflict on another.
+ACCEL = "Command" if sys.platform == "darwin" else "Control"
+
+#: The three windows that take keys. A sequence may be used once in each --
+#: `<Left>` means something different and obvious in all three -- so conflicts
+#: are only ever looked for within a scope.
+SCOPES = ("window", "sheet", "adjuster")
+
+SCOPE_NAMES = {
+    "window": "The main window",
+    "sheet": "The contact sheet",
+    "adjuster": "The frame position window",
+}
+
+
+@dataclass(frozen=True)
+class Action:
+    """One thing a key can do."""
+
+    id: str                                  # "rotate_right"
+    scope: str                               # one of SCOPES
+    label: str                               # what the editor shows
+    default: str                             # a Tk sequence, or "" for none
+
+
+ACTIONS: tuple[Action, ...] = (
+    # -- the main window ---------------------------------------------------
+    Action("previous_pass", "window", "Previous pass", "<Left>"),
+    Action("next_pass", "window", "Next pass", "<Right>"),
+    Action("first_pass", "window", "First pass", "<Home>"),
+    Action("last_pass", "window", "Last pass", "<End>"),
+    Action("rotate_right", "window", "Rotate right 90°", "<Key-r>"),
+    Action("rotate_left", "window", "Rotate left 90°", "<Key-R>"),
+    Action("rotate_180", "window", "Rotate 180°", "<Key-u>"),
+    Action("straighten", "window", "Straighten", "<Key-0>"),
+    Action("flip", "window", "Flip left-right", "<Key-m>"),
+    Action("save_as", "window", "Save as ...", f"<{ACCEL}-Key-s>"),
+    Action("show_prescan", "window", "Show this pass's prescan", "<Key-p>"),
+    Action("delete_pass", "window", "Delete this pass", "<BackSpace>"),
+    Action("zoom_in", "window", "Zoom in", "<Key-plus>"),
+    Action("zoom_out", "window", "Zoom out", "<Key-minus>"),
+    Action("zoom_fit", "window", "Fit the picture", "<Key-f>"),
+    Action("zoom_actual", "window", "One scanned pixel per screen pixel",
+           "<Key-1>"),
+    Action("invert", "window", "Invert the picture", "<Key-i>"),
+    Action("channel_next", "window", "Next channel view", "<Key-c>"),
+    Action("channel_previous", "window", "Previous channel view", "<Key-C>"),
+    Action("contact_sheet", "window", "Open the contact sheet", f"<{ACCEL}-Key-k>"),
+    Action("stop", "window", "Stop after this pass", "<Escape>"),
+    Action("shortcuts", "window", "Edit these shortcuts", f"<{ACCEL}-Key-comma>"),
+
+    # -- the contact sheet -------------------------------------------------
+    Action("sheet_left", "sheet", "Select the frame to the left", "<Left>"),
+    Action("sheet_right", "sheet", "Select the frame to the right", "<Right>"),
+    Action("sheet_up", "sheet", "Select the frame above", "<Up>"),
+    Action("sheet_down", "sheet", "Select the frame below", "<Down>"),
+    Action("sheet_toggle", "sheet", "Scan this frame, or do not", "<space>"),
+    Action("sheet_adjust", "sheet", "Set where this frame sits", "<Return>"),
+    Action("sheet_all", "sheet", "Scan every frame", "<Key-a>"),
+    Action("sheet_none", "sheet", "Scan none of them", "<Key-n>"),
+    Action("sheet_rotate_right", "sheet", "Rotate this frame right", "<Key-r>"),
+    Action("sheet_rotate_left", "sheet", "Rotate this frame left", "<Key-R>"),
+    Action("sheet_flip", "sheet", "Flip this frame", "<Key-m>"),
+    Action("sheet_show", "sheet", "Show this frame in the preview", "<Key-p>"),
+    Action("sheet_close", "sheet", "Close the sheet", "<Escape>"),
+
+    # -- the frame position window -----------------------------------------
+    Action("adjust_left", "adjuster", "Move the film one step left", "<Left>"),
+    Action("adjust_right", "adjuster", "Move the film one step right", "<Right>"),
+    Action("adjust_accept", "adjuster", "Keep this frame and go to the next",
+           "<Return>"),
+    Action("adjust_previous", "adjuster", "Previous frame", "<Shift-Left>"),
+    Action("adjust_next", "adjuster", "Next frame", "<Shift-Right>"),
+    Action("adjust_centre", "adjuster", "Put it back where it was surveyed",
+           "<Key-c>"),
+    Action("adjust_toggle", "adjuster", "Scan this frame, or do not", "<space>"),
+    Action("adjust_close", "adjuster", "Close", "<Escape>"),
+)
+
+#: Actions that must never appear above, checked by a test rather than trusted
+#: to a reading of the table. See the module docstring.
+NEVER_BOUND = (
+    "on_scan", "on_prescan", "on_roll", "on_calibrate", "ask_to_calibrate",
+    "on_move_frames", "on_nudge", "on_abort", "on_scan_chosen",
+)
+
+_BY_ID = {action.id: action for action in ACTIONS}
+
+
+def defaults() -> dict[str, str]:
+    """Every action's key, as shipped."""
+    return {action.id: action.default for action in ACTIONS}
+
+
+def resolve(overrides: dict[str, str] | None = None) -> dict[str, str]:
+    """The keys in force: the defaults, with the operator's changes over them.
+
+    Ids that no longer exist are dropped rather than carried, so a settings
+    file outlives a rename. Values that are not strings are ignored, because
+    this file is meant to be edited by hand and a mistake in it should cost a
+    key rather than the window.
+    """
+    keys = defaults()
+    for action_id, sequence in (overrides or {}).items():
+        if action_id in keys and isinstance(sequence, str):
+            keys[action_id] = sequence
+    return keys
+
+
+def overrides_from(keys: dict[str, str]) -> dict[str, str]:
+    """Only what differs from the defaults, for writing to the settings file.
+
+    Storing the whole table would freeze every key at whatever it was the day
+    the file was first written: a default improved later would never reach a
+    machine that had already run the window once. What the operator changed is
+    the only part that is theirs.
+    """
+    shipped = defaults()
+    return {k: v for k, v in keys.items()
+            if k in shipped and v != shipped[k]}
+
+
+def scope_of(action_id: str) -> str:
+    action = _BY_ID.get(action_id)
+    return action.scope if action else ""
+
+
+def action(action_id: str) -> Action | None:
+    return _BY_ID.get(action_id)
+
+
+def in_scope(keys: dict[str, str], scope: str) -> dict[str, str]:
+    """`{sequence: action id}` for one window, skipping the unbound."""
+    return {sequence: action_id
+            for action_id, sequence in keys.items()
+            if sequence and scope_of(action_id) == scope}
+
+
+def conflicts(keys: dict[str, str]) -> dict[str, list[str]]:
+    """Sequences claimed by more than one action **in the same scope**.
+
+    Across scopes is not a conflict and is usually right: `<Left>` walks the
+    filmstrip, moves the selection in the contact sheet, and steps the film in
+    the position window, and each fires only in its own window.
+    """
+    seen: dict[tuple[str, str], list[str]] = {}
+    for action_id, sequence in keys.items():
+        if not sequence:
+            continue
+        seen.setdefault((scope_of(action_id), sequence), []).append(action_id)
+    return {sequence: sorted(ids)
+            for (_scope, sequence), ids in seen.items() if len(ids) > 1}
+
+
+#: Modifier bits as Tk reports them in `event.state`, in the order a sequence
+#: names them. Command is Mod1 on Aqua; Alt is Mod2 there and Mod1 on X11,
+#: which is why only the two that are the same everywhere are offered besides
+#: it -- a modifier that means different things on different machines is worse
+#: than one that is missing.
+_MODIFIERS = (
+    (0x0004, "Control"),
+    (0x0008, "Command") if sys.platform == "darwin" else (0x20000, "Alt"),
+    (0x0001, "Shift"),
+)
+
+#: Keysyms that are only ever a modifier. Capturing one would make a shortcut
+#: that can never fire.
+_BARE = {
+    "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
+    "Meta_L", "Meta_R", "Super_L", "Super_R", "Caps_Lock", "Num_Lock",
+    "Option_L", "Option_R", "Command_L", "Command_R",
+}
+
+#: Keysyms that name themselves rather than a character, so they are written
+#: `<Left>` rather than `<Key-Left>`. Both forms work in Tk; one form in the
+#: file keeps the editor's display and its conflict check honest.
+_NAMED = {
+    "Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next",
+    "Return", "KP_Enter", "space", "BackSpace", "Delete", "Escape", "Tab",
+    *(f"F{n}" for n in range(1, 21)),
+}
+
+
+def sequence_for(keysym: str, state: int = 0) -> str | None:
+    """A bindable sequence from a captured key press, or None if unusable.
+
+    None for a bare modifier: a shortcut that is only Shift can never fire, and
+    accepting one would silently take the key away from whatever had it.
+    """
+    if not keysym or keysym in _BARE:
+        return None
+    parts = [name for bit, name in _MODIFIERS if state & bit]
+    if keysym in _NAMED:
+        # Shift is already in the keysym for a character, but not for a named
+        # key: <Shift-Left> is a different sequence from <Left>.
+        return f"<{'-'.join([*parts, keysym])}>"
+    # A character carries its own case, so Shift would be named twice.
+    parts = [p for p in parts if p != "Shift"]
+    return f"<{'-'.join([*parts, 'Key', keysym])}>"
+
+
+#: How a modifier reads to a person. A Mac shows symbols and no separators.
+_SHOWN = (
+    {"Command": "⌘", "Control": "⌃", "Shift": "⇧", "Alt": "⌥"}
+    if sys.platform == "darwin" else
+    {"Command": "Cmd", "Control": "Ctrl", "Shift": "Shift", "Alt": "Alt"}
+)
+
+#: And how a key does. Anything not here shows as itself.
+_KEY_SHOWN = {
+    "Left": "←", "Right": "→", "Up": "↑", "Down": "↓",
+    "Return": "↩", "KP_Enter": "↩", "space": "Space",
+    "BackSpace": "⌫", "Delete": "Del", "Escape": "Esc", "Tab": "Tab",
+    "Prior": "PgUp", "Next": "PgDn", "plus": "+", "minus": "−",
+    "equal": "=", "comma": ",", "period": ".", "slash": "/",
+}
+
+
+def describe(sequence: str) -> str:
+    """A sequence as it should read in the editor. "" for unbound."""
+    if not sequence:
+        return "—"
+    parts = sequence.strip("<>").split("-")
+    key = parts[-1]
+    modifiers = [p for p in parts[:-1] if p != "Key"]
+    shown = _KEY_SHOWN.get(key, key if len(key) > 1 else key.upper())
+    if key.isalpha() and len(key) == 1 and key.isupper():
+        modifiers = [*modifiers, "Shift"]
+    joiner = "" if sys.platform == "darwin" else "+"
+    return joiner.join([*(_SHOWN.get(m, m) for m in modifiers), shown])

@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from conftest import load_tool
+from rps7200 import shortcuts
 from rps7200.mono import MONO_AVERAGE
 
 gui = load_tool("gui")
@@ -1508,3 +1509,183 @@ def test_flipping_all_twice_lands_where_it_started():
     """Which is what makes the menu item that says "unflip all" do that."""
     import inspect
     assert "Unflip all" in inspect.getsource(gui._ContactSheet.on_cell_menu)
+
+
+# -- the keyboard ------------------------------------------------------------
+
+
+def _window_actions():
+    """The main window's dispatch table, without building a window."""
+    import types
+    stub = types.SimpleNamespace(
+        current=None, busy=False, v_invert=None, v_channel=None,
+        on_rotate=lambda *a: None, on_flip=lambda *a: None,
+        on_save_as=lambda *a: None, on_show_prescan=lambda *a: None,
+        on_delete=lambda *a: None, on_contact_sheet=lambda: None,
+        on_stop=lambda: None, on_shortcuts=lambda: None,
+        _zoom_by=lambda *a: None, _set_zoom=lambda *a: None,
+        _finest=lambda: 1.0, _walk=lambda *a: None, _jump=lambda *a: None,
+        _on_current=lambda *a: None, _straighten=lambda: None,
+        _toggle_invert=lambda: None, _cycle_channel=lambda *a: None,
+    )
+    return gui.ScannerGui._actions(stub)
+
+
+def test_every_action_in_the_table_has_something_to_do():
+    """An id in `shortcuts.ACTIONS` with no handler is a key that silently
+    does nothing, and the editor would still offer it."""
+    handled = set(_window_actions())
+    for scope, owner in (("sheet", gui._ContactSheet),
+                         ("adjuster", gui._FrameAdjuster)):
+        import inspect
+        source = inspect.getsource(owner._actions)
+        for action in shortcuts.ACTIONS:
+            if action.scope == scope:
+                assert f'"{action.id}"' in source, action.id
+    for action in shortcuts.ACTIONS:
+        if action.scope == "window":
+            assert action.id in handled, action.id
+
+
+def test_no_shortcut_reaches_the_scanner():
+    """The rule this whole table is written under. `on_scan`, `on_prescan`
+    and the transport buttons submit immediately with no confirmation, and a
+    slip on the keyboard is not a decision to spend four minutes of hardware
+    or move somebody's negative."""
+    import inspect
+    sources = [inspect.getsource(gui.ScannerGui._actions),
+               inspect.getsource(gui._ContactSheet._actions),
+               inspect.getsource(gui._FrameAdjuster._actions)]
+    for forbidden in shortcuts.NEVER_BOUND:
+        for source in sources:
+            assert forbidden not in source, forbidden
+
+
+def test_stop_is_the_one_exception_and_only_while_something_runs():
+    """`request_stop` is cooperative and always safe -- but the log is
+    evidence, and "finishing what is already running" with nothing running is
+    a line that will be read back one day and believed."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._actions)
+    assert "self.on_stop() if self.busy else None" in source
+
+
+def test_a_key_does_nothing_while_a_text_field_has_the_focus():
+    """Without this, typing "rotate" into the subject field turns the picture
+    four times and deletes a pass on the "e"."""
+    import inspect
+    import types
+    guard = inspect.getsource(gui.ScannerGui._typing)
+    for widget in ("tk.Entry", "ttk.Entry", "tk.Text", "tk.Spinbox",
+                   "ttk.Spinbox", "ttk.Combobox"):
+        assert widget in guard, widget
+
+    ran = []
+    stub = types.SimpleNamespace(_typing=lambda: True)
+    handler = gui.ScannerGui._runner(stub, lambda: ran.append(1))
+    assert handler(None) is None and ran == []
+    stub._typing = lambda: False
+    assert handler(None) == "break" and ran == [1]
+
+
+def test_rebinding_takes_the_old_key_off_the_window():
+    """Otherwise the old sequence keeps firing beside the new one, and a key
+    the operator deliberately moved still does the thing they moved it from."""
+    import inspect
+    for owner in (gui.ScannerGui._bind_shortcuts, gui._ContactSheet.rebind,
+                  gui._FrameAdjuster.rebind):
+        source = inspect.getsource(owner)
+        assert "unbind(sequence)" in source
+        assert "self._bound = []" in source
+
+
+def test_keys_are_bound_on_the_window_and_not_on_everything():
+    """A widget's bindtags run widget, class, toplevel, all -- so a binding on
+    the window catches a key pressed anywhere in it and only in it. With
+    `bind_all`, `r` in the contact sheet would rotate the preview underneath
+    it as well."""
+    import inspect
+    # The call, not the word: the docstring explains why bind_all is wrong.
+    for owner in (gui.ScannerGui._bind_shortcuts, gui._ContactSheet.rebind,
+                  gui._FrameAdjuster.rebind):
+        source = inspect.getsource(owner)
+        assert ".bind_all(" not in source, owner.__qualname__
+    assert "self.root.bind(" in inspect.getsource(gui.ScannerGui._bind_shortcuts)
+    assert "self.top.bind(" in inspect.getsource(gui._ContactSheet.rebind)
+    assert "self.top.bind(" in inspect.getsource(gui._FrameAdjuster.rebind)
+
+
+def test_only_the_changed_keys_reach_the_settings_file():
+    import inspect
+    source = inspect.getsource(gui.ScannerGui.set_keys)
+    assert "shortcuts.overrides_from(self.keys)" in source
+    assert "shortcuts" in inspect.getsource(gui.ScannerGui._remember)
+    assert "shortcuts.resolve(" in inspect.getsource(gui.ScannerGui._restore)
+
+
+def test_the_settings_file_has_somewhere_to_put_them():
+    from rps7200 import settings
+    assert "shortcuts" in settings.SECTIONS
+
+
+# -- what the contact sheet's keys move --------------------------------------
+
+
+def test_the_sheet_knows_which_cell_the_keyboard_is_on():
+    """It had no notion of "this one" at all before there were keys: a click
+    ticked a picture and nothing was current, so there was nothing for an
+    arrow to move."""
+    import inspect
+    assert "self.selected = 0" in inspect.getsource(gui._ContactSheet.__init__)
+    move = inspect.getsource(gui._ContactSheet._move)
+    assert "self._select(" in move
+
+
+def test_selection_and_ticking_are_shown_as_two_different_things():
+    """A cell can be selected and not scanned, or scanned and not selected."""
+    import inspect
+    paint = inspect.getsource(gui._ContactSheet._paint_rings)
+    assert "background=colour" in paint, "the ring colour says whether it scans"
+    assert "highlightbackground=" in paint, "the outline says where the keyboard is"
+    assert gui._ContactSheet.SELECTED not in (gui._ContactSheet.CHOSEN,
+                                              gui._ContactSheet.SKIPPED)
+
+
+def test_moving_the_selection_does_not_make_the_grid_jump():
+    """The outline is always there and only changes colour, so every cell
+    keeps the same size whether it is selected or not."""
+    import inspect
+    paint = inspect.getsource(gui._ContactSheet._paint_rings)
+    assert "highlightthickness=2" in paint
+    assert "highlightthickness=0" not in paint
+
+
+def test_the_sheet_scrolls_only_as_far_as_it_has_to():
+    """The same rule the filmstrip follows: a sheet that jumped somewhere on
+    every keypress would lose the operator's place rather than keep it."""
+    import inspect
+    source = inspect.getsource(gui._ContactSheet._scroll_to)
+    assert "if total <= height:" in source and "return" in source
+    assert "yview_moveto" in source
+
+
+# -- the frame position window -----------------------------------------------
+
+
+def test_return_keeps_the_frame_and_moves_on():
+    """The offset is already recorded as the picture is dragged, so there is
+    nothing here to save. What Return does is say yes: tick it for scanning,
+    and show the next one."""
+    import inspect
+    source = inspect.getsource(gui._FrameAdjuster._accept)
+    assert source.index("self.v_tick.set(True)") < source.index("self._go(1)")
+    assert "self._tick_changed()" in source
+
+
+def test_the_last_frame_closes_the_window_rather_than_sitting_there():
+    """There is nowhere further to go, and leaving it open invites a press
+    that does nothing."""
+    import inspect
+    source = inspect.getsource(gui._FrameAdjuster._accept)
+    assert "self.index >= len(self.sheet.frames) - 1" in source
+    assert "self.top.destroy()" in source
