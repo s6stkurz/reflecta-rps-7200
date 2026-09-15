@@ -1735,11 +1735,27 @@ def test_an_item_with_no_key_shows_nothing_rather_than_a_dash():
     column reads as a key you cannot make out rather than as the absence of
     one -- the editor is the place that has to say "no key"."""
     import types
-    stub = types.SimpleNamespace(keys={"flip": "", "rotate_right": "<Key-r>"})
+    stub = types.SimpleNamespace(
+        keys={"flip": "", "rotate_right": f"<{shortcuts.ACCEL}-Key-r>"})
     assert gui.ScannerGui.accelerator(stub, "flip") == ""
     assert gui.ScannerGui.accelerator(stub, "missing_entirely") == ""
     assert gui.ScannerGui.accelerator(stub, "rotate_right") == \
-        shortcuts.describe("<Key-r>")
+        shortcuts.accelerator_text(f"<{shortcuts.ACCEL}-Key-r>")
+
+
+def test_a_menu_gets_the_form_tk_parses_not_the_one_a_person_reads():
+    """Tk parses the accelerator itself, looking for modifier names, and draws
+    the glyphs. Given "⌘R" it finds no name it knows, takes the whole string
+    as a key equivalent and draws the first character only -- which put a lone
+    ⌘ in the menu with no letter beside it."""
+    import types
+    stub = types.SimpleNamespace(keys={"r": f"<{shortcuts.ACCEL}-Key-r>"})
+    shown = gui.ScannerGui.accelerator(stub, "r")
+    assert shortcuts.ACCEL in shown, shown
+    assert "R" in shown, shown
+    assert "\u2318" not in shown, "a glyph here is the bug this fixes"
+    # And the editor, which draws its own label, keeps the readable form.
+    assert "\u2318" in shortcuts.describe("<Command-Key-r>")
 
 
 def test_the_menu_shows_the_key_as_it_is_now_not_as_it_shipped():

@@ -285,6 +285,63 @@ _KEY_SHOWN = {
 }
 
 
+#: What Tk's own accelerator parser calls the keys that are not characters.
+#: It matches these names and draws the glyph itself; a name it does not know
+#: becomes the key equivalent verbatim and only its first character is drawn.
+_TK_KEY_NAMES = {
+    "Left": "Left", "Right": "Right", "Up": "Up", "Down": "Down",
+    "Home": "Home", "End": "End", "Prior": "PageUp", "Next": "PageDown",
+    "Return": "Return", "KP_Enter": "Enter", "space": "Space",
+    "BackSpace": "Backspace", "Delete": "Delete", "Escape": "Escape",
+    "Tab": "Tab",
+}
+
+#: Keysyms that name a character. Written as the character, because that is
+#: what the menu should show and what Tk wants as the key equivalent.
+_TK_KEY_CHARS = {
+    "comma": ",", "period": ".", "minus": "-", "equal": "=", "plus": "+",
+    "slash": "/", "backslash": "\\", "bracketleft": "[", "bracketright": "]",
+    "semicolon": ";", "apostrophe": "'", "grave": "`",
+}
+
+
+def accelerator_text(sequence: str) -> str:
+    """The same key in the form a Tk menu wants beside an item. "" for none.
+
+    **Not** :func:`describe`, and the difference is not cosmetic. Tk parses
+    this string itself: it looks for modifier *names* -- Command, Shift,
+    Option, Control -- and for a key it recognises, and then draws the glyphs.
+    Handing it a string that already holds ⌘ leaves it with no name it knows
+    and a key equivalent several characters long, and it draws the first
+    character and stops. The menu showed a lone ⌘ with no letter beside it.
+
+    Joined with "-", which is the form Tk's own documentation uses. The one
+    exception is the minus key itself, where that separator is also the key
+    and "Command--" has no unambiguous reading; Tk splits on "+" as well, so
+    that one is written "Command+-".
+    """
+    if not sequence:
+        return ""
+    parts = sequence.strip("<>").split("-")
+    key = parts[-1]
+    modifiers = [p for p in parts[:-1] if p != "Key"]
+    # A capital letter carries its own Shift in the sequence; Tk needs it
+    # named, or the glyph is missing from a shortcut that does need it held.
+    if len(key) == 1 and key.isalpha() and key.isupper() and "Shift" not in modifiers:
+        modifiers.append("Shift")
+    name = _TK_KEY_NAMES.get(key) or _TK_KEY_CHARS.get(key) or (
+        key.upper() if len(key) == 1 else key)
+    # Control, Option, Shift, Command: the order the glyphs are read in.
+    order = {"Control": 0, "Option": 1, "Alt": 1, "Shift": 2, "Command": 3}
+    modifiers.sort(key=lambda m: order.get(m, 9))
+    if sys.platform != "darwin":
+        # Everywhere else Tk prints the string as it is given, so it has to be
+        # the finished thing rather than something to be parsed.
+        modifiers = ["Ctrl" if m == "Control" else m for m in modifiers]
+    separator = "+" if name == "-" else "-"
+    return separator.join([*modifiers, name])
+
+
 def describe(sequence: str) -> str:
     """A sequence as it should read in the editor. "" for unbound."""
     if not sequence:

@@ -4,6 +4,8 @@ Pure: no Tk, no window. What is checked here is that the table is coherent --
 every action reachable, no two fighting over a key in the same window -- and the
 one rule that is not a matter of taste: **no key drives the scanner**.
 """
+import sys
+
 import pytest
 
 from rps7200 import shortcuts
@@ -191,3 +193,49 @@ def test_the_same_picture_operation_is_the_same_key_in_both_windows():
 def test_only_a_real_modifier_makes_a_key_unmistakable(sequence, modified):
     """Which decides whether it may fire while a text field has the focus."""
     assert shortcuts.is_modified(sequence) is modified
+
+
+# -- what a Tk menu wants beside an item -------------------------------------
+
+
+@pytest.mark.parametrize("sequence, expected", [
+    ("<Command-Key-r>", "Command-R"),
+    ("<Command-Key-R>", "Shift-Command-R"),
+    ("<Control-Key-s>", "Control-S" if sys.platform == "darwin" else "Ctrl-S"),
+    ("<Command-BackSpace>", "Command-Backspace"),
+    ("<Left>", "Left"),
+    ("<Shift-Left>", "Shift-Left"),
+    ("<space>", "Space"),
+    ("<Return>", "Return"),
+    ("<Command-Key-comma>", "Command-,"),
+    ("", ""),
+])
+def test_the_menu_form_is_what_tk_can_parse(sequence, expected):
+    """Tk looks for modifier names and a key it knows, then draws the glyphs
+    itself. A name it does not recognise becomes the key equivalent verbatim
+    and only its first character is drawn."""
+    assert shortcuts.accelerator_text(sequence) == expected
+
+
+def test_the_menu_form_never_contains_a_glyph():
+    """Which is the bug: given ⌘R, Tk found no modifier name, took the whole
+    string as a one-character key equivalent, and drew a lone ⌘."""
+    for action in shortcuts.ACTIONS:
+        shown = shortcuts.accelerator_text(action.default)
+        for glyph in "⌘⌃⌥⇧←→↑↓↩⌫−":
+            assert glyph not in shown, f"{action.id}: {shown}"
+
+
+def test_the_minus_key_is_not_mistaken_for_a_separator():
+    """Everything else uses "-", the form Tk's own documentation uses. The
+    minus key cannot: it is the separator as well, and "Command--" has no
+    unambiguous reading. Tk splits on "+" too, so that one alone uses it."""
+    assert shortcuts.accelerator_text("<Command-Key-minus>") == "Command+-"
+    assert shortcuts.accelerator_text("<Command-Key-equal>") == "Command-="
+
+
+def test_the_editor_still_shows_the_readable_form():
+    """Two forms on purpose: the editor draws its own label and should read
+    the way the keyboard does."""
+    assert "⌘" in shortcuts.describe("<Command-Key-r>")
+    assert "⌘" not in shortcuts.accelerator_text("<Command-Key-r>")

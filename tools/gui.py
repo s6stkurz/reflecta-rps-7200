@@ -2216,7 +2216,13 @@ class ScannerGui:
         return "break"
 
     def accelerator(self, action_id: str) -> str:
-        """This action's key, as it should read beside a menu item.
+        """This action's key, in the form a Tk menu wants beside an item.
+
+        `accelerator_text`, not `describe`: Tk parses what it is given and
+        draws the glyphs itself, so it wants "Command+R" and not "⌘R". Given
+        the second it finds no modifier name it knows, takes the whole string
+        as a key equivalent, and draws the first character only -- which is
+        what put a lone ⌘ in the menu with no letter beside it.
 
         Empty rather than a dash when there is no key: a menu is a list of
         things you can do, and an em dash in the accelerator column reads as a
@@ -2226,8 +2232,7 @@ class ScannerGui:
         Read fresh every time a menu is filled, so a rebind shows up on the
         next right-click without anything having to be told about it.
         """
-        sequence = self.keys.get(action_id, "")
-        return shortcuts.describe(sequence) if sequence else ""
+        return shortcuts.accelerator_text(self.keys.get(action_id, ""))
 
     def _fill_result_menu(self, target) -> None:
         """Everything that can be done to one pass, on `self.menu`.
