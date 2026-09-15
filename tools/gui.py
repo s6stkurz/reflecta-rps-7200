@@ -2204,29 +2204,55 @@ class ScannerGui:
         self.menu.tk_popup(event.x_root, event.y_root)
         return "break"
 
+    def accelerator(self, action_id: str) -> str:
+        """This action's key, as it should read beside a menu item.
+
+        Empty rather than a dash when there is no key: a menu is a list of
+        things you can do, and an em dash in the accelerator column reads as a
+        key you cannot make out rather than as the absence of one. The editor
+        is the place that has to show "no key", and it does.
+
+        Read fresh every time a menu is filled, so a rebind shows up on the
+        next right-click without anything having to be told about it.
+        """
+        sequence = self.keys.get(action_id, "")
+        return shortcuts.describe(sequence) if sequence else ""
+
     def _fill_result_menu(self, target) -> None:
-        """Everything that can be done to one pass, on `self.menu`."""
+        """Everything that can be done to one pass, on `self.menu`.
+
+        Each item carries its key. The menu is how anybody finds out these
+        exist -- nobody reads a shortcut list first -- so an item without its
+        key on it is a key nobody will ever learn.
+        """
         self.menu.delete(0, "end")
         self.menu.add_command(label="Save as ...",
+                              accelerator=self.accelerator("save_as"),
                               command=lambda r=target: self.on_save_as(r))
-        for label, degrees in (("Rotate right 90\u00b0", 90),
-                               ("Rotate left 90\u00b0", 270),
-                               ("Rotate 180\u00b0", 180)):
+        for label, degrees, action_id in (
+                ("Rotate right 90\u00b0", 90, "rotate_right"),
+                ("Rotate left 90\u00b0", 270, "rotate_left"),
+                ("Rotate 180\u00b0", 180, "rotate_180")):
             self.menu.add_command(
-                label=label, command=lambda r=target, d=degrees: self.on_rotate(r, d))
+                label=label, accelerator=self.accelerator(action_id),
+                command=lambda r=target, d=degrees: self.on_rotate(r, d))
         if target.rotation:
             self.menu.add_command(
                 label=f"Straighten (now {target.rotation}\u00b0)",
+                accelerator=self.accelerator("straighten"),
                 command=lambda r=target: self.on_rotate(r, -r.rotation))
         self.menu.add_command(
             label="Unflip" if target.flipped else "Flip left-right",
+            accelerator=self.accelerator("flip"),
             command=lambda r=target: self.on_flip(r))
         if target.supersedes:
             self.menu.add_separator()
             self.menu.add_command(label="Show prescan",
+                                  accelerator=self.accelerator("show_prescan"),
                                   command=lambda r=target: self.on_show_prescan(r))
         self.menu.add_separator()
         self.menu.add_command(label="Delete",
+                              accelerator=self.accelerator("delete_pass"),
                               command=lambda r=target: self.on_delete(r))
 
     def on_save_as(self, result) -> None:
@@ -4063,6 +4089,8 @@ class _ContactSheet:
             "sheet_none": lambda: self._set_all(False),
             "sheet_rotate_right": lambda: self._on_selected(self._rotate, 90),
             "sheet_rotate_left": lambda: self._on_selected(self._rotate, 270),
+            "sheet_rotate_180": lambda: self._on_selected(self._rotate, 180),
+            "sheet_straighten": lambda: self._on_selected(self._straighten),
             "sheet_flip": lambda: self._on_selected(self._flip),
             "sheet_show": self._show_selected,
             "sheet_close": self.top.destroy,
@@ -4206,22 +4234,34 @@ class _ContactSheet:
     # -- arranging ---------------------------------------------------------
 
     def on_cell_menu(self, event: tk.Event, index: int) -> str:
-        """What can be done to one frame without leaving the sheet."""
+        """What can be done to one frame without leaving the sheet.
+
+        Right-clicking selects the cell first. Without that the menu would
+        offer "Rotate right, R" over one frame while R turned a different one
+        -- the key acts on the selection and the menu on what was clicked, and
+        the two saying different things about the same item is worse than
+        either alone.
+        """
+        self._select(index)
         result = self.frames[index]
         number = result.number
+        key = self.gui.accelerator
         self.menu.delete(0, "end")
-        for label, degrees in (("Rotate right 90°", 90),
-                               ("Rotate left 90°", 270),
-                               ("Rotate 180°", 180)):
+        for label, degrees, action_id in (
+                ("Rotate right 90°", 90, "sheet_rotate_right"),
+                ("Rotate left 90°", 270, "sheet_rotate_left"),
+                ("Rotate 180°", 180, "sheet_rotate_180")):
             self.menu.add_command(
-                label=label,
+                label=label, accelerator=key(action_id),
                 command=lambda n=number, d=degrees: self._rotate(n, d))
         if result.rotation:
             self.menu.add_command(
                 label=f"Straighten (now {result.rotation}°)",
-                command=lambda n=number, r=result: self._rotate(n, -r.rotation))
+                accelerator=key("sheet_straighten"),
+                command=lambda n=number: self._straighten(n))
         self.menu.add_command(
             label="Unflip" if result.flipped else "Flip left-right",
+            accelerator=key("sheet_flip"),
             command=lambda n=number: self._flip(n))
         self.menu.add_separator()
         self.menu.add_command(
@@ -4237,11 +4277,12 @@ class _ContactSheet:
         self.menu.add_separator()
         self.menu.add_checkbutton(
             label="Scan this frame", variable=self.ticks[number],
-            command=self._changed)
+            accelerator=key("sheet_toggle"), command=self._changed)
         self.menu.add_command(label="Set position ...",
+                              accelerator=key("sheet_adjust"),
                               command=lambda i=index: self.adjust(i))
         self.menu.add_command(
-            label="Show in preview",
+            label="Show in preview", accelerator=key("sheet_show"),
             command=lambda s=result.seq: self.gui._show_seq(s))
         self.menu.tk_popup(event.x_root, event.y_root)
         return "break"
@@ -4280,6 +4321,12 @@ class _ContactSheet:
     def _rotate(self, number: int, degrees: int) -> None:
         """Turn one frame. The others keep whatever they were."""
         self._one(number, degrees=degrees)
+
+    def _straighten(self, number: int) -> None:
+        """Take this frame's turn off, leaving any mirror alone."""
+        result = self._find(number)
+        if result is not None and result.rotation:
+            self._one(number, degrees=-result.rotation)
 
     def _flip(self, number: int) -> None:
         """Mirror one frame, or put it back. The others keep what they were."""

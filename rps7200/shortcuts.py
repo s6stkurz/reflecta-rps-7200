@@ -87,6 +87,8 @@ ACTIONS: tuple[Action, ...] = (
     Action("sheet_none", "sheet", "Scan none of them", "<Key-n>"),
     Action("sheet_rotate_right", "sheet", "Rotate this frame right", "<Key-r>"),
     Action("sheet_rotate_left", "sheet", "Rotate this frame left", "<Key-R>"),
+    Action("sheet_rotate_180", "sheet", "Rotate this frame 180°", "<Key-u>"),
+    Action("sheet_straighten", "sheet", "Straighten this frame", "<Key-0>"),
     Action("sheet_flip", "sheet", "Flip this frame", "<Key-m>"),
     Action("sheet_show", "sheet", "Show this frame in the preview", "<Key-p>"),
     Action("sheet_close", "sheet", "Close the sheet", "<Escape>"),

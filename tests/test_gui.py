@@ -1689,3 +1689,60 @@ def test_the_last_frame_closes_the_window_rather_than_sitting_there():
     source = inspect.getsource(gui._FrameAdjuster._accept)
     assert "self.index >= len(self.sheet.frames) - 1" in source
     assert "self.top.destroy()" in source
+
+
+def test_every_menu_item_that_has_a_key_shows_it():
+    """The menu is how anybody finds out a key exists -- nobody reads a
+    shortcut list first -- so an item without its key on it is a key nobody
+    will ever learn."""
+    import inspect
+    preview_menu = inspect.getsource(gui.ScannerGui._fill_result_menu)
+    for action_id in ("save_as", "rotate_right", "rotate_left", "rotate_180",
+                      "straighten", "flip", "show_prescan", "delete_pass"):
+        assert f'accelerator=self.accelerator("{action_id}")' in preview_menu \
+            or f'"{action_id}"' in preview_menu, action_id
+
+    cell_menu = inspect.getsource(gui._ContactSheet.on_cell_menu)
+    for action_id in ("sheet_rotate_right", "sheet_rotate_left",
+                      "sheet_rotate_180", "sheet_straighten", "sheet_flip",
+                      "sheet_toggle", "sheet_adjust", "sheet_show"):
+        assert action_id in cell_menu, action_id
+
+
+def test_an_item_with_no_key_shows_nothing_rather_than_a_dash():
+    """A menu is a list of things you can do. An em dash in the accelerator
+    column reads as a key you cannot make out rather than as the absence of
+    one -- the editor is the place that has to say "no key"."""
+    import types
+    stub = types.SimpleNamespace(keys={"flip": "", "rotate_right": "<Key-r>"})
+    assert gui.ScannerGui.accelerator(stub, "flip") == ""
+    assert gui.ScannerGui.accelerator(stub, "missing_entirely") == ""
+    assert gui.ScannerGui.accelerator(stub, "rotate_right") == \
+        shortcuts.describe("<Key-r>")
+
+
+def test_the_menu_shows_the_key_as_it_is_now_not_as_it_shipped():
+    """A rebind has to reach the menu, and the menu is rebuilt on every
+    right-click -- so it reads `self.keys` rather than the defaults."""
+    import inspect
+    assert "self.keys.get(action_id" in inspect.getsource(
+        gui.ScannerGui.accelerator)
+
+
+def test_right_clicking_a_cell_selects_it_first():
+    """Otherwise the menu offers "Rotate right, R" over one frame while R
+    turns a different one: the key acts on the selection and the menu on what
+    was clicked, and the two disagreeing about the same item is worse than
+    either alone."""
+    import inspect
+    source = inspect.getsource(gui._ContactSheet.on_cell_menu)
+    assert source.index("self._select(index)") < source.index("self.menu.delete")
+
+
+def test_the_sheet_offers_the_same_turns_the_window_does():
+    """A frame that can be turned 180° or straightened from the filmstrip and
+    not from the sheet is a gap with no reason behind it."""
+    sheet = {a.id for a in shortcuts.ACTIONS if a.scope == "sheet"}
+    for what in ("rotate_right", "rotate_left", "rotate_180", "straighten",
+                 "flip"):
+        assert f"sheet_{what}" in sheet, what

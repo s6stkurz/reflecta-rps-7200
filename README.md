@@ -227,9 +227,11 @@ the channels. In the contact sheet the arrows move between frames, Space ticks
 one and Return opens it to set where the film sits -- and in that window the
 arrows move the film a hardware step at a time and Return keeps the frame and
 goes to the next, which is the whole job it exists for, done without reaching
-for the mouse. **Shortcuts ...** in the top bar lists every one of them: click a
-key to change it, × to clear it, ↺ to put it back, and Restore all defaults at
-the foot. Only what you changed is written to `gui-settings.json`, so a default
+for the mouse. Every right-click menu carries its
+key beside the item, which is where anybody actually finds out these exist, and
+it shows the key as it is now rather than as it shipped. **Shortcuts ...** in
+the top bar lists every one of them: click a key to change it, × to clear it, ↺
+to put it back, and Restore all defaults at the foot. Only what you changed is written to `gui-settings.json`, so a default
 improved later still reaches you.
 
 **No shortcut touches the scanner.** Nothing scans, calibrates or moves film
