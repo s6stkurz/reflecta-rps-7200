@@ -13,8 +13,10 @@ window is for your eyes only and never reaches disk.
 
 The output folder can be set to TIFF or JPEG. That is a container choice and not
 a picture one: a JPEG holds the same negative at eight bits, uninverted, which
-is why it looks orange. It cannot carry the infrared plane, so the window says
-so per scan, and a roll's own files under `rolls/` stay TIFF regardless.
+is why it looks orange. A JPEG has no room for the infrared plane, so an RGBI
+scan delivered that way leaves a DNG beside it holding all four channels -- that
+is the file to open for dust removal -- and a roll's own files under `rolls/`
+stay TIFF regardless.
 
 Opening the window claims the device and asks it who it is, and does nothing
 else. Nothing moves the mechanism until a button is pressed.
@@ -2796,9 +2798,9 @@ def output_note(fmt: str) -> str:
     if fmt == "jpeg":
         return ("A JPEG of every scan is written here as it lands, on top of "
                 "the library entry. It is the same picture as the TIFF at 8 "
-                "bits -- still a negative -- and it cannot carry the infrared "
-                "plane. A roll's own files stay TIFF. Leave empty for the "
-                "library only.")
+                "bits -- still a negative. An infrared scan leaves a DNG "
+                "beside it holding the plane a JPEG has no room for. A roll's "
+                "own files stay TIFF. Leave empty for the library only.")
     return ("A TIFF of every scan is written here as it lands, on top of the "
             "library entry. Leave empty for the library only.")
 

@@ -108,3 +108,32 @@ def test_any_depth_still_writes_everything(tmp_path, depth):
         writer.submit(**job(n, tmp_path / f"frame{n:02d}.tif"))
     writer.finish()
     assert [n for n, _ in writer.done] == [1, 2, 3, 4]
+
+
+def test_a_jpeg_frame_leaves_its_infrared_beside_it_and_the_roll_keeps_tiff(tmp_path):
+    """The two destinations of one frame, written in the same call.
+
+    `_write` picks the format from each filename, so a roll's own `rolls/...tif`
+    and an output folder set to JPEG are written side by side without the writer
+    knowing the setting. The infrared plane follows the JPEG into a DNG and does
+    not follow the TIFF anywhere -- a four-sample TIFF already carries it.
+    """
+    rolls = tmp_path / "rolls"
+    out = tmp_path / "out"
+    rgbi = np.zeros((8, 8, 4), np.uint16)
+    rgbi[..., 3] = 4242                                  # a plane worth finding again
+
+    writer = scan_roll.FrameWriter()
+    writer.submit(**dict(job(1, None, image=rgbi),
+                         paths=[rolls / "frame01.tif", out / "frame01_ir.jpg"]))
+    writer.finish()
+
+    assert not writer.errors
+    assert sorted(p.name for p in rolls.iterdir()) == ["frame01.tif"]
+    assert sorted(p.name for p in out.iterdir()) == ["frame01_ir.dng", "frame01_ir.jpg"]
+
+    from rps7200 import tiff
+    kept = tiff.read(str(out / "frame01_ir.dng"))
+    assert kept.shape[2] == 4
+    assert (kept[..., 3] == 4242).all(), "the plane, at full depth, not the picture"
+    assert any("frame01_ir.dng" in n for n in writer.notes), "the operator is told"
