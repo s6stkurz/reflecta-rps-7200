@@ -1094,13 +1094,39 @@ class ReversingScanner(FakeScanner):
         self.calls.append(("prescan", resolution, keep_raw))
         return self._truth[::2, ::2].copy(), None
 
+    def _reversed(self):
+        from rps7200 import preview
+        return np.ascontiguousarray(preview.orient(self._truth, *self._reversal))
+
     def scan(self, resolution=1800, infrared=True, **kw):
         self.calls.append(("scan", resolution, infrared, kw.get("auto_exposure")))
-        from rps7200 import preview
-        image = np.ascontiguousarray(preview.orient(self._truth, *self._reversal))
+        image = self._reversed()
         return image, {"resolution_dpi": resolution, "channels": 3,
                        "channel_order": list("RGB"), "width": image.shape[1],
                        "height": image.shape[0], "depth": 16}
+
+    def scan_roll(self, frames=None, resolution=1800, infrared=True,
+                  dry_run=False, skip=0, only=None, **kw):
+        """A roll of the same picture, with each frame's own prescan beside it.
+
+        `FakeScanner` yields an unrelated random prescan per frame, which is
+        fine for every other test and useless here: with no honest reference
+        the detector abstains, correctly, and the test would be measuring
+        nothing.
+        """
+        self.calls.append(("roll", frames, resolution, dry_run, skip))
+        self.only = only
+        image, meta = self.scan(resolution=resolution, infrared=infrared)
+        for i in range(frames or self._frames):
+            if only is not None and skip + i not in only:
+                continue
+            self.produced += 1
+            yield RollFrame(
+                index=skip + i, position=skip + i,
+                image=None if dry_run else image, meta={} if dry_run else meta,
+                prescan=self._truth[::2, ::2].copy(),
+                registration={},
+            )
 
 
 def _delivered(out):
@@ -1219,3 +1245,61 @@ def test_a_prescan_of_a_different_picture_is_never_used_to_judge_a_scan(tmp_path
     assert s._prescan_here() is None, "the film has moved; it is a different one"
     s._last_prescan = None
     assert s._prescan_here() is None, "and nothing at all is not a reference"
+
+
+def test_the_correction_reaches_every_file_that_leaves_here(tmp_path):
+    """The reversal is recorded in the meta so the library entry can stay
+    exactly what the scanner sent. That is bookkeeping, not restraint: every
+    file delivered to the operator is turned by it, whatever container it is
+    written in and wherever it is written to."""
+    from PIL import Image
+
+    from rps7200 import preview, tiff
+    for fmt, suffix in (("tiff", ".tif"), ("jpeg", ".jpg")):
+        out = tmp_path / fmt
+        scanner = ReversingScanner(reversal=(180, False))
+        s = ScanSession(root=str(tmp_path / f"lib-{fmt}"),
+                        rolls=str(tmp_path / f"r-{fmt}"), out_dir=str(out),
+                        open_scanner=lambda sc=scanner: sc, verbose=False)
+        s.out_format = fmt
+        s.start()
+        s.submit(Prescan(resolution=300))
+        s.submit(Scan(resolution=600, infrared=False))
+        s.shutdown()
+        s.join(timeout=20)
+
+        written = [p for p in out.glob(f"*{suffix}")]
+        assert len(written) == 1, written
+        right_way_up = scanner._truth
+        as_it_arrived = preview.orient(right_way_up, 180)
+        if fmt == "tiff":
+            assert np.array_equal(tiff.read(str(written[0])), right_way_up)
+        else:
+            shown = np.asarray(Image.open(written[0]))[..., 0].astype(float)
+
+            def like(other):
+                a = shown - shown.mean()
+                b = (other[..., 0] >> 8).astype(float)
+                b = b - b.mean()
+                return float((a * b).sum()
+                             / np.sqrt((a * a).sum() * (b * b).sum()))
+
+            assert like(right_way_up) > 0.99
+            assert like(as_it_arrived) < 0.5, "and it is not the way it came"
+
+
+def test_a_reversed_roll_frame_is_turned_in_the_rolls_own_file(tmp_path):
+    """`rolls/<name>/frameNN.tif` is a delivered file too, and a roll has the
+    prescan of each frame right beside it to judge against."""
+    from rps7200 import preview, tiff
+    scanner = ReversingScanner(reversal=(0, True))
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, resolution=600, infrared=False, name="strip"))
+    s.shutdown()
+    s.join(timeout=25)
+
+    written = tiff.read(str(tmp_path / "r" / "strip" / "frame01.tif"))
+    assert np.array_equal(written, scanner._truth)
+    assert not np.array_equal(written, preview.mirror(scanner._truth))

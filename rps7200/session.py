@@ -763,11 +763,15 @@ class ScanSession:
     def _note_reversal(self, meta, image, reference):
         """Record any half turn this pass needs to read like its prescan.
 
-        Written into the meta rather than applied to the pixels: the entry
-        holds what the scanner sent, and how a delivered file was arranged is
-        something its record says. `_file` and the window both read it from
-        here, so the picture on screen and the file on disk cannot end up
-        disagreeing about which way up a photograph is.
+        Written into the meta rather than applied to the pixels here, which is
+        bookkeeping and not restraint: **every file that leaves is turned by
+        it**, TIFF and JPEG alike, the output folder's copy and a roll's own
+        `frameNN.tif`. What the meta buys is that the library entry can go on
+        holding exactly what the scanner sent, with its record saying how the
+        delivered file was arranged -- the same split a rotation already has.
+        `_file` and the window both read it from here, so the picture on
+        screen and the file on disk cannot end up disagreeing about which way
+        up a photograph is.
         """
         if not self.match_prescan or reference is None:
             return meta
