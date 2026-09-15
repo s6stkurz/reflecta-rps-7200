@@ -29,7 +29,7 @@ PATH_ENV = "RPS7200_SETTINGS"
 #: The shape, and what an empty file means. Anything not listed is dropped on
 #: load: a key that no longer exists in the window should not survive in the
 #: file for ever.
-SECTIONS = ("controls", "film", "output", "window", "presets")
+SECTIONS = ("controls", "film", "output", "window", "presets", "shortcuts")
 
 
 def path(where: str | Path | None = None) -> Path:

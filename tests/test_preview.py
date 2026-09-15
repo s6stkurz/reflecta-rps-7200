@@ -462,3 +462,77 @@ def test_the_two_top_end_numbers_are_different_questions():
 def test_full_scale_knows_the_two_kinds_of_pixel():
     assert preview.full_scale(np.dtype(np.uint8)) == 255
     assert preview.full_scale(np.dtype(np.uint16)) == 65535
+
+
+# -- arranging a picture: a turn and a mirror together -----------------------
+
+
+def _numbered(h=5, w=7):
+    """A picture where every pixel says which one it is."""
+    return np.arange(h * w).reshape(h, w)
+
+
+@pytest.mark.parametrize("degrees", [0, 90, 180, 270])
+@pytest.mark.parametrize("flipped", [False, True])
+def test_unorient_undoes_orient_exactly(degrees, flipped):
+    """A scan is a measurement: arranging one and putting it back has to give
+    the same numbers, or the file written is not the file that was read."""
+    src = _numbered()
+    out = preview.orient(src, degrees, flipped)
+    assert np.array_equal(preview.unorient(out, degrees, flipped), src)
+
+
+@pytest.mark.parametrize("degrees", [0, 90, 180, 270])
+@pytest.mark.parametrize("flipped", [False, True])
+def test_every_point_of_an_arranged_view_maps_back_to_its_own_pixel(degrees,
+                                                                    flipped):
+    """This is the one that is not cosmetic. The transport moves along the
+    scanner's own x axis however the picture is arranged on screen, so a click
+    has to come back through both steps before it means a distance -- and a
+    mirrored prescan whose click was only un-rotated sends the film the wrong
+    way."""
+    src = _numbered()
+    out = preview.orient(src, degrees, flipped)
+    for y in range(out.shape[0]):
+        for x in range(out.shape[1]):
+            fx, fy = preview.unorient_point(x, y, out.shape, degrees, flipped)
+            assert src[int(round(fy)), int(round(fx))] == out[y, x], (x, y)
+
+
+def test_a_mirror_and_a_quarter_turn_do_not_commute():
+    """Which is the whole reason `orient` exists rather than each caller doing
+    both steps: two call sites that disagree about the order produce two
+    different pictures from the same two numbers, 180 degrees apart -- and one
+    of them would be the preview while the other was the file written from it.
+    """
+    src = _numbered()
+    mirror_then_turn = preview.rotate(preview.mirror(src), 90)
+    turn_then_mirror = preview.mirror(preview.rotate(src, 90))
+    assert not np.array_equal(mirror_then_turn, turn_then_mirror)
+    assert np.array_equal(mirror_then_turn,
+                          preview.rotate(turn_then_mirror, 180))
+    # `orient` is the first of the two, everywhere.
+    assert np.array_equal(preview.orient(src, 90, True), mirror_then_turn)
+
+
+def test_a_mirror_keeps_every_pixel():
+    """Lossless, like a quarter turn. A scan that invents pixels is not the
+    same file any more."""
+    src = _numbered()
+    assert sorted(preview.mirror(src).ravel()) == sorted(src.ravel())
+    assert np.array_equal(preview.mirror(preview.mirror(src)), src)
+
+
+def test_a_mirror_does_not_change_the_shape():
+    """Unlike a quarter turn -- which is why the aspect check beside the zoom
+    asks about the rotation alone."""
+    src = _numbered(5, 7)
+    assert preview.mirror(src).shape == src.shape
+    assert preview.orient(src, 0, True).shape == src.shape
+    assert preview.orient(src, 90, True).shape == (7, 5)
+
+
+def test_arranging_nothing_returns_the_array_untouched():
+    """The common case, and it should cost nothing."""
+    src = _numbered()
+    assert preview.orient(src, 0, False) is src

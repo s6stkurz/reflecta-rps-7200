@@ -95,6 +95,88 @@ def unrotate_point(
     raise ValueError(f"{degrees} is not a quarter turn; expected {ROTATIONS}")
 
 
+def mirror(image: np.ndarray) -> np.ndarray:
+    """`image` reflected left to right.
+
+    Lossless, like `rotate`: every pixel survives, differently arranged. It is
+    a real operation on film rather than a cosmetic one -- a strip loaded
+    emulsion-side up comes off this scanner reading backwards, and no amount
+    of turning fixes that.
+    """
+    return np.flip(image, axis=1)
+
+
+def orient(image: np.ndarray, degrees: int = 0, flipped: bool = False) -> np.ndarray:
+    """`image` mirrored left-right if asked, and then turned.
+
+    **The order lives here and nowhere else**, which is the whole reason this
+    exists rather than each caller doing both steps. A mirror and a quarter
+    turn do not commute: mirror-then-turn and turn-then-mirror differ by 180
+    degrees, so two call sites that disagree about which comes first produce
+    two different pictures from the same two numbers -- and one of them would
+    be the preview while the other was the file written from it.
+    """
+    return rotate(mirror(image) if flipped else image, degrees)
+
+
+def unorient(image: np.ndarray, degrees: int = 0, flipped: bool = False) -> np.ndarray:
+    """The inverse of `orient`: a written picture read back as the film sat.
+
+    Undone in the opposite order, which is what makes it an inverse rather
+    than a second orientation that happens to agree when one of the two is
+    absent.
+    """
+    turned = rotate(image, -degrees)
+    return mirror(turned) if flipped else turned
+
+
+def compose(
+    first: tuple[int, bool], second: tuple[int, bool]
+) -> tuple[int, bool]:
+    """One arrangement equal to applying `first` and then `second`.
+
+    Both are ``(degrees, flipped)`` as :func:`orient` takes them. Needed
+    wherever a correction the scanner made necessary has to be carried
+    alongside the one the operator asked for, without either being applied
+    twice or the two being applied in a made-up order.
+
+    `orient` is a mirror and then a turn, and a mirror and a turn do not
+    commute: pushing the second mirror back through the first turn reverses
+    that turn's sign, which is where the subtraction comes from. Checked
+    against actually doing both, at every combination, rather than trusted to
+    that sentence.
+    """
+    turn, flip = first
+    then_turn, then_flip = second
+    if not then_flip:
+        return (then_turn + turn) % 360, flip
+    return (then_turn - turn) % 360, not flip
+
+
+def unorient_point(
+    x: float, y: float, shape: tuple[int, ...],
+    degrees: int = 0, flipped: bool = False,
+) -> tuple[float, float]:
+    """Where a point on an oriented view sits in the scanner's own pixels.
+
+    `shape` is the *oriented* image's shape, which is what the caller has.
+
+    This is the one place the orientation is not cosmetic. The transport moves
+    along the scanner's own x axis however the picture is arranged on screen,
+    so a click has to come back through both steps before it means a distance
+    -- a mirrored prescan whose click was only un-rotated would send the film
+    the wrong way.
+    """
+    flat_x, flat_y = unrotate_point(x, y, shape, degrees)
+    if not flipped:
+        return flat_x, flat_y
+    # `unrotate_point` has undone the turn, so we are now in the mirrored
+    # image, whose width is the oriented shape's -- transposed if the turn was
+    # a quarter or three quarters.
+    width = shape[1] if degrees % 180 == 0 else shape[0]
+    return (width - 1) - flat_x, flat_y
+
+
 def has_infrared(image: np.ndarray) -> bool:
     """Whether this array carries an infrared plane at all."""
     return image.ndim == 3 and image.shape[2] >= 4

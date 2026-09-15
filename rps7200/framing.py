@@ -418,6 +418,108 @@ CONFIDENCE_FLOOR = 55.0
 MAX_DY_PX = 2
 
 
+#: How much better the reversed reading has to correlate before a pass is
+#: turned to match its prescan. A half turn is a huge signal -- on real film
+#: the right reading beats the wrong one by a wide margin or the picture has
+#: no content to judge by at all -- so this is set to refuse the ambiguous
+#: case rather than to catch the marginal one. Being wrong here stands a
+#: photograph on its head.
+REVERSAL_MARGIN = 0.25
+
+#: The side of the square both passes are reduced to before they are compared.
+#: Small on purpose: what is being asked is "which way up", not "how far", and
+#: a coarse grid answers it while being blind to the grain and the resolution
+#: difference between a 300 dpi prescan and a 3600 dpi scan.
+REVERSAL_GRID = 96
+
+
+def _comparable(image: np.ndarray, side: int = REVERSAL_GRID) -> np.ndarray | None:
+    """One pass as a small, normalised, square greyscale grid.
+
+    Square regardless of the shape it came from: a prescan and a scan cover
+    the same transport window, so the same grid samples the same places on the
+    film whatever each one's pixel count is. Normalised because one is an
+    8-bit prescan and the other a 16-bit scan, and the question is about
+    arrangement rather than about brightness.
+    """
+    a = np.asarray(image)
+    if a.size == 0 or a.ndim < 2 or min(a.shape[:2]) < 2:
+        return None
+    if a.ndim == 3:
+        # The visible planes only. Infrared holds the dust rather than the
+        # picture, and a prescan has no fourth plane to compare it against.
+        a = a[..., :min(3, a.shape[2])].mean(axis=2)
+    rows = np.linspace(0, a.shape[0] - 1, side).astype(int)
+    columns = np.linspace(0, a.shape[1] - 1, side).astype(int)
+    grid = a[np.ix_(rows, columns)].astype(np.float64)
+    grid -= grid.mean()
+    size = float(np.sqrt((grid * grid).sum()))
+    return grid / size if size > 0 else None
+
+
+#: The arrangements a scan can come back in relative to its prescan. Only
+#: these four: the carriage can reverse its travel and the film can be read
+#: from the other side, and neither changes the shape -- a quarter turn would,
+#: and the operator's own turn is a separate question from this one.
+_READINGS = ((0, False), (180, False), (0, True), (180, True))
+
+
+def reversal_against(
+    reference: np.ndarray, image: np.ndarray
+) -> tuple[tuple[int, bool], dict[str, Any]]:
+    """The extra arrangement that makes `image` read like `reference`.
+
+    Returns ``((degrees, flipped), detail)``, ``(0, False)`` meaning "as it
+    came". `reference` is the prescan of the same photograph and `image` the
+    pass to be judged.
+
+    This exists because the scanner sometimes hands back a pass reversed with
+    nothing to say it has. `MODE SELECT` byte 14 bit 0 skips the re-home and
+    buys bidirectional speed, and a pass that immediately follows another
+    bit-0-set pass comes back top-and-bottom reversed -- see CLAUDE.md. There
+    is no status bit for it and no sense condition; the only evidence is that
+    the picture does not match the framing pass taken a minute earlier.
+
+    **It refuses far more readily than it corrects.** Every automatic detector
+    written for this scanner has been confidently wrong on some frames, and
+    this one can stand a photograph on its head, so the winner has to beat
+    "as it came" by :data:`REVERSAL_MARGIN` before it is believed. A frame
+    with nothing to correlate -- a blank sky, a badly under-exposed strip --
+    scores everything alike and is left exactly as it arrived.
+    """
+    detail: dict[str, Any] = {"scores": {}, "margin": None, "reason": ""}
+    here = _comparable(image)
+    there = _comparable(reference)
+    if here is None or there is None:
+        detail["reason"] = "nothing to compare"
+        return (0, False), detail
+
+    scores: dict[tuple[int, bool], float] = {}
+    for turn, flip in _READINGS:
+        # On a square grid the four readings are index tricks, and doing them
+        # here rather than through `orient` keeps this free of a dependency on
+        # the preview module for the sake of two slices.
+        candidate = here[:, ::-1] if flip else here
+        if turn == 180:
+            candidate = candidate[::-1, ::-1]
+        scores[(turn, flip)] = float((candidate * there).sum())
+    detail["scores"] = {f"{t}{'F' if f else ''}": round(v, 4)
+                        for (t, f), v in scores.items()}
+
+    as_it_came = scores[(0, False)]
+    best, score = max(scores.items(), key=lambda kv: kv[1])
+    detail["margin"] = round(score - as_it_came, 4)
+    if best == (0, False):
+        detail["reason"] = "as it came"
+        return (0, False), detail
+    if score - as_it_came < REVERSAL_MARGIN:
+        detail["reason"] = (
+            f"{detail['margin']:+.3f} is not enough to be sure; left alone")
+        return (0, False), detail
+    detail["reason"] = f"reads {best[0]}°{' mirrored' if best[1] else ''}"
+    return best, detail
+
+
 def measure_shift_mm(
     reference: np.ndarray,
     now: np.ndarray,

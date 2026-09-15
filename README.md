@@ -209,6 +209,66 @@ hours, and a strip with four keepers on it should not cost the same as one with
 seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame beside
 it, so a strip can be looked at again tomorrow instead of walked again.
 
+**The histogram is always on screen**, in the top right corner of the picture:
+where the values actually sit, unstretched, with how much of each channel is at
+nothing, at full scale and near it. The preview is stretched so a negative can
+be judged by eye, and a stretch puts the brightest pixel at white whether it was
+against the ceiling or merely near it -- on this scanner blue reaches the rail
+first and looks no different for it. It follows whatever is on screen and
+re-reads itself on the scan's own pixels when those arrive, because a reduced
+copy understates how much is at the rail. Infrared is not in it: it is a dust
+measurement rather than an exposure, and on traditional black and white it
+merely traces green.
+
+**Everything has a key, and the keys are yours.** They are ordinary shortcuts
+-- ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R turn the picture, ⌘M flips it, ⌘0
+straightens it, ⌘F fits it and ⌘1 shows it at one scanned pixel per screen
+pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves. Because they carry a
+modifier they work wherever the focus is, including in the middle of typing a
+subject line. The arrows are bare, because an arrow is already an arrow: they
+walk the filmstrip, move between frames in the contact sheet, and step the film
+in the position window. There Space ticks a frame and Return keeps it and goes
+to the next, which is the whole job that window exists for, done without
+reaching for the mouse. One press moves the frame to the next position the
+transport can actually reach -- 0.27 mm off centre, 0.11 mm everywhere above
+that -- and the **step** box beside the arrows takes a coarser one when you
+want to cross the aperture rather than land on it. Every right-click menu carries its
+key beside the item, which is where anybody actually finds out these exist, and
+it shows the key as it is now rather than as it shipped. **Shortcuts ...** in
+the top bar lists every one of them: click a key to change it, × to clear it, ↺
+to put it back, and Restore all defaults at the foot. Only what you changed is written to `gui-settings.json`, so a default
+improved later still reaches you.
+
+**No shortcut touches the scanner.** Nothing scans, calibrates or moves film
+from the keyboard -- those cost minutes of the hardware or move your negative,
+they submit with no confirmation, and a slip on the keyboard is not a decision
+to do either. Escape stops after the current pass, which is the one that is
+always safe.
+
+**Right-click arranges a picture, wherever it is shown** -- the big preview,
+the filmstrip, or a cell of the contact sheet -- and a frame is scanned the way
+it was left. **The arrangement belongs to the photograph, not to the window**:
+turn a frame in the contact sheet and the preview behind it turns too, and the
+scan of a prescan comes back the way that prescan was left however many other
+pictures were arranged differently in between.
+
+**A pass that comes back the wrong way up is turned to match its prescan.** The
+scanner does this with nothing to say it has -- `MODE SELECT` byte 14 bit 0
+skips the re-home for bidirectional speed, and a pass following another bit-0
+pass reads reversed with no status bit and no sense condition. The only
+evidence is that the picture does not match the framing pass of the same frame,
+so that is what it is judged against, and the correction reaches the delivered
+file as well as the screen. It refuses far more readily than it corrects: being
+wrong stands a photograph on its head, so a frame with nothing to correlate is
+left exactly as it came. Quarter turns and a left-right flip: a strip loaded the other way
+up comes off this scanner reading backwards, and no amount of turning fixes
+that. The sheet keeps both per frame, so a portrait among landscapes comes out
+right; "rotate all" and "flip all" agree the whole strip and set what everything
+scanned afterwards follows. The turn reaches the files you get -- the output
+folder's copy and the roll's own `frameNN.tif` -- and never the library entry,
+whose pixels have to keep matching the raw bytes filed beside them. Turns
+survive closing the window, in `approved.json` beside the positions.
+
 The options are the ones the driver implements: resolution, infrared, film type,
 exposure (metered or by hand), shading (measure or reuse), and for a roll the
 frame count, a start-at for resuming, the metering mode and a dry run.

@@ -37,7 +37,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library, preview, settings, tiff  # noqa: E402
+from rps7200 import export, library, preview, settings, shortcuts, tiff  # noqa: E402
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
@@ -96,7 +96,7 @@ PRESCAN_LADDER = (300, 600, 900)
 #: did, because they describe the last thing looked at rather than the setup.
 REMEMBERED = ("dpi", "predpi", "ir", "film", "expmode", "exposure", "shading",
               "meter", "dryrun", "correct", "fine", "aim", "reverse",
-              "frames", "startat", "outfmt", "jpegq")
+              "frames", "startat", "outfmt", "jpegq", "adjuststep")
 
 #: What a preset carries: the scan settings, and nothing about the film in the
 #: transport or where the files go.
@@ -120,6 +120,9 @@ APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 #: The smallest move the transport can make: param 1 of the calibrated
 #: sub-frame law. Asking for less does not get you less, it gets you this.
 FINE_STEP_MM = 0.27
+#: How finely `step_offset` looks for the next reachable position. A quarter
+#: of the lattice's own spacing, so it cannot step over one.
+FINEST_PROBE_MM = 0.026
 #: The largest one SLIDE command delivers, param 8.
 MAX_FINE_MM = 1.01
 #: How many of those one move may chain, and how far that reaches.
@@ -134,6 +137,12 @@ MAX_TRAVEL_MM = MAX_FINE_MM * MAX_FINE_STEPS
 
 THUMB_H = 76
 POLL_MS = 120
+
+#: The three ways a context menu gets asked for, bound together everywhere one
+#: is offered. X11 and a two-button mouse send Button-3, a Mac trackpad's
+#: two-finger tap arrives as Button-2, and Control-click is the Mac convention
+#: for people without either.
+MENU_EVENTS = ("<Button-3>", "<Button-2>", "<Control-Button-1>")
 
 #: How often the picture may be redrawn, in milliseconds. One frame at 60 Hz.
 _FRAME_MS = 16
@@ -195,10 +204,34 @@ class ScannerGui:
         self._view = [0.0, 0.0]              # the picture point at the corner
         self._reads: queue.Queue = queue.Queue()   # full-resolution reads landing
         self._measured: queue.Queue = queue.Queue()   # histograms landing
+        self._histogram_token = 0            # which measurement is still wanted
         self._shown = None                   # what was last drawn, for clicks
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
         self.rotation = 0                    # applied to new passes and files
+        self.flip = False                    # and whether they read left to right
+        #: What one arrow press moves a frame in the position window. Lives
+        #: here rather than on that window because it is a preference about
+        #: how the operator works, and that window is opened and closed all
+        #: through a roll -- a setting that died with it would be re-chosen
+        #: seventeen times.
+        self.v_adjuststep = tk.StringVar(value=ADJUST_STEPS[0])
+        #: What each key does. `shortcut_overrides` is only what the operator
+        #: changed -- see `shortcuts.overrides_from` for why the whole table is
+        #: not stored -- and `self.keys` is that laid over the defaults.
+        self.shortcut_overrides: dict[str, str] = {}
+        self.keys: dict[str, str] = shortcuts.defaults()
+        self._bound: list[str] = []          # what is on the root right now
+        self._shortcut_editor = None
+        #: How each *photograph* is arranged, keyed by what identifies it --
+        #: its frame number on a roll, or the transport position it was taken
+        #: at. Not per pass and not per window: a prescan and the scan that
+        #: replaces it are two passes over one picture, and arranging one of
+        #: them is a statement about the picture rather than about the pass.
+        #: That is what makes a turn in the contact sheet show up in the
+        #: preview behind it, and what makes a scan come back the way its
+        #: prescan was left.
+        self.orientations: dict[tuple, tuple[int, bool]] = {}
         self.survey: list = []               # the prescans a dry run walked
         self._surveying = False              # a dry run is running right now
         self._survey_start = 1               # the `start at` it was walked with
@@ -241,6 +274,7 @@ class ScannerGui:
             root.bind_all(sequence, self._on_wheel, add="+")
         root.bind_all("<TouchpadScroll>", self._on_touchpad, add="+")
         self.session.start()
+        self._bind_shortcuts()
         self._later(POLL_MS, self._pump)
 
     # -- layout ------------------------------------------------------------
@@ -250,6 +284,8 @@ class ScannerGui:
         head.pack(fill="x")
         ttk.Button(head, text="About the scanner",
                    command=self.on_about).pack(side="left")
+        ttk.Button(head, text="Shortcuts ...",
+                   command=self.on_shortcuts).pack(side="left", padx=6)
         self.v_state = tk.StringVar(value="opening ...")
         ttk.Label(head, textvariable=self.v_state).pack(side="right")
         self.light = tk.Canvas(head, width=14, height=14, highlightthickness=0)
@@ -309,6 +345,9 @@ class ScannerGui:
                 variable.set(value)
             except tk.TclError:
                 pass
+        stored = self.remembered.get("shortcuts")
+        self.keys = shortcuts.resolve(stored if isinstance(stored, dict) else None)
+        self.shortcut_overrides = shortcuts.overrides_from(self.keys)
         for key, value in self.remembered["film"].items():
             if key in REMEMBERED_FILM and key in self.fields:
                 self.fields[key].set(str(value))
@@ -353,9 +392,178 @@ class ScannerGui:
                 "output": self.v_outdir.get(),
                 "window": window,
                 "presets": self.presets,
+                "shortcuts": self.shortcut_overrides,
             }, self._settings_path)
         except Exception as exc:                         # noqa: BLE001
             self._say(f"could not save the settings: {exc}")
+
+    # -- the keyboard ------------------------------------------------------
+
+    def _actions(self) -> dict:
+        """What each action id does, for the main window.
+
+        A table rather than a method per key, because the editor has to be able
+        to say what every id is and the tests have to be able to check that
+        none of them reaches the scanner. The two extra windows keep their own;
+        see `_ContactSheet._actions` and `_FrameAdjuster._actions`.
+
+        Everything here is viewing or arranging. Nothing starts a scan, moves
+        film or calibrates -- `shortcuts.NEVER_BOUND` names those and a test
+        holds the line. `stop` is here because `request_stop` finishes the pass
+        already running rather than abandoning a read.
+        """
+        return {
+            "previous_pass": lambda: self._walk(-1),
+            "next_pass": lambda: self._walk(1),
+            "first_pass": lambda: self._jump(0),
+            "last_pass": lambda: self._jump(-1),
+            "rotate_right": lambda: self._on_current(self.on_rotate, 90),
+            "rotate_left": lambda: self._on_current(self.on_rotate, 270),
+            "rotate_180": lambda: self._on_current(self.on_rotate, 180),
+            "straighten": self._straighten,
+            "flip": lambda: self._on_current(self.on_flip),
+            "save_as": lambda: self._on_current(self.on_save_as),
+            "show_prescan": lambda: self._on_current(self.on_show_prescan),
+            "delete_pass": lambda: self._on_current(self.on_delete),
+            "zoom_in": lambda: self._zoom_by(2.0),
+            "zoom_out": lambda: self._zoom_by(0.5),
+            "zoom_fit": lambda: self._set_zoom(0.0),
+            "zoom_actual": lambda: self._set_zoom(self._finest()),
+            "invert": self._toggle_invert,
+            "channel_next": lambda: self._cycle_channel(1),
+            "channel_previous": lambda: self._cycle_channel(-1),
+            "contact_sheet": self.on_contact_sheet,
+            # Only when there is something to stop. `submit` clears the flag,
+            # so a stray press cannot reach the next job -- but the log is
+            # evidence, and "finishing what is already running" with nothing
+            # running is a line that will be read back one day and believed.
+            "stop": lambda: self.on_stop() if self.busy else None,
+            "shortcuts": self.on_shortcuts,
+        }
+
+    def _on_current(self, method, *args) -> None:
+        """Run a menu action against whatever is on screen, or do nothing."""
+        if self.current is not None:
+            method(self.current, *args)
+
+    def _straighten(self) -> None:
+        if self.current is not None and self.current.rotation:
+            self.on_rotate(self.current, -self.current.rotation)
+
+    def _walk(self, by: int) -> None:
+        """The pass before or after this one in the filmstrip."""
+        shown = self._visible()
+        if not shown:
+            return
+        try:
+            at = shown.index(self.current)
+        except ValueError:
+            at = 0 if by > 0 else len(shown) - 1
+            self._show_seq(shown[at].seq)
+            return
+        self._show_seq(shown[max(0, min(len(shown) - 1, at + by))].seq)
+
+    def _jump(self, at: int) -> None:
+        shown = self._visible()
+        if shown:
+            self._show_seq(shown[at].seq)
+
+    def _toggle_invert(self) -> None:
+        self.v_invert.set(not self.v_invert.get())
+        self._redraw_all()
+
+    def _cycle_channel(self, by: int) -> None:
+        """The next view this pass can actually show.
+
+        Only what `channels_available` allows: a prescan is RGB 8-bit and has
+        no infrared, and stepping onto a view that does not exist would render
+        a black rectangle and leave the operator wondering whether the IR
+        really came back empty.
+        """
+        if self.current is None or self.current.image is None:
+            return
+        offered = [c for c in preview.CHANNELS
+                   if c in preview.channels_available(self.current.image)]
+        if not offered:
+            return
+        here = offered.index(self.v_channel.get()) if self.v_channel.get() in offered else 0
+        self.v_channel.set(offered[(here + by) % len(offered)])
+        self._schedule_redraw()
+
+    def _typing(self) -> bool:
+        """Whether a key belongs to a text field rather than to the window.
+
+        Without this, typing "rotate" into the subject field turns the picture
+        four times and deletes a pass on the "e".
+        """
+        try:
+            widget = self.root.focus_get()
+        except (tk.TclError, KeyError):
+            return False
+        return isinstance(widget, (tk.Entry, ttk.Entry, tk.Text,
+                                   tk.Spinbox, ttk.Spinbox, ttk.Combobox))
+
+    def _bind_shortcuts(self) -> None:
+        """Put the current keys on the window, and take the old ones off.
+
+        Bound on the root rather than with `bind_all`: a widget's bindtags run
+        widget, class, toplevel, all -- so this catches a key pressed anywhere
+        in this window and *only* in this window. With `bind_all`, `r` in the
+        contact sheet would rotate the preview underneath it as well.
+        """
+        for sequence in self._bound:
+            try:
+                self.root.unbind(sequence)
+            except tk.TclError:
+                pass
+        self._bound = []
+        actions = self._actions()
+        for sequence, action_id in shortcuts.in_scope(self.keys, "window").items():
+            run = actions.get(action_id)
+            if run is None:
+                continue
+            self.root.bind(sequence, self._runner(run, sequence))
+            self._bound.append(sequence)
+
+    def _runner(self, run, sequence: str = ""):
+        """One handler shape, and the rule about text fields.
+
+        A modified key fires wherever the focus is. ⌘S in the middle of typing
+        a subject line is a save, and every other application treats it as
+        one -- refusing it would be this window inventing a rule of its own.
+
+        An unmodified one does not: a bare `r` in a text field is an `r`, and
+        the version of this that suppressed nothing turned the picture four
+        times while somebody typed "rotate" into the subject line.
+        """
+        guard = not shortcuts.is_modified(sequence)
+
+        def handler(_event=None):
+            if guard and self._typing():
+                return None
+            run()
+            return "break"
+        return handler
+
+    def on_shortcuts(self) -> None:
+        """The editor. One at a time, like the contact sheet."""
+        if self._shortcut_editor is not None and self._shortcut_editor.alive():
+            self._shortcut_editor.top.lift()
+            self._shortcut_editor.top.focus_force()
+            return
+        self._shortcut_editor = _ShortcutSettings(self)
+
+    def set_keys(self, keys: dict[str, str]) -> None:
+        """Take a whole new set, bind it, and write it down."""
+        self.keys = dict(keys)
+        self.shortcut_overrides = shortcuts.overrides_from(self.keys)
+        self._bind_shortcuts()
+        for window in (self.sheet, self._shortcut_editor):
+            if window is not None and window.alive():
+                rebind = getattr(window, "rebind", None)
+                if rebind is not None:
+                    rebind()
+        self._remember()
 
     # -- presets -----------------------------------------------------------
 
@@ -800,6 +1008,12 @@ class ScannerGui:
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
         self.canvas.bind("<Double-Button-1>", self.on_double_click)
+        # The picture on screen is the one an operator wants to turn, and until
+        # now it was the only one that could not be: the menu lived on the
+        # filmstrip alone, so turning what you were looking at meant finding its
+        # thumbnail first.
+        for seq in MENU_EVENTS:
+            self.canvas.bind(seq, self.on_canvas_menu)
         # Two fingers zoom, because that is the gesture people reach for on
         # a picture; panning is the drag, which needs no gesture support at all.
         self._scrolls(self.canvas, self._wheel_over_picture,
@@ -834,6 +1048,12 @@ class ScannerGui:
         ttk.Label(top, textvariable=self.v_caption,
                   foreground="#777").pack(anchor="w", padx=6)
 
+        # Placed rather than packed, so it floats in the corner of the picture
+        # instead of taking width from it -- and so a canvas redraw, which
+        # clears everything the canvas is holding, cannot touch it.
+        self.histogram = _HistogramPanel(top)
+        self.histogram.place()
+
         middle = ttk.Frame(parent)
         parent.add(middle, weight=1)
         self.strip = tk.Canvas(middle, height=THUMB_H + 12, background="#111",
@@ -846,7 +1066,7 @@ class ScannerGui:
             # should walk along it.
             precise=lambda dx, dy: _scroll_pixels(self.strip, dx or dy, 0),
         )
-        for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+        for seq in MENU_EVENTS:
             self.strip.bind(seq, self.on_strip_menu)
         self.menu = tk.Menu(self.root, tearoff=0)
 
@@ -1162,6 +1382,7 @@ class ScannerGui:
         dpi, exposure = self._dpi(), self._exposure()
         if dpi is None or exposure is None:
             return
+        self._pin_arrangement()
         self.session.submit(Scan(
             resolution=dpi, infrared=self.v_ir.get(), film=self.v_film.get(),
             auto_exposure=self.v_expmode.get() == "auto",
@@ -1169,6 +1390,20 @@ class ScannerGui:
             mono_channel=self.v_mono_channel.get(),
             notes=self._notes(), tags=self._tags(),
         ))
+
+    def _pin_arrangement(self) -> None:
+        """File the next pass the way the one on screen is shown.
+
+        The session carried the last arrangement set anywhere, which drifts:
+        frame the picture, turn it, frame a second picture and turn that one
+        differently, then scan the first -- and the file came out the way the
+        *second* was left. The pass on screen is the one being scanned, so it
+        is the one that decides, and the preview and the file cannot then
+        disagree about a photograph.
+        """
+        if self.current is not None:
+            self.session.rotation = self.current.rotation
+            self.session.flip = self.current.flipped
 
     def on_roll(self) -> None:
         dpi, predpi = self._dpi(), self._prescan_dpi()
@@ -1194,6 +1429,11 @@ class ScannerGui:
             # Only cleared here, so a survey outlives the window that showed it
             # and the sheet can be opened again without walking the strip twice.
             self.survey = []
+            # A fresh strip has no arrangements yet, and the last one's would
+            # be applied to whatever pictures happen to land on the same frame
+            # numbers -- a different film, shown and written sideways. The
+            # positions go too: the film has moved, so they name nothing now.
+            self.orientations = {}
             self._surveying = True
             self._survey_start = start_at
             self._survey_predpi = predpi
@@ -1288,7 +1528,11 @@ class ScannerGui:
         self._redraw_strip()
         self._say(f"reopened {out['roll']}: {len(out['results'])} frames"
                   + (f", {len(out['offsets'])} with a position already set"
-                     if out["offsets"] else ""))
+                     if out["offsets"] else "")
+                  + (f", {len(out['rotations'])} already turned"
+                     if out["rotations"] else "")
+                  + (f", {sum(out['flips'].values())} flipped"
+                     if any(out["flips"].values()) else ""))
         # The film is almost certainly not where the walk left it, and only
         # Stefan can see that. Said rather than guessed at.
         messagebox.showinfo(
@@ -1299,7 +1543,9 @@ class ScannerGui:
             "anything -- nothing here can see where it is now.")
         if self.sheet is not None and self.sheet.alive():
             self.sheet.top.destroy()
-        self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"])
+        self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"],
+                                   rotations=out["rotations"],
+                                   flips=out["flips"])
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=()) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
@@ -1355,6 +1601,12 @@ class ScannerGui:
         ):
             return
         self._write_approved(approved)
+        # Kept so the frames that come back are shown the way they were
+        # written. Without it a roll returns pictures the filmstrip draws one
+        # way up and the file on disk holds another.
+        for record in approved:
+            self.orientations[("frame", record.number)] = (
+                record.rotation, bool(record.flipped))
         if back:
             self.session.submit(Move(frames=-back))
         self.session.submit(Roll(
@@ -1404,6 +1656,8 @@ class ScannerGui:
                 "roll": name,
                 "frames": [{"number": a.number,
                             "offset_mm": round(a.offset_mm, 4),
+                            "rotation": int(a.rotation),
+                            "flipped": bool(a.flipped),
                             "reference_entry": str(a.reference_entry or "")}
                            for a in approved],
             }, indent=2, default=str))
@@ -1549,13 +1803,16 @@ class ScannerGui:
             self._loaded(seq, image)
         while True:
             try:
-                window, counts, clipped, problem = self._measured.get_nowait()
+                token, counts, clipped, problem = self._measured.get_nowait()
             except queue.Empty:
                 break
+            if token != self._histogram_token:
+                continue          # a later measurement is already the answer
             if problem:
                 self._say(f"could not measure: {problem}")
+                self.histogram.failed()
             else:
-                window.show(counts, clipped)
+                self.histogram.show(counts, clipped)
         for event in self.session.poll():
             self._handle(event)
             if not self._alive:
@@ -1797,10 +2054,6 @@ class ScannerGui:
     def _add_result(self, result) -> None:
         result.hidden = False
         result.supersedes = None
-        # New passes arrive already turned the way the last one was, which is
-        # what makes rotating a prescan carry over to the scan of it -- even a
-        # scan taken minutes later.
-        result.rotation = self.rotation
         # Measured once, from the whole picture. Recomputing per redraw was
         # most of what made zooming feel dead, and it also meant the brightness
         # changed as you panned -- the same negative looking different
@@ -1809,6 +2062,11 @@ class ScannerGui:
         # A real scan stands in for the prescan of the same picture, but only
         # when the film has not moved since -- a prescan of a different frame is
         # a different photograph, and hiding it would lose it.
+        #
+        # Worked out before the arrangement below, which reads it: a scan and
+        # the prescan it replaces are two passes over one photograph, and the
+        # answer to "which way up is this" belongs to the photograph.
+        superseded = None
         if result.kind in ("scan", "frame") and result.position is not None:
             for earlier in reversed(self.results):
                 if earlier.kind != "prescan":
@@ -1816,8 +2074,47 @@ class ScannerGui:
                 if earlier.position == result.position and not earlier.hidden:
                     earlier.hidden = True
                     result.supersedes = earlier.seq
+                    superseded = earlier
                     break
+        self._arrange(result, superseded)
         self.results.append(result)
+
+    def _arrange(self, result, superseded=None) -> None:
+        """How this pass should be shown, in order of what knows best.
+
+        The prescan it replaces, first: you framed that picture and said which
+        way up it was, and the scan of it is the same photograph. Then anything
+        already said about this picture, which is what a turn in the contact
+        sheet leaves behind. Then the last arrangement set anywhere, because a
+        strip goes into the transport one way round and the frame after this
+        one is almost certainly the same way up.
+        """
+        known = None
+        if superseded is not None:
+            known = (superseded.rotation, superseded.flipped)
+        if known is None:
+            known = self.orientations.get(picture_of(result))
+        rotation, flipped = known or (self.rotation, self.flip)
+        # The scanner sometimes hands a pass back reversed with nothing to say
+        # it has, and the session says so here after comparing it against its
+        # own prescan. Applied first, because it brings the pixels into the
+        # arrangement the operator was looking at when he chose the rest -- the
+        # same composition `_file` does, from the same number, so the picture
+        # on screen and the file on disk agree about which way up this is.
+        reversal = (result.meta or {}).get("reversal")
+        if reversal:
+            rotation, flipped = preview.compose(
+                (int(reversal[0]), bool(reversal[1])), (rotation, flipped))
+        result.rotation, result.flipped = rotation, flipped
+        # Whatever it turned out to be, the picture now has an answer, so the
+        # next pass over it agrees with this one rather than with the session.
+        self.remember_arrangement(result)
+
+    def remember_arrangement(self, result) -> None:
+        """Record how this photograph is arranged, however it was decided."""
+        key = picture_of(result)
+        if key is not None:
+            self.orientations[key] = (result.rotation, result.flipped)
         if self._surveying and result.kind == "prescan" and result.number:
             self.survey.append(result)
         if result.position is not None:
@@ -1859,7 +2156,8 @@ class ScannerGui:
         if self.v_channel.get() not in available:
             self.v_channel.set("RGB")
         marks = result.registration
-        extra = f"   \u00b7   {result.rotation}\u00b0" if result.rotation else ""
+        extra = ("   \u00b7   " + _arrangement(result)
+                 if result.rotation or result.flipped else "")
         if marks.get("offset_mm") is not None:
             extra = (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
                      f"short by {marks.get('shortfall_mm', 0):.2f} mm")
@@ -1869,17 +2167,31 @@ class ScannerGui:
         if result.supersedes:
             extra += "   ·   replaced its prescan"
         self.v_caption.set(result.label + extra)
+        self._measure_histogram()
         self._schedule_redraw()
+
+    def _reshow(self, *results) -> None:
+        """Redraw the filmstrip, and the big picture if it is one of these.
+
+        A turn made in the contact sheet used to reach the thumbnail and stop
+        there, so the preview behind it went on showing the old arrangement
+        until the frame was clicked again -- the window disagreeing with itself
+        about a decision the operator had just made.
+        """
+        self._redraw_strip()
+        if self.current is not None and any(r is self.current for r in results):
+            self._schedule_redraw()
 
     def _redraw_strip(self) -> None:
         self.strip.delete("all")
         self._thumbs = []
         x = 6
+        here = None                          # where the selected frame ended up
         for r in self._visible():
             if r.image is None:
                 continue
             arr = preview.render(
-                preview.fit(preview.rotate(r.image, r.rotation),
+                preview.fit(preview.orient(r.image, r.rotation, r.flipped),
                             THUMB_H * 2, THUMB_H),
                 "RGB", self.v_invert.get(),
                 cuts=(preview.channel_levels(r.levels, "RGB")
@@ -1889,6 +2201,7 @@ class ScannerGui:
             tag = f"r{r.seq}"
             self.strip.create_image(x, 6, image=photo, anchor="nw", tags=tag)
             if r is self.current:
+                here = (x, x + photo.width())
                 self.strip.create_rectangle(
                     x - 2, 4, x + photo.width() + 1, 8 + photo.height(),
                     outline="#e8b64c", width=2)
@@ -1896,7 +2209,36 @@ class ScannerGui:
                                 lambda _e, s=r.seq: self._show_seq(s))
             x += photo.width() + 8
         self.strip.configure(scrollregion=(0, 0, x, THUMB_H + 12))
-        self.strip.xview_moveto(1.0)
+        self._keep_in_strip(here, x)
+
+    def _keep_in_strip(self, span, total: int) -> None:
+        """Scroll only as far as it takes to have the selected frame in view.
+
+        This used to be `xview_moveto(1.0)` -- jump to the end, on every
+        redraw. A redraw happens when a pass is *selected* as well as when one
+        arrives, so on a strip longer than the window, clicking the first
+        frame showed you the last one: the picture changed to the frame you
+        asked for and the strip scrolled away from it, leaving the highlight
+        off screen and no sign of what had been chosen.
+
+        Following the newest still falls out of this, because a pass that has
+        just arrived is the selected one and it is off the right-hand end.
+        """
+        if span is None or total <= 0:
+            return
+        # The scrollregion was set a moment ago and Tk works out what that
+        # means for the view at idle, so asking before then reads the old one.
+        self.strip.update_idletasks()
+        width = max(1, self.strip.winfo_width())
+        if total <= width:
+            self.strip.xview_moveto(0.0)
+            return
+        left = self.strip.canvasx(0)
+        start, end = span
+        if start < left:
+            self.strip.xview_moveto(max(0.0, (start - 6) / total))
+        elif end > left + width:
+            self.strip.xview_moveto(min(1.0, (end + 6 - width) / total))
 
     def _show_seq(self, seq: int) -> None:
         for r in self.results:
@@ -1926,29 +2268,83 @@ class ScannerGui:
         if target is None:
             return
         self._show_seq(target.seq)
+        self._fill_result_menu(target)
+        self.menu.tk_popup(event.x_root, event.y_root)
+
+    def on_canvas_menu(self, event: tk.Event) -> str:
+        """The filmstrip's menu, over the picture it is actually about.
+
+        One menu, filled by one method, so the two cannot drift apart -- a
+        second copy of this list would be wrong the first time an item was
+        added to either.
+
+        `_drag` is cleared because Control-click is still Button-1 as far as
+        `<B1-Motion>` is concerned, and a menu left open over a live drag pans
+        the picture underneath it. "break" stops the same click reaching
+        `on_press`, which in aim mode moves film.
+        """
+        self._drag = None
+        if self.current is None:
+            return "break"
+        self._fill_result_menu(self.current)
+        self.menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    def accelerator(self, action_id: str) -> str:
+        """This action's key, in the form a Tk menu wants beside an item.
+
+        `accelerator_text`, not `describe`: Tk parses what it is given and
+        draws the glyphs itself, so it wants "Command+R" and not "⌘R". Given
+        the second it finds no modifier name it knows, takes the whole string
+        as a key equivalent, and draws the first character only -- which is
+        what put a lone ⌘ in the menu with no letter beside it.
+
+        Empty rather than a dash when there is no key: a menu is a list of
+        things you can do, and an em dash in the accelerator column reads as a
+        key you cannot make out rather than as the absence of one. The editor
+        is the place that has to show "no key", and it does.
+
+        Read fresh every time a menu is filled, so a rebind shows up on the
+        next right-click without anything having to be told about it.
+        """
+        return shortcuts.accelerator_text(self.keys.get(action_id, ""))
+
+    def _fill_result_menu(self, target) -> None:
+        """Everything that can be done to one pass, on `self.menu`.
+
+        Each item carries its key. The menu is how anybody finds out these
+        exist -- nobody reads a shortcut list first -- so an item without its
+        key on it is a key nobody will ever learn.
+        """
         self.menu.delete(0, "end")
         self.menu.add_command(label="Save as ...",
+                              accelerator=self.accelerator("save_as"),
                               command=lambda r=target: self.on_save_as(r))
-        self.menu.add_command(label="Histogram",
-                              command=lambda r=target: self.on_histogram(r))
-        self.menu.add_separator()
-        for label, degrees in (("Rotate right 90\u00b0", 90),
-                               ("Rotate left 90\u00b0", 270),
-                               ("Rotate 180\u00b0", 180)):
+        for label, degrees, action_id in (
+                ("Rotate right 90\u00b0", 90, "rotate_right"),
+                ("Rotate left 90\u00b0", 270, "rotate_left"),
+                ("Rotate 180\u00b0", 180, "rotate_180")):
             self.menu.add_command(
-                label=label, command=lambda r=target, d=degrees: self.on_rotate(r, d))
+                label=label, accelerator=self.accelerator(action_id),
+                command=lambda r=target, d=degrees: self.on_rotate(r, d))
         if target.rotation:
             self.menu.add_command(
                 label=f"Straighten (now {target.rotation}\u00b0)",
+                accelerator=self.accelerator("straighten"),
                 command=lambda r=target: self.on_rotate(r, -r.rotation))
+        self.menu.add_command(
+            label="Unflip" if target.flipped else "Flip left-right",
+            accelerator=self.accelerator("flip"),
+            command=lambda r=target: self.on_flip(r))
         if target.supersedes:
             self.menu.add_separator()
             self.menu.add_command(label="Show prescan",
+                                  accelerator=self.accelerator("show_prescan"),
                                   command=lambda r=target: self.on_show_prescan(r))
         self.menu.add_separator()
         self.menu.add_command(label="Delete",
+                              accelerator=self.accelerator("delete_pass"),
                               command=lambda r=target: self.on_delete(r))
-        self.menu.tk_popup(event.x_root, event.y_root)
 
     def on_save_as(self, result) -> None:
         # The dialog starts on whatever the output folder is set to, so picking
@@ -1970,7 +2366,7 @@ class ScannerGui:
             # is now an uncorrected file -- so it is re-written every time, and
             # the copy is gone deliberately rather than by oversight.
             full, entry_record = library.corrected(result.entry)
-            full = preview.rotate(full, result.rotation)
+            full = preview.orient(full, result.rotation, result.flipped)
             if mono:
                 full = to_monochrome(full, self.v_mono_channel.get())
             note = export.write(path, full, quality=quality)
@@ -1982,7 +2378,8 @@ class ScannerGui:
                       + ("" if how == "applied" else f" ({how})")
                       + (f" -- {note}" if note else ""))
         elif result.image is not None:
-            turned = preview.rotate(result.image, result.rotation)
+            turned = preview.orient(result.image, result.rotation,
+                                    result.flipped)
             note = export.write(
                 path,
                 to_monochrome(turned, self.v_mono_channel.get()) if mono else turned,
@@ -2001,45 +2398,85 @@ class ScannerGui:
         have to keep matching the raw bytes filed beside them.
         """
         result.rotation = (result.rotation + degrees) % 360
+        self._carry(result, _arrangement(result))
+
+    def on_flip(self, result) -> None:
+        """Mirror this pass left to right, and everything scanned after it.
+
+        Not a fourth angle: a strip loaded the other way up comes off this
+        scanner reading backwards, and no amount of turning fixes that. It
+        carries over exactly as a turn does, for the same reason -- which way
+        round the film went in does not change between one frame and the next.
+        """
+        result.flipped = not result.flipped
+        self._carry(result, _arrangement(result))
+
+    def _carry(self, result, said: str) -> None:
+        """Make this pass's arrangement the one new passes and files follow.
+
+        The carry-over is the point: arranging a prescan is how you say how the
+        film went in, and the scan that follows should not need telling again.
+        It reaches the files written from here on -- the output folder's copy
+        and a roll's own TIFF -- but never the library entry, whose pixels have
+        to keep matching the raw bytes filed beside them.
+        """
         self.rotation = result.rotation
+        self.flip = result.flipped
         self.session.rotation = result.rotation
-        # Anything it stands in for turns with it, so showing the prescan again
+        self.session.flip = result.flipped
+        self.remember_arrangement(result)
+        # Anything it stands in for follows it, so showing the prescan again
         # does not undo what was just decided.
         if result.supersedes:
             for r in self.results:
                 if r.seq == result.supersedes:
-                    r.rotation = result.rotation
-        self._say(f"{result.label}: {result.rotation}\u00b0 -- new scans and "
-                  "the files written for them follow this; the library entry "
-                  "keeps the scanner's own orientation")
+                    r.rotation, r.flipped = result.rotation, result.flipped
+        self._say(f"{result.label}: {said} -- new scans and the files written "
+                  "for them follow this; the library entry keeps the scanner's "
+                  "own orientation")
         self._view = [0.0, 0.0]
         self._show(result)
         self._redraw_strip()
 
-    def on_histogram(self, result) -> None:
-        """Where the values actually sit, which the preview cannot show.
+    def _measure_histogram(self) -> None:
+        """Re-read the panel against whatever is on screen now.
 
-        The picture on the canvas is stretched so a negative can be judged by
-        eye, and a stretch puts the brightest pixel at white whether it was
-        against the ceiling or merely near it. This is the unstretched answer.
+        Where the values actually sit, which the preview cannot show: the
+        picture on the canvas is stretched so a negative can be judged by eye,
+        and a stretch puts the brightest pixel at white whether it was against
+        the ceiling or merely near it.
 
-        Measured on a thread: counting a full 3600 dpi frame exactly is about a
-        third of a second, and a window that locks up for that long while you
-        wait to be told about clipping is its own kind of unhelpful.
+        Measured on a thread. `clipping` counts every pixel rather than
+        sampling, which on a full 3600 dpi frame is about a third of a second
+        -- and a window that locks up for that long each time you click along
+        the filmstrip is its own kind of unhelpful.
+
+        Called twice for one pass, deliberately: once on the working copy as
+        soon as it is shown, and again when the scan's own pixels arrive,
+        because a reduced copy understates how much is at the rail.
         """
-        if result.image is None:
+        result = self.current
+        if result is None or result.image is None:
+            self.histogram.nothing()
             return
         pixels, source = self._finest_pixels(result)
-        window = _Histogram(self.root, result.label, source)
+        # Infrared is not an exposure -- see `rgb_only`.
+        pixels = rgb_only(pixels)
+        # A plain counter, not the result's seq: one pass is measured twice,
+        # so a token that only said *which* pass would let the coarse answer
+        # land after the fine one and quietly replace it.
+        self._histogram_token += 1
+        token = self._histogram_token
+        self.histogram.waiting(source)
 
         def work():
             try:
                 counts = preview.histogram(pixels)
                 clipped = preview.clipping(pixels)
             except Exception as exc:                     # noqa: BLE001
-                self._measured.put((window, None, None, str(exc)))
+                self._measured.put((token, None, None, str(exc)))
                 return
-            self._measured.put((window, counts, clipped, None))
+            self._measured.put((token, counts, clipped, None))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -2050,8 +2487,8 @@ class ScannerGui:
             factor, array = self._levels[-1]
             return array, f"the scan's own {array.shape[1]}x{array.shape[0]} pixels"
         return (result.image,
-                f"a {result.image.shape[1]}x{result.image.shape[0]} copy "
-                "-- the scan itself is not in hand")
+                f"a {result.image.shape[1]}x{result.image.shape[0]} copy, "
+                "not the scan itself")
 
     def on_show_prescan(self, result) -> None:
         for r in self.results:
@@ -2110,7 +2547,7 @@ class ScannerGui:
         r = self.current
         if r is None or r.image is None:
             return None
-        return preview.rotate(r.image, r.rotation)
+        return preview.orient(r.image, r.rotation, r.flipped)
 
     def _finest(self) -> float:
         """How much finer the scan is than the working copy the view uses.
@@ -2150,10 +2587,10 @@ class ScannerGui:
             # is on show.
             for factor, array in self._levels:
                 if factor >= scale:
-                    return preview.rotate(array, r.rotation), factor
+                    return preview.orient(array, r.rotation, r.flipped), factor
             finest, array = self._levels[-1]
-            return preview.rotate(array, r.rotation), finest
-        return preview.rotate(r.image, r.rotation), 1.0
+            return preview.orient(array, r.rotation, r.flipped), finest
+        return preview.orient(r.image, r.rotation, r.flipped), 1.0
 
     def _load_full(self, r) -> None:
         """Read the entry's own pixels, off the UI thread.
@@ -2200,16 +2637,18 @@ class ScannerGui:
         self._levels_seq = seq
         self._say(f"{self.current.label}: now showing the scan's own "
                   f"{image.shape[1]}x{image.shape[0]} pixels")
-        # Deliberately not re-measured: the levels stay the working copy's, so
-        # a 1:1 look is the same picture as the fit it came from.
+        # The levels are deliberately not re-measured -- they stay the working
+        # copy's, so a 1:1 look is the same picture as the fit it came from.
+        # The histogram is, because it is a measurement rather than a look, and
+        # a reduced copy understates how much is at the rail.
+        self._measure_histogram()
         self._redraw()
 
     def _set_zoom(self, zoom: float) -> None:
         """Fit, or a scale about the middle of what is on screen."""
         src = self._source()
         if zoom > 0 and src is not None:
-            w = max(1, self.canvas.winfo_width())
-            h = max(1, self.canvas.winfo_height())
+            w, h = self._picture_area()
             middle = self._source_at(w / 2, h / 2)
             self._view = [middle[0] - (w / 2) / zoom, middle[1] - (h / 2) / zoom]
         self._zoom = zoom
@@ -2230,8 +2669,7 @@ class ScannerGui:
         src = self._source()
         if src is None:
             return
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
+        w, h = self._picture_area()
         fit = min(w / src.shape[1], h / src.shape[0])
 
         focus = self._source_at(*anchor) if anchor is not None else None
@@ -2253,6 +2691,26 @@ class ScannerGui:
                       focus[1] - anchor[1] / target]
         self._zoom = target
         self._schedule_redraw(moving=moving)
+
+    def _picture_area(self) -> tuple[int, int]:
+        """The canvas, less the corner the histogram is standing in.
+
+        The panel floats over the canvas, so without this a picture is laid
+        out underneath it and the top right of every frame sits behind a
+        chart. Moved and re-fitted rather than clipped, because "do not
+        overlap" for a picture that is centred means giving it a smaller
+        space to be centred in.
+
+        The whole height of that column is given up, not just the panel's own
+        rows. The alternative -- reserve it while the picture is tall enough
+        to reach the panel, release it when it is not -- makes the picture
+        jump sideways part way through a zoom.
+        """
+        w = max(1, self.canvas.winfo_width())
+        h = max(1, self.canvas.winfo_height())
+        # Never more than half of it: a pane this narrow is better overlapped
+        # than given a picture too small to judge anything by.
+        return max(1, w - min(self.histogram.footprint(), w // 2)), h
 
     def _geometry(self, src, w: int, h: int):
         """Where the picture sits on the canvas: `(scale, x0, y0, width, height)`.
@@ -2307,8 +2765,7 @@ class ScannerGui:
         src = self._source()
         if src is None:
             return None
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
+        w, h = self._picture_area()
         scale, x0, y0, dw, dh, left, top = self._geometry(src, w, h)
         ix = min(max(x - left, 0.0), float(dw))
         iy = min(max(y - top, 0.0), float(dh))
@@ -2390,8 +2847,7 @@ class ScannerGui:
         self.canvas.delete("note")
         self._shown = None
         src = self._source()
-        w = max(1, self.canvas.winfo_width())
-        h = max(1, self.canvas.winfo_height())
+        w, h = self._picture_area()
         if src is None:
             self.canvas.delete("picture")
             self._item = None
@@ -2514,8 +2970,7 @@ class ScannerGui:
             # point that stays put.
             src = self._source()
             if src is not None:
-                w = max(1, self.canvas.winfo_width())
-                h = max(1, self.canvas.winfo_height())
+                w, h = self._picture_area()
                 fit = min(w / src.shape[1], h / src.shape[0])
                 want = self._finest()
                 self._zoom_by(want / fit if fit else 1.0, anchor=self._pointer)
@@ -2547,8 +3002,9 @@ class ScannerGui:
         # turned on screen, so the click comes back through the rotation before
         # it means a distance. Without this, aiming on a frame turned 90 would
         # drive the transport from the wrong axis entirely.
-        flat_x, _flat_y = preview.unrotate_point(
-            where[0], where[1], src.shape, self.current.rotation)
+        flat_x, _flat_y = preview.unorient_point(
+            where[0], where[1], src.shape,
+            self.current.rotation, self.current.flipped)
         width = (src.shape[1] if self.current.rotation % 180 == 0
                  else src.shape[0])
         fraction = min(1.0, max(0.0, flat_x / max(1, width)))
@@ -2621,18 +3077,27 @@ def read_survey(folder) -> dict:
 
     Returns everything the sheet and a commissioned scan need: the frames as
     `Result` objects, the `start_at` the walk used, the prescan resolution it
-    used, and any positions already approved for it.
+    used, and any positions and orientations already approved for it.
 
     **The prescans are un-rotated on the way in.** `prescanNN.tif` is written
     turned the way the screen had it, and a reference has to be the film's own
     orientation or it will not correlate against a fresh pass. `rotation` is
     carried on the result instead, which is exactly how a live pass behaves.
+
+    That is also why the manifest's single `rotation` is what un-rotates them:
+    a per-frame turn is recorded in `approved.json` and never applied to a
+    `prescanNN.tif`, so this arithmetic stays true however many frames were
+    turned individually. The per-frame turns come back as `rotations`, which
+    the sheet lays over the results afterwards.
     """
     folder = Path(folder)
     manifest = json.loads((folder / "survey.json").read_text())
     turn = int(manifest.get("rotation") or 0)
+    mirrored = bool(manifest.get("flipped"))
 
     offsets: dict[int, float] = {}
+    rotations: dict[int, int] = {}
+    flips: dict[int, bool] = {}
     entries: dict[int, str] = {}
     approved_path = folder / "approved.json"
     if approved_path.exists():
@@ -2640,6 +3105,13 @@ def read_survey(folder) -> dict:
             number = int(record["number"])
             if record.get("offset_mm"):
                 offsets[number] = float(record["offset_mm"])
+            # `is not None` rather than truthiness: an explicit zero is a
+            # decision here, and a file written before this existed has no key
+            # at all rather than a zero.
+            if record.get("rotation") is not None:
+                rotations[number] = int(record["rotation"]) % 360
+            if record.get("flipped") is not None:
+                flips[number] = bool(record["flipped"])
             if record.get("reference_entry"):
                 entries[number] = record["reference_entry"]
 
@@ -2654,7 +3126,7 @@ def read_survey(folder) -> dict:
             seq=-number,                     # negative: never a live pass's seq
             kind="prescan",
             label=f"frame {number} (reopened)",
-            image=preview.rotate(image, -turn),
+            image=preview.unorient(image, turn, mirrored),
             meta={"resolution_dpi": manifest.get("prescan_resolution")},
             entry=Path(entries[number]) if number in entries else None,
             registration=record.get("registration") or {},
@@ -2664,6 +3136,7 @@ def read_survey(folder) -> dict:
         result.hidden = False
         result.supersedes = None
         result.rotation = turn
+        result.flipped = mirrored
         result.levels = (preview.levels(result.image)
                          if result.image is not None else None)
         results.append(result)
@@ -2673,8 +3146,11 @@ def read_survey(folder) -> dict:
         "start_at": int(manifest.get("start_at") or 1),
         "prescan_resolution": manifest.get("prescan_resolution"),
         "offsets": offsets,
+        "rotations": rotations,
+        "flips": flips,
         "roll": manifest.get("roll") or folder.name,
         "rotation": turn,
+        "flipped": mirrored,
     }
 
 
@@ -2710,6 +3186,87 @@ def snap_offset(millimetres: float) -> float:
     return 0.0
 
 
+#: What one press of an arrow in the frame position window moves, as the
+#: operator may choose. "finest" is not a distance: it walks to the next
+#: position the transport can actually reach, which is the smallest move there
+#: is and is not a constant -- the gap is 0.27 mm off zero and 0.11 mm
+#: everywhere above that.
+ADJUST_STEPS = ("finest", "0.27 mm", "0.50 mm", "1.00 mm")
+
+
+def step_millimetres(choice: str) -> float:
+    """The chosen step as a distance, or 0.0 meaning "the next one along"."""
+    try:
+        return float(str(choice).split()[0])
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
+    """Where one press of an arrow should put the frame.
+
+    `step_mm` of zero means the finest move there is: the adjacent position on
+    the transport's own lattice. That is not a fixed distance and cannot be
+    written as one. Off zero the first reachable place is 0.27 mm away -- one
+    SLIDE command, and nothing exists below it -- while above that the
+    positions are 0.11 mm apart, because a command's distance grows by
+    `STEP_MM` per param. Adding a constant and snapping gets this wrong at
+    both ends: 0.27 steps over two thirds of the reachable positions, and
+    0.11 rounds to nothing at all and the frame never moves.
+
+    So the finest step is found rather than computed -- probe outward until
+    the snapped answer changes. It is a handful of arithmetic per keypress and
+    it cannot disagree with `snap_offset` about what is reachable, which a
+    second copy of the lattice would eventually do.
+    """
+    here = snap_offset(current)
+    if step_mm > 0:
+        return snap_offset(here + direction * step_mm)
+    probe = FINEST_PROBE_MM
+    want = here
+    # Enough to cross the widest gap in the lattice, which is the 0.27 mm off
+    # zero, several times over.
+    for _ in range(64):
+        want += direction * probe
+        if abs(want) > MAX_TRAVEL_MM:
+            break
+        landed = snap_offset(want)
+        if abs(landed - here) > 1e-9:
+            return landed
+    return here
+
+
+def picture_of(result) -> tuple | None:
+    """What photograph a pass is of, as far as its arrangement is concerned.
+
+    A roll numbers its frames, and that is the best answer: it survives the
+    film being moved and put back. Otherwise the transport position is what
+    there is -- it is already how `_add_result` decides that a scan stands in
+    for a prescan, so orientation keyed the same way cannot disagree with it.
+
+    None for a pass belonging to no identifiable picture, which is not an
+    error: it simply follows whatever was last set.
+    """
+    if getattr(result, "number", 0):
+        return ("frame", result.number)
+    position = getattr(result, "position", None)
+    if position is not None:
+        return ("at", position)
+    return None
+
+
+def _arrangement(result) -> str:
+    """How a pass is arranged, in words, for a caption or a line in the log.
+
+    One phrasing, so the caption over the picture and the log line underneath
+    it cannot describe the same frame two different ways.
+    """
+    parts = [f"{result.rotation}\u00b0"] if result.rotation else []
+    if getattr(result, "flipped", False):
+        parts.append("flipped")
+    return ", ".join(parts) or "as the scanner sent it"
+
+
 def approved_from_sheet(frames, ticks, offsets) -> tuple:
     """The `Approved` records for the ticked frames, in frame order.
 
@@ -2718,6 +3275,17 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
     -- which is what lets the scan check it rather than assume. `frames` is the
     surveyed results, `ticks` the numbers chosen, `offsets` the adjustments
     made, keyed by frame number.
+
+    The orientation is read off each result rather than passed in, because
+    `result.rotation` is the one place that always knows it: a frame turned in
+    the sheet and a frame merely following the session default both carry it,
+    and both have to reach the file. A separate dictionary of turns could only
+    describe the first kind, and an absent entry would then mean "follow the
+    session" -- which is wrong the moment the session default moves under a
+    frame somebody deliberately straightened.
+
+    A turn on an unticked frame goes nowhere, which is right: there is no file
+    for it to reach. It is the same thing that happens to that frame's offset.
     """
     picked = set(ticks)
     out = []
@@ -2728,6 +3296,8 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
         out.append(Approved(
             number=number,
             offset_mm=snap_offset(offsets.get(number, 0.0)),
+            rotation=int(getattr(result, "rotation", 0) or 0) % 360,
+            flipped=bool(getattr(result, "flipped", False)),
             reference=getattr(result, "image", None),
             # str, not the Path the GUI carries: Approved declares a str,
             # and a Path here reaches json.dumps in _write_approved and
@@ -2886,53 +3456,129 @@ def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
 
 #: The colour each channel is drawn in. Infrared is grey because it is a
 #: measurement rather than a colour, the same reason its preview is not tinted.
-_CHANNEL_INK = ("#e0605a", "#5ab86a", "#5a8fe0", "#a8a8a8")
+#: One ink per visible plane. There is no fourth: see `rgb_only`.
+_CHANNEL_INK = ("#e0605a", "#5ab86a", "#5a8fe0")
+
+#: The channel names a histogram row can carry, in the order the planes sit.
+_CHANNEL_NAMES = "RGB"
 
 
-class _Histogram:
-    """Where a pass's values sit, unstretched, and how much is against the ends.
+def rgb_only(pixels):
+    """The visible planes of a pass, which is all a histogram is about.
 
-    Its own window rather than a panel: it answers a question that is asked
-    occasionally and about one pass, and the room it needs is room the picture
-    would rather have.
+    Infrared is not a colour and not an exposure. It is a dust measurement:
+    its plane holds where the film is opaque to 940 nm, so "how much of it is
+    against full scale" is not a question about whether this frame was exposed
+    well, and the answer moves with the film base rather than with anything
+    the operator can change. On traditional black and white it holds the
+    picture over again, at +0.97 correlation with green -- a fourth curve
+    tracing the third, on a chart read at a glance.
+
+    Dropped before the measurement rather than after it, so a full 3600 dpi
+    frame costs three passes over the pixels and not four.
+    """
+    if pixels.ndim == 3 and pixels.shape[2] > len(_CHANNEL_NAMES):
+        return pixels[..., :len(_CHANNEL_NAMES)]
+    return pixels
+
+
+class _HistogramPanel:
+    """Where the current pass's values sit, unstretched, always on screen.
+
+    A panel in the corner of the picture rather than a window opened from a
+    menu. What it answers -- is this against the ceiling? -- is not an
+    occasional question but the one being asked continuously while an exposure
+    is being judged, and a reading you have to go and ask for is a reading
+    nobody takes. Blue reaches the rail first on this scanner and does it
+    without looking any different on a stretched preview, which is the whole
+    reason these numbers exist.
+
+    Small, and over the picture rather than beside it: the width belongs to
+    the scan. It follows whatever is on screen, and upgrades itself from the
+    working copy to the scan's own pixels when those arrive, because a reduced
+    copy understates how much is at the rail.
     """
 
-    WIDTH, HEIGHT = 540, 260
+    WIDTH, HEIGHT = 244, 74
+    BACK = "#141414"
+    EDGE = "#333333"
+    MARGIN = 12                              # from the corner, and from the picture
 
-    def __init__(self, parent: tk.Misc, label: str, source: str):
-        self.top = tk.Toplevel(parent)
-        self.top.title(f"Histogram -- {label}")
-        self.top.transient(parent)
-        frame = ttk.Frame(self.top, padding=10)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=label, font=("TkDefaultFont", 12, "bold")).pack(
-            anchor="w")
-        ttk.Label(frame, text=f"measured on {source}", foreground="#777").pack(
-            anchor="w", pady=(0, 6))
-        self.canvas = tk.Canvas(frame, width=self.WIDTH, height=self.HEIGHT,
-                                background="#141414", highlightthickness=0)
-        self.canvas.pack()
-        self.canvas.create_text(self.WIDTH // 2, self.HEIGHT // 2,
-                                fill="#888", text="measuring ...", tags="wait")
-        ttk.Label(frame, foreground="#777", justify="left", wraplength=self.WIDTH,
-                  text="Counts on a square-root scale, so a small population "
-                       "against an end is visible beside a large one in the "
-                       "middle. The horizontal axis is the full range of the "
-                       "file, not of this picture.").pack(anchor="w", pady=(6, 8))
-        self.table = ttk.Frame(frame)
-        self.table.pack(fill="x")
-        ttk.Button(frame, text="Close", command=self.top.destroy).pack(
-            anchor="e", pady=(10, 0))
+    def __init__(self, parent: tk.Misc):
+        self.frame = tk.Frame(parent, background=self.BACK,
+                              highlightthickness=1, highlightbackground=self.EDGE)
+        self.v_source = tk.StringVar(value="nothing scanned yet")
+        # One line, clipped rather than wrapped: this is a caption, and three
+        # lines of it made the panel taller than the chart it describes.
+        tk.Label(self.frame, textvariable=self.v_source, background=self.BACK,
+                 foreground="#777", font=("TkDefaultFont", 9), anchor="w",
+                 width=1).pack(fill="x", padx=8, pady=(4, 0))
+        self.canvas = tk.Canvas(self.frame, width=self.WIDTH, height=self.HEIGHT,
+                                background=self.BACK, highlightthickness=0)
+        self.canvas.pack(padx=8, pady=(3, 0))
+        self.table = tk.Frame(self.frame, background=self.BACK)
+        self.table.pack(fill="x", padx=8, pady=(2, 6))
+        # Built once and rewritten, not destroyed and rebuilt: this runs on
+        # every pass the operator clicks through, and a panel that discards
+        # and recreates a dozen widgets each time flickers doing it.
+        self._cells: dict[tuple[int, int], tk.Label] = {}
+        for column, text in enumerate(("", "at 0", "at full", "near full")):
+            tk.Label(self.table, text=text, background=self.BACK,
+                     foreground="#666", font=("TkDefaultFont", 9)).grid(
+                row=0, column=column, sticky="e", padx=(0, 6))
+        for row, name in enumerate(_CHANNEL_NAMES, start=1):
+            tk.Label(self.table, text=name, background=self.BACK,
+                     foreground=_CHANNEL_INK[row - 1],
+                     font=("TkDefaultFont", 9)).grid(row=row, column=0,
+                                                     sticky="w", padx=(0, 6))
+            for column in range(1, 4):
+                cell = tk.Label(self.table, text="--", background=self.BACK,
+                                foreground="#999", font=("TkDefaultFont", 9))
+                cell.grid(row=row, column=column, sticky="e", padx=(0, 6))
+                self._cells[(row, column)] = cell
 
-    def alive(self) -> bool:
-        try:
-            return bool(self.top.winfo_exists())
-        except tk.TclError:
-            return False
+    def place(self) -> None:
+        """Top right of the picture, out of the way of the toolbar below it."""
+        self.frame.place(relx=1.0, x=-self.MARGIN, y=self.MARGIN, anchor="ne")
+
+    def footprint(self) -> int:
+        """How much of the canvas's width this is standing on.
+
+        Its own width, the gap to the edge, and the same gap again so the
+        picture stops short of it rather than up against it.
+
+        `winfo_reqwidth`, not `winfo_width`: the requested width is right
+        before the panel has been mapped, and the first picture is laid out
+        before that has happened.
+        """
+        return self.frame.winfo_reqwidth() + self.MARGIN * 2
+
+    # -- what it is showing ------------------------------------------------
+
+    def waiting(self, source: str) -> None:
+        self.v_source.set(source)
+        self._note("measuring ...")
+
+    def nothing(self) -> None:
+        self.v_source.set("nothing scanned yet")
+        self._note("")
+
+    def failed(self) -> None:
+        self._note("could not measure")
+
+    def _note(self, text: str) -> None:
+        self.canvas.delete("all")
+        self._blank()
+        if text:
+            self.canvas.create_text(self.WIDTH // 2, self.HEIGHT // 2,
+                                    fill="#777", text=text)
+
+    def _blank(self) -> None:
+        for cell in self._cells.values():
+            cell.configure(text="--", foreground="#999")
 
     def show(self, counts, clipped) -> None:
-        if not self.alive():
-            return                                       # closed while measuring
+        self.v_source.set(self.v_source.get())
         self.canvas.delete("all")
         import numpy as np
 
@@ -2944,37 +3590,213 @@ class _Histogram:
         for edge in (0.25, 0.5, 0.75):
             x = 1 + edge * (self.WIDTH - 2)
             self.canvas.create_line(x, 0, x, self.HEIGHT, fill="#2a2a2a")
-        for channel in range(counts.shape[0]):
-            ink = _CHANNEL_INK[channel] if channel < len(_CHANNEL_INK) else "#ccc"
+        for channel in range(min(counts.shape[0], len(_CHANNEL_INK))):
             points = []
             for b in range(bins):
                 x = 1 + b * (self.WIDTH - 2) / max(1, bins - 1)
                 y = self.HEIGHT - 1 - shown[channel][b] / tallest * (self.HEIGHT - 6)
                 points.extend((x, y))
-            self.canvas.create_line(*points, fill=ink, width=1)
-        self.canvas.create_text(4, self.HEIGHT - 8, anchor="w", fill="#666",
-                                text="nothing")
-        self.canvas.create_text(self.WIDTH - 4, self.HEIGHT - 8, anchor="e",
-                                fill="#666", text="full scale")
+            self.canvas.create_line(*points, fill=_CHANNEL_INK[channel], width=1)
+        self.canvas.create_text(3, self.HEIGHT - 7, anchor="w", fill="#555",
+                                text="0", font=("TkDefaultFont", 9))
+        self.canvas.create_text(self.WIDTH - 3, self.HEIGHT - 7, anchor="e",
+                                fill="#555", text="full scale",
+                                font=("TkDefaultFont", 9))
 
-        for child in self.table.winfo_children():
-            child.destroy()
-        headings = ("", "at nothing", "at full scale", "near full")
-        for column, text in enumerate(headings):
-            ttk.Label(self.table, text=text, foreground="#777").grid(
-                row=0, column=column, sticky="e", padx=6)
-        for channel in range(clipped.shape[0]):
-            name = "RGBI"[channel] if channel < 4 else str(channel)
-            ttk.Label(self.table, text=name).grid(row=channel + 1, column=0,
-                                                  sticky="w", padx=6)
+        self._blank()
+        for channel in range(min(clipped.shape[0], len(_CHANNEL_NAMES))):
             for column, fraction in enumerate(clipped[channel], start=1):
+                cell = self._cells.get((channel + 1, column))
+                if cell is None:
+                    continue
                 # A tenth of a percent of a frame is thousands of pixels, so
                 # anything that rounds to zero is said to be zero rather than
                 # shown as a very small number that invites squinting.
-                text = "--" if fraction == 0 else f"{fraction * 100:.3f}%"
-                ttk.Label(self.table, text=text,
-                          foreground="#e0605a" if fraction > 0.001 else None).grid(
-                    row=channel + 1, column=column, sticky="e", padx=6)
+                cell.configure(
+                    text="--" if fraction == 0 else f"{fraction * 100:.2f}%",
+                    foreground="#e0605a" if fraction > 0.001 else "#999")
+
+
+class _ShortcutSettings:
+    """Every key in the window, and what it does, changeable and restorable.
+
+    Its own window like the contact sheet: it is opened to change one thing and
+    closed again, and it wants the room to show three windows' worth of keys at
+    once. A change binds immediately -- there is no Apply -- because the thing
+    being edited is what the keyboard does, and trying a key is how anyone
+    checks they got the one they meant.
+    """
+
+    def __init__(self, gui):
+        self.gui = gui
+        self.keys = dict(gui.keys)
+        self._capturing: str | None = None   # the action id waiting for a key
+        self._buttons: dict[str, tk.Widget] = {}
+
+        self.top = tk.Toplevel(gui.root)
+        self.top.title("Shortcuts")
+        self.top.transient(gui.root)
+        self.top.geometry("620x760")
+
+        outer = ttk.Frame(self.top, padding=(12, 10))
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, font=("TkDefaultFont", 13, "bold"),
+                  text="Shortcuts").pack(anchor="w")
+        ttk.Label(
+            outer, foreground="#777", justify="left", wraplength=580,
+            text=("Click a key to change it, then press the one you want. The "
+                  "same key can be used in different windows -- the arrows walk "
+                  "the filmstrip here, move the selection in the contact sheet, "
+                  "and step the film in the position window.\n\n"
+                  "No shortcut starts a scan, calibrates, or moves film. Those "
+                  "cost minutes of the scanner or move your negative, and a "
+                  "slip on the keyboard is not a decision to do either.")
+        ).pack(anchor="w", pady=(2, 10))
+
+        host = ttk.Frame(outer)
+        host.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(host, highlightthickness=0, borderwidth=0)
+        bar = ttk.Scrollbar(host, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        table = ttk.Frame(self.canvas, padding=(0, 4))
+        window = self.canvas.create_window((0, 0), window=table, anchor="nw")
+        table.bind("<Configure>", lambda _e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>",
+                         lambda e: self.canvas.itemconfigure(window, width=e.width))
+        table.columnconfigure(0, weight=1)
+
+        row = 0
+        for scope in shortcuts.SCOPES:
+            ttk.Label(table, text=shortcuts.SCOPE_NAMES[scope],
+                      font=("TkDefaultFont", 11, "bold")).grid(
+                row=row, column=0, sticky="w", pady=(12, 2))
+            row += 1
+            for action in shortcuts.ACTIONS:
+                if action.scope == scope:
+                    self._row(table, action, row)
+                    row += 1
+
+        foot = ttk.Frame(outer)
+        foot.pack(fill="x", pady=(10, 0))
+        ttk.Button(foot, text="Restore all defaults",
+                   command=self._restore_all).pack(side="left")
+        self.v_note = tk.StringVar()
+        ttk.Label(foot, textvariable=self.v_note, foreground="#e0605a").pack(
+            side="left", padx=10)
+        ttk.Button(foot, text="Close", command=self.top.destroy).pack(side="right")
+
+        gui._scrolls(self.canvas,
+                     lambda amount, _s: self.canvas.yview_scroll(amount, "units"),
+                     precise=lambda dx, dy: _scroll_pixels(self.canvas, dx, dy))
+        self.top.bind("<Escape>", self._escape)
+
+    def _row(self, table, action, row: int) -> None:
+        line = ttk.Frame(table)
+        line.grid(row=row, column=0, sticky="ew", pady=1)
+        line.columnconfigure(0, weight=1)
+        ttk.Label(line, text=action.label).grid(row=0, column=0, sticky="w")
+        button = ttk.Button(line, width=12,
+                            command=lambda a=action.id: self._capture(a))
+        button.grid(row=0, column=1, padx=(8, 2))
+        self._buttons[action.id] = button
+        ttk.Button(line, text="\u00d7", width=2,
+                   command=lambda a=action.id: self._set(a, "")).grid(
+            row=0, column=2, padx=1)
+        ttk.Button(line, text="\u21ba", width=2,
+                   command=lambda d=action.default, a=action.id: self._set(a, d)
+                   ).grid(row=0, column=3, padx=1)
+        self._show(action.id)
+
+    # -- changing one ------------------------------------------------------
+
+    def _show(self, action_id: str) -> None:
+        button = self._buttons.get(action_id)
+        if button is None:
+            return
+        if self._capturing == action_id:
+            button.configure(text="press a key")
+            return
+        button.configure(text=shortcuts.describe(self.keys.get(action_id, "")))
+
+    def _capture(self, action_id: str) -> None:
+        """Wait for the next key press and give it to this action."""
+        was, self._capturing = self._capturing, action_id
+        if was:
+            self._show(was)
+        self._show(action_id)
+        self.v_note.set("")
+        self.top.bind("<KeyPress>", self._captured)
+        self.top.focus_set()
+
+    def _captured(self, event) -> str:
+        action_id, self._capturing = self._capturing, None
+        self.top.unbind("<KeyPress>")
+        if action_id is None:
+            return "break"
+        if event.keysym == "Escape":
+            self._show(action_id)        # cancelled, nothing changed
+            return "break"
+        sequence = shortcuts.sequence_for(event.keysym, int(event.state))
+        if sequence is None:
+            self.v_note.set("That is only a modifier -- it could never fire.")
+            self._show(action_id)
+            return "break"
+        self._set(action_id, sequence)
+        return "break"
+
+    def _escape(self, _event=None) -> str | None:
+        """Cancel a capture if one is running, otherwise close the window."""
+        if self._capturing is not None:
+            waiting, self._capturing = self._capturing, None
+            self.top.unbind("<KeyPress>")
+            self._show(waiting)
+            return "break"
+        self.top.destroy()
+        return "break"
+
+    def _set(self, action_id: str, sequence: str) -> None:
+        """Give one action a key, refusing a clash inside the same window."""
+        scope = shortcuts.scope_of(action_id)
+        if sequence:
+            held = shortcuts.in_scope(self.keys, scope).get(sequence)
+            if held and held != action_id:
+                other = shortcuts.action(held)
+                self.v_note.set(
+                    f"{shortcuts.describe(sequence)} already does "
+                    f"\u201c{other.label}\u201d in {shortcuts.SCOPE_NAMES[scope].lower()}.")
+                self._show(action_id)
+                return
+        self.keys[action_id] = sequence
+        self.v_note.set("")
+        self._show(action_id)
+        self.gui.set_keys(self.keys)
+
+    def _restore_all(self) -> None:
+        if not messagebox.askokcancel(
+            "Shortcuts", "Put every key back to what it ships as?",
+            parent=self.top,
+        ):
+            return
+        self.keys = shortcuts.defaults()
+        self.v_note.set("")
+        for action_id in self.keys:
+            self._show(action_id)
+        self.gui.set_keys(self.keys)
+
+    def rebind(self) -> None:
+        """The window changed the keys under us -- show what they are now."""
+        self.keys = dict(self.gui.keys)
+        for action_id in self.keys:
+            self._show(action_id)
+
+    def alive(self) -> bool:
+        try:
+            return bool(self.top.winfo_exists())
+        except tk.TclError:
+            return False
 
 
 class _FrameAdjuster:
@@ -3021,10 +3843,13 @@ class _FrameAdjuster:
                   font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
         ttk.Label(
             outer, foreground="#777",
-            text=("Drag the picture to say where the film should sit. The "
-                  "dashed lines are the aperture -- anything you drag past "
-                  "them will not be scanned. Shown as the film sits, not "
-                  "turned.")
+            text=("Drag the picture, or use the arrow keys, to say where the "
+                  "film should sit. \u201cfinest\u201d moves to the next "
+                  "position the transport can reach; the others move by that "
+                  "much and land on the nearest one. The dashed lines are the "
+                  "aperture -- anything past them will not be scanned. Return "
+                  "keeps this frame and moves to the next. Shown as the film "
+                  "sits, not arranged.")
         ).pack(anchor="w", pady=(0, 6))
 
         self.canvas = tk.Canvas(outer, background="#1e1e1e",
@@ -3042,6 +3867,9 @@ class _FrameAdjuster:
         ttk.Button(row, text="\u25b6", width=3,
                    command=lambda: self._step(1)).pack(side="left", padx=(2, 8))
         ttk.Button(row, text="Centre", command=self._centre).pack(side="left")
+        ttk.Label(row, text="step").pack(side="left", padx=(12, 4))
+        ttk.Combobox(row, textvariable=gui.v_adjuststep, width=8,
+                     state="readonly", values=list(ADJUST_STEPS)).pack(side="left")
         self.v_read = tk.StringVar()
         ttk.Label(row, textvariable=self.v_read,
                   font=("TkDefaultFont", 11)).pack(side="left", padx=12)
@@ -3060,11 +3888,62 @@ class _FrameAdjuster:
                    command=self._show_in_preview).pack(side="left", padx=6)
         ttk.Button(nav, text="Done", command=self.top.destroy).pack(side="right")
 
-        self.top.bind("<Left>", lambda _e: self._step(-1))
-        self.top.bind("<Right>", lambda _e: self._step(1))
-        self.top.bind("<Escape>", lambda _e: self.top.destroy())
+        self.rebind()
         self.canvas.focus_set()
         self._load()
+
+    # -- the keyboard ------------------------------------------------------
+
+    def _actions(self) -> dict:
+        return {
+            "adjust_left": lambda: self._step(-1),
+            "adjust_right": lambda: self._step(1),
+            "adjust_accept": self._accept,
+            "adjust_previous": lambda: self._go(-1),
+            "adjust_next": lambda: self._go(1),
+            "adjust_centre": self._centre,
+            "adjust_toggle": self._toggle_tick,
+            "adjust_close": self.top.destroy,
+        }
+
+    def rebind(self) -> None:
+        for sequence in getattr(self, "_bound", []):
+            try:
+                self.top.unbind(sequence)
+            except tk.TclError:
+                pass
+        self._bound = []
+        actions = self._actions()
+        for sequence, action_id in shortcuts.in_scope(
+                self.gui.keys, "adjuster").items():
+            run = actions.get(action_id)
+            if run is not None:
+                self.top.bind(sequence, self.gui._runner(run, sequence))
+                self._bound.append(sequence)
+
+    def _accept(self) -> None:
+        """Keep this frame and move on to the next one.
+
+        The offset is already recorded -- `_set` writes it into the sheet as
+        the picture is dragged -- so there is nothing here to save. What this
+        does is say yes: tick it for scanning, and show the next frame. That
+        is the whole of the job this window exists for, done one key at a time
+        rather than one mouse round trip at a time.
+
+        The last frame closes the window, because there is nowhere further to
+        go and leaving it open invites a press that does nothing.
+        """
+        self.v_tick.set(True)
+        self._tick_changed()
+        if self.index >= len(self.sheet.frames) - 1:
+            self.gui._say("that was the last frame of the strip")
+            self.top.destroy()
+            return
+        self._go(1)
+
+    def _toggle_tick(self) -> None:
+        self.v_tick.set(not self.v_tick.get())
+        self._tick_changed()
 
     # -- the frame on show -------------------------------------------------
 
@@ -3107,8 +3986,17 @@ class _FrameAdjuster:
         self.sheet._refresh_caption(self.number)
 
     def _step(self, direction: int) -> None:
-        """One hardware step. Drag is coarse; this is how a frame is landed."""
-        self._set(self.offset + direction * FINE_STEP_MM)
+        """One step. Drag is coarse; this is how a frame is landed.
+
+        "finest" walks to the next position the transport can reach, which is
+        the smallest move there is. What this replaced added a flat 0.27 mm
+        and snapped, and 0.27 is not the lattice's spacing -- it is the
+        distance of a single command off zero. Above that the positions are
+        0.11 mm apart, so the arrows were stepping over two out of every three
+        places the film could actually be put.
+        """
+        self._set(step_offset(self.offset, direction,
+                              step_millimetres(self.gui.v_adjuststep.get())))
 
     def _centre(self) -> None:
         self._set(0.0)
@@ -3233,8 +4121,9 @@ class _ContactSheet:
     COLUMNS = 4
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
+    SELECTED = "#ffffff"                     # the keyboard's place, not a tick
 
-    def __init__(self, gui, frames, offsets=None):
+    def __init__(self, gui, frames, offsets=None, rotations=None, flips=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
         # A frame that was walked but cannot be shown is not a cosmetic
@@ -3251,16 +4140,54 @@ class _ContactSheet:
         #: where it was surveyed. Absent means "as surveyed" -- an explicit
         #: zero never lands here, because snap_offset returns it as absent.
         self.offsets: dict[int, float] = dict(offsets or {})
-        self._photos: list[tk.PhotoImage] = []
+        #: Which way up each frame has been *decided* to be, in degrees
+        #: clockwise. Per frame because a strip is not one orientation: a
+        #: portrait among landscapes is ordinary, and the session's single
+        #: `rotation` can only get one of them right.
+        #:
+        #: Absolute, and **zero is a decision** -- unlike `offsets`, where an
+        #: explicit zero and an absent entry mean the same thing. They cannot
+        #: mean the same thing here: "rotate all" moves the session default, so
+        #: a frame deliberately straightened afterwards would fall back to that
+        #: default and be scanned sideways. It did, on the first strip this was
+        #: driven on.
+        self.rotations: dict[int, int] = {int(n): int(t) % 360 for n, t
+                                          in dict(rotations or {}).items()}
+        #: And whether each reads left to right, on the same terms: absolute,
+        #: and an explicit False is a decision. A strip can go in the other way
+        #: up, and that is not a fourth angle.
+        self.flips: dict[int, bool] = {int(n): bool(v) for n, v
+                                       in dict(flips or {}).items()}
+        # A reopened survey arrives with the manifest's one arrangement on every
+        # result; a frame decided individually overrides it, so the cell is
+        # drawn the way it was left rather than the way the roll was.
+        for result in self.frames:
+            if result.number in self.rotations:
+                result.rotation = self.rotations[result.number]
+            if result.number in self.flips:
+                result.flipped = self.flips[result.number]
+        # Keyed by frame number rather than appended, because a cell is now
+        # re-rendered when it is turned and a list would grow a PhotoImage per
+        # rotation while holding every superseded one alive.
+        self._photos: dict[int, tk.PhotoImage] = {}
+        self._pictures: dict[int, tk.Label] = {}
         self._rings: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
         self._adjuster = None
+        #: Which cell the keyboard is on. Distinct from the tick: a frame can
+        #: be selected and not scanned, or scanned and not selected, and the
+        #: sheet had no notion of "this one" at all before there were keys.
+        self.selected = 0
+        self._bound: list[str] = []
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Contact sheet")
         self.top.transient(gui.root)
         self.top.geometry("980x720")
+        # Its own menu, parented on this window, so closing the sheet takes it
+        # with it rather than leaving one attached to the main window.
+        self.menu = tk.Menu(self.top, tearoff=0)
 
         outer = ttk.Frame(self.top, padding=(10, 8))
         outer.pack(fill="both", expand=True)
@@ -3268,13 +4195,15 @@ class _ContactSheet:
                   text=f"{len(self.frames)} frames walked").pack(anchor="w")
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
                   text=("Tick what is worth scanning. Click a picture to tick "
-                        "it, double-click to open it and set where the film "
-                        "should sit. Positions you set are used as given -- "
-                        "nothing moves until you commission the scan, and the "
-                        "automatic nudge does not apply to frames you adjust. "
-                        "The film is rewound to the start of the strip first, "
-                        "and every frame nobody ticked costs its advance "
-                        "only.")).pack(
+                        "it, double-click or press Return to set where the film "
+                        "should sit, right-click to arrange it. The arrow keys "
+                        "move between frames and Space ticks. A frame is "
+                        "scanned the way you leave it here. Positions you set "
+                        "are used as given -- nothing moves until you "
+                        "commission the scan, and the automatic nudge does not "
+                        "apply to frames you adjust. The film is rewound to the "
+                        "start of the strip first, and every frame nobody "
+                        "ticked costs its advance only.")).pack(
             anchor="w", pady=(0, 8))
 
         # Canvas-with-a-frame-inside, the same shape as the options column:
@@ -3317,7 +4246,98 @@ class _ContactSheet:
         gui._scrolls(self.canvas,
                      lambda amount, sideways: self.canvas.yview_scroll(amount, "units"),
                      precise=lambda dx, dy: _scroll_pixels(self.canvas, dx, dy))
+        self.rebind()
+        self.canvas.focus_set()
         self._changed()
+
+    # -- the keyboard ------------------------------------------------------
+
+    def _actions(self) -> dict:
+        return {
+            "sheet_left": lambda: self._move(-1),
+            "sheet_right": lambda: self._move(1),
+            "sheet_up": lambda: self._move(-self.COLUMNS),
+            "sheet_down": lambda: self._move(self.COLUMNS),
+            "sheet_toggle": lambda: self._on_selected(self._toggle),
+            "sheet_adjust": lambda: self.adjust(self.selected),
+            "sheet_all": lambda: self._set_all(True),
+            "sheet_none": lambda: self._set_all(False),
+            "sheet_rotate_right": lambda: self._on_selected(self._rotate, 90),
+            "sheet_rotate_left": lambda: self._on_selected(self._rotate, 270),
+            "sheet_rotate_180": lambda: self._on_selected(self._rotate, 180),
+            "sheet_straighten": lambda: self._on_selected(self._straighten),
+            "sheet_flip": lambda: self._on_selected(self._flip),
+            "sheet_show": self._show_selected,
+            "sheet_close": self.top.destroy,
+        }
+
+    def rebind(self) -> None:
+        """Take the window's current keys, here and in the position window."""
+        for sequence in self._bound:
+            try:
+                self.top.unbind(sequence)
+            except tk.TclError:
+                pass
+        self._bound = []
+        actions = self._actions()
+        for sequence, action_id in shortcuts.in_scope(
+                self.gui.keys, "sheet").items():
+            run = actions.get(action_id)
+            if run is not None:
+                self.top.bind(sequence, self.gui._runner(run, sequence))
+                self._bound.append(sequence)
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster.rebind()
+
+    def _on_selected(self, method, *args) -> None:
+        if 0 <= self.selected < len(self.frames):
+            method(self.frames[self.selected].number, *args)
+
+    def _show_selected(self) -> None:
+        if 0 <= self.selected < len(self.frames):
+            self.gui._show_seq(self.frames[self.selected].seq)
+
+    def _clicked(self, number: int, index: int) -> None:
+        """A click both picks the frame and ticks it, as it always has."""
+        self._select(index)
+        self._toggle(number)
+
+    def _move(self, by: int) -> None:
+        self._select(self.selected + by)
+
+    def _select(self, index: int) -> None:
+        """Put the keyboard on one cell and make sure it can be seen."""
+        if not self.frames:
+            return
+        self.selected = max(0, min(len(self.frames) - 1, index))
+        self._paint_rings()
+        self._scroll_to(self.selected)
+
+    def _scroll_to(self, index: int) -> None:
+        """Scroll only as far as it takes to have the selected cell in view.
+
+        The same rule the filmstrip follows: a sheet that jumped somewhere on
+        every keypress would lose the operator's place rather than keep it.
+        """
+        number = self.frames[index].number
+        ring = self._rings.get(number)
+        if ring is None:
+            return
+        self.canvas.update_idletasks()
+        try:
+            total = self.canvas.bbox("all")[3]
+        except (TypeError, IndexError):
+            return
+        height = max(1, self.canvas.winfo_height())
+        if total <= height:
+            return
+        top = ring.winfo_rooty() - self.canvas.winfo_rooty() + self.canvas.canvasy(0)
+        bottom = top + ring.winfo_height()
+        seen = self.canvas.canvasy(0)
+        if top < seen:
+            self.canvas.yview_moveto(max(0.0, (top - 8) / total))
+        elif bottom > seen + height:
+            self.canvas.yview_moveto(min(1.0, (bottom + 8 - height) / total))
 
     # -- one picture -------------------------------------------------------
 
@@ -3332,26 +4352,16 @@ class _ContactSheet:
         ring.pack()
         self._rings[number] = ring
 
-        # preview.sample, not preview.fit: fit decimates by whole integers
-        # only, so a 428 px prescan asked to fill a 210 px cell comes back
-        # 143 px wide -- a third of the space, and softer than it needs to be.
-        # sample scales fractionally and fills the cell.
-        turned = preview.rotate(result.image, result.rotation)
-        scale = min(self.CELL / max(turned.shape[1], 1),
-                    self.CELL / max(turned.shape[0], 1))
-        arr = preview.render(
-            preview.sample(turned, scale, 0.0, 0.0,
-                           max(1, int(turned.shape[1] * scale)),
-                           max(1, int(turned.shape[0] * scale))),
-            "RGB", self.gui.v_invert.get(),
-            cuts=(preview.channel_levels(result.levels, "RGB")
-                  if getattr(result, "levels", None) is not None else None))
-        photo = tk.PhotoImage(data=preview.to_ppm(arr))
-        self._photos.append(photo)
+        photo = self._render(result)
         picture = tk.Label(ring, image=photo, borderwidth=0)
         picture.pack()
-        picture.bind("<Button-1>", lambda _e, n=number: self._toggle(n))
+        self._pictures[number] = picture
+        picture.bind("<Button-1>",
+                     lambda _e, n=number, i=index: self._clicked(n, i))
         picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
+        for seq in MENU_EVENTS:
+            picture.bind(
+                seq, lambda e, i=index: self.on_cell_menu(e, i))
 
         ttk.Checkbutton(cell, text=f"Frame {number}", variable=var,
                         command=self._changed).pack(anchor="w", pady=(4, 0))
@@ -3369,6 +4379,187 @@ class _ContactSheet:
             # amount of scanning it brings that back.
             ttk.Label(cell, foreground="#e0605a",
                       text=f"drifted -- {short:.2f} mm outside").pack(anchor="w")
+
+    def _render(self, result) -> tk.PhotoImage:
+        """This frame's thumbnail, the way up it is currently turned.
+
+        Called to build a cell and again whenever one is rotated, so the two
+        cannot disagree about how a cell is drawn. The photo is kept against
+        the frame number because Tk drops an image nothing references.
+
+        preview.sample, not preview.fit: fit decimates by whole integers only,
+        so a 428 px prescan asked to fill a 210 px cell comes back 143 px wide
+        -- a third of the space, and softer than it needs to be. sample scales
+        fractionally and fills the cell.
+        """
+        turned = preview.orient(result.image, result.rotation, result.flipped)
+        scale = min(self.CELL / max(turned.shape[1], 1),
+                    self.CELL / max(turned.shape[0], 1))
+        arr = preview.render(
+            preview.sample(turned, scale, 0.0, 0.0,
+                           max(1, int(turned.shape[1] * scale)),
+                           max(1, int(turned.shape[0] * scale))),
+            "RGB", self.gui.v_invert.get(),
+            cuts=(preview.channel_levels(result.levels, "RGB")
+                  if getattr(result, "levels", None) is not None else None))
+        photo = tk.PhotoImage(data=preview.to_ppm(arr))
+        self._photos[result.number] = photo
+        return photo
+
+    # -- arranging ---------------------------------------------------------
+
+    def on_cell_menu(self, event: tk.Event, index: int) -> str:
+        """What can be done to one frame without leaving the sheet.
+
+        Right-clicking selects the cell first. Without that the menu would
+        offer "Rotate right, R" over one frame while R turned a different one
+        -- the key acts on the selection and the menu on what was clicked, and
+        the two saying different things about the same item is worse than
+        either alone.
+        """
+        self._select(index)
+        result = self.frames[index]
+        number = result.number
+        key = self.gui.accelerator
+        self.menu.delete(0, "end")
+        for label, degrees, action_id in (
+                ("Rotate right 90°", 90, "sheet_rotate_right"),
+                ("Rotate left 90°", 270, "sheet_rotate_left"),
+                ("Rotate 180°", 180, "sheet_rotate_180")):
+            self.menu.add_command(
+                label=label, accelerator=key(action_id),
+                command=lambda n=number, d=degrees: self._rotate(n, d))
+        if result.rotation:
+            self.menu.add_command(
+                label=f"Straighten (now {result.rotation}°)",
+                accelerator=key("sheet_straighten"),
+                command=lambda n=number: self._straighten(n))
+        self.menu.add_command(
+            label="Unflip" if result.flipped else "Flip left-right",
+            accelerator=key("sheet_flip"),
+            command=lambda n=number: self._flip(n))
+        self.menu.add_separator()
+        self.menu.add_command(
+            label="Rotate all right 90°",
+            command=lambda: self._rotate_all(90))
+        self.menu.add_command(
+            label="Rotate all left 90°",
+            command=lambda: self._rotate_all(270))
+        self.menu.add_command(
+            label=("Unflip all" if all(r.flipped for r in self.frames)
+                   else "Flip all left-right"),
+            command=self._flip_all)
+        self.menu.add_separator()
+        self.menu.add_checkbutton(
+            label="Scan this frame", variable=self.ticks[number],
+            accelerator=key("sheet_toggle"), command=self._changed)
+        self.menu.add_command(label="Set position ...",
+                              accelerator=key("sheet_adjust"),
+                              command=lambda i=index: self.adjust(i))
+        self.menu.add_command(
+            label="Show in preview", accelerator=key("sheet_show"),
+            command=lambda s=result.seq: self.gui._show_seq(s))
+        self.menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    def _orient(self, result, degrees: int = 0, flip: bool | None = None) -> str:
+        """Record one frame's new arrangement and redraw its cell.
+
+        Recorded against the number rather than applied to pixels: a prescan is
+        the reference a scan is checked against, and it has to stay in the
+        film's own orientation. `approved_from_sheet` carries this into the
+        roll, where it reaches that frame's delivered file alone.
+
+        Says nothing and leaves the filmstrip alone -- the callers below do
+        that once each, so arranging seventeen frames costs one redraw and one
+        line in the log rather than seventeen of both.
+        """
+        number = result.number
+        result.rotation = (result.rotation + degrees) % 360
+        # Set, not toggled: `flip` is the state wanted, None meaning "leave it".
+        # A toggle would make "flip all" swap each frame instead of agreeing
+        # them, so a half-mirrored strip came out still half-mirrored -- which
+        # is the one thing an operator reaching for "all" is trying to fix.
+        if flip is not None:
+            result.flipped = flip
+        # Recorded even when they come back to nothing: see `self.rotations`.
+        self.rotations[number] = result.rotation
+        self.flips[number] = result.flipped
+        picture = self._pictures.get(number)
+        if picture is not None:
+            picture.configure(image=self._render(result))
+        # The same photograph, not merely the same cell: the window remembers
+        # how this picture is arranged, so the preview behind this sheet and
+        # the scan taken later both agree with what was just decided here.
+        self.gui.remember_arrangement(result)
+        return _arrangement(result)
+
+    def _find(self, number: int):
+        return next((r for r in self.frames if r.number == number), None)
+
+    def _rotate(self, number: int, degrees: int) -> None:
+        """Turn one frame. The others keep whatever they were."""
+        self._one(number, degrees=degrees)
+
+    def _straighten(self, number: int) -> None:
+        """Take this frame's turn off, leaving any mirror alone."""
+        result = self._find(number)
+        if result is not None and result.rotation:
+            self._one(number, degrees=-result.rotation)
+
+    def _flip(self, number: int) -> None:
+        """Mirror one frame, or put it back. The others keep what they were."""
+        result = self._find(number)
+        if result is not None:
+            self._one(number, flip=not result.flipped)
+
+    def _one(self, number: int, degrees: int = 0,
+             flip: bool | None = None) -> None:
+        result = self._find(number)
+        if result is None:
+            return
+        said = self._orient(result, degrees, flip)
+        # The same picture is in the filmstrip and in the preview behind this
+        # window, and one frame shown three ways round is how an operator
+        # loses track of how it will be scanned.
+        self.gui._reshow(result)
+        self.gui._say(f"frame {number}: {said} -- scanned this way; "
+                      "the other frames are unchanged")
+
+    def _rotate_all(self, degrees: int) -> None:
+        """Turn every frame, and make it the session's default too."""
+        self._all(degrees=degrees)
+
+    def _flip_all(self) -> None:
+        """Agree every frame's mirror, and make it the session's default too.
+
+        Mirrored unless they already all are, in which case this puts them
+        back -- so the menu item that says "unflip all" does that, and pressing
+        it twice lands where it started rather than somewhere new.
+        """
+        self._all(flip=not all(r.flipped for r in self.frames))
+
+    def _all(self, degrees: int = 0, flip: bool | None = None) -> None:
+        """Arrange every frame, and make it what everything else follows.
+
+        A whole roll one way round is the ordinary case. If the operator says
+        it here he should not have to say it again for everything scanned
+        outside the sheet, so this sets the same carry-over the filmstrip's
+        menu sets. Each frame still gets its own recorded arrangement, so one
+        of them can be put back afterwards without disturbing the rest.
+        """
+        said = ""
+        for result in self.frames:
+            said = self._orient(result, degrees, flip)
+        if self.frames:
+            last = self.frames[-1]
+            self.gui.rotation = last.rotation
+            self.gui.flip = last.flipped
+            self.gui.session.rotation = last.rotation
+            self.gui.session.flip = last.flipped
+        self.gui._reshow(*self.frames)
+        self.gui._say(f"every frame: {said} -- and new scans follow this "
+                      "until something says otherwise")
 
     # -- adjusting ---------------------------------------------------------
 
@@ -3424,11 +4615,32 @@ class _ContactSheet:
     def chosen(self) -> tuple[int, ...]:
         return tuple(sorted(n for n, var in self.ticks.items() if var.get()))
 
-    def _changed(self) -> None:
-        picked = self.chosen()
+    def _paint_rings(self) -> None:
+        """Ticked or not, and which one the keyboard is on.
+
+        Two different questions on one cell, so two different marks: the ring's
+        colour says whether it will be scanned, and the outline around it says
+        where the keyboard is. A cell can be either without being the other.
+        """
+        chosen = ({self.frames[self.selected].number}
+                  if 0 <= self.selected < len(self.frames) else set())
         for number, ring in self._rings.items():
             on = self.ticks[number].get()
-            ring.configure(background=self.CHOSEN if on else self.SKIPPED)
+            colour = self.CHOSEN if on else self.SKIPPED
+            ring.configure(
+                background=colour,
+                highlightthickness=2,
+                # Its own colour when it is not the selected one: invisible,
+                # and the cell keeps the same size either way, so moving the
+                # selection does not make the grid jump.
+                highlightbackground=(self.SELECTED if number in chosen
+                                     else colour))
+
+    def _changed(self) -> None:
+        picked = self.chosen()
+        self._paint_rings()
+        for number in self._rings:
+            on = self.ticks[number].get()
             # The ring alone is not enough to see. A prescan of a negative is
             # very dark -- measured across real surveys, mean 16 of 255 -- so
             # a dark ring around a nearly black picture reads as an empty

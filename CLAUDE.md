@@ -272,6 +272,10 @@ It needs a power cycle afterwards, so avoid these:
   `scan_roll` and `auto_exposure` avoid triggering it only because an RGB
   pass always precedes the RGBI one -- not by design. Confirmed in real
   prior use, not just on the test ladder: see `docs/byte14-plan.md`.
+  `framing.reversal_against` now catches it after the fact by comparing a
+  pass against the prescan of the same frame, and `ScanSession.match_prescan`
+  switches that off. It is a detector, so it refuses far more readily than it
+  corrects -- a frame with nothing to correlate is left exactly as it came.
 - **The gain field is a digital multiplier; it buys nothing.** Measured
   2026-09-10 on a blue ladder 21→39: signal ×1.484, random noise ×1.476, a
   shortfall of 0.53% where an analog gain would have given ~4%. It is safe to

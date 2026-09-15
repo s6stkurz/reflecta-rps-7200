@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from conftest import load_tool
+from rps7200 import shortcuts
 from rps7200.mono import MONO_AVERAGE
 
 gui = load_tool("gui")
@@ -381,7 +382,7 @@ def test_the_view_is_measured_against_one_array_only():
     back under its own threshold, which swapped the array again -- a picture
     that jumped about as it passed 1:1."""
     import inspect
-    assert "preview.rotate(r.image, r.rotation)" in inspect.getsource(
+    assert "preview.orient(r.image, r.rotation, r.flipped)" in inspect.getsource(
         gui.ScannerGui._source)
     loaded = inspect.getsource(gui.ScannerGui._loaded)
     assert "grow" not in loaded, "the arrival of the big array must move nothing"
@@ -547,20 +548,43 @@ def test_only_the_overlay_is_cleared_between_frames():
 
 def test_the_histogram_is_measured_off_the_ui_thread():
     """Counting a full 3600 dpi frame exactly is about a third of a second, and
-    a window that locks up for that long while you wait to be told about
-    clipping is its own kind of unhelpful."""
+    a window that locks up for that long each time you click along the
+    filmstrip is its own kind of unhelpful."""
     import inspect
-    source = inspect.getsource(gui.ScannerGui.on_histogram)
+    source = inspect.getsource(gui.ScannerGui._measure_histogram)
     assert "threading.Thread" in source
     assert "self._measured.put" in source
     assert "self._measured" in inspect.getsource(gui.ScannerGui._pump), (
         "and the main loop collects it")
 
 
-def test_a_histogram_window_closed_while_measuring_is_not_drawn_into():
-    """The thread finishes whatever happens; the drawing has to notice."""
+def test_the_histogram_is_always_on_screen():
+    """Not a window opened from a menu. "Is this against the ceiling" is the
+    question being asked continuously while an exposure is judged, and a
+    reading you have to go and ask for is a reading nobody takes."""
     import inspect
-    assert "if not self.alive():" in inspect.getsource(gui._Histogram.show)
+    assert not hasattr(gui, "_Histogram"), "the separate window is gone"
+    assert not hasattr(gui.ScannerGui, "on_histogram")
+    assert "Histogram" not in inspect.getsource(gui.ScannerGui._fill_result_menu)
+    built = inspect.getsource(gui.ScannerGui._build_preview)
+    assert "_HistogramPanel(top)" in built and "self.histogram.place()" in built
+    # Placed, not packed: it floats over the picture rather than taking width
+    # from it, and a canvas redraw cannot clear it.
+    assert ".place(" in inspect.getsource(gui._HistogramPanel.place)
+
+
+def test_a_measurement_overtaken_by_a_later_one_is_dropped():
+    """One pass is measured twice -- the working copy, then the scan's own
+    pixels. Without a token the coarse answer can land second and quietly
+    replace the fine one, and clicking quickly along the filmstrip leaves the
+    wrong frame's numbers on screen."""
+    import inspect
+    pump = inspect.getsource(gui.ScannerGui._pump)
+    assert "if token != self._histogram_token:" in pump
+    assert "continue" in pump
+    # A counter, not the result's seq, which cannot tell the two apart.
+    assert "self._histogram_token += 1" in inspect.getsource(
+        gui.ScannerGui._measure_histogram)
 
 
 def test_the_histogram_prefers_the_scans_own_pixels():
@@ -570,13 +594,38 @@ def test_the_histogram_prefers_the_scans_own_pixels():
     source = inspect.getsource(gui.ScannerGui._finest_pixels)
     assert "self._levels" in source
     assert "the scan's own" in source and "copy" in source
+    # Which is why the arrival of those pixels measures again.
+    assert "_measure_histogram" in inspect.getsource(gui.ScannerGui._loaded)
 
 
-def test_infrared_is_drawn_grey():
-    """A measurement, not a colour -- the same reason its preview is not
-    tinted."""
-    assert gui._CHANNEL_INK[3].count(gui._CHANNEL_INK[3][1:3]) == 3, (
-        f"{gui._CHANNEL_INK[3]} should be a neutral grey")
+def test_infrared_is_not_in_the_histogram():
+    """It is a dust measurement, not an exposure: how much of it sits at full
+    scale says nothing about whether this frame was exposed well, and on
+    traditional black and white it holds the picture over again at +0.97
+    correlation with green -- a fourth curve tracing the third."""
+    rgbi = np.zeros((4, 4, 4), np.uint16)
+    assert gui.rgb_only(rgbi).shape[2] == 3
+    assert len(gui._CHANNEL_INK) == 3, "and there is no ink for a fourth"
+    assert gui._CHANNEL_NAMES == "RGB"
+
+
+def test_dropping_infrared_leaves_every_other_shape_alone():
+    """A prescan is RGB and a monochrome scan is one plane. Neither has an
+    infrared plane to lose, and slicing one that is not there would be a
+    silent change of picture."""
+    rgb = np.zeros((4, 4, 3), np.uint16)
+    assert gui.rgb_only(rgb) is rgb
+    mono = np.zeros((4, 4), np.uint16)
+    assert gui.rgb_only(mono) is mono
+
+
+def test_infrared_is_dropped_before_it_is_counted_not_after():
+    """`clipping` counts every pixel of every plane. Measuring a plane that is
+    then thrown away is a quarter of the work for nothing, on the measurement
+    that already costs a third of a second."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._measure_histogram)
+    assert source.index("rgb_only(pixels)") < source.index("preview.histogram")
 
 
 # -- picking frames off a contact sheet --------------------------------------
@@ -867,7 +916,8 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
 # minutes of transport for nothing.
 
 
-def _write_survey(folder, rotation=0, frames=3, offsets=None):
+def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None,
+                  flipped=False, flips=None):
     """A survey folder shaped exactly as `ScanSession._roll` writes one."""
     from rps7200 import preview, tiff
 
@@ -879,21 +929,26 @@ def _write_survey(folder, rotation=0, frames=3, offsets=None):
         images[number] = image
         # written turned, as the writer does
         tiff.write(str(folder / f"prescan{number:02d}.tif"),
-                   preview.rotate(image, rotation))
+                   preview.orient(image, rotation, flipped))
         records.append({"number": number, "index": number - 1,
                         "transport_position": number - 1,
                         "registration": {"contrast": 0.3}, "error": None,
                         "prescan": f"prescan{number:02d}.tif"})
     (folder / "survey.json").write_text(json.dumps({
         "roll": "a-strip", "start_at": 1, "prescan_resolution": 300,
-        "rotation": rotation, "frames": records,
+        "rotation": rotation, "flipped": flipped, "frames": records,
     }))
-    if offsets:
+    if offsets or rotations or flips:
+        numbers = sorted(set(offsets or {}) | set(rotations or {})
+                         | set(flips or {}))
         (folder / "approved.json").write_text(json.dumps({
             "roll": "a-strip",
-            "frames": [{"number": n, "offset_mm": v,
+            "frames": [{"number": n,
+                        "offset_mm": (offsets or {}).get(n, 0.0),
+                        "rotation": (rotations or {}).get(n, 0),
+                        "flipped": (flips or {}).get(n, False),
                         "reference_entry": f"library/frame{n}"}
-                       for n, v in offsets.items()],
+                       for n in numbers],
         }))
     return images
 
@@ -1052,3 +1107,859 @@ def test_the_output_label_stops_promising_a_tiff_when_it_is_a_jpeg():
     assert "infrared" in jpeg, "the plane the format has no room for"
     assert "DNG" in jpeg, "and where it goes instead, which is the actionable half"
     assert "negative" in jpeg, "it is not the inverted picture"
+
+
+# -- turning a picture from wherever it is shown ----------------------------
+#
+# The menu used to live on the filmstrip alone, so the picture you were
+# actually looking at -- full size in the middle, or laid out in the contact
+# sheet -- was the one you could not turn.
+
+
+def test_both_menus_are_filled_by_the_same_method():
+    """One list, one place. A second copy would be wrong the first time an
+    item was added to either."""
+    for handler in (gui.ScannerGui.on_strip_menu, gui.ScannerGui.on_canvas_menu):
+        assert "_fill_result_menu" in inspect.getsource(handler)
+    filled = inspect.getsource(gui.ScannerGui._fill_result_menu)
+    for item in ("Save as", "Rotate right", "Straighten",
+                 "Show prescan", "Delete"):
+        assert item in filled, item
+
+
+def test_the_menu_over_the_picture_does_not_leave_a_drag_running():
+    """Control-click is still Button-1 as far as `<B1-Motion>` is concerned,
+    so a menu opened that way over a live drag pans the picture underneath it.
+    The "break" matters too: without it the same click reaches `on_press`,
+    which in aim mode moves film."""
+    import types
+
+    stub = types.SimpleNamespace(_drag=(1, 2, [0.0, 0.0]), current=None)
+    assert gui.ScannerGui.on_canvas_menu(stub, None) == "break"
+    assert stub._drag is None
+
+
+def test_every_surface_asks_for_a_menu_the_same_three_ways():
+    """X11 sends Button-3, a Mac trackpad's two-finger tap arrives as
+    Button-2, and Control-click is for people with neither."""
+    assert gui.MENU_EVENTS == ("<Button-3>", "<Button-2>", "<Control-Button-1>")
+    for source in (inspect.getsource(gui.ScannerGui._build_preview),
+                   inspect.getsource(gui._ContactSheet._cell)):
+        assert "MENU_EVENTS" in source
+
+
+class _Surveyed:
+    """A surveyed frame, as much of one as `approved_from_sheet` reads."""
+
+    def __init__(self, number, rotation=0):
+        self.number = number
+        self.rotation = rotation
+        self.image = np.zeros((2, 2, 3), np.uint8)
+        self.entry = None
+
+
+def test_a_turn_in_the_sheet_reaches_the_scan():
+    """The whole point of turning a frame there: it is scanned that way up."""
+    approved = gui.approved_from_sheet(
+        [_Surveyed(1), _Surveyed(2, 90)], (1, 2), {})
+    turns = {a.number: a.rotation for a in approved}
+    assert turns == {1: 0, 2: 90}, "one frame turned, the other untouched"
+
+
+def test_a_frame_straightened_after_a_rotate_all_stays_straight():
+    """Zero is a decision, not an absence.
+
+    "Rotate all" moves the session default. A frame turned back to upright
+    afterwards therefore cannot be recorded as "no turn set" and left to fall
+    back on that default -- it would be scanned sideways, which is what
+    happened the first time this was driven: four frames turned to 90, one
+    straightened, and all four came out portrait.
+    """
+    approved = gui.approved_from_sheet(
+        [_Surveyed(1, 0), _Surveyed(2, 90)], (1, 2), {})
+    assert {a.number: a.rotation for a in approved} == {1: 0, 2: 90}
+    # And the sheet keeps the zero rather than popping it, which is what makes
+    # the record above say zero instead of saying nothing.
+    orient = inspect.getsource(gui._ContactSheet._orient)
+    assert "self.rotations[number] = result.rotation" in orient
+    assert "self.flips[number] = result.flipped" in orient, "and the same for a flip"
+    assert ".pop(" not in orient
+
+
+def test_a_frame_nobody_turned_still_carries_the_orientation_it_is_shown_at():
+    """A rotate in the filmstrip before the sheet was opened is just as much
+    the operator's decision, and it is on the result already."""
+    approved = gui.approved_from_sheet([_Surveyed(1, 270)], (1,), {})
+    assert approved[0].rotation == 270
+
+
+def test_a_turn_survives_closing_the_window(tmp_path):
+    """A position set by hand already survives a reopen. An orientation is the
+    same kind of decision and costs the same to make again."""
+    _write_survey(tmp_path / "roll", offsets={2: 0.4833}, rotations={2: 270})
+    out = gui.read_survey(tmp_path / "roll")
+
+    assert out["rotations"] == {2: 270}
+    assert out["offsets"] == {2: pytest.approx(0.4833)}
+
+
+def test_a_frame_turned_by_itself_is_not_confused_with_the_rolls_turn(tmp_path):
+    """`prescanNN.tif` is un-rotated by the manifest's single `rotation`, so
+    that number has to keep describing the file on disk. A per-frame turn is
+    recorded separately and laid over the results afterwards."""
+    images = _write_survey(tmp_path / "roll", rotation=90, rotations={2: 180})
+    out = gui.read_survey(tmp_path / "roll")
+
+    for result in out["results"]:
+        assert np.array_equal(result.image, images[result.number]), (
+            "the pixels still come back in the film's own orientation")
+        assert result.rotation == 90, "and every result carries the roll's turn"
+    assert out["rotations"] == {2: 180}, "the frame's own turn arrives beside it"
+    assert "self.rotations[result.number]" in inspect.getsource(
+        gui._ContactSheet.__init__), "which the sheet then lays over the result"
+
+
+def test_a_cell_is_drawn_by_the_same_code_that_redraws_it():
+    """Two ways to build one thumbnail is two ways for it to disagree with
+    what will be scanned."""
+    assert "self._render(result)" in inspect.getsource(gui._ContactSheet._cell)
+    assert "self._render(result)" in inspect.getsource(gui._ContactSheet._orient)
+
+
+def test_turning_every_frame_is_one_redraw_and_one_line_in_the_log():
+    """Seventeen of each for a seventeen-frame strip is a stutter and a log
+    nobody can read."""
+    every = inspect.getsource(gui._ContactSheet._all)
+    assert every.count("_reshow") == 1
+    assert every.count("_say") == 1
+    assert "_reshow" not in inspect.getsource(gui._ContactSheet._orient)
+
+
+def test_turning_every_frame_also_sets_what_the_next_scan_follows():
+    """A whole roll one way up is the ordinary case; saying it once should be
+    enough for anything scanned outside the sheet too."""
+    every = inspect.getsource(gui._ContactSheet._all)
+    assert "self.gui.rotation = last.rotation" in every
+    assert "self.gui.session.rotation = last.rotation" in every
+    assert "self.gui.rotation" not in inspect.getsource(gui._ContactSheet._one)
+
+
+def test_a_frame_comes_back_shown_the_way_it_was_written():
+    """A roll that returns a picture the filmstrip draws one way up and the
+    file on disk holds another is saying the file is something it is not."""
+    import types
+
+    stub = types.SimpleNamespace(
+        rotation=0, flip=False, orientations={("frame", 2): (90, True)},
+        results=[], survey=[], _surveying=False, _transport=None,
+        _show=lambda _r: None, _redraw_strip=lambda: None,
+    )
+    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
+        stub, r)
+
+    def result(kind, number, meta=None):
+        return types.SimpleNamespace(
+            kind=kind, number=number, seq=number, image=None, position=None,
+            meta=meta or {})
+
+    turned = result("frame", 2)
+    gui.ScannerGui._add_result(stub, turned)
+    assert turned.rotation == 90
+    assert turned.flipped is True, "and a mirror travels the same road"
+
+    plain = result("frame", 1)
+    gui.ScannerGui._add_result(stub, plain)
+    assert plain.rotation == 0, "a frame nobody turned follows the session"
+    assert plain.flipped is False
+
+    # A prescan of frame 2 is a pass over the same photograph, so it is shown
+    # the way that photograph was said to be -- which is the whole point of
+    # keying this by picture rather than by pass.
+    reference = result("prescan", 2)
+    gui.ScannerGui._add_result(stub, reference)
+    assert (reference.rotation, reference.flipped) == (90, True)
+
+
+def test_a_new_strip_does_not_inherit_the_last_ones_orientations():
+    """The numbers start again at 1 for a different film. Keeping them would
+    turn whatever happens to land on frame 2 of the next roll."""
+    walk = inspect.getsource(gui.ScannerGui.on_roll)
+    assert "self.orientations = {}" in walk
+    assert walk.index("self.survey = []") < walk.index("self._surveying = True")
+
+
+# -- the picture and the panel share the canvas ------------------------------
+
+
+class _FakeCanvas:
+    def __init__(self, w, h):
+        self._w, self._h = w, h
+
+    def winfo_width(self):
+        return self._w
+
+    def winfo_height(self):
+        return self._h
+
+
+def _area(width, footprint, height=400):
+    import types
+    stub = types.SimpleNamespace(
+        canvas=_FakeCanvas(width, height),
+        histogram=types.SimpleNamespace(footprint=lambda: footprint))
+    return gui.ScannerGui._picture_area(stub)
+
+
+def test_the_picture_is_laid_out_beside_the_histogram_not_under_it():
+    """The panel floats over the canvas, so without this the top right of
+    every frame sits behind a chart."""
+    assert _area(1000, 286) == (714, 400)
+
+
+def test_a_pane_too_narrow_to_share_is_overlapped_rather_than_emptied():
+    """A picture too small to judge anything by is worse than one with a
+    chart in the corner of it."""
+    assert _area(400, 286) == (200, 400), "at most half is ever given up"
+    assert _area(2, 286)[0] >= 1, "and never all of it"
+
+
+def test_nothing_lays_out_a_picture_against_the_raw_canvas():
+    """One place decides how big the picture may be. A size read straight off
+    the canvas is one that has not heard about the panel, and the picture
+    would go back under it for that one operation -- a zoom that pivots on a
+    point the redraw puts somewhere else."""
+    import inspect
+    for name in ("_redraw", "_source_at", "_zoom_by", "_set_zoom",
+                 "on_double_click"):
+        source = inspect.getsource(getattr(gui.ScannerGui, name))
+        assert "canvas.winfo_width()" not in source, name
+        assert "_picture_area()" in source, name
+
+
+def test_the_panel_leaves_the_same_gap_on_both_sides_of_itself():
+    """It is inset from the corner, and the picture stops the same distance
+    short of it -- otherwise the two touch and read as one object."""
+    import inspect
+    assert "self.MARGIN * 2" in inspect.getsource(gui._HistogramPanel.footprint)
+    placed = inspect.getsource(gui._HistogramPanel.place)
+    assert "x=-self.MARGIN" in placed and "y=self.MARGIN" in placed
+
+
+# -- the filmstrip stays where it was put ------------------------------------
+
+
+class _FakeStrip:
+    """Enough of a canvas for `_keep_in_strip`, recording where it was sent."""
+
+    def __init__(self, width, left=0.0):
+        self._width, self._left = width, left
+        self.moved = []
+
+    def update_idletasks(self):
+        pass
+
+    def winfo_width(self):
+        return self._width
+
+    def canvasx(self, _x):
+        return self._left
+
+    def xview_moveto(self, fraction):
+        self.moved.append(fraction)
+
+
+def _scroll(span, total, width, left=0.0):
+    import types
+    strip = _FakeStrip(width, left)
+    gui.ScannerGui._keep_in_strip(types.SimpleNamespace(strip=strip), span, total)
+    return strip.moved
+
+
+def test_clicking_a_frame_already_in_view_does_not_scroll():
+    """The bug this replaces: every redraw jumped to the end, so clicking the
+    first frame of a long strip showed you the last one -- the picture changed
+    to the frame asked for and the strip scrolled away from it, leaving the
+    highlight off screen and no sign of what had been chosen."""
+    assert _scroll((100, 250), 2700, 900, left=0.0) == []
+    assert _scroll((1000, 1150), 2700, 900, left=950.0) == []
+
+
+def test_a_frame_off_to_the_left_is_scrolled_back_to():
+    moved = _scroll((100, 250), 2700, 900, left=900.0)
+    assert len(moved) == 1 and 0 <= moved[0] < 900 / 2700
+
+
+def test_a_frame_off_to_the_right_is_scrolled_forward_to():
+    moved = _scroll((2500, 2650), 2700, 900, left=0.0)
+    assert len(moved) == 1
+    # Far enough that its end is in view, and no further.
+    assert moved[0] * 2700 + 900 >= 2650
+    assert moved[0] * 2700 <= 2500
+
+
+def test_a_new_pass_still_brings_the_end_of_the_strip_into_view():
+    """It falls out of the same rule: a pass that has just arrived is the
+    selected one and it is off the right-hand end."""
+    moved = _scroll((2600, 2750), 2760, 900, left=0.0)
+    assert moved and moved[0] * 2760 + 900 >= 2750
+
+
+def test_a_strip_that_fits_is_shown_from_the_start():
+    assert _scroll((100, 250), 600, 900) == [0.0]
+
+
+def test_a_strip_with_nothing_selected_is_left_alone():
+    assert _scroll(None, 2700, 900) == []
+
+
+def test_the_strip_no_longer_jumps_to_the_end_on_every_redraw():
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._redraw_strip)
+    assert "xview_moveto(1.0)" not in source
+    assert "_keep_in_strip" in source
+
+
+# -- a mirror, carried the same road as the turn -----------------------------
+
+
+def test_a_flip_in_the_sheet_reaches_the_scan():
+    approved = gui.approved_from_sheet(
+        [_Surveyed(1), _Surveyed(2)], (1, 2), {})
+    assert [a.flipped for a in approved] == [False, False]
+
+    mirrored = _Surveyed(2)
+    mirrored.flipped = True
+    assert gui.approved_from_sheet([mirrored], (2,), {})[0].flipped is True
+
+
+def test_a_flip_survives_closing_the_window(tmp_path):
+    """The same round trip a hand-set position and a turn already get."""
+    _write_survey(tmp_path / "roll", rotations={2: 90}, flips={2: True, 3: False})
+    out = gui.read_survey(tmp_path / "roll")
+    assert out["flips"] == {2: True, 3: False}, "and an explicit False survives"
+
+
+@pytest.mark.parametrize("flipped", [False, True])
+def test_a_reopened_prescan_comes_back_as_the_film_sat(tmp_path, flipped):
+    """`prescanNN.tif` is written arranged the way the screen had it, and a
+    reference has to be the film's own orientation or it will not correlate
+    against a fresh pass. Un-orienting is not the same as orienting by the
+    opposite, because a mirror and a turn do not commute."""
+    images = _write_survey(tmp_path / "roll", rotation=90, flipped=flipped)
+    out = gui.read_survey(tmp_path / "roll")
+    for result in out["results"]:
+        assert np.array_equal(result.image, images[result.number])
+        assert result.rotation == 90 and result.flipped is flipped
+
+
+def test_the_aim_comes_back_through_the_flip_as_well_as_the_turn():
+    """The one place the arrangement is not cosmetic: the transport moves along
+    the scanner's own x axis, so a click on a mirrored prescan that was only
+    un-rotated would send the film the wrong way."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._aim)
+    assert "preview.unorient_point(" in source
+    assert "self.current.flipped" in source
+
+
+def test_one_phrasing_says_how_a_pass_is_arranged():
+    """The caption over the picture and the line in the log underneath it
+    cannot then describe the same frame two different ways."""
+    import types
+    assert gui._arrangement(types.SimpleNamespace(rotation=0, flipped=False)) \
+        == "as the scanner sent it"
+    assert gui._arrangement(types.SimpleNamespace(rotation=90, flipped=False)) \
+        == "90°"
+    assert gui._arrangement(types.SimpleNamespace(rotation=0, flipped=True)) \
+        == "flipped"
+    assert gui._arrangement(types.SimpleNamespace(rotation=180, flipped=True)) \
+        == "180°, flipped"
+
+
+def test_a_turn_and_a_flip_carry_over_by_the_same_route():
+    """Which way round the film went in does not change between one frame and
+    the next, so both follow the pass they were set on."""
+    import inspect
+    for name in ("on_rotate", "on_flip"):
+        assert "self._carry(" in inspect.getsource(getattr(gui.ScannerGui, name))
+    carry = inspect.getsource(gui.ScannerGui._carry)
+    for line in ("self.rotation = result.rotation", "self.flip = result.flipped",
+                 "self.session.rotation", "self.session.flip"):
+        assert line in carry, line
+
+
+def test_nothing_arranges_a_picture_with_only_half_the_answer():
+    """Every place a picture is arranged takes both, through `preview.orient`.
+    A `preview.rotate` left behind is a view that disagrees with the file
+    written from it."""
+    import inspect
+    source = inspect.getsource(gui)
+    assert "preview.rotate(" not in source, (
+        "the window arranges pictures with preview.orient, not preview.rotate")
+    assert "preview.unrotate_point(" not in source
+
+
+def test_flipping_all_agrees_the_strip_rather_than_swapping_each():
+    """A toggle would leave a half-mirrored strip still half-mirrored, which
+    is the one thing an operator reaching for "all" is trying to fix."""
+    import inspect
+    every = inspect.getsource(gui._ContactSheet._flip_all)
+    assert "not all(r.flipped for r in self.frames)" in every
+    orient = inspect.getsource(gui._ContactSheet._orient)
+    assert "if flip is not None:" in orient and "result.flipped = flip" in orient
+    assert "not result.flipped" not in orient, "the state is passed in, not toggled here"
+
+
+def test_flipping_all_twice_lands_where_it_started():
+    """Which is what makes the menu item that says "unflip all" do that."""
+    import inspect
+    assert "Unflip all" in inspect.getsource(gui._ContactSheet.on_cell_menu)
+
+
+# -- the keyboard ------------------------------------------------------------
+
+
+def _window_actions():
+    """The main window's dispatch table, without building a window."""
+    import types
+    stub = types.SimpleNamespace(
+        current=None, busy=False, v_invert=None, v_channel=None,
+        on_rotate=lambda *a: None, on_flip=lambda *a: None,
+        on_save_as=lambda *a: None, on_show_prescan=lambda *a: None,
+        on_delete=lambda *a: None, on_contact_sheet=lambda: None,
+        on_stop=lambda: None, on_shortcuts=lambda: None,
+        _zoom_by=lambda *a: None, _set_zoom=lambda *a: None,
+        _finest=lambda: 1.0, _walk=lambda *a: None, _jump=lambda *a: None,
+        _on_current=lambda *a: None, _straighten=lambda: None,
+        _toggle_invert=lambda: None, _cycle_channel=lambda *a: None,
+    )
+    return gui.ScannerGui._actions(stub)
+
+
+def test_every_action_in_the_table_has_something_to_do():
+    """An id in `shortcuts.ACTIONS` with no handler is a key that silently
+    does nothing, and the editor would still offer it."""
+    handled = set(_window_actions())
+    for scope, owner in (("sheet", gui._ContactSheet),
+                         ("adjuster", gui._FrameAdjuster)):
+        import inspect
+        source = inspect.getsource(owner._actions)
+        for action in shortcuts.ACTIONS:
+            if action.scope == scope:
+                assert f'"{action.id}"' in source, action.id
+    for action in shortcuts.ACTIONS:
+        if action.scope == "window":
+            assert action.id in handled, action.id
+
+
+def test_no_shortcut_reaches_the_scanner():
+    """The rule this whole table is written under. `on_scan`, `on_prescan`
+    and the transport buttons submit immediately with no confirmation, and a
+    slip on the keyboard is not a decision to spend four minutes of hardware
+    or move somebody's negative."""
+    import inspect
+    sources = [inspect.getsource(gui.ScannerGui._actions),
+               inspect.getsource(gui._ContactSheet._actions),
+               inspect.getsource(gui._FrameAdjuster._actions)]
+    for forbidden in shortcuts.NEVER_BOUND:
+        for source in sources:
+            assert forbidden not in source, forbidden
+
+
+def test_stop_is_the_one_exception_and_only_while_something_runs():
+    """`request_stop` is cooperative and always safe -- but the log is
+    evidence, and "finishing what is already running" with nothing running is
+    a line that will be read back one day and believed."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._actions)
+    assert "self.on_stop() if self.busy else None" in source
+
+
+def test_a_key_does_nothing_while_a_text_field_has_the_focus():
+    """Without this, typing "rotate" into the subject field turns the picture
+    four times and deletes a pass on the "e"."""
+    import inspect
+    import types
+    guard = inspect.getsource(gui.ScannerGui._typing)
+    for widget in ("tk.Entry", "ttk.Entry", "tk.Text", "tk.Spinbox",
+                   "ttk.Spinbox", "ttk.Combobox"):
+        assert widget in guard, widget
+
+    ran = []
+    stub = types.SimpleNamespace(_typing=lambda: True)
+    bare = gui.ScannerGui._runner(stub, lambda: ran.append(1), "<Key-r>")
+    assert bare(None) is None and ran == []
+    stub._typing = lambda: False
+    assert bare(None) == "break" and ran == [1]
+
+
+def test_a_modified_key_fires_even_while_a_text_field_has_the_focus():
+    """⌘S in the middle of typing a subject line is a save, and every other
+    application treats it as one. Refusing it would be this window inventing a
+    rule of its own."""
+    import types
+    ran = []
+    stub = types.SimpleNamespace(_typing=lambda: True)
+    modified = gui.ScannerGui._runner(
+        stub, lambda: ran.append(1), f"<{shortcuts.ACCEL}-Key-s>")
+    assert modified(None) == "break" and ran == [1]
+
+
+def test_the_binding_tells_the_handler_which_key_it_is():
+    """Or the handler cannot know whether to stand aside for a text field."""
+    import inspect
+    for source in (inspect.getsource(gui.ScannerGui._bind_shortcuts),
+                   inspect.getsource(gui._ContactSheet.rebind),
+                   inspect.getsource(gui._FrameAdjuster.rebind)):
+        assert "_runner(run, sequence)" in source
+
+
+def test_rebinding_takes_the_old_key_off_the_window():
+    """Otherwise the old sequence keeps firing beside the new one, and a key
+    the operator deliberately moved still does the thing they moved it from."""
+    import inspect
+    for owner in (gui.ScannerGui._bind_shortcuts, gui._ContactSheet.rebind,
+                  gui._FrameAdjuster.rebind):
+        source = inspect.getsource(owner)
+        assert "unbind(sequence)" in source
+        assert "self._bound = []" in source
+
+
+def test_keys_are_bound_on_the_window_and_not_on_everything():
+    """A widget's bindtags run widget, class, toplevel, all -- so a binding on
+    the window catches a key pressed anywhere in it and only in it. With
+    `bind_all`, `r` in the contact sheet would rotate the preview underneath
+    it as well."""
+    import inspect
+    # The call, not the word: the docstring explains why bind_all is wrong.
+    for owner in (gui.ScannerGui._bind_shortcuts, gui._ContactSheet.rebind,
+                  gui._FrameAdjuster.rebind):
+        source = inspect.getsource(owner)
+        assert ".bind_all(" not in source, owner.__qualname__
+    assert "self.root.bind(" in inspect.getsource(gui.ScannerGui._bind_shortcuts)
+    assert "self.top.bind(" in inspect.getsource(gui._ContactSheet.rebind)
+    assert "self.top.bind(" in inspect.getsource(gui._FrameAdjuster.rebind)
+
+
+def test_only_the_changed_keys_reach_the_settings_file():
+    import inspect
+    source = inspect.getsource(gui.ScannerGui.set_keys)
+    assert "shortcuts.overrides_from(self.keys)" in source
+    assert "shortcuts" in inspect.getsource(gui.ScannerGui._remember)
+    assert "shortcuts.resolve(" in inspect.getsource(gui.ScannerGui._restore)
+
+
+def test_the_settings_file_has_somewhere_to_put_them():
+    from rps7200 import settings
+    assert "shortcuts" in settings.SECTIONS
+
+
+# -- what the contact sheet's keys move --------------------------------------
+
+
+def test_the_sheet_knows_which_cell_the_keyboard_is_on():
+    """It had no notion of "this one" at all before there were keys: a click
+    ticked a picture and nothing was current, so there was nothing for an
+    arrow to move."""
+    import inspect
+    assert "self.selected = 0" in inspect.getsource(gui._ContactSheet.__init__)
+    move = inspect.getsource(gui._ContactSheet._move)
+    assert "self._select(" in move
+
+
+def test_selection_and_ticking_are_shown_as_two_different_things():
+    """A cell can be selected and not scanned, or scanned and not selected."""
+    import inspect
+    paint = inspect.getsource(gui._ContactSheet._paint_rings)
+    assert "background=colour" in paint, "the ring colour says whether it scans"
+    assert "highlightbackground=" in paint, "the outline says where the keyboard is"
+    assert gui._ContactSheet.SELECTED not in (gui._ContactSheet.CHOSEN,
+                                              gui._ContactSheet.SKIPPED)
+
+
+def test_moving_the_selection_does_not_make_the_grid_jump():
+    """The outline is always there and only changes colour, so every cell
+    keeps the same size whether it is selected or not."""
+    import inspect
+    paint = inspect.getsource(gui._ContactSheet._paint_rings)
+    assert "highlightthickness=2" in paint
+    assert "highlightthickness=0" not in paint
+
+
+def test_the_sheet_scrolls_only_as_far_as_it_has_to():
+    """The same rule the filmstrip follows: a sheet that jumped somewhere on
+    every keypress would lose the operator's place rather than keep it."""
+    import inspect
+    source = inspect.getsource(gui._ContactSheet._scroll_to)
+    assert "if total <= height:" in source and "return" in source
+    assert "yview_moveto" in source
+
+
+# -- the frame position window -----------------------------------------------
+
+
+def test_return_keeps_the_frame_and_moves_on():
+    """The offset is already recorded as the picture is dragged, so there is
+    nothing here to save. What Return does is say yes: tick it for scanning,
+    and show the next one."""
+    import inspect
+    source = inspect.getsource(gui._FrameAdjuster._accept)
+    assert source.index("self.v_tick.set(True)") < source.index("self._go(1)")
+    assert "self._tick_changed()" in source
+
+
+def test_the_last_frame_closes_the_window_rather_than_sitting_there():
+    """There is nowhere further to go, and leaving it open invites a press
+    that does nothing."""
+    import inspect
+    source = inspect.getsource(gui._FrameAdjuster._accept)
+    assert "self.index >= len(self.sheet.frames) - 1" in source
+    assert "self.top.destroy()" in source
+
+
+def test_every_menu_item_that_has_a_key_shows_it():
+    """The menu is how anybody finds out a key exists -- nobody reads a
+    shortcut list first -- so an item without its key on it is a key nobody
+    will ever learn."""
+    import inspect
+    preview_menu = inspect.getsource(gui.ScannerGui._fill_result_menu)
+    for action_id in ("save_as", "rotate_right", "rotate_left", "rotate_180",
+                      "straighten", "flip", "show_prescan", "delete_pass"):
+        assert f'accelerator=self.accelerator("{action_id}")' in preview_menu \
+            or f'"{action_id}"' in preview_menu, action_id
+
+    cell_menu = inspect.getsource(gui._ContactSheet.on_cell_menu)
+    for action_id in ("sheet_rotate_right", "sheet_rotate_left",
+                      "sheet_rotate_180", "sheet_straighten", "sheet_flip",
+                      "sheet_toggle", "sheet_adjust", "sheet_show"):
+        assert action_id in cell_menu, action_id
+
+
+def test_an_item_with_no_key_shows_nothing_rather_than_a_dash():
+    """A menu is a list of things you can do. An em dash in the accelerator
+    column reads as a key you cannot make out rather than as the absence of
+    one -- the editor is the place that has to say "no key"."""
+    import types
+    stub = types.SimpleNamespace(
+        keys={"flip": "", "rotate_right": f"<{shortcuts.ACCEL}-Key-r>"})
+    assert gui.ScannerGui.accelerator(stub, "flip") == ""
+    assert gui.ScannerGui.accelerator(stub, "missing_entirely") == ""
+    assert gui.ScannerGui.accelerator(stub, "rotate_right") == \
+        shortcuts.accelerator_text(f"<{shortcuts.ACCEL}-Key-r>")
+
+
+def test_a_menu_gets_the_form_tk_parses_not_the_one_a_person_reads():
+    """Tk parses the accelerator itself, looking for modifier names, and draws
+    the glyphs. Given "⌘R" it finds no name it knows, takes the whole string
+    as a key equivalent and draws the first character only -- which put a lone
+    ⌘ in the menu with no letter beside it."""
+    import types
+    stub = types.SimpleNamespace(keys={"r": f"<{shortcuts.ACCEL}-Key-r>"})
+    shown = gui.ScannerGui.accelerator(stub, "r")
+    assert shortcuts.ACCEL in shown, shown
+    assert "R" in shown, shown
+    assert "\u2318" not in shown, "a glyph here is the bug this fixes"
+    # And the editor, which draws its own label, keeps the readable form.
+    assert "\u2318" in shortcuts.describe("<Command-Key-r>")
+
+
+def test_the_menu_shows_the_key_as_it_is_now_not_as_it_shipped():
+    """A rebind has to reach the menu, and the menu is rebuilt on every
+    right-click -- so it reads `self.keys` rather than the defaults."""
+    import inspect
+    assert "self.keys.get(action_id" in inspect.getsource(
+        gui.ScannerGui.accelerator)
+
+
+def test_right_clicking_a_cell_selects_it_first():
+    """Otherwise the menu offers "Rotate right, R" over one frame while R
+    turns a different one: the key acts on the selection and the menu on what
+    was clicked, and the two disagreeing about the same item is worse than
+    either alone."""
+    import inspect
+    source = inspect.getsource(gui._ContactSheet.on_cell_menu)
+    assert source.index("self._select(index)") < source.index("self.menu.delete")
+
+
+def test_the_sheet_offers_the_same_turns_the_window_does():
+    """A frame that can be turned 180° or straightened from the filmstrip and
+    not from the sheet is a gap with no reason behind it."""
+    sheet = {a.id for a in shortcuts.ACTIONS if a.scope == "sheet"}
+    for what in ("rotate_right", "rotate_left", "rotate_180", "straighten",
+                 "flip"):
+        assert f"sheet_{what}" in sheet, what
+
+
+# -- how far one arrow press moves a frame -----------------------------------
+
+
+def test_the_finest_step_lands_on_every_place_the_film_can_go():
+    """0.27 mm is not the lattice's spacing -- it is what a single command
+    delivers off zero. Above that the positions are 0.11 mm apart, because a
+    command's distance grows by STEP_MM per param. Adding a flat 0.27 and
+    snapping stepped over two out of every three of them."""
+    reached, offset = [], 0.0
+    for _ in range(8):
+        offset = gui.step_offset(offset, 1)
+        reached.append(round(offset, 3))
+    assert reached == [0.272, 0.378, 0.483, 0.589, 0.695, 0.800, 0.906, 1.012]
+
+
+def test_the_old_step_skipped_most_of_them():
+    """Kept as the reason this changed, not as a thing anyone should use."""
+    coarse, offset = [], 0.0
+    for _ in range(8):
+        offset = gui.snap_offset(offset + gui.FINE_STEP_MM)
+        coarse.append(round(offset, 3))
+    finest, offset = [], 0.0
+    while offset < coarse[-1] - 1e-9:
+        offset = gui.step_offset(offset, 1)
+        finest.append(round(offset, 3))
+    assert set(coarse) < set(finest), "every coarse stop is a fine one"
+    assert len(finest) > 2 * len(coarse), "and there are far more in between"
+
+
+def test_a_step_of_nothing_still_moves():
+    """A flat 0.11 mm would round to nothing off zero -- there is no such
+    position -- and the frame would never move at all. The finest step is
+    found rather than computed, so it cannot fall into that."""
+    assert gui.step_offset(0.0, 1) > 0
+    assert gui.step_offset(0.0, -1) < 0
+
+
+def test_stepping_back_walks_the_same_places_and_crosses_zero():
+    there, offset = [], 0.0
+    for _ in range(4):
+        offset = gui.step_offset(offset, 1)
+        there.append(round(offset, 3))
+    back = []
+    for _ in range(6):
+        offset = gui.step_offset(offset, -1)
+        back.append(round(offset, 3))
+    assert back[:3] == list(reversed(there[:3]))
+    assert 0.0 in back and back[-1] < 0, "and out the other side"
+
+
+@pytest.mark.parametrize("choice, first", [
+    ("finest", 0.272), ("0.27 mm", 0.272), ("0.50 mm", 0.483), ("1.00 mm", 1.012),
+])
+def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
+    """Whatever is asked for, what comes back is somewhere the film can go --
+    a number finer than the hardware is a lie."""
+    landed = gui.step_offset(0.0, 1, gui.step_millimetres(choice))
+    assert round(landed, 3) == first
+    assert landed == gui.snap_offset(landed)
+
+
+def test_the_offered_steps_read_as_distances_except_the_finest():
+    """"finest" is not a distance and cannot be written as one: the gap is
+    0.27 mm off zero and 0.11 mm everywhere above it."""
+    assert gui.ADJUST_STEPS[0] == "finest"
+    assert gui.step_millimetres("finest") == 0.0
+    for label in gui.ADJUST_STEPS[1:]:
+        assert gui.step_millimetres(label) > 0, label
+
+
+def test_a_step_never_leaves_the_reach_of_the_transport():
+    offset = 0.0
+    for _ in range(80):
+        offset = gui.step_offset(offset, 1, 1.0)
+    assert abs(offset) <= gui.MAX_TRAVEL_MM
+
+
+def test_the_chosen_step_outlives_the_window_that_uses_it():
+    """That window is opened and closed all through a roll; a setting that
+    died with it would be re-chosen seventeen times."""
+    import inspect
+    assert "self.v_adjuststep" in inspect.getsource(gui.ScannerGui.__init__)
+    assert "adjuststep" in gui.REMEMBERED
+    assert "self.gui.v_adjuststep.get()" in inspect.getsource(
+        gui._FrameAdjuster._step)
+
+
+# -- one arrangement per photograph, not per pass ----------------------------
+
+
+def test_a_scan_comes_back_the_way_its_prescan_was_left():
+    """You frame a picture and say which way up it is; the scan of it is the
+    same photograph and should not need telling again. It used to inherit
+    whatever was last set anywhere, which drifts: frame two pictures, turn
+    them differently, and the second one's answer reached the first one's
+    scan."""
+    import types
+    stub = types.SimpleNamespace(
+        rotation=0, flip=False, orientations={}, results=[], survey=[],
+        _surveying=False, _transport=None,
+        _show=lambda _r: None, _redraw_strip=lambda: None)
+    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
+        stub, r)
+
+    def pass_of(kind, position, seq):
+        return types.SimpleNamespace(kind=kind, number=0, seq=seq, image=None,
+                                     position=position, meta={})
+
+    first = pass_of("prescan", 4, 1)
+    gui.ScannerGui._add_result(stub, first)
+    first.rotation, first.flipped = 90, True
+    stub.remember_arrangement(first)
+
+    # A prescan of a different picture, turned differently. This is what used
+    # to poison the answer for the first one.
+    second = pass_of("prescan", 7, 2)
+    gui.ScannerGui._add_result(stub, second)
+    second.rotation, second.flipped = 180, False
+    stub.remember_arrangement(second)
+    stub.rotation, stub.flip = 180, False
+
+    scan = pass_of("scan", 4, 3)
+    gui.ScannerGui._add_result(stub, scan)
+    assert scan.supersedes == 1, "it stands in for the prescan of picture 4"
+    assert (scan.rotation, scan.flipped) == (90, True), (
+        "and is arranged like that picture, not like the session")
+
+
+def test_a_photograph_is_identified_by_frame_first_and_position_second():
+    """A roll number survives the film being moved and put back; a transport
+    position is what there is otherwise, and it is already how a scan is
+    matched to its prescan."""
+    import types
+    assert gui.picture_of(types.SimpleNamespace(number=3, position=9)) == ("frame", 3)
+    assert gui.picture_of(types.SimpleNamespace(number=0, position=9)) == ("at", 9)
+    assert gui.picture_of(types.SimpleNamespace(number=0, position=None)) is None
+
+
+def test_a_turn_in_the_sheet_reaches_the_window_behind_it():
+    """It used to reach the thumbnail and stop there, so the preview went on
+    showing the old arrangement until the frame was clicked again -- the
+    window disagreeing with itself about a decision just made."""
+    import inspect
+    assert "self.gui.remember_arrangement(result)" in inspect.getsource(
+        gui._ContactSheet._orient)
+    assert "self.gui._reshow(" in inspect.getsource(gui._ContactSheet._one)
+    reshow = inspect.getsource(gui.ScannerGui._reshow)
+    assert "_redraw_strip" in reshow and "_schedule_redraw" in reshow
+
+
+def test_the_file_is_arranged_like_the_pass_that_was_on_screen():
+    """The session carried the last arrangement set anywhere, which drifts.
+    The pass on screen is the one being scanned, so it is the one that
+    decides."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._pin_arrangement)
+    assert "self.session.rotation = self.current.rotation" in source
+    assert "self.session.flip = self.current.flipped" in source
+    assert "_pin_arrangement" in inspect.getsource(gui.ScannerGui.on_scan)
+
+
+def test_a_reversed_pass_is_composed_the_same_way_in_both_places():
+    """The window and the writer each turn the pass themselves, from the same
+    number. If they composed it differently the file and the preview would
+    disagree about which way up a photograph is."""
+    import inspect
+    from rps7200 import session as session_module
+    for source in (inspect.getsource(gui.ScannerGui._arrange),
+                   inspect.getsource(session_module.ScanSession._file)):
+        assert "preview.compose(" in source
+        assert 'reversal' in source
