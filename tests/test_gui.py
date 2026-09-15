@@ -1229,9 +1229,9 @@ def test_turning_every_frame_is_one_redraw_and_one_line_in_the_log():
     """Seventeen of each for a seventeen-frame strip is a stutter and a log
     nobody can read."""
     every = inspect.getsource(gui._ContactSheet._all)
-    assert every.count("_redraw_strip") == 1
+    assert every.count("_reshow") == 1
     assert every.count("_say") == 1
-    assert "_redraw_strip" not in inspect.getsource(gui._ContactSheet._orient)
+    assert "_reshow" not in inspect.getsource(gui._ContactSheet._orient)
 
 
 def test_turning_every_frame_also_sets_what_the_next_scan_follows():
@@ -1249,14 +1249,18 @@ def test_a_frame_comes_back_shown_the_way_it_was_written():
     import types
 
     stub = types.SimpleNamespace(
-        rotation=0, flip=False, _frame_rotations={2: 90}, _frame_flips={2: True},
+        rotation=0, flip=False, orientations={("frame", 2): (90, True)},
         results=[], survey=[], _surveying=False, _transport=None,
         _show=lambda _r: None, _redraw_strip=lambda: None,
     )
+    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
+        stub, r)
 
-    def result(kind, number):
+    def result(kind, number, meta=None):
         return types.SimpleNamespace(
-            kind=kind, number=number, seq=number, image=None, position=None)
+            kind=kind, number=number, seq=number, image=None, position=None,
+            meta=meta or {})
 
     turned = result("frame", 2)
     gui.ScannerGui._add_result(stub, turned)
@@ -1268,18 +1272,19 @@ def test_a_frame_comes_back_shown_the_way_it_was_written():
     assert plain.rotation == 0, "a frame nobody turned follows the session"
     assert plain.flipped is False
 
-    # A prescan of the same picture is a reference, not a deliverable, and the
-    # session files it unturned -- so showing it turned would be a lie too.
+    # A prescan of frame 2 is a pass over the same photograph, so it is shown
+    # the way that photograph was said to be -- which is the whole point of
+    # keying this by picture rather than by pass.
     reference = result("prescan", 2)
     gui.ScannerGui._add_result(stub, reference)
-    assert reference.rotation == 0 and reference.flipped is False
+    assert (reference.rotation, reference.flipped) == (90, True)
 
 
 def test_a_new_strip_does_not_inherit_the_last_ones_orientations():
     """The numbers start again at 1 for a different film. Keeping them would
     turn whatever happens to land on frame 2 of the next roll."""
     walk = inspect.getsource(gui.ScannerGui.on_roll)
-    assert "self._frame_rotations = {}" in walk
+    assert "self.orientations = {}" in walk
     assert walk.index("self.survey = []") < walk.index("self._surveying = True")
 
 
@@ -1870,3 +1875,90 @@ def test_the_chosen_step_outlives_the_window_that_uses_it():
     assert "adjuststep" in gui.REMEMBERED
     assert "self.gui.v_adjuststep.get()" in inspect.getsource(
         gui._FrameAdjuster._step)
+
+
+# -- one arrangement per photograph, not per pass ----------------------------
+
+
+def test_a_scan_comes_back_the_way_its_prescan_was_left():
+    """You frame a picture and say which way up it is; the scan of it is the
+    same photograph and should not need telling again. It used to inherit
+    whatever was last set anywhere, which drifts: frame two pictures, turn
+    them differently, and the second one's answer reached the first one's
+    scan."""
+    import types
+    stub = types.SimpleNamespace(
+        rotation=0, flip=False, orientations={}, results=[], survey=[],
+        _surveying=False, _transport=None,
+        _show=lambda _r: None, _redraw_strip=lambda: None)
+    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
+        stub, r)
+
+    def pass_of(kind, position, seq):
+        return types.SimpleNamespace(kind=kind, number=0, seq=seq, image=None,
+                                     position=position, meta={})
+
+    first = pass_of("prescan", 4, 1)
+    gui.ScannerGui._add_result(stub, first)
+    first.rotation, first.flipped = 90, True
+    stub.remember_arrangement(first)
+
+    # A prescan of a different picture, turned differently. This is what used
+    # to poison the answer for the first one.
+    second = pass_of("prescan", 7, 2)
+    gui.ScannerGui._add_result(stub, second)
+    second.rotation, second.flipped = 180, False
+    stub.remember_arrangement(second)
+    stub.rotation, stub.flip = 180, False
+
+    scan = pass_of("scan", 4, 3)
+    gui.ScannerGui._add_result(stub, scan)
+    assert scan.supersedes == 1, "it stands in for the prescan of picture 4"
+    assert (scan.rotation, scan.flipped) == (90, True), (
+        "and is arranged like that picture, not like the session")
+
+
+def test_a_photograph_is_identified_by_frame_first_and_position_second():
+    """A roll number survives the film being moved and put back; a transport
+    position is what there is otherwise, and it is already how a scan is
+    matched to its prescan."""
+    import types
+    assert gui.picture_of(types.SimpleNamespace(number=3, position=9)) == ("frame", 3)
+    assert gui.picture_of(types.SimpleNamespace(number=0, position=9)) == ("at", 9)
+    assert gui.picture_of(types.SimpleNamespace(number=0, position=None)) is None
+
+
+def test_a_turn_in_the_sheet_reaches_the_window_behind_it():
+    """It used to reach the thumbnail and stop there, so the preview went on
+    showing the old arrangement until the frame was clicked again -- the
+    window disagreeing with itself about a decision just made."""
+    import inspect
+    assert "self.gui.remember_arrangement(result)" in inspect.getsource(
+        gui._ContactSheet._orient)
+    assert "self.gui._reshow(" in inspect.getsource(gui._ContactSheet._one)
+    reshow = inspect.getsource(gui.ScannerGui._reshow)
+    assert "_redraw_strip" in reshow and "_schedule_redraw" in reshow
+
+
+def test_the_file_is_arranged_like_the_pass_that_was_on_screen():
+    """The session carried the last arrangement set anywhere, which drifts.
+    The pass on screen is the one being scanned, so it is the one that
+    decides."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._pin_arrangement)
+    assert "self.session.rotation = self.current.rotation" in source
+    assert "self.session.flip = self.current.flipped" in source
+    assert "_pin_arrangement" in inspect.getsource(gui.ScannerGui.on_scan)
+
+
+def test_a_reversed_pass_is_composed_the_same_way_in_both_places():
+    """The window and the writer each turn the pass themselves, from the same
+    number. If they composed it differently the file and the preview would
+    disagree about which way up a photograph is."""
+    import inspect
+    from rps7200 import session as session_module
+    for source in (inspect.getsource(gui.ScannerGui._arrange),
+                   inspect.getsource(session_module.ScanSession._file)):
+        assert "preview.compose(" in source
+        assert 'reversal' in source

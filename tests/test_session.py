@@ -1061,3 +1061,161 @@ def test_a_rolls_flips_do_not_outlive_it(tmp_path):
     s.shutdown()
     s.join(timeout=20)
     assert s._frame_flip == {}
+
+
+# -- a pass that came back the wrong way up ----------------------------------
+
+
+def _picture(h=48, w=72, seed=1):
+    """Something with enough structure to tell one way up from the other."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:h, 0:w]
+    a = np.sin(x / 9) * 90 + np.cos(y / 6) * 60 + y * 1.5
+    a = a + rng.normal(0, 6, (h, w))
+    a = (a - a.min()) / max(1e-9, float(a.max() - a.min()))
+    return np.repeat((a * 60000).astype(np.uint16)[..., None], 3, axis=2)
+
+
+class ReversingScanner(FakeScanner):
+    """A scanner whose scan comes back reversed against its own prescan.
+
+    Which is a thing this one really does: MODE SELECT byte 14 bit 0 skips
+    the re-home for bidirectional speed, and a pass following another bit-0
+    pass reads top-and-bottom reversed with no status bit to say so.
+    """
+
+    def __init__(self, reversal=(180, False), **kw):
+        super().__init__(**kw)
+        self._truth = _picture()
+        self._reversal = reversal
+
+    def prescan(self, resolution=300, frame=None, keep_raw=False,
+                film="negative"):
+        self.calls.append(("prescan", resolution, keep_raw))
+        return self._truth[::2, ::2].copy(), None
+
+    def scan(self, resolution=1800, infrared=True, **kw):
+        self.calls.append(("scan", resolution, infrared, kw.get("auto_exposure")))
+        from rps7200 import preview
+        image = np.ascontiguousarray(preview.orient(self._truth, *self._reversal))
+        return image, {"resolution_dpi": resolution, "channels": 3,
+                       "channel_order": list("RGB"), "width": image.shape[1],
+                       "height": image.shape[0], "depth": 16}
+
+
+def _delivered(out):
+    """The scan's own copy. Prescans go to their own subdirectory beside it."""
+    from rps7200 import tiff
+    files = sorted(p for p in out.glob("*.tif"))
+    assert len(files) == 1, files
+    return tiff.read(str(files[0]))
+
+
+@pytest.mark.parametrize("reversal", [(180, False), (0, True), (180, True)])
+def test_a_reversed_scan_is_turned_to_match_its_prescan(tmp_path, reversal):
+    """The scanner hands it back the wrong way up with nothing to say it has.
+    The only evidence is that it does not match the framing pass taken a
+    minute earlier, so that is what it is judged against."""
+    from rps7200 import preview
+    out = tmp_path / "out"
+    scanner = ReversingScanner(reversal=reversal)
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Prescan(resolution=300))
+    s.submit(Scan(resolution=600, infrared=False))
+    s.shutdown()
+    s.join(timeout=20)
+
+    written = _delivered(out)
+    assert np.array_equal(written, scanner._truth), (
+        "the delivered file reads the way the prescan did")
+    # And the entry keeps what the scanner actually sent.
+    stored, record = library.load(tmp_path / "lib" / [
+        e["id"] for e in library.entries(tmp_path / "lib")
+        if e["id"].endswith("600dpi")][0])
+    assert np.array_equal(
+        stored, preview.orient(scanner._truth, *reversal)), "raw, as it arrived"
+    assert record["scan"]["reversal"] == [reversal[0], reversal[1]]
+
+
+def test_a_pass_that_came_back_right_is_left_alone(tmp_path):
+    out = tmp_path / "out"
+    scanner = ReversingScanner(reversal=(0, False))
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Prescan(resolution=300))
+    s.submit(Scan(resolution=600, infrared=False))
+    s.shutdown()
+    s.join(timeout=20)
+    assert np.array_equal(_delivered(out), scanner._truth)
+
+
+def test_the_operators_own_turn_survives_the_correction(tmp_path):
+    """Two arrangements on one pass: the one the scanner made necessary and
+    the one the operator asked for. Composed, not fought over."""
+    from rps7200 import preview
+    out = tmp_path / "out"
+    scanner = ReversingScanner(reversal=(180, False))
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
+    s.rotation = 90
+    s.start()
+    s.submit(Prescan(resolution=300))
+    s.submit(Scan(resolution=600, infrared=False))
+    s.shutdown()
+    s.join(timeout=20)
+    assert np.array_equal(_delivered(out), preview.orient(scanner._truth, 90))
+
+
+def test_the_correction_can_be_switched_off(tmp_path):
+    """It is a detector, and every detector written for this scanner has been
+    confidently wrong on some frame."""
+    from rps7200 import preview
+    out = tmp_path / "out"
+    scanner = ReversingScanner(reversal=(180, False))
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
+    s.match_prescan = False
+    s.start()
+    s.submit(Prescan(resolution=300))
+    s.submit(Scan(resolution=600, infrared=False))
+    s.shutdown()
+    s.join(timeout=20)
+    assert np.array_equal(_delivered(out), preview.orient(scanner._truth, 180))
+
+
+def test_a_scan_with_no_prescan_of_its_own_is_never_turned(tmp_path):
+    """There is nothing to judge it against, and guessing would be worse than
+    leaving it as it came."""
+    from rps7200 import preview
+    out = tmp_path / "out"
+    scanner = ReversingScanner(reversal=(180, False))
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600, infrared=False))      # no prescan first
+    s.shutdown()
+    s.join(timeout=20)
+    assert np.array_equal(_delivered(out), preview.orient(scanner._truth, 180))
+
+
+def test_a_prescan_of_a_different_picture_is_never_used_to_judge_a_scan(tmp_path):
+    """`reversal_against` answers about arrangement, not identity: two
+    photographs with the same broad structure correlate, and it will say which
+    way round one sits against the other. Keeping the reference honest is this
+    side's job, and the transport position is how it is done -- the same test
+    that decides a scan stands in for a prescan."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=FakeScanner, verbose=False)
+    s._scanner = FakeScanner()
+    s._last_prescan = (np.zeros((4, 4)), 3)
+    s._scanner.t = None
+
+    s._position = lambda: 3
+    assert s._prescan_here() is not None, "the same picture"
+    s._position = lambda: 4
+    assert s._prescan_here() is None, "the film has moved; it is a different one"
+    s._last_prescan = None
+    assert s._prescan_here() is None, "and nothing at all is not a reference"

@@ -221,11 +221,15 @@ class ScannerGui:
         self.keys: dict[str, str] = shortcuts.defaults()
         self._bound: list[str] = []          # what is on the root right now
         self._shortcut_editor = None
-        #: The same two, for one picture of the roll being scanned, keyed by
-        #: frame number -- what the contact sheet was left holding when the scan
-        #: was commissioned. Frames with no entry fall back to the session's.
-        self._frame_rotations: dict[int, int] = {}
-        self._frame_flips: dict[int, bool] = {}
+        #: How each *photograph* is arranged, keyed by what identifies it --
+        #: its frame number on a roll, or the transport position it was taken
+        #: at. Not per pass and not per window: a prescan and the scan that
+        #: replaces it are two passes over one picture, and arranging one of
+        #: them is a statement about the picture rather than about the pass.
+        #: That is what makes a turn in the contact sheet show up in the
+        #: preview behind it, and what makes a scan come back the way its
+        #: prescan was left.
+        self.orientations: dict[tuple, tuple[int, bool]] = {}
         self.survey: list = []               # the prescans a dry run walked
         self._surveying = False              # a dry run is running right now
         self._survey_start = 1               # the `start at` it was walked with
@@ -1376,6 +1380,7 @@ class ScannerGui:
         dpi, exposure = self._dpi(), self._exposure()
         if dpi is None or exposure is None:
             return
+        self._pin_arrangement()
         self.session.submit(Scan(
             resolution=dpi, infrared=self.v_ir.get(), film=self.v_film.get(),
             auto_exposure=self.v_expmode.get() == "auto",
@@ -1383,6 +1388,20 @@ class ScannerGui:
             mono_channel=self.v_mono_channel.get(),
             notes=self._notes(), tags=self._tags(),
         ))
+
+    def _pin_arrangement(self) -> None:
+        """File the next pass the way the one on screen is shown.
+
+        The session carried the last arrangement set anywhere, which drifts:
+        frame the picture, turn it, frame a second picture and turn that one
+        differently, then scan the first -- and the file came out the way the
+        *second* was left. The pass on screen is the one being scanned, so it
+        is the one that decides, and the preview and the file cannot then
+        disagree about a photograph.
+        """
+        if self.current is not None:
+            self.session.rotation = self.current.rotation
+            self.session.flip = self.current.flipped
 
     def on_roll(self) -> None:
         dpi, predpi = self._dpi(), self._prescan_dpi()
@@ -1408,11 +1427,11 @@ class ScannerGui:
             # Only cleared here, so a survey outlives the window that showed it
             # and the sheet can be opened again without walking the strip twice.
             self.survey = []
-            # A fresh strip has no orientations yet, and the last one's would
+            # A fresh strip has no arrangements yet, and the last one's would
             # be applied to whatever pictures happen to land on the same frame
-            # numbers -- a different film, shown and written sideways.
-            self._frame_rotations = {}
-            self._frame_flips = {}
+            # numbers -- a different film, shown and written sideways. The
+            # positions go too: the film has moved, so they name nothing now.
+            self.orientations = {}
             self._surveying = True
             self._survey_start = start_at
             self._survey_predpi = predpi
@@ -1583,8 +1602,9 @@ class ScannerGui:
         # Kept so the frames that come back are shown the way they were
         # written. Without it a roll returns pictures the filmstrip draws one
         # way up and the file on disk holds another.
-        self._frame_rotations = {a.number: a.rotation for a in approved}
-        self._frame_flips = {a.number: bool(a.flipped) for a in approved}
+        for record in approved:
+            self.orientations[("frame", record.number)] = (
+                record.rotation, bool(record.flipped))
         if back:
             self.session.submit(Move(frames=-back))
         self.session.submit(Roll(
@@ -2032,18 +2052,6 @@ class ScannerGui:
     def _add_result(self, result) -> None:
         result.hidden = False
         result.supersedes = None
-        # New passes arrive already turned the way the last one was, which is
-        # what makes rotating a prescan carry over to the scan of it -- even a
-        # scan taken minutes later. A frame of a roll whose cell was turned in
-        # the contact sheet arrives turned that way instead, because that is
-        # what was written to disk for it: showing it any other way would say
-        # the file is something it is not.
-        result.rotation = self.rotation
-        result.flipped = self.flip
-        if result.kind == "frame" and result.number:
-            result.rotation = self._frame_rotations.get(result.number,
-                                                        self.rotation)
-            result.flipped = self._frame_flips.get(result.number, self.flip)
         # Measured once, from the whole picture. Recomputing per redraw was
         # most of what made zooming feel dead, and it also meant the brightness
         # changed as you panned -- the same negative looking different
@@ -2052,6 +2060,11 @@ class ScannerGui:
         # A real scan stands in for the prescan of the same picture, but only
         # when the film has not moved since -- a prescan of a different frame is
         # a different photograph, and hiding it would lose it.
+        #
+        # Worked out before the arrangement below, which reads it: a scan and
+        # the prescan it replaces are two passes over one photograph, and the
+        # answer to "which way up is this" belongs to the photograph.
+        superseded = None
         if result.kind in ("scan", "frame") and result.position is not None:
             for earlier in reversed(self.results):
                 if earlier.kind != "prescan":
@@ -2059,8 +2072,47 @@ class ScannerGui:
                 if earlier.position == result.position and not earlier.hidden:
                     earlier.hidden = True
                     result.supersedes = earlier.seq
+                    superseded = earlier
                     break
+        self._arrange(result, superseded)
         self.results.append(result)
+
+    def _arrange(self, result, superseded=None) -> None:
+        """How this pass should be shown, in order of what knows best.
+
+        The prescan it replaces, first: you framed that picture and said which
+        way up it was, and the scan of it is the same photograph. Then anything
+        already said about this picture, which is what a turn in the contact
+        sheet leaves behind. Then the last arrangement set anywhere, because a
+        strip goes into the transport one way round and the frame after this
+        one is almost certainly the same way up.
+        """
+        known = None
+        if superseded is not None:
+            known = (superseded.rotation, superseded.flipped)
+        if known is None:
+            known = self.orientations.get(picture_of(result))
+        rotation, flipped = known or (self.rotation, self.flip)
+        # The scanner sometimes hands a pass back reversed with nothing to say
+        # it has, and the session says so here after comparing it against its
+        # own prescan. Applied first, because it brings the pixels into the
+        # arrangement the operator was looking at when he chose the rest -- the
+        # same composition `_file` does, from the same number, so the picture
+        # on screen and the file on disk agree about which way up this is.
+        reversal = (result.meta or {}).get("reversal")
+        if reversal:
+            rotation, flipped = preview.compose(
+                (int(reversal[0]), bool(reversal[1])), (rotation, flipped))
+        result.rotation, result.flipped = rotation, flipped
+        # Whatever it turned out to be, the picture now has an answer, so the
+        # next pass over it agrees with this one rather than with the session.
+        self.remember_arrangement(result)
+
+    def remember_arrangement(self, result) -> None:
+        """Record how this photograph is arranged, however it was decided."""
+        key = picture_of(result)
+        if key is not None:
+            self.orientations[key] = (result.rotation, result.flipped)
         if self._surveying and result.kind == "prescan" and result.number:
             self.survey.append(result)
         if result.position is not None:
@@ -2115,6 +2167,18 @@ class ScannerGui:
         self.v_caption.set(result.label + extra)
         self._measure_histogram()
         self._schedule_redraw()
+
+    def _reshow(self, *results) -> None:
+        """Redraw the filmstrip, and the big picture if it is one of these.
+
+        A turn made in the contact sheet used to reach the thumbnail and stop
+        there, so the preview behind it went on showing the old arrangement
+        until the frame was clicked again -- the window disagreeing with itself
+        about a decision the operator had just made.
+        """
+        self._redraw_strip()
+        if self.current is not None and any(r is self.current for r in results):
+            self._schedule_redraw()
 
     def _redraw_strip(self) -> None:
         self.strip.delete("all")
@@ -2358,6 +2422,7 @@ class ScannerGui:
         self.flip = result.flipped
         self.session.rotation = result.rotation
         self.session.flip = result.flipped
+        self.remember_arrangement(result)
         # Anything it stands in for follows it, so showing the prescan again
         # does not undo what was just decided.
         if result.supersedes:
@@ -3167,6 +3232,25 @@ def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
         if abs(landed - here) > 1e-9:
             return landed
     return here
+
+
+def picture_of(result) -> tuple | None:
+    """What photograph a pass is of, as far as its arrangement is concerned.
+
+    A roll numbers its frames, and that is the best answer: it survives the
+    film being moved and put back. Otherwise the transport position is what
+    there is -- it is already how `_add_result` decides that a scan stands in
+    for a prescan, so orientation keyed the same way cannot disagree with it.
+
+    None for a pass belonging to no identifiable picture, which is not an
+    error: it simply follows whatever was last set.
+    """
+    if getattr(result, "number", 0):
+        return ("frame", result.number)
+    position = getattr(result, "position", None)
+    if position is not None:
+        return ("at", position)
+    return None
 
 
 def _arrangement(result) -> str:
@@ -4402,6 +4486,10 @@ class _ContactSheet:
         picture = self._pictures.get(number)
         if picture is not None:
             picture.configure(image=self._render(result))
+        # The same photograph, not merely the same cell: the window remembers
+        # how this picture is arranged, so the preview behind this sheet and
+        # the scan taken later both agree with what was just decided here.
+        self.gui.remember_arrangement(result)
         return _arrangement(result)
 
     def _find(self, number: int):
@@ -4429,10 +4517,10 @@ class _ContactSheet:
         if result is None:
             return
         said = self._orient(result, degrees, flip)
-        # The same picture is in the filmstrip behind this window, and the two
-        # showing one frame two ways round is how an operator loses track of
-        # how it will be scanned.
-        self.gui._redraw_strip()
+        # The same picture is in the filmstrip and in the preview behind this
+        # window, and one frame shown three ways round is how an operator
+        # loses track of how it will be scanned.
+        self.gui._reshow(result)
         self.gui._say(f"frame {number}: {said} -- scanned this way; "
                       "the other frames are unchanged")
 
@@ -4467,7 +4555,7 @@ class _ContactSheet:
             self.gui.flip = last.flipped
             self.gui.session.rotation = last.rotation
             self.gui.session.flip = last.flipped
-        self.gui._redraw_strip()
+        self.gui._reshow(*self.frames)
         self.gui._say(f"every frame: {said} -- and new scans follow this "
                       "until something says otherwise")
 

@@ -247,7 +247,20 @@ always safe.
 
 **Right-click arranges a picture, wherever it is shown** -- the big preview,
 the filmstrip, or a cell of the contact sheet -- and a frame is scanned the way
-it was left. Quarter turns and a left-right flip: a strip loaded the other way
+it was left. **The arrangement belongs to the photograph, not to the window**:
+turn a frame in the contact sheet and the preview behind it turns too, and the
+scan of a prescan comes back the way that prescan was left however many other
+pictures were arranged differently in between.
+
+**A pass that comes back the wrong way up is turned to match its prescan.** The
+scanner does this with nothing to say it has -- `MODE SELECT` byte 14 bit 0
+skips the re-home for bidirectional speed, and a pass following another bit-0
+pass reads reversed with no status bit and no sense condition. The only
+evidence is that the picture does not match the framing pass of the same frame,
+so that is what it is judged against, and the correction reaches the delivered
+file as well as the screen. It refuses far more readily than it corrects: being
+wrong stands a photograph on its head, so a frame with nothing to correlate is
+left exactly as it came. Quarter turns and a left-right flip: a strip loaded the other way
 up comes off this scanner reading backwards, and no amount of turning fixes
 that. The sheet keeps both per frame, so a portrait among landscapes comes out
 right; "rotate all" and "flip all" agree the whole strip and set what everything

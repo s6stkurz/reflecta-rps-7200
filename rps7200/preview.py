@@ -130,6 +130,29 @@ def unorient(image: np.ndarray, degrees: int = 0, flipped: bool = False) -> np.n
     return mirror(turned) if flipped else turned
 
 
+def compose(
+    first: tuple[int, bool], second: tuple[int, bool]
+) -> tuple[int, bool]:
+    """One arrangement equal to applying `first` and then `second`.
+
+    Both are ``(degrees, flipped)`` as :func:`orient` takes them. Needed
+    wherever a correction the scanner made necessary has to be carried
+    alongside the one the operator asked for, without either being applied
+    twice or the two being applied in a made-up order.
+
+    `orient` is a mirror and then a turn, and a mirror and a turn do not
+    commute: pushing the second mirror back through the first turn reverses
+    that turn's sign, which is where the subtraction comes from. Checked
+    against actually doing both, at every combination, rather than trusted to
+    that sentence.
+    """
+    turn, flip = first
+    then_turn, then_flip = second
+    if not then_flip:
+        return (then_turn + turn) % 360, flip
+    return (then_turn - turn) % 360, not flip
+
+
 def unorient_point(
     x: float, y: float, shape: tuple[int, ...],
     degrees: int = 0, flipped: bool = False,

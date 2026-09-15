@@ -45,6 +45,7 @@ import numpy as np
 
 from . import export, library, preview
 from .direct import METER_EACH, DirectScanner
+from .framing import reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
 
@@ -483,6 +484,15 @@ class ScanSession:
         #: flight. Read and written on the scanner thread alone, so no lock.
         self._frame_rotation: dict[int, int] = {}
         self._frame_flip: dict[int, bool] = {}
+        #: Whether a pass that comes back reversed against its own prescan is
+        #: turned to match it. On, because the scanner does this with nothing
+        #: to say it has and the alternative is a frame filed upside down; and
+        #: switchable, because it is a detector and every detector written for
+        #: this scanner has been confidently wrong on some frame.
+        self.match_prescan = True
+        #: The last framing pass and where the transport was for it, so a scan
+        #: taken straight afterwards has something to be judged against.
+        self._last_prescan: tuple[Any, int | None] | None = None
         #: What the output folder's copy is written as -- "tiff" or "jpeg".
         #: Only that copy: a roll's own files under `rolls/` stay TIFF whatever
         #: this says, because they are machinery rather than deliverables and
@@ -691,6 +701,9 @@ class ScanSession:
             "channel_order": ["R", "G", "B"]})
         raw_image = getattr(self._scanner, "last_pixels_raw", None)
         label = f"prescan {job.resolution} dpi"
+        # Kept so the scan taken next has something to be judged against. One
+        # pass, ~370 KB at 300 dpi, replaced each time -- not a history.
+        self._last_prescan = (image, self._position())
         seq = self._deliver(
             "prescan", label, image, {"resolution_dpi": job.resolution}
         )
@@ -720,6 +733,7 @@ class ScanSession:
             keep_raw=True,
         )
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
+        meta = self._note_reversal(meta, image, self._prescan_here())
         seq = self._deliver("scan", label, image, meta)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
                    mono=wants_mono(job.mono, job.film),
@@ -731,6 +745,40 @@ class ScanSession:
         # reason meta["shading_skipped"] is set is job.shading=False, and that
         # is the job's own choice, not a shortfall.
         return None
+
+    def _prescan_here(self):
+        """The last framing pass, if it was of the picture now in the gate.
+
+        A prescan of a different frame is a different photograph, and judging
+        a scan against one would be worse than not judging it at all. The
+        transport position is the same test `_add_result` uses to decide that
+        a scan stands in for a prescan, so the two cannot disagree about which
+        pictures are the same one.
+        """
+        if not self._last_prescan:
+            return None
+        image, where = self._last_prescan
+        return image if where == self._position() else None
+
+    def _note_reversal(self, meta, image, reference):
+        """Record any half turn this pass needs to read like its prescan.
+
+        Written into the meta rather than applied to the pixels: the entry
+        holds what the scanner sent, and how a delivered file was arranged is
+        something its record says. `_file` and the window both read it from
+        here, so the picture on screen and the file on disk cannot end up
+        disagreeing about which way up a photograph is.
+        """
+        if not self.match_prescan or reference is None:
+            return meta
+        extra, detail = reversal_against(reference, image)
+        if extra == (0, False):
+            return meta
+        self._emit("log", text=(
+            f"this pass came back {extra[0]}\u00b0"
+            f"{' mirrored' if extra[1] else ''} against its own prescan "
+            f"(by {detail['margin']:+.2f}); turned to match it"))
+        return dict(meta, reversal=[extra[0], bool(extra[1])])
 
     def _move(self, job: Move) -> str | None:
         """Whole frames, or a sub-frame nudge. Never both in one job."""
@@ -891,8 +939,13 @@ class ScanSession:
                         f"frame {number} · {job.resolution} dpi "
                         f"{'RGBI' if job.infrared else 'RGB'}"
                     )
+                    # Judged against the framing pass taken of this very
+                    # frame a minute earlier, which is the only evidence there
+                    # is that the carriage reversed: see `_note_reversal`.
+                    frame_meta = self._note_reversal(
+                        rf.meta, rf.image, rf.prescan)
                     seq = self._deliver(
-                        "frame", label, rf.image, rf.meta,
+                        "frame", label, rf.image, frame_meta,
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
@@ -900,7 +953,7 @@ class ScanSession:
                         job.notes, frame=job.notes.frame or f"{name}-{number:02d}"
                     )
                     self._file(
-                        seq, number, rf.image, rf.meta, notes,
+                        seq, number, rf.image, frame_meta, notes,
                         tuple(job.tags) + ("gui", "roll", name),
                         raw_image=rf.raw_image,
                         prescan=rf.prescan,
@@ -1052,7 +1105,14 @@ class ScanSession:
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
         # One answer, recorded and applied, so the entry's record says what the
         # delivered file actually got rather than what the session default was.
+        # Any reversal the scanner made necessary goes on first: it brings the
+        # pixels into the arrangement the operator was looking at when he chose
+        # the rest, so his choice is the second of the two.
+        reversal = meta.get("reversal")
         turn, flip = self._orientation_for(number, kind)
+        if reversal:
+            turn, flip = preview.compose(
+                (int(reversal[0]), bool(reversal[1])), (turn, flip))
         meta = dict(meta, rotation=turn, flipped=flip)
         # Only if it really is this picture. A raw array of another shape is a
         # different pass, and filing it here is exactly the failure the guard
