@@ -52,45 +52,69 @@ class Action:
 
 ACTIONS: tuple[Action, ...] = (
     # -- the main window ---------------------------------------------------
+    #
+    # A letter or a digit always carries the platform's modifier, the way any
+    # other application's do. Bare letters were quicker and they were wrong:
+    # they collide with typing, they read as a private convention rather than
+    # a shortcut, and a modified key can be pressed without first checking
+    # where the focus is.
+    #
+    # Arrows, Home, End, Return, Space and Escape stay bare. Those are already
+    # what they look like everywhere else, and a modifier on them is friction
+    # for nothing.
     Action("previous_pass", "window", "Previous pass", "<Left>"),
     Action("next_pass", "window", "Next pass", "<Right>"),
     Action("first_pass", "window", "First pass", "<Home>"),
     Action("last_pass", "window", "Last pass", "<End>"),
-    Action("rotate_right", "window", "Rotate right 90°", "<Key-r>"),
-    Action("rotate_left", "window", "Rotate left 90°", "<Key-R>"),
-    Action("rotate_180", "window", "Rotate 180°", "<Key-u>"),
-    Action("straighten", "window", "Straighten", "<Key-0>"),
-    Action("flip", "window", "Flip left-right", "<Key-m>"),
+    Action("rotate_right", "window", "Rotate right 90°", f"<{ACCEL}-Key-r>"),
+    Action("rotate_left", "window", "Rotate left 90°", f"<{ACCEL}-Key-R>"),
+    Action("rotate_180", "window", "Rotate 180°", f"<{ACCEL}-Key-u>"),
+    Action("straighten", "window", "Straighten", f"<{ACCEL}-Key-0>"),
+    Action("flip", "window", "Flip left-right", f"<{ACCEL}-Key-m>"),
     Action("save_as", "window", "Save as ...", f"<{ACCEL}-Key-s>"),
-    Action("show_prescan", "window", "Show this pass's prescan", "<Key-p>"),
-    Action("delete_pass", "window", "Delete this pass", "<BackSpace>"),
-    Action("zoom_in", "window", "Zoom in", "<Key-plus>"),
-    Action("zoom_out", "window", "Zoom out", "<Key-minus>"),
-    Action("zoom_fit", "window", "Fit the picture", "<Key-f>"),
+    Action("show_prescan", "window", "Show this pass's prescan",
+           f"<{ACCEL}-Key-p>"),
+    Action("delete_pass", "window", "Delete this pass", f"<{ACCEL}-BackSpace>"),
+    # `equal` rather than `plus`: + needs Shift on most layouts, and ⌘= is
+    # what a hand actually presses and what other applications accept.
+    Action("zoom_in", "window", "Zoom in", f"<{ACCEL}-Key-equal>"),
+    Action("zoom_out", "window", "Zoom out", f"<{ACCEL}-Key-minus>"),
+    Action("zoom_fit", "window", "Fit the picture", f"<{ACCEL}-Key-f>"),
     Action("zoom_actual", "window", "One scanned pixel per screen pixel",
-           "<Key-1>"),
-    Action("invert", "window", "Invert the picture", "<Key-i>"),
-    Action("channel_next", "window", "Next channel view", "<Key-c>"),
-    Action("channel_previous", "window", "Previous channel view", "<Key-C>"),
-    Action("contact_sheet", "window", "Open the contact sheet", f"<{ACCEL}-Key-k>"),
+           f"<{ACCEL}-Key-1>"),
+    Action("invert", "window", "Invert the picture", f"<{ACCEL}-Key-i>"),
+    Action("channel_next", "window", "Next channel view", f"<{ACCEL}-Key-c>"),
+    Action("channel_previous", "window", "Previous channel view",
+           f"<{ACCEL}-Key-C>"),
+    Action("contact_sheet", "window", "Open the contact sheet",
+           f"<{ACCEL}-Key-k>"),
     Action("stop", "window", "Stop after this pass", "<Escape>"),
     Action("shortcuts", "window", "Edit these shortcuts", f"<{ACCEL}-Key-comma>"),
 
     # -- the contact sheet -------------------------------------------------
+    #
+    # The turns and the flip are the same keys as the main window's, because
+    # they do the same thing to a picture and only the picture differs. Each
+    # fires in its own window, so they do not collide.
     Action("sheet_left", "sheet", "Select the frame to the left", "<Left>"),
     Action("sheet_right", "sheet", "Select the frame to the right", "<Right>"),
     Action("sheet_up", "sheet", "Select the frame above", "<Up>"),
     Action("sheet_down", "sheet", "Select the frame below", "<Down>"),
     Action("sheet_toggle", "sheet", "Scan this frame, or do not", "<space>"),
     Action("sheet_adjust", "sheet", "Set where this frame sits", "<Return>"),
-    Action("sheet_all", "sheet", "Scan every frame", "<Key-a>"),
-    Action("sheet_none", "sheet", "Scan none of them", "<Key-n>"),
-    Action("sheet_rotate_right", "sheet", "Rotate this frame right", "<Key-r>"),
-    Action("sheet_rotate_left", "sheet", "Rotate this frame left", "<Key-R>"),
-    Action("sheet_rotate_180", "sheet", "Rotate this frame 180°", "<Key-u>"),
-    Action("sheet_straighten", "sheet", "Straighten this frame", "<Key-0>"),
-    Action("sheet_flip", "sheet", "Flip this frame", "<Key-m>"),
-    Action("sheet_show", "sheet", "Show this frame in the preview", "<Key-p>"),
+    Action("sheet_all", "sheet", "Scan every frame", f"<{ACCEL}-Key-a>"),
+    Action("sheet_none", "sheet", "Scan none of them", f"<{ACCEL}-Key-n>"),
+    Action("sheet_rotate_right", "sheet", "Rotate this frame right",
+           f"<{ACCEL}-Key-r>"),
+    Action("sheet_rotate_left", "sheet", "Rotate this frame left",
+           f"<{ACCEL}-Key-R>"),
+    Action("sheet_rotate_180", "sheet", "Rotate this frame 180°",
+           f"<{ACCEL}-Key-u>"),
+    Action("sheet_straighten", "sheet", "Straighten this frame",
+           f"<{ACCEL}-Key-0>"),
+    Action("sheet_flip", "sheet", "Flip this frame", f"<{ACCEL}-Key-m>"),
+    Action("sheet_show", "sheet", "Show this frame in the preview",
+           f"<{ACCEL}-Key-p>"),
     Action("sheet_close", "sheet", "Close the sheet", "<Escape>"),
 
     # -- the frame position window -----------------------------------------
@@ -101,7 +125,7 @@ ACTIONS: tuple[Action, ...] = (
     Action("adjust_previous", "adjuster", "Previous frame", "<Shift-Left>"),
     Action("adjust_next", "adjuster", "Next frame", "<Shift-Right>"),
     Action("adjust_centre", "adjuster", "Put it back where it was surveyed",
-           "<Key-c>"),
+           f"<{ACCEL}-Key-c>"),
     Action("adjust_toggle", "adjuster", "Scan this frame, or do not", "<space>"),
     Action("adjust_close", "adjuster", "Close", "<Escape>"),
 )
@@ -147,6 +171,22 @@ def overrides_from(keys: dict[str, str]) -> dict[str, str]:
     shipped = defaults()
     return {k: v for k, v in keys.items()
             if k in shipped and v != shipped[k]}
+
+
+#: The modifiers that make a key unmistakably a shortcut rather than typing.
+#: Shift is not one of them: Shift-R is a capital R.
+_REAL_MODIFIERS = ("Control", "Command", "Alt", "Meta")
+
+
+def is_modified(sequence: str) -> bool:
+    """Whether this key could never be confused with typing.
+
+    Which decides whether it is allowed to fire while a text field has the
+    focus. ⌘S in the middle of typing a subject line is a save, and every
+    other application treats it as one; a bare `s` is an `s`.
+    """
+    parts = sequence.strip("<>").split("-")[:-1]
+    return any(p in _REAL_MODIFIERS for p in parts)
 
 
 def scope_of(action_id: str) -> str:

@@ -220,14 +220,16 @@ copy understates how much is at the rail. Infrared is not in it: it is a dust
 measurement rather than an exposure, and on traditional black and white it
 merely traces green.
 
-**Everything has a key, and the keys are yours.** The arrows walk the
-filmstrip, `r` and `m` turn and flip what is on screen, `f` and `1` fit it and
-show it at one scanned pixel per screen pixel, `i` inverts, `c` steps through
-the channels. In the contact sheet the arrows move between frames, Space ticks
-one and Return opens it to set where the film sits -- and in that window the
-arrows move the film a hardware step at a time and Return keeps the frame and
-goes to the next, which is the whole job it exists for, done without reaching
-for the mouse. Every right-click menu carries its
+**Everything has a key, and the keys are yours.** They are ordinary shortcuts
+-- ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R turn the picture, ⌘M flips it, ⌘0
+straightens it, ⌘F fits it and ⌘1 shows it at one scanned pixel per screen
+pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves. Because they carry a
+modifier they work wherever the focus is, including in the middle of typing a
+subject line. The arrows are bare, because an arrow is already an arrow: they
+walk the filmstrip, move between frames in the contact sheet, and step the film
+in the position window. There Space ticks a frame and Return keeps it and goes
+to the next, which is the whole job that window exists for, done without
+reaching for the mouse. Every right-click menu carries its
 key beside the item, which is where anybody actually finds out these exist, and
 it shows the key as it is now rather than as it shipped. **Shortcuts ...** in
 the top bar lists every one of them: click a key to change it, × to clear it, ↺

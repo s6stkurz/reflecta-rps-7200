@@ -1582,10 +1582,31 @@ def test_a_key_does_nothing_while_a_text_field_has_the_focus():
 
     ran = []
     stub = types.SimpleNamespace(_typing=lambda: True)
-    handler = gui.ScannerGui._runner(stub, lambda: ran.append(1))
-    assert handler(None) is None and ran == []
+    bare = gui.ScannerGui._runner(stub, lambda: ran.append(1), "<Key-r>")
+    assert bare(None) is None and ran == []
     stub._typing = lambda: False
-    assert handler(None) == "break" and ran == [1]
+    assert bare(None) == "break" and ran == [1]
+
+
+def test_a_modified_key_fires_even_while_a_text_field_has_the_focus():
+    """⌘S in the middle of typing a subject line is a save, and every other
+    application treats it as one. Refusing it would be this window inventing a
+    rule of its own."""
+    import types
+    ran = []
+    stub = types.SimpleNamespace(_typing=lambda: True)
+    modified = gui.ScannerGui._runner(
+        stub, lambda: ran.append(1), f"<{shortcuts.ACCEL}-Key-s>")
+    assert modified(None) == "break" and ran == [1]
+
+
+def test_the_binding_tells_the_handler_which_key_it_is():
+    """Or the handler cannot know whether to stand aside for a text field."""
+    import inspect
+    for source in (inspect.getsource(gui.ScannerGui._bind_shortcuts),
+                   inspect.getsource(gui._ContactSheet.rebind),
+                   inspect.getsource(gui._FrameAdjuster.rebind)):
+        assert "_runner(run, sequence)" in source
 
 
 def test_rebinding_takes_the_old_key_off_the_window():

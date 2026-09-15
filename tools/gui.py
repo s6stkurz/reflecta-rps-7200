@@ -507,13 +507,24 @@ class ScannerGui:
             run = actions.get(action_id)
             if run is None:
                 continue
-            self.root.bind(sequence, self._runner(run))
+            self.root.bind(sequence, self._runner(run, sequence))
             self._bound.append(sequence)
 
-    def _runner(self, run):
-        """One handler shape: skip it while typing, and stop it propagating."""
+    def _runner(self, run, sequence: str = ""):
+        """One handler shape, and the rule about text fields.
+
+        A modified key fires wherever the focus is. ⌘S in the middle of typing
+        a subject line is a save, and every other application treats it as
+        one -- refusing it would be this window inventing a rule of its own.
+
+        An unmodified one does not: a bare `r` in a text field is an `r`, and
+        the version of this that suppressed nothing turned the picture four
+        times while somebody typed "rotate" into the subject line.
+        """
+        guard = not shortcuts.is_modified(sequence)
+
         def handler(_event=None):
-            if self._typing():
+            if guard and self._typing():
                 return None
             run()
             return "break"
@@ -3752,7 +3763,7 @@ class _FrameAdjuster:
                 self.gui.keys, "adjuster").items():
             run = actions.get(action_id)
             if run is not None:
-                self.top.bind(sequence, self.gui._runner(run))
+                self.top.bind(sequence, self.gui._runner(run, sequence))
                 self._bound.append(sequence)
 
     def _accept(self) -> None:
@@ -4109,7 +4120,7 @@ class _ContactSheet:
                 self.gui.keys, "sheet").items():
             run = actions.get(action_id)
             if run is not None:
-                self.top.bind(sequence, self.gui._runner(run))
+                self.top.bind(sequence, self.gui._runner(run, sequence))
                 self._bound.append(sequence)
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.rebind()

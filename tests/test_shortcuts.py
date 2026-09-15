@@ -143,9 +143,51 @@ def test_an_unbound_action_says_so_rather_than_showing_nothing():
     assert shortcuts.describe("") == "—"
 
 
-def test_the_window_is_the_only_scope_with_an_accelerator_default():
-    """The two extra windows are transient and reached with the hands already
-    on the picture; a modifier there is friction for nothing."""
+#: Keys that are already what they look like everywhere else, and carry no
+#: modifier for that reason.
+BARE = {"<Left>", "<Right>", "<Up>", "<Down>", "<Home>", "<End>",
+        "<Return>", "<space>", "<Escape>", "<Shift-Left>", "<Shift-Right>"}
+
+
+def test_every_letter_and_digit_carries_the_platform_modifier():
+    """Bare letters were quicker and they were wrong: they collide with
+    typing, they read as a private convention rather than as a shortcut, and a
+    modified key can be pressed without first checking where the focus is."""
     for action in shortcuts.ACTIONS:
-        if action.scope != "window":
-            assert shortcuts.ACCEL not in action.default, action.id
+        if action.default in BARE:
+            continue
+        assert shortcuts.is_modified(action.default), (
+            f"{action.id} is {action.default}, which is neither a navigation "
+            "key nor a modified one")
+
+
+def test_navigation_keys_stay_bare():
+    """A modifier on an arrow is friction for nothing."""
+    for action in shortcuts.ACTIONS:
+        if action.default in BARE:
+            assert not shortcuts.is_modified(action.default), action.id
+
+
+def test_the_same_picture_operation_is_the_same_key_in_both_windows():
+    """A turn does the same thing to a picture in the filmstrip and in the
+    contact sheet; only the picture differs. Two keys for that would be two
+    things to remember about one idea."""
+    keys = shortcuts.defaults()
+    for what in ("rotate_right", "rotate_left", "rotate_180", "straighten",
+                 "flip"):
+        assert keys[what] == keys[f"sheet_{what}"], what
+
+
+@pytest.mark.parametrize("sequence, modified", [
+    ("<Key-r>", False),
+    ("<Key-R>", False),               # Shift-R is a capital R, not a shortcut
+    ("<Left>", False),
+    ("<Shift-Left>", False),
+    ("<Command-Key-r>", True),
+    ("<Control-Key-s>", True),
+    ("<Command-BackSpace>", True),
+    ("", False),
+])
+def test_only_a_real_modifier_makes_a_key_unmistakable(sequence, modified):
+    """Which decides whether it may fire while a text field has the focus."""
+    assert shortcuts.is_modified(sequence) is modified
