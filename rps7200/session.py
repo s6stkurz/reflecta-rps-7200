@@ -173,13 +173,14 @@ class Approved:
     approved" has to mean. `reference_entry` is the library path to the same
     pass, for the case where the array did not survive.
 
-    `rotation` is which way up that picture is, in degrees clockwise, as it was
-    turned in the contact sheet. It is per frame rather than per session because
-    a strip is not one orientation -- a portrait among landscapes is ordinary,
-    and one number for the roll can only get one of them right. A frame without
-    one falls back to :attr:`ScanSession.rotation`. It reaches the delivered
-    files only; the library entry keeps the scanner's own orientation, for the
-    reason :class:`FrameWriter` gives.
+    `rotation` and `flipped` are how that picture is arranged -- degrees
+    clockwise, and whether it reads left to right -- as it was set in the
+    contact sheet. Per frame rather than per session because a strip is not one
+    orientation: a portrait among landscapes is ordinary, and one answer for the
+    roll can only get one of them right. A frame without one falls back to
+    :attr:`ScanSession.rotation` and :attr:`ScanSession.flip`. They reach the
+    delivered files only; the library entry keeps the scanner's own
+    orientation, for the reason :class:`FrameWriter` gives.
     """
 
     number: int                              # 1-based, as the contact sheet counts
@@ -187,6 +188,7 @@ class Approved:
     reference: Any = field(default=None, compare=False, repr=False)
     reference_entry: str = ""
     rotation: int = 0
+    flipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -389,7 +391,8 @@ class FrameWriter:
         # matching the raw bytes beside them and `library.reconstruct` is right
         # to call it a changed decode. `raw_image` is that; `image` is what the
         # operator asked to be given.
-        turned = preview.rotate(job["image"], job.get("rotate") or 0)
+        turned = preview.orient(job["image"], job.get("rotate") or 0,
+                                bool(job.get("flip")))
         # One channel on the way out, three in the library. A consumer cannot
         # tell black and white from a slide by looking at the pixels -- see
         # rps7200/mono.py -- so the file it reads has to say so by its shape.
@@ -470,11 +473,16 @@ class ScanSession:
         #: Set from the UI, so a picture rotated on screen is rotated in the
         #: files that follow it.
         self.rotation = 0
-        #: The same thing for one picture of a roll, keyed by frame number --
-        #: `Approved.rotation` for the frames that carry one. Filled at the top
-        #: of a roll and emptied when it ends, so it only ever describes the roll
-        #: in flight. Read and written on the scanner thread alone, so no lock.
+        #: Whether those files also read left to right. A strip loaded the other
+        #: way up comes off this scanner backwards, and turning it does not fix
+        #: that -- so it is its own answer rather than a fourth angle.
+        self.flip = False
+        #: The same two, for one picture of a roll, keyed by frame number --
+        #: from `Approved` for the frames that carry one. Filled at the top of a
+        #: roll and emptied when it ends, so they only ever describe the roll in
+        #: flight. Read and written on the scanner thread alone, so no lock.
         self._frame_rotation: dict[int, int] = {}
+        self._frame_flip: dict[int, bool] = {}
         #: What the output folder's copy is written as -- "tiff" or "jpeg".
         #: Only that copy: a roll's own files under `rolls/` stay TIFF whatever
         #: this says, because they are machinery rather than deliverables and
@@ -794,24 +802,26 @@ class ScanSession:
             # Both recorded so the survey can be opened again rather than
             # walked again. The prescan resolution because an approved
             # position is checked against a reference at that resolution and
-            # a mismatch costs half the correlation confidence; the rotation
-            # because prescanNN.tif is written turned the way the screen had
-            # it, and a reference has to be the film's own orientation.
+            # a mismatch costs half the correlation confidence; the
+            # orientation because prescanNN.tif is written arranged the way the
+            # screen had it, and a reference has to be the film's own.
             "prescan_resolution": job.prescan_resolution,
             "rotation": self.rotation,
+            "flipped": self.flip,
             "only": list(job.only) if job.only is not None else None,
             "frames": [],
         }
 
-        # Which way up each chosen picture is. Every approved frame appears,
-        # zeros included: the contact sheet knows each frame's orientation
-        # outright, so an approval is the answer for that frame rather than a
-        # deviation from `self.rotation`. Dropping the zeros meant a frame
-        # deliberately straightened after a "rotate all" fell back to the
-        # default that rotate-all had just moved, and was scanned sideways.
+        # How each chosen picture is arranged. Every approved frame appears,
+        # zeros and falses included: the contact sheet knows each frame's
+        # orientation outright, so an approval is the answer for that frame
+        # rather than a deviation from the session's. Dropping the zeros meant
+        # a frame deliberately straightened after a "rotate all" fell back to
+        # the default that rotate-all had just moved, and was scanned sideways.
         # Frames with no approval at all -- a roll commissioned without a
-        # sheet -- still fall through to `self.rotation`.
+        # sheet -- still fall through to `self.rotation` and `self.flip`.
         self._frame_rotation = {a.number: a.rotation for a in job.approved}
+        self._frame_flip = {a.number: bool(a.flipped) for a in job.approved}
 
         frames = self._scanner.scan_roll(
             should_stop=self._stop.is_set,
@@ -924,8 +934,9 @@ class ScanSession:
             frames.close()
             # This roll's orientations die with it. A single scan taken
             # afterwards is not frame 3 of anything, and letting it inherit
-            # frame 3's turn would be a silent wrong answer.
+            # frame 3's arrangement would be a silent wrong answer.
             self._frame_rotation = {}
+            self._frame_flip = {}
         return stopped
 
     # -- shared ------------------------------------------------------------
@@ -965,24 +976,25 @@ class ScanSession:
         except Exception:                                # noqa: BLE001
             return None
 
-    def _rotation_for(self, number: int, kind: str) -> int:
-        """Which way up this picture's delivered file should be.
+    def _orientation_for(self, number: int, kind: str) -> tuple[int, bool]:
+        """How this picture's delivered file should be arranged.
 
-        The frame's own turn if the contact sheet gave it one, the session's
-        otherwise.
+        The frame's own turn and mirror if the contact sheet gave it them, the
+        session's otherwise. One method for both, because they are one decision
+        and `preview.orient` takes them together.
 
         **Prescans are exempt, deliberately.** `prescanNN.tif` is a reference
-        rather than a deliverable: `read_survey` un-rotates it by the single
-        `rotation` the manifest carries, and a per-frame turn here would make
-        that un-rotation wrong -- the reference would come back at an
-        orientation the film was never at, and it would no longer correlate
-        against a fresh pass of the same frame.
+        rather than a deliverable: `read_survey` un-orients it by the single
+        pair the manifest carries, and a per-frame answer here would make that
+        arithmetic wrong -- the reference would come back arranged a way the
+        film was never in, and it would no longer correlate against a fresh
+        pass of the same frame.
         """
         if kind != "prescan":
             turn = self._frame_rotation.get(number)
             if turn is not None:
-                return turn
-        return self.rotation
+                return turn, self._frame_flip.get(number, self.flip)
+        return self.rotation, self.flip
 
     def _file(
         self,
@@ -1038,10 +1050,10 @@ class ScanSession:
                     f"raw bytes do not describe this image ({detail}); "
                     "filing it without them rather than filing the wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
-        # One value, recorded and applied, so the entry's record says what the
+        # One answer, recorded and applied, so the entry's record says what the
         # delivered file actually got rather than what the session default was.
-        turn = self._rotation_for(number, kind)
-        meta = dict(meta, rotation=turn)
+        turn, flip = self._orientation_for(number, kind)
+        meta = dict(meta, rotation=turn, flipped=flip)
         # Only if it really is this picture. A raw array of another shape is a
         # different pass, and filing it here is exactly the failure the guard
         # above exists to prevent -- better to file the corrected pixels and
@@ -1057,6 +1069,7 @@ class ScanSession:
             number=number,
             paths=paths,
             rotate=turn,
+            flip=flip,
             image=image,
             raw_image=raw_image,
             quality=self.jpeg_quality,

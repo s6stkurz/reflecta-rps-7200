@@ -773,10 +773,12 @@ def test_a_frames_turn_does_not_reach_the_prescan_beside_it(tmp_path):
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     open_scanner=FakeScanner, verbose=False)
     s.rotation = 180
+    s.flip = False
     s._frame_rotation = {2: 90}
-    assert s._rotation_for(2, "frame") == 90, "the frame gets its own"
-    assert s._rotation_for(2, "prescan") == 180, "its prescan does not"
-    assert s._rotation_for(1, "frame") == 180, "an unturned frame falls back"
+    s._frame_flip = {2: True}
+    assert s._orientation_for(2, "frame") == (90, True), "the frame gets its own"
+    assert s._orientation_for(2, "prescan") == (180, False), "its prescan does not"
+    assert s._orientation_for(1, "frame") == (180, False), "and so does frame 1"
 
 
 def test_a_rolls_orientations_do_not_outlive_it(tmp_path):
@@ -975,3 +977,87 @@ def test_the_filename_says_which_format_it_is(tmp_path):
     # Still `_ir`: it says what was *scanned*, and the JPEG's own note says what
     # arrived. Renaming it here would lose the first.
     assert s._out_name(3, meta, "roll-a").endswith("_1800dpi_ir.jpg")
+
+
+# -- a mirror, which is not a fourth angle -----------------------------------
+
+
+def test_a_flip_reaches_the_delivered_file_but_not_the_entry(tmp_path):
+    """A strip loaded the other way up comes off this scanner reading
+    backwards, and no amount of turning fixes that. The entry still keeps the
+    scanner's own pixels, because they have to go on matching the raw bytes."""
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.flip = True
+    s.start()
+    s.submit(Scan(resolution=600, infrared=True))
+    s.shutdown()
+    s.join(timeout=15)
+
+    from rps7200 import preview, tiff
+    delivered = sorted(out.rglob("*.tif"))
+    assert len(delivered) == 1
+    written = tiff.read(str(delivered[0]))
+    stored, record = library.load(tmp_path / "lib" / library.entries(
+        tmp_path / "lib")[0]["id"])
+    assert written.shape == stored.shape, "a mirror does not change the shape"
+    assert np.array_equal(written, preview.mirror(stored)), "the file is mirrored"
+    assert not np.array_equal(written, stored), "and it really is a change"
+    assert record["scan"]["flipped"] is True, "the entry records what was asked"
+
+
+def test_one_frame_of_a_roll_can_be_flipped_without_flipping_the_rest(tmp_path):
+    """The same per-frame rule the turn follows, for the same reason: a strip
+    is not one arrangement."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, infrared=False, name="mixed",
+                  approved=(Approved(number=1),
+                            Approved(number=2, flipped=True))))
+    s.shutdown()
+    s.join(timeout=20)
+
+    from rps7200 import preview, tiff
+    first = tiff.read(str(tmp_path / "r" / "mixed" / "frame01.tif"))
+    second = tiff.read(str(tmp_path / "r" / "mixed" / "frame02.tif"))
+    # Both frames are the same fake picture, so one mirrored and one not is
+    # exactly a mirror apart.
+    assert not np.array_equal(first, second)
+    assert np.array_equal(preview.mirror(first), second)
+
+
+def test_a_turn_and_a_flip_are_applied_in_one_agreed_order(tmp_path):
+    """A mirror and a quarter turn do not commute, so the file has to be
+    written by the same `preview.orient` the screen was drawn with -- not by
+    two steps the writer chose an order for."""
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.rotation, s.flip = 90, True
+    s.start()
+    s.submit(Scan(resolution=600, infrared=False))
+    s.shutdown()
+    s.join(timeout=15)
+
+    from rps7200 import preview, tiff
+    written = tiff.read(str(sorted(out.rglob("*.tif"))[0]))
+    stored, _ = library.load(tmp_path / "lib" / library.entries(
+        tmp_path / "lib")[0]["id"])
+    assert np.array_equal(written, preview.orient(stored, 90, True))
+    assert not np.array_equal(written, preview.rotate(preview.mirror(stored), 270)), \
+        "and it is not the other order, which is 180 degrees away"
+
+
+def test_a_rolls_flips_do_not_outlive_it(tmp_path):
+    """As with the turns: a single scan afterwards is not frame 2 of
+    anything."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, infrared=False, name="mixed",
+                  approved=(Approved(number=2, flipped=True),)))
+    s.shutdown()
+    s.join(timeout=20)
+    assert s._frame_flip == {}

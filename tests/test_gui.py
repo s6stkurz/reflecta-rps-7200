@@ -381,7 +381,7 @@ def test_the_view_is_measured_against_one_array_only():
     back under its own threshold, which swapped the array again -- a picture
     that jumped about as it passed 1:1."""
     import inspect
-    assert "preview.rotate(r.image, r.rotation)" in inspect.getsource(
+    assert "preview.orient(r.image, r.rotation, r.flipped)" in inspect.getsource(
         gui.ScannerGui._source)
     loaded = inspect.getsource(gui.ScannerGui._loaded)
     assert "grow" not in loaded, "the arrival of the big array must move nothing"
@@ -915,7 +915,8 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
 # minutes of transport for nothing.
 
 
-def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None):
+def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None,
+                  flipped=False, flips=None):
     """A survey folder shaped exactly as `ScanSession._roll` writes one."""
     from rps7200 import preview, tiff
 
@@ -927,22 +928,24 @@ def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None):
         images[number] = image
         # written turned, as the writer does
         tiff.write(str(folder / f"prescan{number:02d}.tif"),
-                   preview.rotate(image, rotation))
+                   preview.orient(image, rotation, flipped))
         records.append({"number": number, "index": number - 1,
                         "transport_position": number - 1,
                         "registration": {"contrast": 0.3}, "error": None,
                         "prescan": f"prescan{number:02d}.tif"})
     (folder / "survey.json").write_text(json.dumps({
         "roll": "a-strip", "start_at": 1, "prescan_resolution": 300,
-        "rotation": rotation, "frames": records,
+        "rotation": rotation, "flipped": flipped, "frames": records,
     }))
-    if offsets or rotations:
-        numbers = sorted(set(offsets or {}) | set(rotations or {}))
+    if offsets or rotations or flips:
+        numbers = sorted(set(offsets or {}) | set(rotations or {})
+                         | set(flips or {}))
         (folder / "approved.json").write_text(json.dumps({
             "roll": "a-strip",
             "frames": [{"number": n,
                         "offset_mm": (offsets or {}).get(n, 0.0),
                         "rotation": (rotations or {}).get(n, 0),
+                        "flipped": (flips or {}).get(n, False),
                         "reference_entry": f"library/frame{n}"}
                        for n in numbers],
         }))
@@ -1175,9 +1178,10 @@ def test_a_frame_straightened_after_a_rotate_all_stays_straight():
     assert {a.number: a.rotation for a in approved} == {1: 0, 2: 90}
     # And the sheet keeps the zero rather than popping it, which is what makes
     # the record above say zero instead of saying nothing.
-    assert "self.rotations[number] = turn" in inspect.getsource(
-        gui._ContactSheet._turn)
-    assert ".pop(" not in inspect.getsource(gui._ContactSheet._turn)
+    orient = inspect.getsource(gui._ContactSheet._orient)
+    assert "self.rotations[number] = result.rotation" in orient
+    assert "self.flips[number] = result.flipped" in orient, "and the same for a flip"
+    assert ".pop(" not in orient
 
 
 def test_a_frame_nobody_turned_still_carries_the_orientation_it_is_shown_at():
@@ -1217,25 +1221,25 @@ def test_a_cell_is_drawn_by_the_same_code_that_redraws_it():
     """Two ways to build one thumbnail is two ways for it to disagree with
     what will be scanned."""
     assert "self._render(result)" in inspect.getsource(gui._ContactSheet._cell)
-    assert "self._render(result)" in inspect.getsource(gui._ContactSheet._turn)
+    assert "self._render(result)" in inspect.getsource(gui._ContactSheet._orient)
 
 
 def test_turning_every_frame_is_one_redraw_and_one_line_in_the_log():
     """Seventeen of each for a seventeen-frame strip is a stutter and a log
     nobody can read."""
-    every = inspect.getsource(gui._ContactSheet._rotate_all)
+    every = inspect.getsource(gui._ContactSheet._all)
     assert every.count("_redraw_strip") == 1
     assert every.count("_say") == 1
-    assert "_redraw_strip" not in inspect.getsource(gui._ContactSheet._turn)
+    assert "_redraw_strip" not in inspect.getsource(gui._ContactSheet._orient)
 
 
 def test_turning_every_frame_also_sets_what_the_next_scan_follows():
     """A whole roll one way up is the ordinary case; saying it once should be
     enough for anything scanned outside the sheet too."""
-    every = inspect.getsource(gui._ContactSheet._rotate_all)
-    assert "self.gui.rotation = turn" in every
-    assert "self.gui.session.rotation = turn" in every
-    assert "rotation" not in inspect.getsource(gui._ContactSheet._rotate)
+    every = inspect.getsource(gui._ContactSheet._all)
+    assert "self.gui.rotation = last.rotation" in every
+    assert "self.gui.session.rotation = last.rotation" in every
+    assert "self.gui.rotation" not in inspect.getsource(gui._ContactSheet._one)
 
 
 def test_a_frame_comes_back_shown_the_way_it_was_written():
@@ -1244,8 +1248,8 @@ def test_a_frame_comes_back_shown_the_way_it_was_written():
     import types
 
     stub = types.SimpleNamespace(
-        rotation=0, _frame_rotations={2: 90}, results=[], survey=[],
-        _surveying=False, _transport=None,
+        rotation=0, flip=False, _frame_rotations={2: 90}, _frame_flips={2: True},
+        results=[], survey=[], _surveying=False, _transport=None,
         _show=lambda _r: None, _redraw_strip=lambda: None,
     )
 
@@ -1256,16 +1260,18 @@ def test_a_frame_comes_back_shown_the_way_it_was_written():
     turned = result("frame", 2)
     gui.ScannerGui._add_result(stub, turned)
     assert turned.rotation == 90
+    assert turned.flipped is True, "and a mirror travels the same road"
 
     plain = result("frame", 1)
     gui.ScannerGui._add_result(stub, plain)
     assert plain.rotation == 0, "a frame nobody turned follows the session"
+    assert plain.flipped is False
 
     # A prescan of the same picture is a reference, not a deliverable, and the
     # session files it unturned -- so showing it turned would be a lie too.
     reference = result("prescan", 2)
     gui.ScannerGui._add_result(stub, reference)
-    assert reference.rotation == 0
+    assert reference.rotation == 0 and reference.flipped is False
 
 
 def test_a_new_strip_does_not_inherit_the_last_ones_orientations():
@@ -1405,3 +1411,100 @@ def test_the_strip_no_longer_jumps_to_the_end_on_every_redraw():
     source = inspect.getsource(gui.ScannerGui._redraw_strip)
     assert "xview_moveto(1.0)" not in source
     assert "_keep_in_strip" in source
+
+
+# -- a mirror, carried the same road as the turn -----------------------------
+
+
+def test_a_flip_in_the_sheet_reaches_the_scan():
+    approved = gui.approved_from_sheet(
+        [_Surveyed(1), _Surveyed(2)], (1, 2), {})
+    assert [a.flipped for a in approved] == [False, False]
+
+    mirrored = _Surveyed(2)
+    mirrored.flipped = True
+    assert gui.approved_from_sheet([mirrored], (2,), {})[0].flipped is True
+
+
+def test_a_flip_survives_closing_the_window(tmp_path):
+    """The same round trip a hand-set position and a turn already get."""
+    _write_survey(tmp_path / "roll", rotations={2: 90}, flips={2: True, 3: False})
+    out = gui.read_survey(tmp_path / "roll")
+    assert out["flips"] == {2: True, 3: False}, "and an explicit False survives"
+
+
+@pytest.mark.parametrize("flipped", [False, True])
+def test_a_reopened_prescan_comes_back_as_the_film_sat(tmp_path, flipped):
+    """`prescanNN.tif` is written arranged the way the screen had it, and a
+    reference has to be the film's own orientation or it will not correlate
+    against a fresh pass. Un-orienting is not the same as orienting by the
+    opposite, because a mirror and a turn do not commute."""
+    images = _write_survey(tmp_path / "roll", rotation=90, flipped=flipped)
+    out = gui.read_survey(tmp_path / "roll")
+    for result in out["results"]:
+        assert np.array_equal(result.image, images[result.number])
+        assert result.rotation == 90 and result.flipped is flipped
+
+
+def test_the_aim_comes_back_through_the_flip_as_well_as_the_turn():
+    """The one place the arrangement is not cosmetic: the transport moves along
+    the scanner's own x axis, so a click on a mirrored prescan that was only
+    un-rotated would send the film the wrong way."""
+    import inspect
+    source = inspect.getsource(gui.ScannerGui._aim)
+    assert "preview.unorient_point(" in source
+    assert "self.current.flipped" in source
+
+
+def test_one_phrasing_says_how_a_pass_is_arranged():
+    """The caption over the picture and the line in the log underneath it
+    cannot then describe the same frame two different ways."""
+    import types
+    assert gui._arrangement(types.SimpleNamespace(rotation=0, flipped=False)) \
+        == "as the scanner sent it"
+    assert gui._arrangement(types.SimpleNamespace(rotation=90, flipped=False)) \
+        == "90°"
+    assert gui._arrangement(types.SimpleNamespace(rotation=0, flipped=True)) \
+        == "flipped"
+    assert gui._arrangement(types.SimpleNamespace(rotation=180, flipped=True)) \
+        == "180°, flipped"
+
+
+def test_a_turn_and_a_flip_carry_over_by_the_same_route():
+    """Which way round the film went in does not change between one frame and
+    the next, so both follow the pass they were set on."""
+    import inspect
+    for name in ("on_rotate", "on_flip"):
+        assert "self._carry(" in inspect.getsource(getattr(gui.ScannerGui, name))
+    carry = inspect.getsource(gui.ScannerGui._carry)
+    for line in ("self.rotation = result.rotation", "self.flip = result.flipped",
+                 "self.session.rotation", "self.session.flip"):
+        assert line in carry, line
+
+
+def test_nothing_arranges_a_picture_with_only_half_the_answer():
+    """Every place a picture is arranged takes both, through `preview.orient`.
+    A `preview.rotate` left behind is a view that disagrees with the file
+    written from it."""
+    import inspect
+    source = inspect.getsource(gui)
+    assert "preview.rotate(" not in source, (
+        "the window arranges pictures with preview.orient, not preview.rotate")
+    assert "preview.unrotate_point(" not in source
+
+
+def test_flipping_all_agrees_the_strip_rather_than_swapping_each():
+    """A toggle would leave a half-mirrored strip still half-mirrored, which
+    is the one thing an operator reaching for "all" is trying to fix."""
+    import inspect
+    every = inspect.getsource(gui._ContactSheet._flip_all)
+    assert "not all(r.flipped for r in self.frames)" in every
+    orient = inspect.getsource(gui._ContactSheet._orient)
+    assert "if flip is not None:" in orient and "result.flipped = flip" in orient
+    assert "not result.flipped" not in orient, "the state is passed in, not toggled here"
+
+
+def test_flipping_all_twice_lands_where_it_started():
+    """Which is what makes the menu item that says "unflip all" do that."""
+    import inspect
+    assert "Unflip all" in inspect.getsource(gui._ContactSheet.on_cell_menu)

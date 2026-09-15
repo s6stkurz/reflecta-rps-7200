@@ -204,11 +204,12 @@ class ScannerGui:
         self._scrollers: list = []           # (widget, handler) for the wheel
         self._zoom_travel = 0                # trackpad pixels not yet spent
         self.rotation = 0                    # applied to new passes and files
-        #: The same, for one picture of the roll being scanned, keyed by frame
-        #: number -- what the contact sheet was left holding when the scan was
-        #: commissioned. Only the frames turned individually appear; the rest
-        #: fall back to `self.rotation`.
+        self.flip = False                    # and whether they read left to right
+        #: The same two, for one picture of the roll being scanned, keyed by
+        #: frame number -- what the contact sheet was left holding when the scan
+        #: was commissioned. Frames with no entry fall back to the session's.
         self._frame_rotations: dict[int, int] = {}
+        self._frame_flips: dict[int, bool] = {}
         self.survey: list = []               # the prescans a dry run walked
         self._surveying = False              # a dry run is running right now
         self._survey_start = 1               # the `start at` it was walked with
@@ -1220,6 +1221,7 @@ class ScannerGui:
             # be applied to whatever pictures happen to land on the same frame
             # numbers -- a different film, shown and written sideways.
             self._frame_rotations = {}
+            self._frame_flips = {}
             self._surveying = True
             self._survey_start = start_at
             self._survey_predpi = predpi
@@ -1316,7 +1318,9 @@ class ScannerGui:
                   + (f", {len(out['offsets'])} with a position already set"
                      if out["offsets"] else "")
                   + (f", {len(out['rotations'])} already turned"
-                     if out["rotations"] else ""))
+                     if out["rotations"] else "")
+                  + (f", {sum(out['flips'].values())} flipped"
+                     if any(out["flips"].values()) else ""))
         # The film is almost certainly not where the walk left it, and only
         # Stefan can see that. Said rather than guessed at.
         messagebox.showinfo(
@@ -1328,7 +1332,8 @@ class ScannerGui:
         if self.sheet is not None and self.sheet.alive():
             self.sheet.top.destroy()
         self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"],
-                                   rotations=out["rotations"])
+                                   rotations=out["rotations"],
+                                   flips=out["flips"])
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=()) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
@@ -1388,6 +1393,7 @@ class ScannerGui:
         # written. Without it a roll returns pictures the filmstrip draws one
         # way up and the file on disk holds another.
         self._frame_rotations = {a.number: a.rotation for a in approved}
+        self._frame_flips = {a.number: bool(a.flipped) for a in approved}
         if back:
             self.session.submit(Move(frames=-back))
         self.session.submit(Roll(
@@ -1438,6 +1444,7 @@ class ScannerGui:
                 "frames": [{"number": a.number,
                             "offset_mm": round(a.offset_mm, 4),
                             "rotation": int(a.rotation),
+                            "flipped": bool(a.flipped),
                             "reference_entry": str(a.reference_entry or "")}
                            for a in approved],
             }, indent=2, default=str))
@@ -1841,9 +1848,11 @@ class ScannerGui:
         # what was written to disk for it: showing it any other way would say
         # the file is something it is not.
         result.rotation = self.rotation
+        result.flipped = self.flip
         if result.kind == "frame" and result.number:
             result.rotation = self._frame_rotations.get(result.number,
                                                         self.rotation)
+            result.flipped = self._frame_flips.get(result.number, self.flip)
         # Measured once, from the whole picture. Recomputing per redraw was
         # most of what made zooming feel dead, and it also meant the brightness
         # changed as you panned -- the same negative looking different
@@ -1902,7 +1911,8 @@ class ScannerGui:
         if self.v_channel.get() not in available:
             self.v_channel.set("RGB")
         marks = result.registration
-        extra = f"   \u00b7   {result.rotation}\u00b0" if result.rotation else ""
+        extra = ("   \u00b7   " + _arrangement(result)
+                 if result.rotation or result.flipped else "")
         if marks.get("offset_mm") is not None:
             extra = (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
                      f"short by {marks.get('shortfall_mm', 0):.2f} mm")
@@ -1924,7 +1934,7 @@ class ScannerGui:
             if r.image is None:
                 continue
             arr = preview.render(
-                preview.fit(preview.rotate(r.image, r.rotation),
+                preview.fit(preview.orient(r.image, r.rotation, r.flipped),
                             THUMB_H * 2, THUMB_H),
                 "RGB", self.v_invert.get(),
                 cuts=(preview.channel_levels(r.levels, "RGB")
@@ -2037,6 +2047,9 @@ class ScannerGui:
             self.menu.add_command(
                 label=f"Straighten (now {target.rotation}\u00b0)",
                 command=lambda r=target: self.on_rotate(r, -r.rotation))
+        self.menu.add_command(
+            label="Unflip" if target.flipped else "Flip left-right",
+            command=lambda r=target: self.on_flip(r))
         if target.supersedes:
             self.menu.add_separator()
             self.menu.add_command(label="Show prescan",
@@ -2065,7 +2078,7 @@ class ScannerGui:
             # is now an uncorrected file -- so it is re-written every time, and
             # the copy is gone deliberately rather than by oversight.
             full, entry_record = library.corrected(result.entry)
-            full = preview.rotate(full, result.rotation)
+            full = preview.orient(full, result.rotation, result.flipped)
             if mono:
                 full = to_monochrome(full, self.v_mono_channel.get())
             note = export.write(path, full, quality=quality)
@@ -2077,7 +2090,8 @@ class ScannerGui:
                       + ("" if how == "applied" else f" ({how})")
                       + (f" -- {note}" if note else ""))
         elif result.image is not None:
-            turned = preview.rotate(result.image, result.rotation)
+            turned = preview.orient(result.image, result.rotation,
+                                    result.flipped)
             note = export.write(
                 path,
                 to_monochrome(turned, self.v_mono_channel.get()) if mono else turned,
@@ -2096,17 +2110,41 @@ class ScannerGui:
         have to keep matching the raw bytes filed beside them.
         """
         result.rotation = (result.rotation + degrees) % 360
+        self._carry(result, _arrangement(result))
+
+    def on_flip(self, result) -> None:
+        """Mirror this pass left to right, and everything scanned after it.
+
+        Not a fourth angle: a strip loaded the other way up comes off this
+        scanner reading backwards, and no amount of turning fixes that. It
+        carries over exactly as a turn does, for the same reason -- which way
+        round the film went in does not change between one frame and the next.
+        """
+        result.flipped = not result.flipped
+        self._carry(result, _arrangement(result))
+
+    def _carry(self, result, said: str) -> None:
+        """Make this pass's arrangement the one new passes and files follow.
+
+        The carry-over is the point: arranging a prescan is how you say how the
+        film went in, and the scan that follows should not need telling again.
+        It reaches the files written from here on -- the output folder's copy
+        and a roll's own TIFF -- but never the library entry, whose pixels have
+        to keep matching the raw bytes filed beside them.
+        """
         self.rotation = result.rotation
+        self.flip = result.flipped
         self.session.rotation = result.rotation
-        # Anything it stands in for turns with it, so showing the prescan again
+        self.session.flip = result.flipped
+        # Anything it stands in for follows it, so showing the prescan again
         # does not undo what was just decided.
         if result.supersedes:
             for r in self.results:
                 if r.seq == result.supersedes:
-                    r.rotation = result.rotation
-        self._say(f"{result.label}: {result.rotation}\u00b0 -- new scans and "
-                  "the files written for them follow this; the library entry "
-                  "keeps the scanner's own orientation")
+                    r.rotation, r.flipped = result.rotation, result.flipped
+        self._say(f"{result.label}: {said} -- new scans and the files written "
+                  "for them follow this; the library entry keeps the scanner's "
+                  "own orientation")
         self._view = [0.0, 0.0]
         self._show(result)
         self._redraw_strip()
@@ -2220,7 +2258,7 @@ class ScannerGui:
         r = self.current
         if r is None or r.image is None:
             return None
-        return preview.rotate(r.image, r.rotation)
+        return preview.orient(r.image, r.rotation, r.flipped)
 
     def _finest(self) -> float:
         """How much finer the scan is than the working copy the view uses.
@@ -2260,10 +2298,10 @@ class ScannerGui:
             # is on show.
             for factor, array in self._levels:
                 if factor >= scale:
-                    return preview.rotate(array, r.rotation), factor
+                    return preview.orient(array, r.rotation, r.flipped), factor
             finest, array = self._levels[-1]
-            return preview.rotate(array, r.rotation), finest
-        return preview.rotate(r.image, r.rotation), 1.0
+            return preview.orient(array, r.rotation, r.flipped), finest
+        return preview.orient(r.image, r.rotation, r.flipped), 1.0
 
     def _load_full(self, r) -> None:
         """Read the entry's own pixels, off the UI thread.
@@ -2675,8 +2713,9 @@ class ScannerGui:
         # turned on screen, so the click comes back through the rotation before
         # it means a distance. Without this, aiming on a frame turned 90 would
         # drive the transport from the wrong axis entirely.
-        flat_x, _flat_y = preview.unrotate_point(
-            where[0], where[1], src.shape, self.current.rotation)
+        flat_x, _flat_y = preview.unorient_point(
+            where[0], where[1], src.shape,
+            self.current.rotation, self.current.flipped)
         width = (src.shape[1] if self.current.rotation % 180 == 0
                  else src.shape[0])
         fraction = min(1.0, max(0.0, flat_x / max(1, width)))
@@ -2765,9 +2804,11 @@ def read_survey(folder) -> dict:
     folder = Path(folder)
     manifest = json.loads((folder / "survey.json").read_text())
     turn = int(manifest.get("rotation") or 0)
+    mirrored = bool(manifest.get("flipped"))
 
     offsets: dict[int, float] = {}
     rotations: dict[int, int] = {}
+    flips: dict[int, bool] = {}
     entries: dict[int, str] = {}
     approved_path = folder / "approved.json"
     if approved_path.exists():
@@ -2780,6 +2821,8 @@ def read_survey(folder) -> dict:
             # at all rather than a zero.
             if record.get("rotation") is not None:
                 rotations[number] = int(record["rotation"]) % 360
+            if record.get("flipped") is not None:
+                flips[number] = bool(record["flipped"])
             if record.get("reference_entry"):
                 entries[number] = record["reference_entry"]
 
@@ -2794,7 +2837,7 @@ def read_survey(folder) -> dict:
             seq=-number,                     # negative: never a live pass's seq
             kind="prescan",
             label=f"frame {number} (reopened)",
-            image=preview.rotate(image, -turn),
+            image=preview.unorient(image, turn, mirrored),
             meta={"resolution_dpi": manifest.get("prescan_resolution")},
             entry=Path(entries[number]) if number in entries else None,
             registration=record.get("registration") or {},
@@ -2804,6 +2847,7 @@ def read_survey(folder) -> dict:
         result.hidden = False
         result.supersedes = None
         result.rotation = turn
+        result.flipped = mirrored
         result.levels = (preview.levels(result.image)
                          if result.image is not None else None)
         results.append(result)
@@ -2814,8 +2858,10 @@ def read_survey(folder) -> dict:
         "prescan_resolution": manifest.get("prescan_resolution"),
         "offsets": offsets,
         "rotations": rotations,
+        "flips": flips,
         "roll": manifest.get("roll") or folder.name,
         "rotation": turn,
+        "flipped": mirrored,
     }
 
 
@@ -2851,6 +2897,18 @@ def snap_offset(millimetres: float) -> float:
     return 0.0
 
 
+def _arrangement(result) -> str:
+    """How a pass is arranged, in words, for a caption or a line in the log.
+
+    One phrasing, so the caption over the picture and the log line underneath
+    it cannot describe the same frame two different ways.
+    """
+    parts = [f"{result.rotation}\u00b0"] if result.rotation else []
+    if getattr(result, "flipped", False):
+        parts.append("flipped")
+    return ", ".join(parts) or "as the scanner sent it"
+
+
 def approved_from_sheet(frames, ticks, offsets) -> tuple:
     """The `Approved` records for the ticked frames, in frame order.
 
@@ -2881,6 +2939,7 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
             number=number,
             offset_mm=snap_offset(offsets.get(number, 0.0)),
             rotation=int(getattr(result, "rotation", 0) or 0) % 360,
+            flipped=bool(getattr(result, "flipped", False)),
             reference=getattr(result, "image", None),
             # str, not the Path the GUI carries: Approved declares a str,
             # and a Path here reaches json.dumps in _write_approved and
@@ -3457,7 +3516,7 @@ class _ContactSheet:
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
 
-    def __init__(self, gui, frames, offsets=None, rotations=None):
+    def __init__(self, gui, frames, offsets=None, rotations=None, flips=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
         # A frame that was walked but cannot be shown is not a cosmetic
@@ -3487,12 +3546,19 @@ class _ContactSheet:
         #: driven on.
         self.rotations: dict[int, int] = {int(n): int(t) % 360 for n, t
                                           in dict(rotations or {}).items()}
-        # A reopened survey arrives with the manifest's one rotation on every
+        #: And whether each reads left to right, on the same terms: absolute,
+        #: and an explicit False is a decision. A strip can go in the other way
+        #: up, and that is not a fourth angle.
+        self.flips: dict[int, bool] = {int(n): bool(v) for n, v
+                                       in dict(flips or {}).items()}
+        # A reopened survey arrives with the manifest's one arrangement on every
         # result; a frame decided individually overrides it, so the cell is
         # drawn the way it was left rather than the way the roll was.
         for result in self.frames:
             if result.number in self.rotations:
                 result.rotation = self.rotations[result.number]
+            if result.number in self.flips:
+                result.flipped = self.flips[result.number]
         # Keyed by frame number rather than appended, because a cell is now
         # re-rendered when it is turned and a list would grow a PhotoImage per
         # rotation while holding every superseded one alive.
@@ -3621,7 +3687,7 @@ class _ContactSheet:
         -- a third of the space, and softer than it needs to be. sample scales
         fractionally and fills the cell.
         """
-        turned = preview.rotate(result.image, result.rotation)
+        turned = preview.orient(result.image, result.rotation, result.flipped)
         scale = min(self.CELL / max(turned.shape[1], 1),
                     self.CELL / max(turned.shape[0], 1))
         arr = preview.render(
@@ -3635,7 +3701,7 @@ class _ContactSheet:
         self._photos[result.number] = photo
         return photo
 
-    # -- turning -----------------------------------------------------------
+    # -- arranging ---------------------------------------------------------
 
     def on_cell_menu(self, event: tk.Event, index: int) -> str:
         """What can be done to one frame without leaving the sheet."""
@@ -3652,6 +3718,9 @@ class _ContactSheet:
             self.menu.add_command(
                 label=f"Straighten (now {result.rotation}°)",
                 command=lambda n=number, r=result: self._rotate(n, -r.rotation))
+        self.menu.add_command(
+            label="Unflip" if result.flipped else "Flip left-right",
+            command=lambda n=number: self._flip(n))
         self.menu.add_separator()
         self.menu.add_command(
             label="Rotate all right 90°",
@@ -3659,6 +3728,10 @@ class _ContactSheet:
         self.menu.add_command(
             label="Rotate all left 90°",
             command=lambda: self._rotate_all(270))
+        self.menu.add_command(
+            label=("Unflip all" if all(r.flipped for r in self.frames)
+                   else "Flip all left-right"),
+            command=self._flip_all)
         self.menu.add_separator()
         self.menu.add_checkbutton(
             label="Scan this frame", variable=self.ticks[number],
@@ -3671,57 +3744,93 @@ class _ContactSheet:
         self.menu.tk_popup(event.x_root, event.y_root)
         return "break"
 
-    def _turn(self, result, degrees: int) -> int:
-        """Record one frame's new orientation and redraw its cell.
+    def _orient(self, result, degrees: int = 0, flip: bool | None = None) -> str:
+        """Record one frame's new arrangement and redraw its cell.
 
         Recorded against the number rather than applied to pixels: a prescan is
         the reference a scan is checked against, and it has to stay in the
         film's own orientation. `approved_from_sheet` carries this into the
         roll, where it reaches that frame's delivered file alone.
 
-        Says nothing and leaves the filmstrip alone -- the two callers below do
-        that once each, so turning seventeen frames costs one redraw and one
+        Says nothing and leaves the filmstrip alone -- the callers below do
+        that once each, so arranging seventeen frames costs one redraw and one
         line in the log rather than seventeen of both.
         """
         number = result.number
-        turn = (result.rotation + degrees) % 360
-        result.rotation = turn
-        # Recorded even when it comes back to zero: see `self.rotations`.
-        self.rotations[number] = turn
+        result.rotation = (result.rotation + degrees) % 360
+        # Set, not toggled: `flip` is the state wanted, None meaning "leave it".
+        # A toggle would make "flip all" swap each frame instead of agreeing
+        # them, so a half-mirrored strip came out still half-mirrored -- which
+        # is the one thing an operator reaching for "all" is trying to fix.
+        if flip is not None:
+            result.flipped = flip
+        # Recorded even when they come back to nothing: see `self.rotations`.
+        self.rotations[number] = result.rotation
+        self.flips[number] = result.flipped
         picture = self._pictures.get(number)
         if picture is not None:
             picture.configure(image=self._render(result))
-        return turn
+        return _arrangement(result)
+
+    def _find(self, number: int):
+        return next((r for r in self.frames if r.number == number), None)
 
     def _rotate(self, number: int, degrees: int) -> None:
         """Turn one frame. The others keep whatever they were."""
-        result = next((r for r in self.frames if r.number == number), None)
+        self._one(number, degrees=degrees)
+
+    def _flip(self, number: int) -> None:
+        """Mirror one frame, or put it back. The others keep what they were."""
+        result = self._find(number)
+        if result is not None:
+            self._one(number, flip=not result.flipped)
+
+    def _one(self, number: int, degrees: int = 0,
+             flip: bool | None = None) -> None:
+        result = self._find(number)
         if result is None:
             return
-        turn = self._turn(result, degrees)
+        said = self._orient(result, degrees, flip)
         # The same picture is in the filmstrip behind this window, and the two
-        # showing one frame two ways up is how an operator loses track of which
-        # way it will be scanned.
+        # showing one frame two ways round is how an operator loses track of
+        # how it will be scanned.
         self.gui._redraw_strip()
-        self.gui._say(f"frame {number}: {turn}° -- scanned this way up; "
+        self.gui._say(f"frame {number}: {said} -- scanned this way; "
                       "the other frames are unchanged")
 
     def _rotate_all(self, degrees: int) -> None:
-        """Turn every frame, and make it the session's default too.
+        """Turn every frame, and make it the session's default too."""
+        self._all(degrees=degrees)
 
-        A whole roll one way up is the ordinary case. If the operator says it
-        here he should not have to say it again for everything scanned outside
-        the sheet, so this sets the same carry-over a rotate in the filmstrip
-        sets. Each frame still gets its own recorded turn, so one of them can
-        be put back afterwards without disturbing the rest.
+    def _flip_all(self) -> None:
+        """Agree every frame's mirror, and make it the session's default too.
+
+        Mirrored unless they already all are, in which case this puts them
+        back -- so the menu item that says "unflip all" does that, and pressing
+        it twice lands where it started rather than somewhere new.
         """
-        turn = 0
+        self._all(flip=not all(r.flipped for r in self.frames))
+
+    def _all(self, degrees: int = 0, flip: bool | None = None) -> None:
+        """Arrange every frame, and make it what everything else follows.
+
+        A whole roll one way round is the ordinary case. If the operator says
+        it here he should not have to say it again for everything scanned
+        outside the sheet, so this sets the same carry-over the filmstrip's
+        menu sets. Each frame still gets its own recorded arrangement, so one
+        of them can be put back afterwards without disturbing the rest.
+        """
+        said = ""
         for result in self.frames:
-            turn = self._turn(result, degrees)
-        self.gui.rotation = turn
-        self.gui.session.rotation = turn
+            said = self._orient(result, degrees, flip)
+        if self.frames:
+            last = self.frames[-1]
+            self.gui.rotation = last.rotation
+            self.gui.flip = last.flipped
+            self.gui.session.rotation = last.rotation
+            self.gui.session.flip = last.flipped
         self.gui._redraw_strip()
-        self.gui._say(f"every frame: {turn}° -- and new scans follow this "
+        self.gui._say(f"every frame: {said} -- and new scans follow this "
                       "until something says otherwise")
 
     # -- adjusting ---------------------------------------------------------

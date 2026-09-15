@@ -220,10 +220,12 @@ copy understates how much is at the rail. Infrared is not in it: it is a dust
 measurement rather than an exposure, and on traditional black and white it
 merely traces green.
 
-**Right-click turns a picture, wherever it is shown** -- the big preview, the
-filmstrip, or a cell of the contact sheet -- and a frame is scanned the way up
-it was left. The sheet keeps a turn per frame, so a portrait among landscapes
-comes out right; "rotate all" turns the whole strip and sets what everything
+**Right-click arranges a picture, wherever it is shown** -- the big preview,
+the filmstrip, or a cell of the contact sheet -- and a frame is scanned the way
+it was left. Quarter turns and a left-right flip: a strip loaded the other way
+up comes off this scanner reading backwards, and no amount of turning fixes
+that. The sheet keeps both per frame, so a portrait among landscapes comes out
+right; "rotate all" and "flip all" agree the whole strip and set what everything
 scanned afterwards follows. The turn reaches the files you get -- the output
 folder's copy and the roll's own `frameNN.tif` -- and never the library entry,
 whose pixels have to keep matching the raw bytes filed beside them. Turns
