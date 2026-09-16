@@ -1,22 +1,51 @@
 # Fast infrared: MODE SELECT quality bit 0x80
 
-## Status: run twice, 2026-09-16. **It halves the pass in one configuration and does nothing in another, and we do not know why.**
+## Status: answered 2026-09-16. **The bit removes the infrared floor. The saving is whatever the floor was worth at that resolution.**
 
-- **1800 dpi, colour negative: 250.5 s -> 126.1 s, -49.7%.** Nothing measurable
-  pays for it.
-- **3600 dpi, slide: 221.0 s -> 213.9 s, -3.2%.** Nothing measurable pays for it
-  there either, and there is almost nothing to pay *for*.
+```
+    time with the flag  =  7.46 s  +  59.88 ms/line          (r^2 = 1.000)
+    time without it     =  219.8 s, flat, whatever the line count
+```
 
-Two variables changed between the runs -- resolution and film -- so which one
-kills the saving is open. One more ladder answers it.
+An ordinary infrared pass costs ~220 s at every resolution -- that is the
+documented floor. With the bit set the floor is simply gone, and the pass costs
+what its line count costs, exactly like a scan with no infrared in it. The two
+curves cross at about **3700 dpi**, which is why 3600 dpi looked like a failure
+and 300 dpi looks like magic.
 
-**Not adopted as a default**, and it should not be until that is answered: a
-flag that halves the pass on one setting and does nothing on another is not a
-default, it is a special case waiting to be understood.
+| dpi | lines | without | with | saved | |
+|---|---|---|---|---|---|
+| 300 | 286 | 219.2 s | 24.6 s | 194.6 s | **-88.8%** |
+| 600 | 573 | 219.6 s | 41.7 s | 177.9 s | **-81.0%** |
+| 900 | 860 | 219.8 s | 58.9 s | 160.9 s | **-73.2%** |
+| 1200 | 1147 | 220.1 s | 76.3 s | 143.8 s | **-65.3%** |
+| 1800 | 1721 | 220.3 s | 110.5 s | 109.8 s | **-49.8%** |
+| 3600 | 3443 | 221.0 s | 213.6 s | 7.4 s | -3.4% |
+| 7200 | 6886 | ~420 s | ~420 s | ~0 | ~0, predicted |
 
-Both runs found the same thing about the hardware, which outlives the question:
+**The film was a red herring.** 1800 dpi on colour negative gave -49.7% and
+1800 dpi on slide gives -49.8%. It was resolution the whole time.
+
+### Superseded: the earlier reading of this
+
+This section previously said the result "does not generalise" and that the
+saving was unexplained. Both are wrong and are corrected above. The 3600 dpi
+slide run was not a failure to reproduce; it was the one resolution measured
+where the line-count cost had already caught up with the floor.
+
+Quality was measured at two configurations, eleven passes: 1800 dpi on colour
+negative and 3600 dpi on slide. **Nothing degrades** -- picture, infrared plane
+and dust all unchanged against same-setting controls.
+
+Both runs also found something about the hardware that outlives this question:
 **the carriage start moves between passes**, and the flag itself moves it. Every
 comparison here is aligned pair by pair for that reason.
+
+**Still not adopted as a default**, for one reason that is worth stating
+precisely: the resolution where quality was properly tested and the flag
+actually *does* something is 1800 dpi, and that one is clean. At 3600 the "no
+degradation" result is nearly vacuous, because the flag barely changes the pass
+there. Below 1800, where the saving is 73-89%, quality is untested.
 
 ## The question
 
@@ -364,24 +393,80 @@ speck depth is unchanged at 3600 (7.17-7.25 sigma source, comparable to off),
 and binning should blunt a point feature. It is not explained, and nothing here
 depends on explaining it.
 
+## The sweep: every resolution, one film, 2026-09-16
+
+Twelve passes planned, one `off` and one `on` at each of 300, 600, 900, 1200,
+1800, 3600 and 7200 dpi, on the slide already loaded. One exposure metered once
+at 1800 dpi and **held across every resolution** -- scan time tracks exposure, so
+metering each resolution separately would have put a different exposure behind
+each row and let the difference be called resolution. The order alternated, `off`
+first at 300, `on` first at 600 and so on, so that nothing drifting across the
+hour could line up with the flag.
+
+Three repeats a side were not taken and were not needed: timing here repeats to
+a tenth of a second, and the ladders had already spent their repeats on the
+quality questions.
+
+**It ended early**: the scanner was disconnected during the 3600 dpi `off` pass
+(`LIBUSB_ERROR_IO`), which cost that pass and the whole 7200 dpi pair. Nothing
+was lost -- the 3600 `on` pass had already completed, and the earlier slide
+ladder supplies the 3600 `off` figure at an exposure within 2% of this one.
+
+### What the numbers say
+
+The `off` column is flat: 219.2, 219.6, 219.8, 220.1, 220.3 s across a sixfold
+resolution range, a spread of 1.1 s. That is the infrared floor, and it is
+indifferent to how many lines were asked for -- exactly as
+`docs/dpi-tradeoff-plan.md` found.
+
+The `on` column is a straight line in the line count:
+
+```
+    dpi   lines   measured    fitted     error
+    600     573      41.7s     41.8s    -0.07s
+    900     860      58.9s     59.0s    -0.06s
+   1200    1147      76.3s     76.1s    +0.16s
+   1800    1721     110.5s    110.5s    -0.01s
+   3600    3443     213.6s    213.6s    -0.02s
+```
+
+`time = 7.46 s + 59.88 ms/line`, fitting every point to within 0.16 s. The fit
+was then checked against a pass it was not fitted to -- the 3600 dpi `on` mean
+from the earlier ladder, a separate run on a separate exposure -- and predicted
+it to **0.24 s**.
+
+### What that means
+
+The bit does not make the infrared acquisition faster. **It removes the floor.**
+With it set, an RGBI pass costs what an RGB pass of the same geometry costs; the
+~212-250 s the infrared plane has always cost, at every resolution, regardless
+of line count, simply is not spent.
+
+The two costs cross where `7.46 + 0.05988 x lines = 219.8`, at **3546 lines,
+about 3709 dpi**. Below that the floor is the dominant cost and removing it is
+worth almost everything; above it the line count already exceeds the floor and
+there is nothing left to remove. 3600 dpi sits just under the crossover, which
+is the entire explanation of the second ladder's -3.2%.
+
+7200 dpi was not reached. The model puts it at ~420 s either way, so no saving,
+and it is refused for real scans anyway because the device will not produce a
+shading reference wide enough to correct it.
+
 ## Where this leaves it
 
-The bit is safe -- eleven passes across two configurations and nothing
-measurable degrades -- and it is worth a great deal in one configuration and
-nothing in another. That is not yet a default.
+The mechanism is understood and the saving is large exactly where this driver
+spends most of its time. At 1800 dpi -- the resolution `docs/dpi-tradeoff-plan.md`
+recommends when time matters -- an infrared pass goes from 220 s to 110 s, and a
+38-frame roll from about 2.3 hours of floor to 1.2. At 900 dpi it is 73% off.
 
-**The open question is one ladder wide.** Two variables moved between the runs,
-and either could be the one:
+What is still missing before it becomes the default, and it is one ladder:
 
-- **Resolution.** If the saving is 1800-only, that is still worth having: 1800
-  dpi is the recommended resolution when time matters, which is exactly when a
-  halved pass is worth the most.
-- **Film or stock.** If the saving is negative-only, it is worth having for
-  colour negative, which is most of what this scanner is pointed at.
+- **Quality below 1800 dpi is untested.** The two quality ladders ran at 1800
+  (clean, and the flag halved the pass there) and 3600 (clean, but the flag
+  barely acts there, so it proves little). The band where the saving is 73-89%
+  has never been checked for what it costs. A six-pass ladder at 600 or 900 dpi,
+  about 15 minutes now that the `on` passes are short, would close it.
+- **`PROTOCOL_REVISION` moves** when the default payload does, and not before.
 
-**Slide at 1800 dpi** answers it in one 25-minute run with the film already
-loaded, and the answer is useful whichever way it falls. That should happen
-before any decision about defaults.
-
-`PROTOCOL_REVISION` still has not moved, and should not until the default
-payload does.
+Adopting it above ~3600 dpi is pointless rather than harmful: there is nothing
+to save, and it still shifts the carriage start by a line or two.

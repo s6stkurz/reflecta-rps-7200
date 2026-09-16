@@ -148,10 +148,20 @@ def main() -> int:
                          "metered with the visible channels locked together "
                          "and a negative is not. Infrared is refused outright "
                          "for the stocks blind to it.")
+    ap.add_argument("--resolutions", default=None,
+                    help="comma-separated dpi list -- switches to SWEEP mode: "
+                         "one off pass and one on pass at each resolution, "
+                         "timing only, with one metered exposure held across "
+                         "all of them. Answers how the saving depends on "
+                         "resolution; says nothing about quality, which the "
+                         "ladder has already settled at two configurations.")
     ap.add_argument("--json", default=None)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
+
+    if args.resolutions:
+        return sweep(args)
 
     if args.dry_run:
         print(f"would take {len(LADDER)} RGBI passes at {args.resolution} dpi "
@@ -380,6 +390,126 @@ def report(results: list[dict], frames: dict[bool, list[np.ndarray]],
     if out:
         Path(out).write_text(json.dumps(
             {"passes": results, "summary": summary}, indent=2, default=float))
+        print(f"\nwritten to {out}")
+    return 0
+
+
+#: What the sweep meters at. One exposure is held across every resolution,
+#: because scan time tracks exposure -- `ms/line = 2.60 + 4.851e-4 x
+#: sum(exposure)` for the visible part -- so metering each resolution
+#: separately would put a different exposure behind each row of the table and
+#: call the difference resolution.
+SWEEP_METER_DPI = 1800
+
+
+def sweep(args) -> int:
+    """One off pass and one on pass at each resolution. Timing only.
+
+    Three repeats a side are what the quality readings need, and the ladder has
+    already taken them twice. Timing needs far less: at 1800 dpi the three off
+    passes came in at 250.5, 250.5 and 250.4 s and the three on passes at 126.1
+    each, so a pair settles a resolution to a tenth of a second. Spending three
+    a side at every resolution would cost two hours to learn nothing more.
+
+    The order alternates -- off first at one resolution, on first at the next --
+    so that if anything does drift across the run it cannot line up with the
+    flag, which is the trap the second ladder fell into.
+    """
+    ladder = [int(v, 0) for v in args.resolutions.replace(" ", "").split(",")]
+    if args.dry_run:
+        print(f"would take {2 * len(ladder)} RGBI passes on {args.film} at "
+              f"{ladder} dpi, one off and one on at each, byte14="
+              f"{BYTE14_REHOME:#04x}, exposure metered once at "
+              f"{SWEEP_METER_DPI} dpi and held")
+        print(f"budget roughly {2 * len(ladder) * 230 / 60:.0f} minutes at the "
+              f"infrared floor, plus metering -- background it")
+        return 0
+    if not os.environ.get("RPS7200_DEBUG"):
+        print("refusing to run without RPS7200_DEBUG=1", file=sys.stderr)
+        return 2
+
+    rows: list[dict] = []
+    scanner = DirectScanner(verbose=True)
+    try:
+        scanner.open()
+        state = scanner.read_state()
+        print(f"state: scanning={state.scanning:#04x} "
+              f"media_loaded={state.media_loaded} position={state.position}")
+        scanner.session_start()
+        scanner.wait_warm()
+        scales = list(scanner.auto_exposure(
+            resolution=SWEEP_METER_DPI, film=args.film, infrared=True))
+        print(f"\nexposure held at {[round(v, 3) for v in scales]} for every "
+              f"pass, every resolution\n")
+
+        for index, dpi in enumerate(ladder):
+            # Alternating, so drift cannot correlate with the flag.
+            order = (False, True) if index % 2 == 0 else (True, False)
+            for fast in order:
+                image, meta = scanner.scan(
+                    resolution=dpi, infrared=True, frame=FULL_FRAME,
+                    exposure_scale=scales, auto_exposure=False,
+                    film=args.film, shading=False, keep_raw=True,
+                    byte14=BYTE14_REHOME, fast_infrared=fast,
+                )
+                if image is None or image.size == 0:
+                    raise RuntimeError(f"{dpi} dpi, fast={fast}: no image")
+                ms = 1000 * meta["duration_s"] / meta["height"]
+                rows.append({"resolution": dpi, "fast_infrared": bool(fast),
+                             "height": meta["height"],
+                             "duration_s": meta["duration_s"],
+                             "ms_per_line": round(ms, 4)})
+                print(f"  {dpi:>5} dpi  {'on ' if fast else 'off'}  "
+                      f"height={meta['height']:5d}  "
+                      f"duration={meta['duration_s']:6.1f}s  "
+                      f"ms/line={ms:7.2f}")
+                del image
+    except BaseException as exc:                        # noqa: BLE001
+        print(f"\nsweep stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        if not isinstance(exc, (KeyboardInterrupt, CheckCondition, RuntimeError)):
+            raise
+    finally:
+        try:
+            scanner.close()
+        except BaseException:                           # noqa: BLE001
+            pass
+
+    if not rows:
+        return 1
+    return sweep_report(rows, args.json)
+
+
+def sweep_report(rows: list[dict], out: str | None) -> int:
+    print("\n" + "=" * 72)
+    print("the saving, by resolution\n")
+    print(f"{'dpi':>6}{'lines':>7}{'off':>10}{'on':>10}{'saved':>9}{'saved':>9}")
+    print(f"{'':>6}{'':>7}{'':>10}{'':>10}{'':>9}{'%':>9}")
+    table = []
+    for dpi in sorted({r["resolution"] for r in rows}):
+        off = [r for r in rows if r["resolution"] == dpi and not r["fast_infrared"]]
+        on = [r for r in rows if r["resolution"] == dpi and r["fast_infrared"]]
+        if not off or not on:
+            continue
+        off_s = float(np.mean([r["duration_s"] for r in off]))
+        on_s = float(np.mean([r["duration_s"] for r in on]))
+        table.append({"resolution": dpi, "lines": off[0]["height"],
+                      "off_s": off_s, "on_s": on_s,
+                      "saved_s": off_s - on_s, "saved": 1 - on_s / off_s})
+        print(f"{dpi:>6}{off[0]['height']:>7}{off_s:>9.1f}s{on_s:>9.1f}s"
+              f"{off_s - on_s:>8.1f}s{1 - on_s / off_s:>8.1%}")
+
+    if len(table) > 1:
+        best = max(table, key=lambda t: t["saved"])
+        worst = min(table, key=lambda t: t["saved"])
+        print(f"\n  best  {best['resolution']} dpi  {best['saved']:+.1%}")
+        print(f"  worst {worst['resolution']} dpi  {worst['saved']:+.1%}")
+        absolute = [t["saved_s"] for t in table]
+        print(f"\n  seconds saved range {min(absolute):.1f}-{max(absolute):.1f}"
+              f" -- if the bit removed a fixed cost this would be flat, and if "
+              f"it halved the pass the percentage column would be")
+    if out:
+        Path(out).write_text(json.dumps({"passes": rows, "table": table},
+                                        indent=2, default=float))
         print(f"\nwritten to {out}")
     return 0
 
