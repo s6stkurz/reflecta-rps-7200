@@ -227,6 +227,12 @@ def save(
                 "channels", "channel_order", "bytes_per_line", "film",
                 "exposure_scale", "exposure_metered", "duration_s",
                 "protocol_revision", "rotation", "flipped", "reversal",
+                # Which side of a fast-infrared ladder this pass came from.
+                # Without it `signature` cannot tell the halves apart -- the
+                # whole ladder is one frame at one dpi, depth, channel count
+                # and commanded exposure -- and `duplicates` would call six
+                # deliberately different passes interchangeable.
+                "fast_infrared",
                 # Read from GET PARAMETERS and otherwise discarded. `scan()`
                 # keeps them because they are the prime suspect for the
                 # pass-to-pass offset, and a suspicion that cannot be tested

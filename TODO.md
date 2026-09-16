@@ -248,20 +248,40 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
-- **Fast infrared has never been sent, and might move the floor.** Quality bit
-  `0x80` is defined, reachable and unused; the reference backend calls it
-  "acquire the infrared plane in a faster, lower-quality pass". The infrared
-  floor is the dominant cost of everything here -- 69.6 s RGB against 227.2 s
-  RGBI at 1800 dpi, and it does not move with resolution -- so this is the
-  largest unexplored lever in the driver. It is also the one place a worse
-  answer might be acceptable, because the plane is a dust mask and not a
-  picture.
+- **~~Fast infrared has never been sent~~ -- run 2026-09-16, and it halves the
+  infrared pass.** Quality bit `0x80`, defined and unused since the protocol was
+  written. At 1800 dpi a pass goes from **250.5 s to 126.1 s**, three of each,
+  with the line count unchanged. The picture is untouched (`agreement_z`
+  families off/off 2.14, on/on 2.10, off/on 2.00), the infrared plane is
+  untouched (1.35 / 1.38 / 1.31), and the dust persists across the flag exactly
+  as well as between two passes at one setting -- 0.98x against a 1.00x control,
+  on ~4,700 specks. Infrared random noise rises 593 -> 623 DN, about 5%, and
+  that is the only cost found.
 
-  Wired and tested offline; **not run**. `tools/fast_ir_probe.py` is the ladder
-  (six RGBI passes, ~25 minutes, film loaded, background it, ask first) and
-  `docs/fast-infrared-plan.md` says what decides it. Note what cuts against it:
-  CyberView sends the bit in none of 3,955 captured commands, so unlike every
-  other field this driver sends there is no capture to check it against.
+  **Not adopted as the default.** That moves the payload every scan sends, so it
+  is a design change and wants Stefan's agreement -- and it would be the right
+  moment to bump `PROTOCOL_REVISION`, which was deliberately left alone for the
+  wiring. `--fast-ir` and `scan(fast_infrared=True)` exist meanwhile.
+
+  The measurement is clean but narrow: one frame, one film, 1800 dpi. A second
+  frame at 3600 dpi and one on a different stock, 25 minutes each, is what would
+  turn it into a default. See `docs/fast-infrared-plan.md`.
+
+- **The carriage start creeps across a long run of passes.** Found by the ladder
+  above, not looked for: six passes of one frame registered at 0, 0, -1, -2, -2,
+  -3 lines against the first, dx = 0 throughout, over about twenty minutes --
+  **with byte 14 bit 0 clear, so a re-home before every pass.** The re-home does
+  not land in the same place twice.
+
+  Nothing is known to be broken by it: ~3 lines is 42 um at 1800 dpi, roll
+  registration works at a coarser scale than that, and a single delivered scan
+  does not care where a previous pass started. What it does break is the
+  assumption that two passes of one frame are pixel-aligned, which any
+  multi-pass measurement makes -- it silently cost the first reading of the fast
+  infrared ladder, where a point feature lost most of its contrast to a
+  half-line shift. Anything comparing passes pixel by pixel should register
+  first. Unmeasured: whether it also creeps with bit 0 set, and whether it
+  saturates or keeps going.
 
 - **Filing a roll compresses while the device is open.** `FrameWriter` gzips
   each frame on its own thread while the next one scans, which is what keeps a

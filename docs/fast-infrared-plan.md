@@ -1,9 +1,16 @@
 # Fast infrared: MODE SELECT quality bit 0x80
 
-## Status: written and wired, **not yet run**. Needs Stefan, film loaded, ~25 minutes.
+## Status: run 2026-09-16. **It halves the infrared pass, and nothing measurable pays for it.**
 
-`tools/fast_ir_probe.py` is the run. `tests/test_fast_infrared.py` holds the
-bytes. Nothing has been driven.
+250.5 s to 126.1 s at 1800 dpi, three passes of each, with the picture, the
+infrared plane and the dust all unchanged against a same-setting control. The
+ladder also found something it was not looking for: the carriage start creeps a
+few lines across a long run, which confounded the first reading and is worth
+knowing on its own.
+
+Adopting it as the default is a design change -- it moves the payload every scan
+sends -- and **wants Stefan's agreement**. Nothing about the default has been
+changed; `fast_infrared` is still off unless asked for.
 
 ## The question
 
@@ -170,4 +177,107 @@ matters.
 
 ## What actually followed
 
-Not yet run.
+Six RGBI passes at 1800 dpi, one frame, one held exposure, `off on off on on
+off`, byte 14 forced to `0x20`. No pass came back reversed and none failed. All
+six are filed with their raw bytes, so everything below re-derives offline.
+
+### Time: it halves the pass
+
+```
+setting   n   mean ms/line   vs off      per pass
+    off   3         145.54    1.000       250.5 s
+     on   3          73.27    0.503       126.1 s
+```
+
+**-49.7%**, and not a noisy -49.7%: the three `off` passes came in at 250.5,
+250.5 and 250.4 s and the three `on` passes at 126.1 s each. The drift check
+holds -- first `off` pass 145.55 ms/line, last 145.50.
+
+The line count is identical either way: 1721 lines both times. Whatever the bit
+does, it does not do it by returning less.
+
+### The picture is untouched
+
+`agreement_z`, green channel, darkest tenth, all fifteen pairs grouped by
+whether the flag differed:
+
+```
+  off/off   n=3   median |z| = 2.14    range 2.05-2.29
+    on/on   n=3   median |z| = 2.10    range 1.18-2.15
+   off/on   n=9   median |z| = 2.00    range 1.17-2.20
+```
+
+The three families are the same, and `off/on` is if anything the best of them.
+Removing the drift (below) moves all three together -- 2.33 / 2.23 / 2.31 -- and
+changes nothing about the conclusion.
+
+### The infrared plane is untouched, and keeps its dust
+
+Agreement on the infrared plane itself, which is the sharper question:
+
+```
+  off/off   n=3   median |z| = 1.35
+    on/on   n=3   median |z| = 1.38
+   off/on   n=9   median |z| = 1.31
+```
+
+And the dust, compared only between passes whose measured drift matches, with a
+same-setting control beside every cross-flag comparison:
+
+```
+ drift     kind  specks   source   measured   ratio
+    -2   on->on    4716     7.39       7.28    0.98
+    -2   on->on    4697     7.32       7.38    1.01
+     0  off->on    4682     7.46       7.26    0.97
+     0  on->off    4692     7.39       7.30    0.99
+```
+
+Specks persist across the flag exactly as well as between two passes at the same
+setting: **0.98x against a control of 1.00x**. That the picks are real film
+features and not the noise tail is settled by moving the same pixel set 37
+columns, which reads -0.06 sigma.
+
+Infrared random noise rises from **593 to 623 DN**, about 5%, which is the only
+cost found anywhere and is invisible beside a speck depth of 7 sigma.
+
+### What it was not looking for: the carriage start creeps
+
+Registered against the first pass, the six came in at
+
+```
+  +0  +0  -1  -2  -2  -3     lines, dx = 0 throughout
+```
+
+Three lines -- about 42 um at 1800 dpi -- monotonic across roughly twenty
+minutes, **with byte 14 bit 0 clear, so a re-home before every pass**. The
+re-home does not land in the same place twice.
+
+That matters beyond this run: anything that assumes two passes of one frame are
+pixel-aligned is wrong over a long sequence, and a point feature a pixel or two
+across loses most of its contrast to a half-line shift. It is why the speck
+table above is grouped by drift rather than pooled.
+
+### A correction to this plan's own method
+
+As first written, the probe compared one `off/off` pair against one `off/on`
+pair and called the difference an effect of the flag. It was not: the control
+pair sat further apart in the run than the test pair, and the drift above did
+the rest. It printed "the visible channels are unchanged" for the wrong reason
+and would have printed it whatever the flag did.
+
+`report()` now measures drift first, compares the three families rather than two
+pairs, and compares specks only within a matched alignment. The conclusion did
+not change; the evidence for it did.
+
+### Where this leaves it
+
+The bit halves the infrared pass -- about an hour off a 17-frame roll, over two
+off a 38-frame one -- and every reading taken says the pass that comes back is
+the same one. Two things to decide before it becomes the default, neither of
+which is this document's to settle:
+
+- **`PROTOCOL_REVISION` moves** if the default payload changes. That is the
+  right time to bump it, and the reason it was left alone for the wiring.
+- **One frame, one film, one resolution.** The measurement is clean but narrow.
+  A second frame at 3600 dpi, and one on a different stock, would cost 25
+  minutes each and would be what turns this from a result into a default.

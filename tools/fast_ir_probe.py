@@ -86,8 +86,9 @@ from rps7200.direct import (                                        # noqa: E402
     DirectScanner,
 )
 from rps7200.framing import reversal_against                        # noqa: E402
+from rps7200.uniformity import register                             # noqa: E402
 
-from metrics import _highpass, agreement_z, dark_mask, noise_split  # noqa: E402
+from metrics import _highpass, agreement_z, dark_mask              # noqa: E402
 
 #: `off on off on on off`. Three of each so both sides have a same-setting pair,
 #: interleaved so drift does not line up with the variable, and `off` at both
@@ -250,77 +251,163 @@ def main() -> int:
 
 def report(results: list[dict], frames: dict[bool, list[np.ndarray]],
            out: str | None) -> int:
-    print("\n" + "=" * 72)
+    """The three readings, from passes that are actually comparable.
 
-    off_rows = [r["ms_per_line"] for r in results if not r["fast_infrared"]]
-    on_rows = [r["ms_per_line"] for r in results if r["fast_infrared"]]
-    base = float(np.mean(off_rows)) if off_rows else None
+    **Drift is measured first and everything else is conditioned on it.** Run
+    once on 2026-09-16, the carriage start crept 0/0/-1/-2/-2/-3 lines across
+    six passes -- with bit 0 *clear*, so a re-home before every one -- and dx
+    stayed 0 throughout. Three lines is enough to wreck any per-pixel
+    comparison: the first version of this function compared one far-apart pair
+    against one adjacent pair and reported the difference as an effect of the
+    flag. It was drift.
+
+    So agreement is reported as three *families* -- off/off, on/on, off/on --
+    which is the comparison that survives drift, and specks are compared only
+    between passes whose measured drift matches, always beside a same-setting
+    control.
+    """
+    print("\n" + "=" * 72)
+    ordered = [(r["fast_infrared"], f) for r, f in
+               zip(results, _in_order(results, frames))]
     summary: dict[str, object] = {}
 
-    print("time\n")
+    # -- drift, first, because everything below is conditioned on it ---------
+    base = _lum(ordered[0][1])
+    drift = [register(base, _lum(f), 24)[0] for _, f in ordered]
+    summary["drift_lines"] = drift
+    print("drift\n")
+    print("  carriage start, lines against the first pass: "
+          + " ".join(f"{d:+d}" for d in drift))
+    if max(drift) - min(drift) > 0:
+        print(f"  spread {max(drift) - min(drift)} lines -- pairs further "
+              f"apart in the run agree less for this reason alone, which is "
+              f"why the families below are what decide it")
+
+    # -- time ---------------------------------------------------------------
+    off_ms = [r["ms_per_line"] for r in results if not r["fast_infrared"]]
+    on_ms = [r["ms_per_line"] for r in results if r["fast_infrared"]]
+    print("\ntime\n")
     print(f"{'setting':>8}{'n':>4}{'mean ms/line':>14}{'vs off':>9}")
-    for label, rows in (("off", off_rows), ("on", on_rows)):
-        if not rows:
-            continue
-        mean_ms = float(np.mean(rows))
-        ratio = mean_ms / base if base else 1.0
-        print(f"{label:>8}{len(rows):>4}{mean_ms:>14.2f}{ratio:>9.3f}")
-        summary[f"ms_per_line_{label}"] = mean_ms
-    if off_rows and on_rows:
-        saved = 1 - float(np.mean(on_rows)) / base
+    base_ms = float(np.mean(off_ms)) if off_ms else None
+    for label, rows in (("off", off_ms), ("on", on_ms)):
+        if rows:
+            mean_ms = float(np.mean(rows))
+            print(f"{label:>8}{len(rows):>4}{mean_ms:>14.2f}"
+                  f"{(mean_ms / base_ms if base_ms else 1.0):>9.3f}")
+            summary[f"ms_per_line_{label}"] = mean_ms
+    if off_ms and on_ms:
+        saved = 1 - float(np.mean(on_ms)) / base_ms
         summary["time_saved"] = saved
         print(f"\n  {saved:+.1%} on the pass. Under 15% is not worth a "
               f"protocol change.")
 
-    off, on = frames.get(False, []), frames.get(True, [])
-    if len(off) >= 2 and len(on) >= 1:
-        print("\ndoes the picture survive it\n")
-        mask = dark_mask(off[0], 10.0)
-        control = agreement_z(off[0], off[1], mask, channel=1)
-        test = agreement_z(off[0], on[0], mask, channel=1)
-        summary["agreement_control"] = control
-        summary["agreement_on_off"] = test
-        print(f"  off vs off (control)  |z| = {control:.2f}")
-        print(f"  off vs on  (test)     |z| = {test:.2f}")
-        print(f"\n  {'the visible channels are unchanged' if test <= control * 1.15 else 'THE PICTURE MOVED -- this is where it stops'}")
+    # -- agreement, by family -----------------------------------------------
+    for label, channel, mask in (
+            ("picture (green, darkest tenth)", 1,
+             dark_mask(ordered[0][1], 10.0)),
+            ("infrared plane", IR, np.ones(ordered[0][1].shape[:2], bool))):
+        print(f"\n{label}\n")
+        fam = _families(ordered, channel, mask)
+        summary[f"agreement_{channel}"] = {k: float(np.median(v))
+                                           for k, v in fam.items() if v}
+        for kind, values in fam.items():
+            if values:
+                print(f"  {kind:>7}: n={len(values)}  "
+                      f"median |z| = {np.median(values):.2f}  "
+                      f"range {min(values):.2f}-{max(values):.2f}")
+        control = fam["off/off"] or fam["on/on"]
+        if control and fam["off/on"]:
+            verdict = ("unchanged" if np.median(fam["off/on"])
+                       <= np.median(control) * 1.15 else
+                       "MOVED -- this is where it stops")
+            print(f"\n  off/on against a same-setting control: {verdict}")
 
-    if len(on) >= 2 and len(off) >= 2:
-        print("\ndoes the dust survive it\n")
-        picks = speck_pixels(off[0][..., IR])
-        found = int(picks.sum())
-        summary["specks"] = found
-        if found < MIN_SPECKS:
-            print(f"  only {found} specks in the off plane -- this frame has "
-                  f"nothing to judge dust by. Pick a dustier one.")
-        else:
-            depth_off = speck_depth(off[0][..., IR], picks)
-            depth_on = speck_depth(on[0][..., IR], picks)
-            summary["speck_depth_off"] = depth_off
-            summary["speck_depth_on"] = depth_on
-            print(f"  {found} specks, measured in both planes at the same "
-                  f"pixels")
-            print(f"  depth below local base:  off {depth_off:.2f} sigma   "
-                  f"on {depth_on:.2f} sigma   ({depth_on / depth_off:.2f}x)")
+    # -- specks, only where the drift matches -------------------------------
+    print("\ndust\n")
+    groups: dict[int, list[tuple[bool, np.ndarray]]] = {}
+    for (fast, frame), d in zip(ordered, drift):
+        groups.setdefault(d, []).append((fast, frame))
+    rows = []
+    for d, members in sorted(groups.items()):
+        for i, (fast_a, a) in enumerate(members):
+            for j, (fast_b, b) in enumerate(members):
+                if i == j:
+                    continue
+                picks = speck_pixels(a[..., IR])
+                if int(picks.sum()) < MIN_SPECKS:
+                    continue
+                depth_a = speck_depth(a[..., IR], picks)
+                depth_b = speck_depth(b[..., IR], picks)
+                kind = (("off" if not fast_a else "on") + "->"
+                        + ("off" if not fast_b else "on"))
+                rows.append({"drift": d, "kind": kind, "specks": int(picks.sum()),
+                             "source_sigma": depth_a, "measured_sigma": depth_b,
+                             "ratio": depth_b / max(depth_a, 1e-9)})
+    if not rows:
+        print("  no two passes share an alignment, or the frame has no dust "
+              "-- nothing here can be compared speck by speck. A frame with "
+              "visible dust and a shorter run would answer it.")
+    else:
+        print(f"{'drift':>6}{'kind':>9}{'specks':>8}{'source':>9}"
+              f"{'measured':>10}{'ratio':>8}")
+        for r in rows:
+            print(f"{r['drift']:>6}{r['kind']:>9}{r['specks']:>8}"
+                  f"{r['source_sigma']:>9.2f}{r['measured_sigma']:>10.2f}"
+                  f"{r['ratio']:>8.2f}")
+        same = [r["ratio"] for r in rows if r["kind"] in ("off->off", "on->on")]
+        cross = [r["ratio"] for r in rows if r["kind"] in ("off->on", "on->off")]
+        if same and cross:
+            print(f"\n  same-setting control {np.median(same):.2f}x, "
+                  f"across the flag {np.median(cross):.2f}x")
+        summary["specks"] = rows
 
-        for label, pair in (("off", off), ("on", on)):
-            mask = np.ones(pair[0].shape[:2], bool)
-            rnd, total, share = noise_split(pair[0], pair[1], mask, channel=IR)
-            summary[f"ir_noise_{label}"] = {"random": rnd, "total": total,
-                                            "share": share}
-            print(f"  infrared plane, {label:>3}: random {rnd:7.1f} DN   "
-                  f"total {total:7.1f} DN   random share {share:.0%}")
-
-    first_off = next((r for r in results if not r["fast_infrared"]), None)
-    last_off = next((r for r in reversed(results) if not r["fast_infrared"]), None)
-    if first_off and last_off and first_off is not last_off:
-        print(f"\ndrift check: first off pass {first_off['ms_per_line']:.2f} "
-              f"ms/line, last {last_off['ms_per_line']:.2f} ms/line")
+    print("\n  note: `noise_split`'s random share is not reported for the "
+          "infrared plane. Its highpass is a horizontal box filter, which "
+          "understates total high-frequency content on a plane that is mostly "
+          "smooth base, and the share comes out above 100%.")
 
     if out:
         Path(out).write_text(json.dumps(
             {"passes": results, "summary": summary}, indent=2, default=float))
         print(f"\nwritten to {out}")
     return 0
+
+
+def _lum(frame: np.ndarray) -> np.ndarray:
+    return frame[..., :3].astype(np.float64).mean(axis=2)
+
+
+def _in_order(results: list[dict],
+              frames: dict[bool, list[np.ndarray]]) -> list[np.ndarray]:
+    """The frames back in the order they were taken.
+
+    `frames` is grouped by setting for the noise pairs; the drift measurement
+    needs the run's own sequence, which is what `results` still carries.
+    """
+    taken = {True: 0, False: 0}
+    out = []
+    for r in results:
+        fast = r["fast_infrared"]
+        out.append(frames[fast][taken[fast]])
+        taken[fast] += 1
+    return out
+
+
+def _families(ordered: list[tuple[bool, np.ndarray]], channel: int,
+              mask: np.ndarray) -> dict[str, list[float]]:
+    """Every pair's agreement, grouped by whether the flag differed.
+
+    The comparison that survives drift: a single control pair and a single test
+    pair can differ by how far apart they sat in the run, and did.
+    """
+    fam: dict[str, list[float]] = {"off/off": [], "on/on": [], "off/on": []}
+    for i in range(len(ordered)):
+        for j in range(i + 1, len(ordered)):
+            (fast_a, a), (fast_b, b) = ordered[i], ordered[j]
+            kind = ("off/off" if not fast_a and not fast_b
+                    else "on/on" if fast_a and fast_b else "off/on")
+            fam[kind].append(agreement_z(a, b, mask, channel=channel))
+    return fam
 
 
 if __name__ == "__main__":
