@@ -19,6 +19,7 @@ from rps7200 import library
 from rps7200.direct import DirectScanner
 from rps7200.protocol import (
     ONE_PASS_COLOR,
+    PROTOCOL_REVISION,
     ONE_PASS_RGBI,
     QUALITY_FAST_INFRARED,
     QUALITY_SKIP_SHADING,
@@ -48,25 +49,28 @@ def test_the_bit_is_set_when_asked_for():
     assert quality_of(t.payloads(SCSI_MODE_SELECT)[-1]) & QUALITY_FAST_INFRARED
 
 
-def test_the_bit_is_clear_by_default():
-    """The default has to be off on every path. A bit nobody has measured must
-    not arrive on an ordinary scan by accident."""
+def test_set_mode_itself_still_defaults_the_bit_clear():
+    """`set_mode` writes what it is told and decides nothing. The default that
+    moved is `scan()`'s; this one stays off so that calibration, metering and
+    anything else reaching the primitive directly are unaffected."""
     s, t = scanner()
     s.set_mode(resolution=1800, passes=ONE_PASS_RGBI)
     assert not quality_of(t.payloads(SCSI_MODE_SELECT)[-1]) & QUALITY_FAST_INFRARED
 
 
-def test_an_ordinary_scan_still_sends_exactly_what_the_vendor_sends():
-    """0x0008, which is the quality field in 32 of the 33 captured scan cycles.
+def test_an_ordinary_infrared_scan_now_sends_a_payload_the_vendor_never_did():
+    """0x0088 where CyberView sends 0x0008, on every infrared pass.
 
-    This is what makes leaving `PROTOCOL_REVISION` alone correct: adding a flag
-    that defaults off does not move the payload an ordinary scan sends, so
-    entries filed before and after this change really are interchangeable. See
-    `docs/fast-infrared-plan.md`.
+    This is why `PROTOCOL_REVISION` moved to 3. It is the whole reason that
+    field exists: `library.signature` keeps entries from reducing to each other
+    across a change in what was sent, and a scan taken today is not the same
+    measurement as one taken before this default moved.
     """
     s, t = scanner()
-    s.set_mode(resolution=1800, passes=ONE_PASS_RGBI)
-    assert quality_of(t.payloads(SCSI_MODE_SELECT)[-1]) == QUALITY_SKIP_SHADING
+    s.set_mode(resolution=1800, passes=ONE_PASS_RGBI, fast_infrared=True)
+    assert (quality_of(t.payloads(SCSI_MODE_SELECT)[-1])
+            == QUALITY_SKIP_SHADING | QUALITY_FAST_INFRARED)
+    assert PROTOCOL_REVISION >= 3
 
 
 def test_it_rides_alongside_skip_shading_rather_than_replacing_it():
@@ -99,15 +103,19 @@ def test_nothing_else_in_the_payload_moves():
 # -- what scan() does with it ------------------------------------------------
 
 
-def test_scan_takes_the_flag_and_defaults_it_off():
-    """`scan()` is where a ladder reaches the bit, and where an ordinary run
-    must never meet it. Checked by introspection because the suite has no
-    harness that drives a full `DirectScanner.scan`; the byte tests above are
-    what hold the wiring, and `tests/test_scan_tool.py` holds the tool's."""
+def test_scan_and_scan_roll_both_tie_infrared_by_default():
+    """The default moved to True on 2026-09-16, once the sweep showed the bit
+    removes the infrared floor rather than trading it for quality. Both entry
+    points, because a roll that kept the floor while a single scan did not
+    would be the worst of both. Checked by introspection because the suite has
+    no harness that drives a full `DirectScanner.scan`; the byte tests above
+    hold the wiring and `tests/test_scan_tool.py` holds the tool's."""
     import inspect
 
-    parameter = inspect.signature(DirectScanner.scan).parameters["fast_infrared"]
-    assert parameter.default is False
+    for name in ("scan", "scan_roll"):
+        method = getattr(DirectScanner, name)
+        parameter = inspect.signature(method).parameters["fast_infrared"]
+        assert parameter.default is True, name
 
 
 # -- telling two otherwise identical passes apart ---------------------------

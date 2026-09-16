@@ -248,15 +248,13 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
-- **~~Fast infrared~~ -- answered 2026-09-16. The bit removes the infrared
-  floor.** Quality bit `0x80`. With it set, an RGBI pass costs
-  `7.46 s + 59.88 ms/line` -- what an RGB pass of the same geometry costs. The
-  ~220 s the infrared plane has always cost at *every* resolution is simply not
-  spent. Fitted across five resolutions to within 0.16 s, and it predicted an
-  independently measured 3600 dpi pass to 0.24 s.
+- **~~Fast infrared~~ -- answered and adopted 2026-09-16. The infrared plane is
+  now tied to the resolution asked for.** Quality bit `0x80` removes the
+  infrared floor: a tied pass costs `7.46 s + 59.88 ms/line`, an untied one a
+  flat ~220 s whatever the line count.
 
   ```
-    dpi    lines    without     with      saved
+    dpi    lines    untied      tied      saved
     300      286     219.2s    24.6s     -88.8%
     600      573     219.6s    41.7s     -81.0%
     900      860     219.8s    58.9s     -73.2%
@@ -266,21 +264,29 @@ bit is not evidence, not a new problem.
    7200     6886      ~420s    ~420s       ~0     (predicted; refused anyway)
   ```
 
-  The two costs cross at about **3709 dpi**: below it the floor dominates and
-  removing it is worth nearly everything, above it the line count already
-  exceeds the floor. That is the whole explanation of the 3600 dpi run's -3.2%,
-  which was briefly written up here as a failure to generalise. **Film was a red
-  herring** -- 1800 dpi gives -49.7% on colour negative and -49.8% on slide.
+  The curves cross at ~3709 dpi, which is the whole explanation of the 3600 dpi
+  figure. Film was a red herring: 1800 dpi gives -49.7% on colour negative and
+  -49.8% on slide. Quality is clean at 1800 (negative) and 3600 (slide), eleven
+  passes. **Below 1800 dpi quality was never measured and Stefan waived it** --
+  a low-resolution infrared plane is a coarse dust mask either way. Recorded as
+  his decision in `docs/fast-infrared-plan.md`.
 
-  Quality is clean at 1800 dpi (negative) and 3600 (slide), eleven passes:
-  picture, infrared plane and dust all unchanged against same-setting controls.
+  `PROTOCOL_REVISION` moved to 3 with the default. Untie it with
+  `--no-fast-ir`, `scan(fast_infrared=False)` or the box in the window.
 
-  **Not yet the default, and one ladder from it:** quality below 1800 dpi is
-  untested, which is exactly the band where the saving is 73-89%. Six passes at
-  600 or 900 dpi is now only ~15 minutes, because the `on` passes are short.
-  `PROTOCOL_REVISION` moves when the default payload does, not before.
-  `--fast-ir` and `scan(fast_infrared=True)` exist meanwhile. See
-  `docs/fast-infrared-plan.md`.
+  Still unexplained, and recorded rather than chased: the bit made the infrared
+  plane *quieter* at 3600 dpi (493 -> 314 DN random) where at 1800 it was
+  slightly noisier (576 -> 603).
+
+- **The untied infrared estimate disagrees with the sweep at 3600 dpi.**
+  `estimate_seconds` keeps its older anchor of 334 s, from the timing table in
+  `docs/dpi-tradeoff-plan.md`; the 2026-09-16 sweep measured 221 s on slide.
+  Both are real measurements of different film at different exposures, and scan
+  time tracks exposure -- the same 1800 dpi pass took 250.5 s on negative and
+  220.3 s on that slide. One slide is not enough to rewrite a figure with its
+  own provenance, so the disagreement is recorded rather than resolved. Low
+  stakes: it is an estimate, the untied path is now the exception, and it errs
+  long. Resolving it wants one untied pair at 3600 dpi on colour negative.
 
 - **The carriage start moves between passes, and fast infrared moves it.** Found by the ladders
   above, not looked for: six passes of one frame registered at 0, 0, -1, -2, -2,

@@ -406,7 +406,13 @@ capabilities. The divisors of 7200 nobody has asked for are in
 **Scan time is set by exposure, not only by line count.** Thirteen 3600 dpi RGB scans
 fit `ms/line = 2.60 + 4.851e-4 × sum(exposure)` at r² = 1.0000, which is why a dense
 negative can take four times as long as a slide at the same resolution. An infrared pass
-has its own floor of ~212 s whatever the resolution, so it dominates below about 1800 dpi.
+had its own floor of ~212 s whatever the resolution, so it dominated below about
+1800 dpi -- **until the infrared plane was tied to the resolution asked for**, which
+is now the default. A tied pass costs `7.5 s + 59.9 ms/line` and no floor at all:
+25 s at 300 dpi against 219 s, 110 s at 1800 against 220. Above about 3600 dpi the
+line count has already overtaken the floor and there is nothing left to save. The
+untied pass is still there -- `--no-fast-ir`, or the box in the window -- and nothing
+measured says it is better. See `docs/fast-infrared-plan.md`.
 
 A prescan is a separate, cheap pass — 300 dpi, RGB, 8-bit, the whole transport — and takes
 its own resolution rather than the scan's.

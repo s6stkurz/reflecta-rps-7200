@@ -1,6 +1,17 @@
 # Fast infrared: MODE SELECT quality bit 0x80
 
-## Status: answered 2026-09-16. **The bit removes the infrared floor. The saving is whatever the floor was worth at that resolution.**
+## Status: answered and adopted 2026-09-16. **The bit removes the infrared floor, and it is now the default.**
+
+Every infrared scan ties the plane to the resolution asked for unless told
+otherwise -- `scan(fast_infrared=False)`, `--no-fast-ir`, or the box in the
+window. `PROTOCOL_REVISION` moved to **3** with it, because the payload an
+ordinary infrared pass sends has changed.
+
+Stefan's call on the one open question, and worth recording as his rather than
+mine: the quality ladder was never run below 1800 dpi, where the saving is
+73-89%. He waived it -- *"its not necessary to look what it costs, since the dpi
+is still low"* -- and the reasoning holds: a 300 dpi infrared plane is a coarse
+dust mask either way, and the pass it belongs to is cheap enough to retake.
 
 ```
     time with the flag  =  7.46 s  +  59.88 ms/line          (r^2 = 1.000)

@@ -489,19 +489,45 @@ def test_the_device_closes_before_the_writer_spends_time_gzipping(tmp_path):
 # -- estimates --------------------------------------------------------------
 
 
-def test_infrared_never_estimates_below_its_floor():
-    """A pass with infrared on holds the device for ~212 s however few lines
-    were asked for. That floor is why a short timeout once wedged it."""
+def test_an_untied_infrared_pass_never_estimates_below_its_floor():
+    """Untied, a pass with infrared on holds the device for ~212 s however few
+    lines were asked for. That floor is why a short timeout once wedged it."""
     for dpi in (25, 300, 600, 1800):
-        assert estimate_seconds(dpi, infrared=True) >= session.INFRARED_FLOOR_S
+        assert (estimate_seconds(dpi, infrared=True, fast_infrared=False)
+                >= session.INFRARED_FLOOR_S)
+
+
+def test_a_tied_infrared_pass_is_allowed_below_the_floor():
+    """Because it measurably goes there. 24.6 s at 300 dpi, against 219.2 s
+    untied -- the floor is not spent at all, so an estimate that still assumed
+    it would be wrong by a factor of nine on the readout an operator watches."""
+    assert estimate_seconds(300, infrared=True) < session.INFRARED_FLOOR_S
 
 
 def test_the_estimates_track_what_was_measured():
-    """900 dpi RGB 38.8 s, 1800 dpi RGB 69.6 s, 1800 dpi RGBI 227 s."""
+    """RGB: 900 dpi 38.8 s, 1800 dpi 69.6 s.
+
+    Infrared, measured 2026-09-16 on one slide: tied, 24.6 s at 300 dpi,
+    110.5 s at 1800 and 213.6 s at 3600; untied, ~220 s at every one of them.
+    """
     assert estimate_seconds(900, False) == pytest.approx(38.8, abs=3)
     assert estimate_seconds(1800, False) == pytest.approx(69.6, abs=3)
-    assert estimate_seconds(1800, True) == pytest.approx(227, abs=10)
-    assert estimate_seconds(3600, True) == pytest.approx(334, abs=20)
+
+    assert estimate_seconds(300, True) == pytest.approx(24.6, abs=3)
+    assert estimate_seconds(1800, True) == pytest.approx(110.5, abs=5)
+    assert estimate_seconds(3600, True) == pytest.approx(213.6, abs=10)
+
+    assert estimate_seconds(1800, True, False) == pytest.approx(227, abs=10)
+    assert estimate_seconds(3600, True, False) == pytest.approx(334, abs=20)
+
+
+def test_tying_infrared_never_estimates_slower():
+    """At every resolution, at worst a wash. The saving shrinks as the line
+    count overtakes the floor -- 89% at 300 dpi, 50% at 1800, 3% at 3600 as
+    measured -- but it never turns negative, and a readout that suggested
+    otherwise would be talking an operator out of the right default."""
+    for dpi in (300, 600, 900, 1200, 1800, 3600, 7200):
+        assert estimate_seconds(dpi, True) <= estimate_seconds(dpi, True, False)
 
 
 def test_more_resolution_never_estimates_less_time():

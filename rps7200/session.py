@@ -53,6 +53,20 @@ from .mono import MONO_CHANNEL, to_monochrome, wants_mono
 #: however few lines were asked for. Measured at 212-227 s across resolutions.
 INFRARED_FLOOR_S = 212.0
 
+#: Where tying the infrared plane to the resolution stops buying anything.
+#:
+#: Measured 2026-09-16: a tied pass costs `7.46 s + 59.88 ms/line` and an
+#: untied one a flat ~219.8 s, so the two curves meet at 3546 lines -- about
+#: **3709 dpi**. Below it the floor is the dominant cost and removing it is
+#: worth nearly everything: -88.8% at 300 dpi, -49.8% at 1800.
+#:
+#: The constant is 3600 rather than 3709 because 3600 is the resolution the
+#: device actually offers nearest the crossing, and there the saving already
+#: measured **-3.4%** -- seven seconds. Rounding up to 3709 would have the
+#: window offer a choice at 3600 that measurement says is not one.
+#: See `docs/fast-infrared-plan.md`.
+INFRARED_TIE_CROSSOVER_DPI = 3600
+
 #: What one SLIDE sub-frame command can move, from the calibrated law:
 #: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and param 8.
 FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
@@ -136,18 +150,39 @@ _LINES_PER_DPI = 6888 / 7200
 WORKING_COPIES = 12
 
 
-def estimate_seconds(resolution: int, infrared: bool) -> float:
+def estimate_seconds(resolution: int, infrared: bool,
+                     fast_infrared: bool = True) -> float:
     """Roughly how long one pass will take, for a progress readout.
 
-    Scan time barely depends on resolution -- the carriage traverse dominates.
-    The RGB figure is the measured fit `8 + 0.036 x lines`; the infrared one is
-    anchored on 227 s at 900 and 1800 dpi and 334 s at 3600. An estimate, and
-    labelled as one wherever it is shown.
+    Scan time barely depends on resolution for a plain RGB pass -- the carriage
+    traverse dominates -- and the figure is the measured fit `8 + 0.036 x
+    lines`.
+
+    **Infrared has two costs now, and they are nothing like each other.** With
+    the plane tied to the resolution asked for, which is the default, the pass
+    costs `7.5 + 0.0599 x lines`: measured across five resolutions on one slide
+    2026-09-16, fitting every point to within 0.16 s and predicting a pass it
+    was not fitted to within 0.24 s. Untied, it is the old fixed floor --
+    anchored on 227 s at 900 and 1800 dpi and 334 s at 3600 -- which the line
+    count does not move until about 3700 dpi.
+
+    **The untied branch keeps its older anchors, which the sweep disagrees
+    with**: it says 334 s at 3600 dpi where the 2026-09-16 slide measured
+    221 s. Both are real measurements of different film at different exposures,
+    and scan time tracks exposure -- the same 1800 dpi pass took 250.5 s on
+    colour negative and 220.3 s on that slide. One slide is not enough to
+    rewrite a figure with its own provenance, so the disagreement is recorded
+    rather than resolved. It matters little: the untied branch is now the
+    exception, and it errs long.
+
+    An estimate, and labelled as one wherever it is shown.
     """
     lines = max(1.0, resolution * _LINES_PER_DPI)
     rgb = 8.0 + 0.036 * lines
     if not infrared:
         return rgb
+    if fast_infrared:
+        return 7.5 + 0.0599 * lines
     return max(INFRARED_FLOOR_S, 227.0 + (rgb - 70.0) * 1.7)
 
 
@@ -219,6 +254,12 @@ class Scan:
 
     resolution: int = 1800
     infrared: bool = True
+    #: Tie the infrared plane's cost to the resolution asked for. On by
+    #: default, and worth a great deal: an untied infrared pass costs ~220 s
+    #: whatever the resolution, a tied one costs what its lines cost -- 110 s
+    #: at 1800 dpi, 25 s at 300, and no different above ~3700 dpi where the
+    #: line count has already overtaken the floor. See `rps7200/direct.py`.
+    fast_infrared: bool = True
     film: str = "negative"
     auto_exposure: bool = True
     exposure_scale: Any = 1.0
@@ -241,6 +282,9 @@ class Roll:
     start_at: int = 1
     resolution: int = 1800
     infrared: bool = True
+    #: As on :class:`Scan`, and worth most here: it is the difference between
+    #: a 38-frame infrared roll spending 2.3 hours on the floor and 1.2.
+    fast_infrared: bool = True
     film: str = "negative"
     meter: str = METER_EACH
     #: As on :class:`Scan`.
@@ -725,6 +769,7 @@ class ScanSession:
         image, meta = self._scanner.scan(
             resolution=job.resolution,
             infrared=job.infrared,
+            fast_infrared=job.fast_infrared,
             film=job.film,
             auto_exposure=job.auto_exposure,
             exposure_scale=job.exposure_scale,
@@ -881,6 +926,7 @@ class ScanSession:
             frames=job.frames,
             resolution=job.resolution,
             infrared=job.infrared,
+            fast_infrared=job.fast_infrared,
             film=job.film,
             meter=job.meter,
             skip=max(0, job.start_at - 1),

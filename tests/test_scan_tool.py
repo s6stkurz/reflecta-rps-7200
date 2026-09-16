@@ -205,26 +205,36 @@ def test_bracket_zero_is_a_single_pass(tmp_path, monkeypatch):
 # --- the fast-infrared bit reaching the device ----------------------------
 
 
-def test_fast_ir_reaches_the_scan(tmp_path, monkeypatch):
-    """An unmeasured quality bit is worth nothing if the tool drops it between
-    the parser and `scan()`, and a ladder driven through this tool would then
-    measure one value twice."""
-    s, code = run(tmp_path, monkeypatch, "--ir", "--fast-ir")
+def test_an_infrared_run_ties_the_plane_to_the_resolution_by_default(
+        tmp_path, monkeypatch):
+    """The default since 2026-09-16, and the whole saving lives here: an
+    untied pass costs ~220 s at any resolution, a tied one costs what its lines
+    cost. A tool that dropped it between the parser and `scan()` would silently
+    give every operator the slow pass back."""
+    s, code = run(tmp_path, monkeypatch, "--ir")
     assert code == 0
     assert s.kwargs[-1]["fast_infrared"] is True
 
 
-def test_an_ordinary_run_never_sends_it(tmp_path, monkeypatch):
-    s, code = run(tmp_path, monkeypatch, "--ir")
+def test_no_fast_ir_unties_it(tmp_path, monkeypatch):
+    """The override has to actually reach the device, or it is a lie in the
+    help text."""
+    s, code = run(tmp_path, monkeypatch, "--ir", "--no-fast-ir")
     assert code == 0
     assert s.kwargs[-1]["fast_infrared"] is False
 
 
-def test_fast_ir_without_ir_is_warned_and_dropped(tmp_path, monkeypatch, capsys):
-    """There is no infrared plane in an RGB pass, so the bit governs nothing.
-    Warned and ignored rather than refused -- the reference backend's line, and
-    failing a scan over a no-op would cost more than it saved."""
+def test_an_rgb_run_never_sends_it(tmp_path, monkeypatch):
+    """No plane to acquire, so the bit governs nothing. Cleared silently now
+    that it is the default: warning on every RGB scan about a flag nobody
+    asked for would be noise."""
+    s, code = run(tmp_path, monkeypatch)
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is False
+
+
+def test_an_rgb_run_with_fast_ir_typed_explicitly_still_sends_nothing(
+        tmp_path, monkeypatch):
     s, code = run(tmp_path, monkeypatch, "--fast-ir")
     assert code == 0
     assert s.kwargs[-1]["fast_infrared"] is False
-    assert "no effect without --ir" in capsys.readouterr().err

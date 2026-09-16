@@ -2286,7 +2286,7 @@ class DirectScanner:
         film: str = FILM_NEGATIVE,
         keep_raw: bool = False,
         byte14: int | None = None,
-        fast_infrared: bool = False,
+        fast_infrared: bool = True,
         slide_init_param: int = 0x16,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
@@ -2318,15 +2318,26 @@ class DirectScanner:
         it is asked for, and a 7200 dpi frame is twice that. See
         `docs/7200dpi-plan.md`.
 
-        ``fast_infrared`` sets bit 0x80 of the quality field, which the
-        reference backend describes as acquiring the infrared plane "in a
-        faster, lower-quality pass". It exists so the bit can be driven and
-        measured -- like ``byte14``, nothing in normal operation passes it, and
-        for the same reason: **CyberView never sends it.** Across 33 scan cycles
-        in six captures the quality field is 0x0008 thirty-two times and 0x0800
-        once, and bit 0x80 appears in none of them. It is recorded in the
-        metadata so a pass taken with it is identifiable afterwards. See
-        `docs/fast-infrared-plan.md`.
+        ``fast_infrared`` **ties the infrared plane's cost to the resolution
+        asked for, and is on by default.** Without it an infrared pass costs
+        ~220 s at every resolution -- a floor, indifferent to the line count.
+        With it the floor is not spent at all and the pass costs what its lines
+        cost: `7.5 s + 59.9 ms/line`, measured across five resolutions and
+        fitting each to within 0.16 s.
+
+        So the saving is whatever the floor was worth there -- 89% at 300 dpi,
+        50% at 1800, and nothing above about 3700 dpi, where the line count has
+        already overtaken the floor. Quality was measured at 1800 dpi on colour
+        negative and 3600 on slide, eleven passes: the picture, the infrared
+        plane and the dust it carries are all unchanged.
+
+        Pass ``False`` for the fixed-cost pass. Worth knowing either way: the
+        bit shifts where the carriage starts by a line or two, so passes taken
+        with and without it are not pixel-aligned with each other.
+
+        **CyberView sends it in none of 3,955 captured commands**, so this is
+        the one field here with no capture behind it -- `tests/test_fast_infrared.py`
+        holds the payload byte by byte instead. See `docs/fast-infrared-plan.md`.
         """
         if infrared and not supports_infrared(film):
             # Refused rather than warned. This costs the ~212 s infrared floor
@@ -2894,6 +2905,7 @@ class DirectScanner:
         correct_dry_run: bool = False,
         approved: dict[int, Any] | None = None,
         reverse_hold: bool = False,
+        fast_infrared: bool = True,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -3182,6 +3194,7 @@ class DirectScanner:
                         exposure_scale=scales,
                         film=film,
                         keep_raw=keep_raw,
+                        fast_infrared=fast_infrared,
                     )
                     meta["roll_index"] = index
                     meta["roll_position"] = position

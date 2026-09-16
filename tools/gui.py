@@ -63,6 +63,7 @@ from rps7200.session import (                             # noqa: E402
     Roll,
     Scan,
     ScanSession,
+    INFRARED_TIE_CROSSOVER_DPI,
     estimate_seconds,
     plan_nudges,
 )
@@ -94,14 +95,14 @@ PRESCAN_LADDER = (300, 600, 900)
 #: The controls worth carrying between launches: what the scanner is being
 #: asked to do. Not the view -- channel, invert and zoom start where they always
 #: did, because they describe the last thing looked at rather than the setup.
-REMEMBERED = ("dpi", "predpi", "ir", "film", "expmode", "exposure", "shading",
-              "meter", "dryrun", "correct", "fine", "aim", "reverse",
+REMEMBERED = ("dpi", "predpi", "ir", "fast_ir", "film", "expmode", "exposure",
+              "shading", "meter", "dryrun", "correct", "fine", "aim", "reverse",
               "frames", "startat", "outfmt", "jpegq", "adjuststep")
 
 #: What a preset carries: the scan settings, and nothing about the film in the
 #: transport or where the files go.
-PRESET_KEYS = ("dpi", "predpi", "ir", "film", "expmode", "exposure", "shading",
-               "meter")
+PRESET_KEYS = ("dpi", "predpi", "ir", "fast_ir", "film", "expmode", "exposure",
+               "shading", "meter")
 
 #: Film fields safe to carry over. `stock`, `process` and `tags` describe the
 #: film and are the same all roll; `roll`, `frame`, `subject` and `notes`
@@ -777,6 +778,15 @@ class ScannerGui:
                                     variable=self.v_ir,
                                     command=self._show_estimate)
         self.c_ir.pack(anchor="w", pady=2)
+        # Tied to the scan resolution by default. Untying it restores the fixed
+        # ~220 s floor, which is worth having only where the plane matters more
+        # than the wait -- the reason it is a checkbox rather than a constant.
+        self.v_fast_ir = tk.BooleanVar(value=True)
+        self.c_fast_ir = ttk.Checkbutton(
+            box, text="infrared at scan resolution", variable=self.v_fast_ir,
+            command=self._show_estimate)
+        self.l_fast_ir = ttk.Label(box, text="", foreground="#555555",
+                                   wraplength=240, justify="left")
         self.l_ir = ttk.Label(box, text="", foreground="#8a6d00",
                               wraplength=240, justify="left")
 
@@ -1238,6 +1248,17 @@ class ScannerGui:
         else:
             self.c_ir.configure(state="normal")
             self.l_ir.pack_forget()
+        # Only meaningful when there is an infrared plane to acquire, so it
+        # appears with one and goes away with it rather than sitting greyed out.
+        if self.v_ir.get():
+            self.c_fast_ir.pack(anchor="w", padx=(20, 0))
+            self.l_fast_ir.configure(
+                text=infrared_cost_note(dpi_or(self.v_dpi.get()),
+                                        self.v_fast_ir.get()))
+            self.l_fast_ir.pack(anchor="w", padx=(38, 0))
+        else:
+            self.c_fast_ir.pack_forget()
+            self.l_fast_ir.pack_forget()
         self._show_estimate()
 
     def _show_exposure(self) -> None:
@@ -1267,8 +1288,15 @@ class ScannerGui:
         except ValueError:
             self.v_estimate.set("")
             return
+        fast = self.v_fast_ir.get()
         self.v_estimate.set(
-            f"about {_duration(estimate_seconds(dpi, self.v_ir.get()))} a pass")
+            f"about {_duration(estimate_seconds(dpi, self.v_ir.get(), fast))} "
+            f"a pass")
+        # Kept in step here as well as in `_sync_infrared`: the resolution box
+        # and this checkbox both change what the line below should say, and
+        # only this method sees both.
+        if self.v_ir.get():
+            self.l_fast_ir.configure(text=infrared_cost_note(dpi, fast))
 
     def _set_outdir(self, path: str) -> None:
         self.v_outdir.set(path)
@@ -1384,7 +1412,8 @@ class ScannerGui:
             return
         self._pin_arrangement()
         self.session.submit(Scan(
-            resolution=dpi, infrared=self.v_ir.get(), film=self.v_film.get(),
+            resolution=dpi, infrared=self.v_ir.get(),
+            fast_infrared=self.v_fast_ir.get(), film=self.v_film.get(),
             auto_exposure=self.v_expmode.get() == "auto",
             exposure_scale=exposure, mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
@@ -1414,7 +1443,9 @@ class ScannerGui:
         if frames is None or start_at is None:
             return
         dry = self.v_dryrun.get()
-        per = 23.0 if dry else estimate_seconds(dpi, self.v_ir.get()) + 70
+        per = (23.0 if dry else
+               estimate_seconds(dpi, self.v_ir.get(),
+                                self.v_fast_ir.get()) + 70)
         if not messagebox.askokcancel(
             "Scan roll",
             f"{'Walk' if dry else 'Scan'} {frames or 'as many frames as there are'} "
@@ -1452,6 +1483,7 @@ class ScannerGui:
         self.session.submit(Roll(
             frames=frames or None, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
+            fast_infrared=self.v_fast_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
             correct=self.v_correct.get(), mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
@@ -1483,7 +1515,8 @@ class ScannerGui:
             dpi = int(self.v_dpi.get().strip())
         except ValueError:
             dpi = 1800
-        return estimate_seconds(dpi, self.v_ir.get()) + 70
+        return estimate_seconds(dpi, self.v_ir.get(),
+                                self.v_fast_ir.get()) + 70
 
     def on_reopen_survey(self) -> None:
         """Open a strip walked earlier instead of walking it again.
@@ -1612,6 +1645,7 @@ class ScannerGui:
         self.session.submit(Roll(
             frames=walked, start_at=self._survey_start, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
+            fast_infrared=self.v_fast_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=False,
             correct=self.v_correct.get(), only=tuple(numbers),
             approved=tuple(approved), reverse_hold=self.v_reverse.get(),
@@ -3361,6 +3395,37 @@ def save_as_types(fmt: str) -> list[tuple[str, str]]:
     types = {"tiff": ("TIFF", "*.tif"), "jpeg": ("JPEG", "*.jpg")}
     first = types.get(fmt, types["tiff"])
     return [first] + [t for key, t in types.items() if t != first]
+
+
+def dpi_or(text: str, fallback: int = 1800) -> int:
+    """The resolution box as a number, or a sane one while it is being typed."""
+    try:
+        return int(str(text).strip())
+    except ValueError:
+        return fallback
+
+
+def infrared_cost_note(resolution: int, fast: bool) -> str:
+    """What the infrared plane costs at this resolution, tied or untied.
+
+    Both numbers, always, because the choice is only meaningful as a comparison
+    -- and above about 3700 dpi there is no choice left to make, which the line
+    says outright rather than leaving an operator to notice that the two
+    figures have converged.
+    """
+    tied = estimate_seconds(resolution, True, True)
+    untied = estimate_seconds(resolution, True, False)
+    now, other = (tied, untied) if fast else (untied, tied)
+    note = (f"about {_duration(now)} a pass at {resolution} dpi; "
+            f"{_duration(other)} "
+            f"{'untied' if fast else 'tied to the resolution'}")
+    if resolution >= INFRARED_TIE_CROSSOVER_DPI:
+        # Keyed on the measured crossover rather than on the two estimates
+        # agreeing, because they do not: the untied branch keeps older anchors
+        # that read long above 1800 dpi. See `estimate_seconds`.
+        note += (f" -- little in it past ~{INFRARED_TIE_CROSSOVER_DPI} dpi, "
+                 f"where the lines cost more than the floor did")
+    return note
 
 
 def output_note(fmt: str) -> str:

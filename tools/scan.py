@@ -43,11 +43,16 @@ def main() -> int:
                     metavar="N", help="JPEG quality 60-100 (default "
                                       f"{export.DEFAULT_QUALITY}); ignored for TIFF")
     ap.add_argument("--ir", action="store_true", help="capture the infrared plane too")
-    ap.add_argument("--fast-ir", action="store_true",
-                    help="acquire the infrared plane in a faster, lower-quality "
-                         "pass (quality bit 0x80). Unmeasured on this hardware "
-                         "and CyberView never sends it -- see "
-                         "docs/fast-infrared-plan.md. Needs --ir.")
+    ap.add_argument("--fast-ir", dest="fast_ir", action="store_true",
+                    default=True,
+                    help="tie the infrared plane's cost to --dpi (default). An "
+                         "untied pass costs ~220 s at every resolution; a tied "
+                         "one costs what its lines cost -- 110 s at 1800 dpi, "
+                         "25 s at 300. See docs/fast-infrared-plan.md.")
+    ap.add_argument("--no-fast-ir", dest="fast_ir", action="store_false",
+                    help="untie it: the fixed-cost infrared pass. Nothing "
+                         "measured says it is better, and above ~3700 dpi the "
+                         "two cost the same anyway.")
     ap.add_argument("--reference", default="calibration/shading.npz",
                     help="where to cache the shading reference")
     ap.add_argument("--reuse", action="store_true",
@@ -139,12 +144,11 @@ def main() -> int:
         exposure_scale = parts[0] if len(parts) == 1 else parts
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
-    if args.fast_ir and not args.ir:
-        # Warned and ignored rather than refused, which is what the reference
-        # backend does: the bit governs a plane this pass will not acquire, so
-        # it changes nothing, and failing a scan over a no-op would be worse.
-        print("--fast-ir has no effect without --ir: there is no infrared "
-              "plane in an RGB pass", file=sys.stderr)
+    if not args.ir:
+        # No plane to acquire, so the bit governs nothing. Silently cleared now
+        # that it is the default -- warning on every RGB scan about a flag
+        # nobody asked for would be noise, where warning about one typed
+        # explicitly was not.
         args.fast_ir = False
 
     ref_path = Path(args.reference)

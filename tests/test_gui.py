@@ -1963,3 +1963,45 @@ def test_a_reversed_pass_is_composed_the_same_way_in_both_places():
                    inspect.getsource(session_module.ScanSession._file)):
         assert "preview.compose(" in source
         assert 'reversal' in source
+
+
+# --- tying infrared to the resolution --------------------------------------
+
+
+def test_the_resolution_box_survives_being_half_typed():
+    """`infrared_cost_note` is recomputed on every keystroke in the dpi box, so
+    it meets "18" on the way to "1800" and must not raise there."""
+    assert gui.dpi_or("1800") == 1800
+    assert gui.dpi_or(" 900 ") == 900
+    assert gui.dpi_or("") == 1800
+    assert gui.dpi_or("oops") == 1800
+    assert gui.dpi_or("", fallback=300) == 300
+
+
+def test_the_cost_note_gives_both_numbers():
+    """The choice is only meaningful as a comparison: 110 s against 220 s at
+    1800 dpi is a decision, and "110 s" on its own is not."""
+    tied = gui.infrared_cost_note(1800, True)
+    untied = gui.infrared_cost_note(1800, False)
+    assert "1800 dpi" in tied
+    # Both lines name both costs, so switching the box does not hide the other.
+    for note in (tied, untied):
+        assert note.count("s") >= 2
+    assert "untied" in tied
+    assert "tied to the resolution" in untied
+
+
+def test_the_cost_note_says_when_there_is_no_choice_left():
+    """Past ~3700 dpi the line count has overtaken the floor and the two cost
+    the same. Said outright rather than leaving an operator to notice that the
+    two figures have converged."""
+    assert "little in it" in gui.infrared_cost_note(7200, True)
+    assert "little in it" in gui.infrared_cost_note(3600, True)
+
+
+def test_the_saving_the_note_reports_is_the_measured_one():
+    """300 dpi measured 219.2 s untied and 24.6 s tied. A note that rounded
+    that to "about 4 minutes either way" would be talking the operator out of
+    the default."""
+    note = gui.infrared_cost_note(300, True)
+    assert "little in it" not in note
