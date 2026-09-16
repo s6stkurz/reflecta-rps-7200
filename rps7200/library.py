@@ -227,6 +227,12 @@ def save(
                 "channels", "channel_order", "bytes_per_line", "film",
                 "exposure_scale", "exposure_metered", "duration_s",
                 "protocol_revision", "rotation", "flipped", "reversal",
+                # Which side of a fast-infrared ladder this pass came from.
+                # Without it `signature` cannot tell the halves apart -- the
+                # whole ladder is one frame at one dpi, depth, channel count
+                # and commanded exposure -- and `duplicates` would call six
+                # deliberately different passes interchangeable.
+                "fast_infrared",
                 # Read from GET PARAMETERS and otherwise discarded. `scan()`
                 # keeps them because they are the prime suspect for the
                 # pass-to-pass offset, and a suspicion that cannot be tested
@@ -478,6 +484,14 @@ def signature(record: dict[str, Any]) -> tuple:
     ``scan.exposure_metered`` says which kind it was. Entries written before
     that field existed are treated as metered, which is what they were: it
     leaves their signatures exactly as they were.
+
+    ``scan.fast_infrared`` is included for exactly the bracket reason above. A
+    fast-infrared ladder is one frame at one dpi, depth, channel count and
+    commanded exposure, differing only in a quality bit -- so without this the
+    whole ladder collapses to a single signature and `--delete` would keep one
+    pass and destroy the comparison it was run to make. Entries written before
+    the field existed read as ``None``, which is what they were taken with, so
+    their signatures do not move.
     """
     scan, film = record.get("scan") or {}, record.get("film") or {}
 
@@ -500,6 +514,7 @@ def signature(record: dict[str, Any]) -> tuple:
         scan.get("film"),
         scan.get("protocol_revision"),
         commanded,
+        scan.get("fast_infrared"),
     )
 
 

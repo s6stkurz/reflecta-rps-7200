@@ -248,6 +248,67 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
+- **~~Fast infrared~~ -- answered and adopted 2026-09-16. The infrared plane is
+  now tied to the resolution asked for.** Quality bit `0x80` removes the
+  infrared floor: a tied pass costs `7.46 s + 59.88 ms/line`, an untied one a
+  flat ~220 s whatever the line count.
+
+  ```
+    dpi    lines    untied      tied      saved
+    300      286     219.2s    24.6s     -88.8%
+    600      573     219.6s    41.7s     -81.0%
+    900      860     219.8s    58.9s     -73.2%
+   1200     1147     220.1s    76.3s     -65.3%
+   1800     1721     220.3s   110.5s     -49.8%
+   3600     3443     221.0s   213.6s      -3.4%
+   7200     6886      ~420s    ~420s       ~0     (predicted; refused anyway)
+  ```
+
+  The curves cross at ~3709 dpi, which is the whole explanation of the 3600 dpi
+  figure. Film was a red herring: 1800 dpi gives -49.7% on colour negative and
+  -49.8% on slide. Quality is clean at 1800 (negative) and 3600 (slide), eleven
+  passes. **Below 1800 dpi quality was never measured and Stefan waived it** --
+  a low-resolution infrared plane is a coarse dust mask either way. Recorded as
+  his decision in `docs/fast-infrared-plan.md`.
+
+  `PROTOCOL_REVISION` moved to 3 with the default. Untie it with
+  `--no-fast-ir`, `scan(fast_infrared=False)` or the box in the window.
+
+  Still unexplained, and recorded rather than chased: the bit made the infrared
+  plane *quieter* at 3600 dpi (493 -> 314 DN random) where at 1800 it was
+  slightly noisier (576 -> 603).
+
+- **~~The untied infrared estimate disagreed with the sweep at 3600 dpi~~ --
+  settled by Stefan, sweep wins.** `estimate_seconds` used a 334 s anchor from
+  the timing table in `docs/dpi-tradeoff-plan.md`; the 2026-09-16 sweep measured
+  221 s. Both are real, on different film at different exposures, and scan time
+  tracks exposure -- but the sweep covers the whole range in one run at one held
+  exposure, which is what makes a table of resolutions comparable at all. The
+  untied estimate is now a *floor* rather than a curve: ~220 s until the line
+  count overtakes it, the line count after. That also makes the window's two
+  figures converge above 3600 dpi as measurement says they should, where before
+  it promised a two-minute saving that was really seven seconds. The 334 s
+  figure stays in the timing table as what was measured that day, annotated.
+
+- **The carriage start moves between passes, and fast infrared moves it.** Found by the ladders
+  above, not looked for: six passes of one frame registered at 0, 0, -1, -2, -2,
+  -3 lines against the first, dx = 0 throughout, over about twenty minutes --
+  **with byte 14 bit 0 clear, so a re-home before every pass.** The re-home does
+  not land in the same place twice.
+
+  Nothing is known to be broken by it: ~3 lines is 42 um at 1800 dpi, roll
+  registration works at a coarser scale than that, and a single delivered scan
+  does not care where a previous pass started. What it does break is the
+  assumption that two passes of one frame are pixel-aligned, which any
+  multi-pass measurement makes -- it silently cost the first reading of the fast
+  infrared ladder, where a point feature lost most of its contrast to a
+  half-line shift. Anything comparing passes pixel by pixel should register
+  first. The second ladder made it worse: at 3600 dpi the offset aligned
+  *perfectly with the flag* -- every fast-infrared pass a line or two from every
+  ordinary one -- which nearly produced a false negative, because grouping pairs
+  into families does not help when the drift correlates with the variable.
+  Unmeasured: whether it also moves with bit 0 set, and whether it saturates.
+
 - **Filing a roll compresses while the device is open.** `FrameWriter` gzips
   each frame on its own thread while the next one scans, which is what keeps a
   38-frame roll from ending in an eleven-minute wait. CLAUDE.md's warning is

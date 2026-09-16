@@ -52,6 +52,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--dpi", type=int, default=1800)
     ap.add_argument("--ir", action="store_true", help="capture the infrared plane too")
+    ap.add_argument("--fast-ir", dest="fast_ir", action="store_true", default=True,
+                    help="tie the infrared plane's cost to --dpi (default). "
+                         "Worth most here: it is the difference between a "
+                         "38-frame infrared roll spending 2.3 hours on the "
+                         "fixed floor and 1.2. See docs/fast-infrared-plan.md.")
+    ap.add_argument("--no-fast-ir", dest="fast_ir", action="store_false",
+                    help="untie it: the fixed ~220 s infrared pass.")
     ap.add_argument("--frames", type=int, default=None,
                     help="how many pictures to scan; without it the roll runs "
                          "until the window holds no picture or the transport "
@@ -169,6 +176,7 @@ def main() -> int:
             frames=args.frames,
             resolution=args.dpi,
             infrared=args.ir,
+            fast_infrared=args.fast_ir and args.ir,
             film=args.film,
             meter=args.meter,
             skip=max(0, args.start_at - 1),

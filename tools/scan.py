@@ -43,6 +43,16 @@ def main() -> int:
                     metavar="N", help="JPEG quality 60-100 (default "
                                       f"{export.DEFAULT_QUALITY}); ignored for TIFF")
     ap.add_argument("--ir", action="store_true", help="capture the infrared plane too")
+    ap.add_argument("--fast-ir", dest="fast_ir", action="store_true",
+                    default=True,
+                    help="tie the infrared plane's cost to --dpi (default). An "
+                         "untied pass costs ~220 s at every resolution; a tied "
+                         "one costs what its lines cost -- 110 s at 1800 dpi, "
+                         "25 s at 300. See docs/fast-infrared-plan.md.")
+    ap.add_argument("--no-fast-ir", dest="fast_ir", action="store_false",
+                    help="untie it: the fixed-cost infrared pass. Nothing "
+                         "measured says it is better, and above ~3700 dpi the "
+                         "two cost the same anyway.")
     ap.add_argument("--reference", default="calibration/shading.npz",
                     help="where to cache the shading reference")
     ap.add_argument("--reuse", action="store_true",
@@ -134,6 +144,12 @@ def main() -> int:
         exposure_scale = parts[0] if len(parts) == 1 else parts
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
+    if not args.ir:
+        # No plane to acquire, so the bit governs nothing. Silently cleared now
+        # that it is the default -- warning on every RGB scan about a flag
+        # nobody asked for would be noise, where warning about one typed
+        # explicitly was not.
+        args.fast_ir = False
 
     ref_path = Path(args.reference)
     # debug=False deliberately: this tool files its own library entries,
@@ -197,6 +213,7 @@ def main() -> int:
                 film=args.film,
                 shading=not args.no_shading,
                 keep_raw=args.library is not None,
+                fast_infrared=args.fast_ir,
             )
             hold(image, meta, s.capture_record())
 

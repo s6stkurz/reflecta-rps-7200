@@ -37,6 +37,7 @@ class FakeBracketScanner(DirectScanner):
         self.last_raw = None
         self.last_raw_layout = None
         self.scans = []
+        self.kwargs = []
 
     def __enter__(self):
         return self
@@ -64,6 +65,10 @@ class FakeBracketScanner(DirectScanner):
         n = 4 if infrared else 3
         k = exposure_scale[0] if isinstance(exposure_scale, list) else exposure_scale
         self.scans.append(float(k))
+        # Everything else the tool passed, for tests about wiring rather than
+        # about pixels -- a flag dropped between the parser and the device is
+        # invisible to a fake that only records exposures.
+        self.kwargs.append(dict(kw))
         self.last_raw = f"pass-{len(self.scans)}".encode()
         self.last_raw_layout = {"format": "index", "pass": len(self.scans)}
         level = int(min(60000, 1000 * len(self.scans)))
@@ -195,3 +200,41 @@ def test_bracket_zero_is_a_single_pass(tmp_path, monkeypatch):
     scanner, code = run(tmp_path, monkeypatch, "--bracket", "0")
     assert code == 0
     assert len(scanner.scans) == 1
+
+
+# --- the fast-infrared bit reaching the device ----------------------------
+
+
+def test_an_infrared_run_ties_the_plane_to_the_resolution_by_default(
+        tmp_path, monkeypatch):
+    """The default since 2026-09-16, and the whole saving lives here: an
+    untied pass costs ~220 s at any resolution, a tied one costs what its lines
+    cost. A tool that dropped it between the parser and `scan()` would silently
+    give every operator the slow pass back."""
+    s, code = run(tmp_path, monkeypatch, "--ir")
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is True
+
+
+def test_no_fast_ir_unties_it(tmp_path, monkeypatch):
+    """The override has to actually reach the device, or it is a lie in the
+    help text."""
+    s, code = run(tmp_path, monkeypatch, "--ir", "--no-fast-ir")
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is False
+
+
+def test_an_rgb_run_never_sends_it(tmp_path, monkeypatch):
+    """No plane to acquire, so the bit governs nothing. Cleared silently now
+    that it is the default: warning on every RGB scan about a flag nobody
+    asked for would be noise."""
+    s, code = run(tmp_path, monkeypatch)
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is False
+
+
+def test_an_rgb_run_with_fast_ir_typed_explicitly_still_sends_nothing(
+        tmp_path, monkeypatch):
+    s, code = run(tmp_path, monkeypatch, "--fast-ir")
+    assert code == 0
+    assert s.kwargs[-1]["fast_infrared"] is False
