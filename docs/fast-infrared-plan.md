@@ -1,16 +1,22 @@
 # Fast infrared: MODE SELECT quality bit 0x80
 
-## Status: run 2026-09-16. **It halves the infrared pass, and nothing measurable pays for it.**
+## Status: run twice, 2026-09-16. **It halves the pass in one configuration and does nothing in another, and we do not know why.**
 
-250.5 s to 126.1 s at 1800 dpi, three passes of each, with the picture, the
-infrared plane and the dust all unchanged against a same-setting control. The
-ladder also found something it was not looking for: the carriage start creeps a
-few lines across a long run, which confounded the first reading and is worth
-knowing on its own.
+- **1800 dpi, colour negative: 250.5 s -> 126.1 s, -49.7%.** Nothing measurable
+  pays for it.
+- **3600 dpi, slide: 221.0 s -> 213.9 s, -3.2%.** Nothing measurable pays for it
+  there either, and there is almost nothing to pay *for*.
 
-Adopting it as the default is a design change -- it moves the payload every scan
-sends -- and **wants Stefan's agreement**. Nothing about the default has been
-changed; `fast_infrared` is still off unless asked for.
+Two variables changed between the runs -- resolution and film -- so which one
+kills the saving is open. One more ladder answers it.
+
+**Not adopted as a default**, and it should not be until that is answered: a
+flag that halves the pass on one setting and does nothing on another is not a
+default, it is a special case waiting to be understood.
+
+Both runs found the same thing about the hardware, which outlives the question:
+**the carriage start moves between passes**, and the flag itself moves it. Every
+comparison here is aligned pair by pair for that reason.
 
 ## The question
 
@@ -198,27 +204,30 @@ does, it does not do it by returning less.
 
 ### The picture is untouched
 
-`agreement_z`, green channel, darkest tenth, all fifteen pairs grouped by
-whether the flag differed:
+`agreement_z`, green channel, darkest tenth, all fifteen pairs at their own best
+alignment, grouped by whether the flag differed:
 
 ```
-  off/off   n=3   median |z| = 2.14    range 2.05-2.29
-    on/on   n=3   median |z| = 2.10    range 1.18-2.15
-   off/on   n=9   median |z| = 2.00    range 1.17-2.20
+  off/off   n=3   median |z| = 1.34    range 1.33-1.36
+    on/on   n=3   median |z| = 1.20    range 1.18-1.38
+   off/on   n=9   median |z| = 1.24    range 1.08-1.45
 ```
 
-The three families are the same, and `off/on` is if anything the best of them.
-Removing the drift (below) moves all three together -- 2.33 / 2.23 / 2.31 -- and
-changes nothing about the conclusion.
+The three families are the same, and `off/on` sits between the two controls.
+
+*(These numbers are the corrected ones. This document first reported 2.14 / 2.10
+/ 2.00, computed without aligning each pair -- all three were inflated by the
+carriage drift below, which is also why they sat so far above the 1.03 repeat
+baseline. The conclusion was right; the numbers were not.)*
 
 ### The infrared plane is untouched, and keeps its dust
 
 Agreement on the infrared plane itself, which is the sharper question:
 
 ```
-  off/off   n=3   median |z| = 1.35
-    on/on   n=3   median |z| = 1.38
-   off/on   n=9   median |z| = 1.31
+  off/off   n=3   median |z| = 1.06
+    on/on   n=3   median |z| = 1.07
+   off/on   n=9   median |z| = 1.05
 ```
 
 And the dust, compared only between passes whose measured drift matches, with a
@@ -269,15 +278,110 @@ and would have printed it whatever the flag did.
 pairs, and compares specks only within a matched alignment. The conclusion did
 not change; the evidence for it did.
 
-### Where this leaves it
+## The second run: 3600 dpi, slide film, 2026-09-16
 
-The bit halves the infrared pass -- about an hour off a 17-frame roll, over two
-off a 38-frame one -- and every reading taken says the pass that comes back is
-the same one. Two things to decide before it becomes the default, neither of
-which is this document's to settle:
+Taken to answer "does this generalise", on the two axes that mattered most --
+resolution, and a different stock. Slide is also a *positive*, so it exercises
+the metering path where the visible channels are locked together. Both axes
+moved at once deliberately, at the cost that a negative result cannot be
+attributed to either.
 
-- **`PROTOCOL_REVISION` moves** if the default payload changes. That is the
-  right time to bump it, and the reason it was left alone for the wiring.
-- **One frame, one film, one resolution.** The measurement is clean but narrow.
-  A second frame at 3600 dpi, and one on a different stock, would cost 25
-  minutes each and would be what turns this from a result into a default.
+It is a negative result.
+
+### The saving did not reproduce
+
+```
+setting   n   mean ms/line   vs off      per pass
+    off   3          64.18    1.000       221.0 s
+     on   3          62.12    0.968       213.9 s
+```
+
+**-3.2%.** Systematic -- 221.2/220.9/220.8 against 213.4/213.9/214.3, no overlap
+-- but 7 seconds, not 124.
+
+The obvious explanation is wrong: the infrared exposure was **7745 in both
+runs**, identical, so this is not the bit saving time proportional to an
+exposure that happened to be long the first time.
+
+### Nothing degraded there either
+
+Every pair at its own best alignment:
+
+```
+            picture                    infrared
+  off/off   1.16   on/on 1.01     off/off 1.10   on/on 1.06
+   off/on   1.17                   off/on 1.10
+```
+
+Dust persists at 0.91-1.00 within each setting. No cross-flag speck comparison
+was possible: no `on` pass shared an alignment with any `off` pass, for the
+reason below, and the probe declined to invent one.
+
+### The flag moves where the carriage starts
+
+At 3600 dpi the alignment split perfectly along the flag: same-setting pairs
+align at 0 or -1 lines, cross-flag pairs at -2, +1 or +2. Every `on` pass landed
+a line or two from every `off` pass, consistently.
+
+This is a real property of the bit, and it is not a degradation -- a scan on its
+own is unaffected, and it is a couple of lines at 3600 dpi, about 14 um. It
+matters only where an `on` pass and an `off` pass are combined or compared, and
+it is the reason the second run very nearly produced a false negative.
+
+### The second correction to this plan's method
+
+The families comparison, introduced to fix the first run's flaw, failed on the
+second in a new way. Families survive drift only when the drift is uncorrelated
+with the flag. Here it was *perfectly* correlated -- every `on` pass at +1, every
+`off` pass at 0 or -2 -- so off/on was the only family comparing misaligned
+passes, and it duly read worst. The probe reported
+
+```
+   picture  off/off 1.41   on/on 1.02   off/on 1.84   -> "MOVED"
+  infrared  off/off 1.33   on/on 1.06   off/on 1.62   -> "MOVED"
+```
+
+and both verdicts were registration artefacts. Aligned pair by pair the same
+data gives 1.16/1.01/1.17 and 1.10/1.06/1.10: no effect whatever.
+
+**Every comparison now aligns first**, over a +-4 line search, and the shifts are
+printed because a systematic one is itself the finding above. There is no
+arrangement of the ladder that avoids this; only aligning does.
+
+### An unexplained reading, recorded rather than explained
+
+Infrared random noise, from same-setting pairs:
+
+```
+  1800 dpi negative:   off 575.6 DN   on 602.6 DN   (on/off 1.047)
+  3600 dpi slide:      off 493.2 DN   on 314.1 DN   (on/off 0.637)
+```
+
+The bit made the infrared plane *quieter* at 3600 dpi, by a third. A
+"faster, lower-quality" mode should not do that. Line binning would explain both
+the reduced noise and the reduced saving -- read everything, combine it -- but
+speck depth is unchanged at 3600 (7.17-7.25 sigma source, comparable to off),
+and binning should blunt a point feature. It is not explained, and nothing here
+depends on explaining it.
+
+## Where this leaves it
+
+The bit is safe -- eleven passes across two configurations and nothing
+measurable degrades -- and it is worth a great deal in one configuration and
+nothing in another. That is not yet a default.
+
+**The open question is one ladder wide.** Two variables moved between the runs,
+and either could be the one:
+
+- **Resolution.** If the saving is 1800-only, that is still worth having: 1800
+  dpi is the recommended resolution when time matters, which is exactly when a
+  halved pass is worth the most.
+- **Film or stock.** If the saving is negative-only, it is worth having for
+  colour negative, which is most of what this scanner is pointed at.
+
+**Slide at 1800 dpi** answers it in one 25-minute run with the film already
+loaded, and the answer is useful whichever way it falls. That should happen
+before any decision about defaults.
+
+`PROTOCOL_REVISION` still has not moved, and should not until the default
+payload does.

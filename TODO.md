@@ -248,26 +248,28 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
-- **~~Fast infrared has never been sent~~ -- run 2026-09-16, and it halves the
-  infrared pass.** Quality bit `0x80`, defined and unused since the protocol was
-  written. At 1800 dpi a pass goes from **250.5 s to 126.1 s**, three of each,
-  with the line count unchanged. The picture is untouched (`agreement_z`
-  families off/off 2.14, on/on 2.10, off/on 2.00), the infrared plane is
-  untouched (1.35 / 1.38 / 1.31), and the dust persists across the flag exactly
-  as well as between two passes at one setting -- 0.98x against a 1.00x control,
-  on ~4,700 specks. Infrared random noise rises 593 -> 623 DN, about 5%, and
-  that is the only cost found.
+- **~~Fast infrared has never been sent~~ -- run twice 2026-09-16. It halves the
+  pass in one configuration and does nothing in another.** Quality bit `0x80`.
+  At **1800 dpi on colour negative: 250.5 s -> 126.1 s, -49.7%.** At **3600 dpi
+  on slide: 221.0 s -> 213.9 s, -3.2%.** Nothing measurable degrades in either
+  -- picture, infrared plane and dust all unchanged against same-setting
+  controls, eleven passes in total.
 
-  **Not adopted as the default.** That moves the payload every scan sends, so it
-  is a design change and wants Stefan's agreement -- and it would be the right
-  moment to bump `PROTOCOL_REVISION`, which was deliberately left alone for the
-  wiring. `--fast-ir` and `scan(fast_infrared=True)` exist meanwhile.
+  Two variables moved between the runs, so which kills the saving is open.
+  **Slide at 1800 dpi answers it in one 25-minute run** and the answer is useful
+  either way: if it is resolution-dependent the saving lands exactly where time
+  matters most, and if it is film-dependent it lands on colour negative, which
+  is most of what this scanner is pointed at. The obvious explanation is already
+  ruled out -- the infrared exposure was 7745 in both runs.
 
-  The measurement is clean but narrow: one frame, one film, 1800 dpi. A second
-  frame at 3600 dpi and one on a different stock, 25 minutes each, is what would
-  turn it into a default. See `docs/fast-infrared-plan.md`.
+  **Not a default**, and should not be until that is answered.
+  `PROTOCOL_REVISION` has not moved. `--fast-ir` and `scan(fast_infrared=True)`
+  exist meanwhile. See `docs/fast-infrared-plan.md`.
 
-- **The carriage start creeps across a long run of passes.** Found by the ladder
+  Unexplained and recorded: the bit made the infrared plane *quieter* at 3600
+  dpi (493 -> 314 DN random), where at 1800 it was slightly noisier (576 -> 603).
+
+- **The carriage start moves between passes, and fast infrared moves it.** Found by the ladders
   above, not looked for: six passes of one frame registered at 0, 0, -1, -2, -2,
   -3 lines against the first, dx = 0 throughout, over about twenty minutes --
   **with byte 14 bit 0 clear, so a re-home before every pass.** The re-home does
@@ -280,8 +282,11 @@ bit is not evidence, not a new problem.
   multi-pass measurement makes -- it silently cost the first reading of the fast
   infrared ladder, where a point feature lost most of its contrast to a
   half-line shift. Anything comparing passes pixel by pixel should register
-  first. Unmeasured: whether it also creeps with bit 0 set, and whether it
-  saturates or keeps going.
+  first. The second ladder made it worse: at 3600 dpi the offset aligned
+  *perfectly with the flag* -- every fast-infrared pass a line or two from every
+  ordinary one -- which nearly produced a false negative, because grouping pairs
+  into families does not help when the drift correlates with the variable.
+  Unmeasured: whether it also moves with bit 0 set, and whether it saturates.
 
 - **Filing a roll compresses while the device is open.** `FrameWriter` gzips
   each frame on its own thread while the next one scans, which is what keeps a

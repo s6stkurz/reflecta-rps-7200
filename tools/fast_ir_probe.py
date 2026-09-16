@@ -80,7 +80,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent
                        / ".claude" / "skills" / "measure-scan-quality" / "scripts"))
 
 from rps7200.direct import (                                        # noqa: E402
-    FILM_NEGATIVE,
+    FILM_TYPES,
     FULL_FRAME,
     CheckCondition,
     DirectScanner,
@@ -143,14 +143,20 @@ def main() -> int:
     ap.add_argument("--resolution", type=int, default=1800,
                     help="1800 by default: the floor dominates there and the "
                          "visible half is still short")
+    ap.add_argument("--film", default="negative", choices=sorted(FILM_TYPES),
+                    help="reaches metering only, and it matters: a slide is "
+                         "metered with the visible channels locked together "
+                         "and a negative is not. Infrared is refused outright "
+                         "for the stocks blind to it.")
     ap.add_argument("--json", default=None)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
 
     if args.dry_run:
-        print(f"would take {len(LADDER)} RGBI passes at {args.resolution} dpi, "
-              f"sequence {['on' if v else 'off' for v in LADDER]}, "
+        print(f"would take {len(LADDER)} RGBI passes at {args.resolution} dpi "
+              f"on {args.film}, sequence "
+              f"{['on' if v else 'off' for v in LADDER]}, "
               f"byte14={BYTE14_REHOME:#04x} throughout")
         print(f"budget roughly {len(LADDER) * 230 / 60:.0f} minutes at the "
               f"infrared floor, plus metering -- background it")
@@ -179,7 +185,7 @@ def main() -> int:
         # exposure, film-dependently, and metering it as though this were RGB
         # would put it at the rail.
         scales = list(scanner.auto_exposure(
-            resolution=args.resolution, film=FILM_NEGATIVE, infrared=True))
+            resolution=args.resolution, film=args.film, infrared=True))
         print(f"\nexposure held at {[round(v, 3) for v in scales]} for every "
               f"pass\n")
 
@@ -192,6 +198,7 @@ def main() -> int:
                 frame=FULL_FRAME,
                 exposure_scale=scales,
                 auto_exposure=False,
+                film=args.film,
                 shading=False,
                 keep_raw=True,
                 byte14=BYTE14_REHOME,
@@ -302,25 +309,29 @@ def report(results: list[dict], frames: dict[bool, list[np.ndarray]],
               f"protocol change.")
 
     # -- agreement, by family -----------------------------------------------
-    for label, channel, mask in (
-            ("picture (green, darkest tenth)", 1,
-             dark_mask(ordered[0][1], 10.0)),
-            ("infrared plane", IR, np.ones(ordered[0][1].shape[:2], bool))):
-        print(f"\n{label}\n")
-        fam = _families(ordered, channel, mask)
+    for label, channel in (("picture (green, darkest tenth)", 1),
+                           ("infrared plane", IR)):
+        print(f"\n{label} -- every pair at its own best alignment\n")
+        fam, shifts = _families(ordered, channel)
         summary[f"agreement_{channel}"] = {k: float(np.median(v))
                                            for k, v in fam.items() if v}
         for kind, values in fam.items():
             if values:
                 print(f"  {kind:>7}: n={len(values)}  "
                       f"median |z| = {np.median(values):.2f}  "
-                      f"range {min(values):.2f}-{max(values):.2f}")
+                      f"range {min(values):.2f}-{max(values):.2f}   "
+                      f"shifts {sorted(set(shifts[kind]))}")
         control = fam["off/off"] or fam["on/on"]
         if control and fam["off/on"]:
             verdict = ("unchanged" if np.median(fam["off/on"])
                        <= np.median(control) * 1.15 else
                        "MOVED -- this is where it stops")
             print(f"\n  off/on against a same-setting control: {verdict}")
+        same = set(shifts["off/off"]) | set(shifts["on/on"])
+        if channel == 1 and same and set(shifts["off/on"]) - same:
+            print(f"  the flag moves the carriage start: same-setting pairs "
+                  f"align at {sorted(same)}, across the flag at "
+                  f"{sorted(set(shifts['off/on']))}")
 
     # -- specks, only where the drift matches -------------------------------
     print("\ndust\n")
@@ -393,21 +404,61 @@ def _in_order(results: list[dict],
     return out
 
 
-def _families(ordered: list[tuple[bool, np.ndarray]], channel: int,
-              mask: np.ndarray) -> dict[str, list[float]]:
-    """Every pair's agreement, grouped by whether the flag differed.
+#: Line shifts searched when aligning one pass to another. Four lines each way
+#: covers everything seen: a carriage that creeps a line or two across a run,
+#: plus the offset the flag itself introduces.
+ALIGN = range(-4, 5)
 
-    The comparison that survives drift: a single control pair and a single test
-    pair can differ by how far apart they sat in the run, and did.
+
+def _aligned_z(a: np.ndarray, b: np.ndarray, channel: int) -> tuple[float, int]:
+    """Best agreement over a small range of line shifts, and the shift.
+
+    **Every comparison goes through this, and that is not defensive coding.**
+    Twice this probe reported an effect that was a misregistration. The first
+    time the carriage crept monotonically across the run, so pairs further
+    apart agreed less; grouping into families fixed that. The second time the
+    drift *correlated with the flag* -- every `on` pass landed a line or two
+    from every `off` pass -- and families did not help at all, because the
+    off/on family was then the only one comparing misaligned passes. It
+    reported the picture and the infrared plane as both degraded, at 1.84 and
+    1.62 against controls of 1.41 and 1.33. Aligned pair by pair, the same data
+    gives 1.15 and 1.10 against 1.08 and 1.09: no effect whatever.
+
+    A pair compared at anything but its own best alignment is not measuring the
+    flag, and there is no arrangement of the ladder that avoids this -- only
+    aligning does.
+    """
+    pad = max(abs(s) for s in ALIGN)
+    best = (float("inf"), 0)
+    for shift in ALIGN:
+        left = a[pad:a.shape[0] - pad]
+        right = np.roll(b, shift, axis=0)[pad:b.shape[0] - pad]
+        mask = (dark_mask(left, 10.0) if channel < IR
+                else np.ones(left.shape[:2], bool))
+        best = min(best, (agreement_z(left, right, mask, channel=channel), shift))
+    return best
+
+
+def _families(ordered: list[tuple[bool, np.ndarray]],
+              channel: int) -> tuple[dict[str, list[float]], dict[str, list[int]]]:
+    """Every pair's best-aligned agreement, grouped by whether the flag differed.
+
+    Returns the agreements and the shifts they needed. The shifts are not
+    bookkeeping: a systematic offset between the `on` and `off` families is the
+    flag moving where the carriage starts, which is worth knowing on its own and
+    is invisible in the agreement numbers once it has been corrected for.
     """
     fam: dict[str, list[float]] = {"off/off": [], "on/on": [], "off/on": []}
+    shifts: dict[str, list[int]] = {"off/off": [], "on/on": [], "off/on": []}
     for i in range(len(ordered)):
         for j in range(i + 1, len(ordered)):
             (fast_a, a), (fast_b, b) = ordered[i], ordered[j]
             kind = ("off/off" if not fast_a and not fast_b
                     else "on/on" if fast_a and fast_b else "off/on")
-            fam[kind].append(agreement_z(a, b, mask, channel=channel))
-    return fam
+            z, shift = _aligned_z(a, b, channel)
+            fam[kind].append(z)
+            shifts[kind].append(shift)
+    return fam, shifts
 
 
 if __name__ == "__main__":
