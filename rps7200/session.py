@@ -49,9 +49,27 @@ from .framing import reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
 
-#: The infrared floor: a pass with infrared on holds the device this long
-#: however few lines were asked for. Measured at 212-227 s across resolutions.
+#: The infrared floor: an **untied** pass with infrared on holds the device this
+#: long however few lines were asked for. Measured at 212-227 s across
+#: resolutions, and the reason a short timeout once wedged the device -- so it
+#: stays the conservative end of the range, because what it guards is a read
+#: that must not be abandoned.
+#:
+#: A *tied* pass does not spend it at all; see :data:`INFRARED_UNTIED_S` and
+#: :func:`estimate_seconds`.
 INFRARED_FLOOR_S = 212.0
+
+#: What an untied infrared pass actually costs, for the readout rather than the
+#: timeout. Measured 2026-09-16 across five resolutions on one slide: 219.2,
+#: 219.6, 219.8, 220.1, 220.3 s from 300 to 1800 dpi -- flat to 1.1 s over a
+#: sixfold range -- and 221.0 s at 3600.
+#:
+#: **This supersedes the older 334 s figure at 3600 dpi** from the timing table
+#: in `docs/dpi-tradeoff-plan.md`. The two disagree because they are different
+#: film at different exposures and scan time tracks exposure; the sweep is the
+#: one that covers the whole range in a single run at a single held exposure,
+#: which is what a table of resolutions needs to be comparable at all.
+INFRARED_UNTIED_S = 219.8
 
 #: Where tying the infrared plane to the resolution stops buying anything.
 #:
@@ -166,24 +184,25 @@ def estimate_seconds(resolution: int, infrared: bool,
     anchored on 227 s at 900 and 1800 dpi and 334 s at 3600 -- which the line
     count does not move until about 3700 dpi.
 
-    **The untied branch keeps its older anchors, which the sweep disagrees
-    with**: it says 334 s at 3600 dpi where the 2026-09-16 slide measured
-    221 s. Both are real measurements of different film at different exposures,
-    and scan time tracks exposure -- the same 1800 dpi pass took 250.5 s on
-    colour negative and 220.3 s on that slide. One slide is not enough to
-    rewrite a figure with its own provenance, so the disagreement is recorded
-    rather than resolved. It matters little: the untied branch is now the
-    exception, and it errs long.
+    **Untied is a floor, not a curve**: ~220 s until the line count overtakes
+    it, and the line count after that. The older form anchored 334 s at
+    3600 dpi and grew with resolution throughout; the sweep measured 221 s
+    there, and flat to 1.1 s from 300 to 1800 dpi. Same shape as the tied
+    branch with a floor under it, which is also the physically sensible one --
+    a pass cannot cost less than the work it does.
 
-    An estimate, and labelled as one wherever it is shown.
+    An estimate, and labelled as one wherever it is shown. Note that exposure
+    moves all of these: the same 1800 dpi pass took 250.5 s on colour negative
+    and 220.3 s on slide.
     """
     lines = max(1.0, resolution * _LINES_PER_DPI)
     rgb = 8.0 + 0.036 * lines
     if not infrared:
         return rgb
+    tied = 7.5 + 0.0599 * lines
     if fast_infrared:
-        return 7.5 + 0.0599 * lines
-    return max(INFRARED_FLOOR_S, 227.0 + (rgb - 70.0) * 1.7)
+        return tied
+    return max(INFRARED_UNTIED_S, tied)
 
 
 # ---------------------------------------------------------------------------

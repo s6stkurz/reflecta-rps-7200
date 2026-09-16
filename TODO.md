@@ -278,15 +278,17 @@ bit is not evidence, not a new problem.
   plane *quieter* at 3600 dpi (493 -> 314 DN random) where at 1800 it was
   slightly noisier (576 -> 603).
 
-- **The untied infrared estimate disagrees with the sweep at 3600 dpi.**
-  `estimate_seconds` keeps its older anchor of 334 s, from the timing table in
-  `docs/dpi-tradeoff-plan.md`; the 2026-09-16 sweep measured 221 s on slide.
-  Both are real measurements of different film at different exposures, and scan
-  time tracks exposure -- the same 1800 dpi pass took 250.5 s on negative and
-  220.3 s on that slide. One slide is not enough to rewrite a figure with its
-  own provenance, so the disagreement is recorded rather than resolved. Low
-  stakes: it is an estimate, the untied path is now the exception, and it errs
-  long. Resolving it wants one untied pair at 3600 dpi on colour negative.
+- **~~The untied infrared estimate disagreed with the sweep at 3600 dpi~~ --
+  settled by Stefan, sweep wins.** `estimate_seconds` used a 334 s anchor from
+  the timing table in `docs/dpi-tradeoff-plan.md`; the 2026-09-16 sweep measured
+  221 s. Both are real, on different film at different exposures, and scan time
+  tracks exposure -- but the sweep covers the whole range in one run at one held
+  exposure, which is what makes a table of resolutions comparable at all. The
+  untied estimate is now a *floor* rather than a curve: ~220 s until the line
+  count overtakes it, the line count after. That also makes the window's two
+  figures converge above 3600 dpi as measurement says they should, where before
+  it promised a two-minute saving that was really seven seconds. The 334 s
+  figure stays in the timing table as what was measured that day, annotated.
 
 - **The carriage start moves between passes, and fast infrared moves it.** Found by the ladders
   above, not looked for: six passes of one frame registered at 0, 0, -1, -2, -2,

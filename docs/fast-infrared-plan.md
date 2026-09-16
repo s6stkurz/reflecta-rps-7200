@@ -13,6 +13,12 @@ mine: the quality ladder was never run below 1800 dpi, where the saving is
 is still low"* -- and the reasoning holds: a 300 dpi infrared plane is a coarse
 dust mask either way, and the pass it belongs to is cheap enough to retake.
 
+**Confirmed downstream, which is better evidence than the ladder would have
+been**: he opened a tied scan in NegPy and the dust removal worked. Every
+measurement here is a proxy for that -- speck depth in sigmas is only
+interesting because it predicts whether a consumer can threshold the plane --
+and the consumer has now answered directly.
+
 ```
     time with the flag  =  7.46 s  +  59.88 ms/line          (r^2 = 1.000)
     time without it     =  219.8 s, flat, whatever the line count

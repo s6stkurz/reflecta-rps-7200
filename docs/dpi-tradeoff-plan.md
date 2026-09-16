@@ -91,7 +91,17 @@ sidecars, time follows the **line count**, not the pixel count:
 ```
 
 RGB fits `t = 8 + 0.036 x lines`. RGBI has a floor around 227 s that resolution
-does not move until roughly 1800 dpi. Both need confirming across the full
+does not move until roughly 1800 dpi.
+
+> **The 333.7 s at 3600 dpi is superseded for estimation.** A sweep of every
+> resolution at one held exposure (2026-09-16, `docs/fast-infrared-plan.md`)
+> measured an untied RGBI pass flat at 219.2-220.3 s from 300 to 1800 dpi and
+> **221.0 s at 3600** -- so the floor holds far past 1800, and does not climb to
+> 334. The two disagree because they are different film at different exposures
+> and scan time tracks exposure: the same 1800 dpi pass took 250.5 s on colour
+> negative and 220.3 s on that slide. `estimate_seconds` now uses the sweep,
+> which is the one that covers the range in a single run and is therefore
+> internally comparable. The figure above stays as what was measured that day. Both need confirming across the full
 range, and the RGBI floor's exact shape is the most interesting unknown — if it
 holds to 2400, IR scans get more resolution for nothing.
 

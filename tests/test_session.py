@@ -517,8 +517,21 @@ def test_the_estimates_track_what_was_measured():
     assert estimate_seconds(1800, True) == pytest.approx(110.5, abs=5)
     assert estimate_seconds(3600, True) == pytest.approx(213.6, abs=10)
 
-    assert estimate_seconds(1800, True, False) == pytest.approx(227, abs=10)
-    assert estimate_seconds(3600, True, False) == pytest.approx(334, abs=20)
+    # Untied: flat at the floor until the line count overtakes it. The 3600 dpi
+    # figure supersedes the older 334 s anchor in docs/dpi-tradeoff-plan.md,
+    # which was a different film at a different exposure -- see
+    # INFRARED_UNTIED_S.
+    assert estimate_seconds(300, True, False) == pytest.approx(219.2, abs=3)
+    assert estimate_seconds(1800, True, False) == pytest.approx(220.3, abs=3)
+    assert estimate_seconds(3600, True, False) == pytest.approx(221.0, abs=3)
+
+
+def test_an_untied_pass_stops_being_flat_once_the_lines_cost_more():
+    """The floor is a floor, not a constant. Past the crossover an untied pass
+    costs what the lines cost, same as a tied one -- which is exactly why there
+    is nothing left to save up there."""
+    assert (estimate_seconds(7200, True, False)
+            == pytest.approx(estimate_seconds(7200, True), abs=1))
 
 
 def test_tying_infrared_never_estimates_slower():
