@@ -200,6 +200,7 @@ __all__ = [
     "SCSI_VENDOR_E7",
     "SCSI_WRITE",
     "SCSI_WRITE_GAIN_OFFSET",
+    "SHADING_SKIPPED_EXPLICIT",
     "SLIDE_INIT",
     "SLIDE_NEXT",
     "SLIDE_PREV",
@@ -275,6 +276,24 @@ __all__ = [
 #: comparison -- pieusb 0.85, nkscan 0.97 -- which left about a fifth of a stop
 #: unused for no measured reason.
 EXPOSURE_TARGET = 0.80
+
+
+#: What :meth:`DirectScanner.scan` records in ``meta["shading_skipped"]`` when
+#: the caller asked for raw pixels outright, by passing ``shading=False``.
+#:
+#: **It is the only reason this driver still writes.** A pass that *wanted*
+#: correction and could not get one raises :class:`ShadingUnavailable` rather
+#: than returning raw pixels quietly, so on anything scanned today a skipped
+#: correction is always a choice.
+#:
+#: Entries filed before that was true carry other reasons -- four in this
+#: library, reading "no shading reference in this session" or "this pass is
+#: 10344 columns but the reference covers 5172" -- and those were a shortfall,
+#: not a choice. :func:`rps7200.library.corrected` compares against this
+#: constant to tell the two apart, and `verify` already draws the same line.
+#: They must not drift, which is why the string lives here rather than being
+#: written out in both places.
+SHADING_SKIPPED_EXPLICIT = "shading=False (explicit)"
 
 
 #: How far *above* its target a channel may land and still be accepted.
@@ -2192,6 +2211,7 @@ class DirectScanner:
         keep_raw: bool = True,
         shading: bool = True,
         retain: bool = True,
+        fast_infrared: bool = True,
         on_pass: Callable[[int, np.ndarray, dict[str, Any], dict[str, Any]], None]
         | None = None,
     ) -> tuple[list[np.ndarray], list[float], list[dict[str, Any]]]:
@@ -2207,6 +2227,13 @@ class DirectScanner:
         constant the vendor never meters, so bracketing it would multiply the
         scan time for nothing. With ``infrared`` set, one pass -- the brightest,
         which carries the most signal -- is taken as RGBI and the rest as RGB.
+
+        ``fast_infrared`` reaches that one pass and is inert on the others,
+        which :meth:`scan` gates on ``infrared`` for itself. It is here because
+        it was missing: `tools/scan.py` parsed ``--no-fast-ir`` and then did not
+        pass it on this path, so a bracket ran tied whatever was asked for --
+        and below 1800 dpi the tied pass's quality is waived rather than
+        measured, which makes that flag the escape hatch from a waiver.
 
         ``on_pass(index, image, meta, capture)`` is called as each pass lands,
         with that pass's :meth:`capture_record`. It exists because only one
@@ -2248,6 +2275,7 @@ class DirectScanner:
                 keep_raw=keep_raw,
                 shading=shading,
                 film=film,
+                fast_infrared=fast_infrared,
             )
             meta["bracket_index"] = i
             meta["bracket_ratio"] = float(k)
@@ -2472,6 +2500,17 @@ class DirectScanner:
 
         passes = ONE_PASS_RGBI if infrared else ONE_PASS_COLOR
         channels = 4 if infrared else 3
+        # Gated on `infrared` here rather than left to each caller. The bit
+        # governs how the infrared plane is acquired, so on an RGB pass there
+        # is nothing for it to govern -- and its behaviour there is simply
+        # unmeasured: `docs/fast-infrared-plan.md` characterises it on RGBI
+        # passes and says nothing about RGB. `tools/scan.py` and
+        # `tools/scan_roll.py` each cleared it locally; the window did not, and
+        # `gui-settings.json` persists the box ticked, so an ordinary RGB scan
+        # from it was sending an untested combination. One gate here closes all
+        # three callers, which is why the tools' own guards are now redundant
+        # rather than load-bearing.
+        fast_infrared = bool(fast_infrared and infrared)
         self.set_mode(
             resolution=resolution,
             passes=passes,
@@ -2590,7 +2629,7 @@ class DirectScanner:
                 "accept raw pixels deliberately."
             )
         else:
-            shading_skipped = "shading=False (explicit)"
+            shading_skipped = SHADING_SKIPPED_EXPLICIT
 
         meta = {
             "resolution_dpi": resolution,

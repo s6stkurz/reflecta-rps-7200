@@ -12,10 +12,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 4: `scan()` now clears the fast-infrared quality bit on an RGB pass. It
+#    used to forward whatever it was given, so the window -- which passes the
+#    box straight through, ticked by default -- sent 0x0088 on ordinary RGB
+#    scans where the vendor sends 0x0008, a combination nothing has measured.
+#    RGBI passes are unchanged.
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 3
+PROTOCOL_REVISION = 4
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

@@ -199,6 +199,7 @@ def main() -> int:
                 ),
                 keep_raw=args.library is not None,
                 shading=not args.no_shading,
+                fast_infrared=args.fast_ir,
                 on_pass=lambda i, image, meta, capture: hold(image, meta, capture),
             )
             image, meta = bracket[0][-1], bracket[2][-1]

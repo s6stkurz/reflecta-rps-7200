@@ -40,6 +40,80 @@ bit is not evidence, not a new problem.
 
 ## Known problems
 
+- **Nothing has ever been scanned at the protocol revision `main` is on.**
+  `PROTOCOL_REVISION` went to 3 when fast infrared became the default (7244cc1,
+  merged as 1b74ee7) and to 4 when the bit was gated on `infrared` (2026-09-19).
+  Across all 217 library entries: **112 at revision 1, 36 at revision 2, 69
+  prescans carrying none, and none at all at 3 or 4.**
+
+  The sweep that justified revision 3 is real and is not in question -- but it
+  was taken by `tools/fast_ir_probe.py` on the feature branch, with the flag
+  passed *explicitly*, before the default moved. Every entry from it reads
+  revision 2. What has never run on the device is the path an ordinary scan now
+  takes: `tools/scan.py` or the window, with `fast_infrared=True` arriving as a
+  default rather than as an argument.
+
+  So the next scan anybody takes is the first exercise of it. Worth doing
+  deliberately -- one RGB pass and one RGBI pass, filed with `RPS7200_DEBUG=1`,
+  checking that the entries read `protocol_revision: 4` and that the RGB one
+  carries no fast-infrared bit -- rather than finding out in the middle of a
+  roll. Two of the entries below are the kind of thing that hides in an
+  unexercised default: both were found by reading, not by scanning, and both
+  are now fixed without the device having confirmed either.
+
+- **`make verify` reports 16 problems and has for a week, so it no longer
+  reports anything.** All sixteen are the byte-14 ladder passes, filed between
+  `20260911T091344Z` and `20260911T091347Z`, taken with no shading reference so
+  they can never be corrected. Two add *"correction was asked for: no shading
+  reference in this session"*.
+
+  They are evidence and must not be pruned; `scan.protocol_revision` reads 1 on
+  every one, from a code version that no longer exists (`scan()` now raises
+  `ShadingUnavailable` rather than filing a pass that wanted correction and
+  went without). The problem is the check, not the entries: **the same failure
+  `reconstruct` had with its 26 false alarms**, below. A check that is always
+  red is a check nobody reads, and this is the one that would catch a real
+  regression in the library.
+
+  There is no way to mark an entry as deliberately uncalibrated. `blue-clipped`
+  and `not-a-reference` already mark the other deliberate failures, so the
+  mechanism exists and `verify` simply does not consult it. Not fixed here --
+  recorded so that a red `verify` is known to mean these sixteen and nothing
+  else, until someone makes it green.
+
+- ~~**`library.corrected()` calls a shortfall a choice, and tells the operator
+  so.**~~ **Fixed 2026-09-19.** It treated *any* non-empty
+  `calibration.skipped` as a deliberate `shading=False`, where `verify` reads
+  the identical field and correctly splits it: a `skipped` reason other than an
+  explicit request is "a thing that went wrong". The two read one field with
+  opposite meanings, and the wrong one was what Save As printed.
+
+  For anything scanned today they agree -- `scan()` can only ever write
+  `"shading=False (explicit)"`, because it raises `ShadingUnavailable`
+  otherwise, and `session.py` documents that invariant. They disagree on four
+  entries already on disk, which predate it: two of the sixteen above, which
+  carry "no shading reference in this session" (the other fourteen have no
+  reason recorded at all and come back as "no reference"), and the two 7200 dpi
+  passes of 2026-09-11, which carry "this pass is 10344 columns but the
+  reference covers 5172".
+
+  Those four now read `"raw -- correction was asked for"`, and the 23 that
+  genuinely passed `shading=False` still read `"deliberately raw"`. The
+  sentinel moved to `SHADING_SKIPPED_EXPLICIT` in `direct.py` and is imported
+  rather than written out twice, so the producer and its two consumers cannot
+  drift apart again; one of the tests pins the constant rather than a copy of
+  its text, because a reworded string would otherwise silently make every
+  legacy entry read as deliberate again.
+
+  **The wrong label reaches a person.** Save As prints the provenance verbatim,
+  so saving one of those entries says *"(deliberately raw)"* -- telling the
+  operator the rawness was a choice when it was a shortfall. CLAUDE.md's whole
+  point about raw pixels is that a raw file shown to a person is what this
+  driver stopped delivering; being told it was intentional is worse than being
+  told nothing. Both `corrected()` call sites are otherwise correct and
+  carefully commented: the bug is one branch inside `corrected()`, not the
+  delivery paths.
+
 - ~~**An RGBI scan can come back with every row in reverse order, and nothing
   says so.**~~ **Closed 2026-09-13 as won't-fix, by Stefan's decision:** a
   reversed pass is visible the moment you look at it and flipping it back is
@@ -80,6 +154,28 @@ bit is not evidence, not a new problem.
   `docs/byte14-plan.md` holds the candidate fixes, kept for the record
   rather than as a plan: both change what is sent to the device, so either
   would move `PROTOCOL_REVISION` in `rps7200/direct.py`.
+
+  **There is a third path, and it does not avoid the trigger: `tools/scan.py`.**
+  Without `--auto-exposure` it takes a single `s.scan(...)` and no RGB pass at
+  all, and `data[14]` is `0x21` for RGBI against `0x10` for RGB. The carriage
+  position that decides the reversal is *device* state, so it survives process
+  exit. Scanning a strip by hand the obvious way --
+
+      python3 tools/scan.py --dpi 1800 --ir --frame 1     # normal
+      python3 tools/scan.py --dpi 1800 --ir --frame 2     # reversed
+      python3 tools/scan.py --dpi 1800 --ir --frame 3     # normal
+
+  -- gives every second frame upside down, filed that way, with
+  `reversal_against` unable to help because it judges a pass against the prescan
+  of the same frame and this path takes none. The window has the same shape:
+  nothing forces a prescan before a scan, and `_note_reversal` falls back to
+  `_prescan_here()`, which is `None` if the operator just presses Scan twice.
+
+  **The decision does not change** -- Stefan reaffirmed won't-fix on
+  2026-09-19. What changes is the premise written down above it: "an RGB pass
+  always precedes the RGBI one" was true of `scan_roll` and `auto_exposure` and
+  was never true of `tools/scan.py` or of the window. Recorded so that the
+  won't-fix rests on what the code actually does.
 
 - ~~**Drift in roll scans.**~~ **Closed 2026-09-06.** The 1 -> 10 -> 36 px
   strip3 reading that started this was itself a measurement artefact, not the
@@ -227,6 +323,56 @@ bit is not evidence, not a new problem.
   `20260828T010052Z` has blue saturated on 2.07% of pixels from a metering
   error, and `strip6-01..03` are tagged blue-clipped / not-a-reference. Their
   raw bytes are fine; do not prune them as junk.
+- ~~**The window sets the fast-infrared quality bit on RGB passes; both command
+  line tools deliberately clear it.**~~ **Fixed 2026-09-19, and
+  `PROTOCOL_REVISION` moved to 4 with it.** `set_mode` ORs
+  `QUALITY_FAST_INFRARED` in whenever `fast_infrared` is truthy, and `scan()`
+  forwarded it **without gating on `infrared`** -- so it landed on a
+  `passes=ONE_PASS_COLOR` pass just as readily. `tools/scan.py` guarded against
+  that (`if not args.ir: args.fast_ir = False`, with a comment saying the bit
+  governs nothing when there is no plane to acquire), and so did
+  `tools/scan_roll.py` (`args.fast_ir and args.ir`). The window passed
+  `v_fast_ir` bare at all three of its call sites, and `Scan.fast_infrared`
+  defaults to `True`.
+
+  So: infrared unticked, fast-infrared ticked -- which is what
+  `gui-settings.json` persists -- and an **RGB pass went out carrying a quality
+  bit that has only ever been measured on RGBI passes.**
+  `docs/fast-infrared-plan.md` characterises it for infrared and says nothing
+  about RGB. It may well be inert; the point is that nobody knew, two of the
+  three callers thought it worth guarding, and the third shipped the unmeasured
+  combination by default. Prescans were never affected -- `prescan()` takes no
+  `fast_infrared` at all.
+
+  The gate went into `scan()` (`fast_infrared and infrared`) rather than into
+  the window, so one place closes all three callers and the tools' own guards
+  became redundant rather than load-bearing. `set_mode` is unchanged and still
+  writes what it is told: calibration and metering reach it directly and should
+  not be gated.
+
+  Measured on the payload, driving a real `scan()` as far as MODE SELECT: an
+  RGB pass asked for the bit sent `0x0088` before and sends `0x0008` after,
+  which is what CyberView sends; RGBI is `0x0088` either way, and `--no-fast-ir`
+  still gives `0x0008`. **Only the RGB row moved**, and none of it has been
+  confirmed on the device -- see the first entry in this section.
+
+- ~~**`--no-fast-ir` is accepted and discarded on the bracket path.**~~
+  **Fixed 2026-09-19**, alongside the entry above. `scan_bracket` took no
+  `fast_infrared` parameter, and `tools/scan.py`'s bracket call passed none --
+  where the single-scan branch fourteen lines below it did. `--dpi 600 --ir
+  --bracket 3 --no-fast-ir` parsed the flag, set `args.fast_ir = False`, and
+  then ran the bracket's infrared pass tied anyway, because `scan()`'s own
+  default is `True`. Nothing reported it.
+
+  Worse than a dropped flag usually is: below 1800 dpi the tied pass's *quality*
+  was never measured and Stefan waived it (see "Untested" below). `--no-fast-ir`
+  is the escape hatch from that waiver, and on this path it did nothing.
+
+  The tests for it subscript `fast_infrared` rather than using `.get()`,
+  deliberately: the key used to be *absent*, and an absent flag reads as False
+  to any default-tolerant check -- which is how it went unnoticed, and which
+  made a first version of the test pass against the unfixed code.
+
 - **`tools/scan.py` and `tools/scan_roll.py` both write the three comparison
   TIFFs to the repo root**, so running them together clobbers one another.
 
@@ -240,6 +386,24 @@ bit is not evidence, not a new problem.
   reference: a channel calibrated 3x below its scan exposure corrected
   13.0% -> 1.4%, 6x below 8.2% -> 2.0%, and 10x below got *worse*,
   10.0% -> 11.2%. The device just does not let the host pick.
+
+- **`--reuse` will load a shading reference from a different power-on, and
+  nothing can catch it afterwards.** The README is explicit that "the reference
+  belongs to the power-on that measured it". Nothing enforces it:
+  `ensure_shading(path, reuse=True)` loads whatever file is at the path if it
+  exists, and `ShadingReference.save` writes **no timestamp, no session id, no
+  device identity** -- only the arrays.
+
+  So a reference measured days ago loads as a success ("reusing
+  calibration/shading.npz (5172 columns...)"), the scan is filed with it as
+  though it were this session's, and `reconstruct` reproduces it faithfully
+  forever. There is no evidence anywhere in the entry that the reference was
+  stale. Cheap to close from the save side: a timestamp in the `.npz` and a
+  warning when it predates the session.
+
+  Not currently live -- `calibration/` is not on disk, so `--reuse` falls
+  through to a real calibration -- which is why this is recorded rather than
+  urgent. The next run that writes the cache re-arms it.
 
 - **`apply_shading` silently leaves trailing columns uncorrected** when the CCD
   mask yields fewer used pixels than the image width — it writes only
@@ -429,14 +593,39 @@ driver for Nikon Coolscans:
   the knee, and a B&W frame duly landed at 87% with samples at the rail. The
   band is asymmetric now. Raising a target is not safe unless the band above it
   is looked at too.
-- **Otsu plus morphological opening in `film_bounds`.** Now load-bearing in a
-  second place: metering crops to it, so a bad edge would mis-expose rather
-  than only mis-report registration. It still fails safe -- an undetected edge
-  returns the whole window, which is what metering did before -- but the
-  threshold is worth improving on its own merits. It currently cuts at a
-  fixed fraction of the clear level, the rule nkscan explicitly rejects because
-  it "lands in the wrong population" when the proportion of film in the pass
-  changes. Self-contained and testable against the prescans already stored.
+- **~~Otsu plus morphological opening in `film_bounds`.~~ The question is the
+  wrong one, and the harness that says so is stranded on a branch.**
+
+  `film_bounds` is load-bearing in a second place: metering crops to it, so a
+  bad edge mis-exposes rather than only mis-reporting registration. It fails
+  safe -- an undetected edge returns the whole window, which is what metering
+  did before -- and this entry used to argue that its fixed fraction of the
+  clear level should become Otsu, the rule nkscan prefers because a fixed
+  fraction "lands in the wrong population" when the proportion of film in the
+  pass changes.
+
+  **`tools/film_edge_study.py` measures that, and it is not on `main`.** It sits
+  on `analysis/film-edge-study` (2026-09-13), the only local branch never merged
+  -- 424 lines, offline, running against the stored prescans, comparing eight
+  rules including `fixed`, `otsu` and a scale-free `ratio_gap`. Two things it
+  records up front, both of which change what is worth doing:
+
+  * **The fraction almost never fires.** The `CLEAR_RATIO` gate short-circuits
+    first on nearly every real prescan, so *whatever decides abstention* is the
+    load-bearing part -- not the cut. Replacing the cut with Otsu leaves the
+    part that actually decides untouched, and Otsu has no notion of "these are
+    one population", which is precisely what the gate provides.
+  * **The corpus contains none of the object `film_bounds` is calibrated
+    against.** Every bright band in it is clear C-41 *film base*, strongly
+    orange at R:B 3-7 -- not the neutral empty aperture at R:B ~0.93 that the
+    docstring is written for. They are different physical objects.
+
+  So: do not implement Otsu on the strength of the old entry. Land the harness
+  first, run it against the 217-entry library, and let the numbers say what the
+  rule should be. The harness is incomplete in one visible way -- its docstring
+  points at `--render` for the cases needing a human and `main()` defines only
+  `--root` and `--json`.
+
   (The variance-based `detect_frame` this item used to name has been deleted;
   it was documented as unreliable and nothing called it.)
 
@@ -462,13 +651,82 @@ driver for Nikon Coolscans:
 - **IR dust removal** — NegPy does it, and does it well. The point of this
   driver is handing the infrared plane over untouched.
 
+## What the gates do not cover
+
+Found 2026-09-19, reading the repo rather than the code. `make all` is green --
+ruff clean, `make type` clean, 947 passed and 3 skipped in 31 s -- and `make
+verify` is red with the sixteen entries at the top of this file. Most of what
+follows lives in the gap between those two.
+
+- **The `hardware` and `slow` pytest markers are declared, documented, and used
+  by nothing.** `pyproject.toml` declares both, `addopts = "-m 'not hardware'"`
+  deselects one, CLAUDE.md gives `uv run pytest tests/ -m hardware` as a
+  workflow, and the README says "a test that genuinely needs the device is
+  marked `hardware` and is skipped by default". Measured: 950 tests collected,
+  `-m hardware` collects **0**, `-m slow` collects **0**.
+
+  "The suite stays runnable with no scanner" is true only because there are no
+  hardware tests at all, so the deselection reads as a protection that exists.
+  Every hardware confirmation is a manual session hand-written into this file --
+  a defensible choice for a device that wedges, and not what the docs describe.
+  Either write the handful of tests or say plainly that confirmation is manual;
+  declared-deselected-empty is the worst of the three.
+
+- **`make type` checks about a third of the tree and silences the rules that
+  find bugs.** The target excludes `tests/` and `tools/` and ignores six rule
+  classes, `unresolved-attribute` and `invalid-argument-type` among them. So
+  `tools/gui.py` -- 4,840 lines, the largest file here and the one an operator
+  actually drives -- gets **zero** type checking. A full `uv run ty check`
+  reports 148 diagnostics where `make type` reports none.
+
+  Most of the 148 are numpy and tifffile stub noise, which is presumably why the
+  ignores exist. The same silencing hides real ones: `tools/uniformity.py:496`
+  subscripts and `.shape`s `solved[key]` on a path where it is `None`. Worth
+  either widening the target or writing in the Makefile why it is this narrow.
+
+- **Three TIFF cross-implementation tests are permanently skipped**, because
+  they want `scans/negatives/*.tif` and `scans/` is gitignored and not on this
+  machine either. They are the only tests that put the built-in reader and
+  `tifffile` against *real* scanner output rather than synthetic fixtures --
+  which is the claim the README makes for `tests/test_tiff.py`. Cheap to fix:
+  217 real `library/*/scan.tif` are sitting right there.
+
+- **The largest file in the repo has no design doc.** `tools/gui.py` is 4,840
+  lines against `direct.py`'s 3,229. Twelve plan docs cover decisions as small
+  as the gain register being a digital multiplier; none covers the window, and
+  the three that mention it do so in passing. Its 2,007-line test file is the
+  only specification of what it is supposed to do.
+
+  Not documentation for its own sake: it is why the two window-only divergences
+  in "Known problems" above went unnoticed. Nothing states what the window
+  should do differently from the command line tools, so nothing makes a
+  divergence visible as one.
+
+- **Twenty-seven merged branches are still present locally.** Every local branch
+  except `analysis/film-edge-study` is merged into `main`. Harmless in itself,
+  and it is how the film-edge harness got stranded: the one branch carrying
+  unmerged work is invisible in a list of twenty-eight.
+
 ## Do not lose
 
-`library/`, `calibration/` and `previews/` are gitignored and hold data that
-cannot be re-derived without the scanner — including the vignette study's nine
-600 dpi passes with their raw bytes and shading references. A `git clean -xdf`
-or a fresh clone would destroy them. Back `library/` up before anything
-aggressive.
+`library/` and `previews/` are gitignored and hold data that cannot be
+re-derived without the scanner — including the vignette study's nine 600 dpi
+passes with their raw bytes and shading references. A `git clean -xdf` or a
+fresh clone would destroy them. Back `library/` up before anything aggressive.
+
+**`calibration/` is not in that class**, though this file used to list it
+alongside. It holds one cached shading reference, it costs ~22 s to
+re-measure, and every library entry already keeps its own `shading.npz` beside
+its pixels. It is also not on disk at all at the moment, so `--reuse` currently
+falls through to a real calibration. Listing a one-file cache beside an
+irreplaceable 12 GB library only dilutes the warning that matters.
+
+**`demo/` is not in that class either, and it is 6.3 GB.** `make run-demo` files
+into `demo/library`, which now holds 274 entries — more than the real library's
+217. Every one is re-derivable by definition, being decoded from a library
+entry's raw bytes. The .gitignore comment says the demo "leaves no trace",
+which is true of git and reads as "costs nothing". Nothing prunes it and
+nothing caps it.
 
 ## Process
 
