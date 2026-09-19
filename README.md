@@ -263,6 +263,27 @@ copy understates how much is at the rail. Infrared is not in it: it is a dust
 measurement rather than an exposure, and on traditional black and white it
 merely traces green.
 
+**Every panel says what you have changed, and puts it back.** A panel header
+reads `Scan · 3` with a `↺` beside it when three of its controls differ from
+what the window shipped with, and both appear only then -- a reset button that is
+always there is one more thing to read past. The arrow resets that panel;
+right-clicking any single control offers `Reset to '1800'` for just that one; and
+**Restore settings ...** in the header puts everything back. Your keyboard
+shortcuts and your presets are left alone, because the shortcuts have their own
+restore and the presets are things you made.
+
+The defaults are *captured* the moment the window finishes building itself and
+before any settings file is read, rather than written down a second time -- a
+table of default values would disagree with the controls the first time either
+moved, and the disagreement would show up as a reset that quietly changed a
+setting.
+
+**A control that cannot apply greys out with the reason rather than
+disappearing.** JPEG quality is still readable while TIFF is selected, and the
+infrared-at-scan-resolution box is still readable on an RGB pass -- it stays
+ticked, and the driver gates it, so it is a setting that is still *set*. A
+setting you cannot see the state of is worse than a dead control you can.
+
 **Everything has a key, and the keys are yours.** They are ordinary shortcuts
 -- ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R turn the picture, ⌘M flips it, ⌘0
 straightens it, ⌘F fits it and ⌘1 shows it at one scanned pixel per screen

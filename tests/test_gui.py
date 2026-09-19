@@ -2346,3 +2346,75 @@ def test_approvals_are_read_without_loading_a_survey(tmp_path):
     assert gui.read_approved(tmp_path) == ({}, {}, {}, {})
     (folder / "approved.json").write_text("{nope")
     assert gui.read_approved(folder) == ({}, {}, {}, {})
+
+
+# --- defaults you can get back to ------------------------------------------
+
+
+def test_a_tick_means_the_same_however_it_was_written():
+    """A BooleanVar answers True, a hand-edited settings file may hold 1, and
+    JSON round-trips true. All three are the same tick, and a comparison that
+    disagreed would offer to reset a control nobody had touched."""
+    for same in (True, 1, "1", "true", "True", "yes"):
+        assert gui.as_text(same) == "1", same
+    for same in (False, 0, "0", "false", "no"):
+        assert gui.as_text(same) == "0", same
+    assert gui.as_text(" 1800 ") == "1800", "whitespace is not a change"
+    assert gui.as_text("negative") == "negative"
+
+
+def test_only_what_moved_is_counted():
+    defaults = {"dpi": "1800", "ir": True, "frames": "0"}
+    assert gui.changed_controls({"dpi": "1800", "ir": 1}, defaults,
+                                ("dpi", "ir")) == ()
+    assert gui.changed_controls({"dpi": "3600", "ir": False}, defaults,
+                                ("dpi", "ir")) == ("dpi", "ir")
+    # Order follows the panel's own order, so a message reads the way the
+    # controls are laid out.
+    assert gui.changed_controls({"ir": False, "dpi": "900"}, defaults,
+                                ("dpi", "ir")) == ("dpi", "ir")
+
+
+def test_a_control_with_no_recorded_default_is_left_alone():
+    """It means the control did not exist when the defaults were taken, and
+    inventing one is how a reset button starts changing things nobody set."""
+    assert gui.changed_controls({"mystery": "x"}, {"dpi": "1800"},
+                                ("mystery",)) == ()
+
+
+def test_every_remembered_setting_can_be_reset():
+    """A setting that persists but sits in no panel is one an operator can move
+    and never put back. This is the test that makes adding a control to
+    `REMEMBERED` force a decision about where its reset lives."""
+    reachable = {name for panel in gui.PANEL_CONTROLS.values()
+                 for name in panel} | set(gui.PANEL_LESS)
+    missing = [name for name in gui.REMEMBERED if name not in reachable]
+    assert not missing, f"no reset reaches: {missing}"
+
+
+def test_the_panels_name_real_controls_and_do_not_overlap():
+    """A name in two panels would be reset twice and counted twice; a name in
+    none is the case above."""
+    seen = []
+    for panel in gui.PANEL_CONTROLS.values():
+        seen.extend(panel)
+    assert len(seen) == len(set(seen)), "a control is in two panels"
+    # Film's controls are the film fields, not `v_` variables; everything else
+    # should be a remembered control or the one deliberate extra.
+    known = set(gui.REMEMBERED) | set(gui.REMEMBERED_FILM) | {
+        "roll", "frame", "subject", "notes", "mono_channel"}
+    assert not set(seen) - known, set(seen) - known
+
+
+def test_the_settings_payload_carries_every_section():
+    """The regression this guards actually shipped: `_remember` built its payload
+    without the `rolls` key, and because the file is written whole that did not
+    merely fail to save the rolls table's "Last opened" -- it erased it on every
+    save. A section in `settings.SECTIONS` that the payload omits is silently
+    destroyed, so the check is against that list rather than a hand-kept one."""
+    import inspect
+    from rps7200 import settings as settings_module
+
+    source = inspect.getsource(gui.ScannerGui._remember)
+    for section in settings_module.SECTIONS:
+        assert f'"{section}"' in source, section

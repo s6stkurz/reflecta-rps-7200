@@ -101,6 +101,58 @@ REMEMBERED = ("dpi", "predpi", "ir", "fast_ir", "film", "expmode", "exposure",
               "shading", "meter", "dryrun", "correct", "fine", "aim", "reverse",
               "frames", "startat", "outfmt", "jpegq", "adjuststep")
 
+#: Which controls each left-hand panel owns, keyed by the title in its header.
+#: The header uses this to say how many of them differ from their default and to
+#: reset exactly those. Data rather than a walk of the widget tree, so the count
+#: and the reset can both be tested without Tk.
+#:
+#: `mono` is absent deliberately: `_sync_film` derives it from the film type, so
+#: resetting the film resets it, and offering it separately would offer a control
+#: that immediately disagrees with the one above it.
+PANEL_CONTROLS = {
+    "Scan": ("dpi", "predpi", "ir", "fast_ir", "film", "mono_channel",
+             "expmode", "exposure", "shading"),
+    "Transport": ("fine", "aim", "reverse"),
+    "Roll": ("frames", "startat", "meter", "dryrun", "correct"),
+    "Film": ("stock", "roll", "frame", "process", "subject", "notes", "tags"),
+    "Save scans to": ("outfmt", "jpegq"),
+}
+
+#: Remembered settings that belong to no panel, so "Restore settings ..." can
+#: still reach them. `adjuststep` lives on the window rather than on the frame
+#: adjuster precisely so it is not re-chosen seventeen times a roll, which
+#: leaves it with no header to sit under.
+PANEL_LESS = ("adjuststep",)
+
+
+def as_text(value) -> str:
+    """A control's value as one canonical string, for comparing.
+
+    Ticks are the awkward ones. A `BooleanVar` answers `True`, a settings file
+    edited by hand may hold `1`, and JSON round-trips `true` -- all three are
+    the same tick, and a comparison that disagreed would offer to reset a
+    control nobody had touched. Everything else is its own text, stripped, so
+    `" 1800"` and `"1800"` are not a change either.
+    """
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    text = str(value).strip()
+    return {"true": "1", "yes": "1", "false": "0", "no": "0"}.get(
+        text.lower(), text)
+
+
+def changed_controls(values: dict, defaults: dict, names) -> tuple:
+    """Which of `names` have been moved off their default, in order.
+
+    A name with no recorded default is skipped rather than counted: it means the
+    control did not exist when the defaults were taken, and inventing a default
+    for it is how a reset button starts changing things nobody set.
+    """
+    return tuple(name for name in names
+                 if name in defaults
+                 and as_text(values.get(name, "")) != as_text(defaults[name]))
+
+
 #: What a preset carries: the scan settings, and nothing about the film in the
 #: transport or where the files go.
 PRESET_KEYS = ("dpi", "predpi", "ir", "fast_ir", "film", "expmode", "exposure",
@@ -250,6 +302,13 @@ class ScannerGui:
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
         self._loaded_roll = None             # which roll folder is open, if any
+        #: What each control was built holding, taken between `_build` and
+        #: `_restore`. The panels' headers and every reset are measured against
+        #: it. See `_take_defaults`.
+        self.defaults: dict = {}
+        self._panel_marks: dict = {}         # title -> (count label, reset button)
+        self._panel_boxes: dict = {}         # title -> the LabelFrame
+        self._panel_job = None               # a pending recount
         self._saves: queue.Queue = queue.Queue()
 
         # -- the two live time estimates -----------------------------------
@@ -271,7 +330,13 @@ class ScannerGui:
         root.geometry(self.remembered["window"].get("geometry") or "1280x860")
         root.minsize(900, 600)
         self._build()
+        # Between the two, deliberately: this is the one moment the window holds
+        # its shipped defaults and nothing a settings file has said.
+        self._take_defaults()
+        self._bind_control_menus()
+        self._watch_controls()
         self._restore()
+        self._refresh_panels()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         # One binding at the root, dispatched by what the pointer is actually
         # over. Binding per widget did not work: the panel's children sit on
@@ -293,6 +358,8 @@ class ScannerGui:
                    command=self.on_about).pack(side="left")
         ttk.Button(head, text="Shortcuts ...",
                    command=self.on_shortcuts).pack(side="left", padx=6)
+        ttk.Button(head, text="Restore settings ...",
+                   command=self.on_restore_settings).pack(side="left")
         self.v_state = tk.StringVar(value="opening ...")
         ttk.Label(head, textvariable=self.v_state).pack(side="right")
         self.light = tk.Canvas(head, width=14, height=14, highlightthickness=0)
@@ -400,6 +467,12 @@ class ScannerGui:
                 "window": window,
                 "presets": self.presets,
                 "shortcuts": self.shortcut_overrides,
+                # Carried through rather than rebuilt: `_note_roll_opened` is
+                # the only writer and it writes into `self.remembered`. Leaving
+                # this key out did not merely fail to save it -- it *erased* it,
+                # because the payload is written whole, so the rolls table's
+                # "Last opened" column never survived a launch.
+                "rolls": self.remembered.get("rolls") or {},
             }, self._settings_path)
         except Exception as exc:                         # noqa: BLE001
             self._say(f"could not save the settings: {exc}")
@@ -769,6 +842,212 @@ class ScannerGui:
             for child in widget.winfo_children():
                 self._bind_scroll(child, wheel, touchpad)
 
+    def _panel(self, parent, title: str):
+        """A group box whose header says what in it has been changed.
+
+        `labelwidget` rather than `text`, which is the only way Tk will put
+        anything but a string in a group's header -- and a reset that lives
+        anywhere but the header of the thing it resets is a reset you have to go
+        looking for.
+
+        The count and the button appear only when something differs from its
+        default, which is NegPy's arrangement and for the same reason: a reset
+        button that is always there is one more thing to read past on every
+        panel, every launch.
+        """
+        box = ttk.LabelFrame(parent, padding=8)
+        header = ttk.Frame(box)
+        ttk.Label(header, text=title).pack(side="left")
+        count = ttk.Label(header, foreground="#a8761f")
+        reset = ttk.Button(header, text="↺", width=2,
+                           command=lambda t=title: self.on_reset_panel(t))
+        box.configure(labelwidget=header)
+        self._panel_marks[title] = (count, reset)
+        self._panel_boxes[title] = box
+        return box
+
+    # -- defaults, and getting back to them --------------------------------
+
+    def _control(self, name: str):
+        """The variable behind a control name, whichever kind it is.
+
+        The panels hold two sorts: the window's own `v_<name>`, and the film
+        fields, which live in `self.fields` because they are written as a block.
+        A reset has to reach both, and nothing else should have to know which is
+        which.
+        """
+        own = getattr(self, f"v_{name}", None)
+        return own if own is not None else self.fields.get(name)
+
+    def _resettable_names(self) -> tuple:
+        """Every control a reset can reach, panels first then the homeless."""
+        names = [n for panel in PANEL_CONTROLS.values() for n in panel]
+        return tuple(names) + PANEL_LESS
+
+    def _take_defaults(self) -> None:
+        """Remember what every control was built holding.
+
+        Called between `_build` and `_restore`, which is the one moment the
+        window shows its shipped defaults and nothing else. **Captured rather
+        than written down**: a table of default values would be a second copy of
+        what the `_build_*` methods set, and the two would disagree the first
+        time either moved -- as a reset button that quietly changed a setting.
+        """
+        self.defaults = {}
+        for name in self._resettable_names():
+            variable = self._control(name)
+            if variable is not None:
+                self.defaults[name] = variable.get()
+
+    def _values(self, names) -> dict:
+        """What those controls hold now."""
+        out = {}
+        for name in names:
+            variable = self._control(name)
+            if variable is not None:
+                out[name] = variable.get()
+        return out
+
+    def _watch_controls(self) -> None:
+        """Recount a panel's changes whenever one of its controls moves."""
+        for name in self._resettable_names():
+            variable = self._control(name)
+            if variable is not None:
+                variable.trace_add("write", lambda *_a: self._panels_changed())
+
+    def _panels_changed(self) -> None:
+        """Ask for a recount, once, however many variables just moved.
+
+        A trace fires per variable, and `_restore`, a preset and a roll's own
+        settings each write a dozen in a row -- recounting on every one would
+        redraw five headers twelve times for one action.
+        """
+        if self._panel_job is None:
+            self._panel_job = self._later(60, self._refresh_panels)
+
+    def _refresh_panels(self) -> None:
+        self._panel_job = None
+        for title, (count, reset) in self._panel_marks.items():
+            names = PANEL_CONTROLS.get(title, ())
+            changed = changed_controls(self._values(names), self.defaults, names)
+            if changed:
+                count.configure(text=f"· {len(changed)}")
+                count.pack(side="left", padx=(5, 0))
+                reset.pack(side="left", padx=(5, 0))
+            else:
+                # Cleared as well as unpacked. An unpacked label keeps its text,
+                # which is invisible and still wrong -- and the next thing to
+                # read that text believes it.
+                count.configure(text="")
+                count.pack_forget()
+                reset.pack_forget()
+
+    def _reset_names(self, names) -> list:
+        """Put those controls back, and say which ones actually moved."""
+        moved = []
+        for name in changed_controls(self._values(names), self.defaults, names):
+            variable = self._control(name)
+            if variable is None:
+                continue
+            try:
+                variable.set(self.defaults[name])
+            except tk.TclError:
+                continue
+            moved.append(name)
+        if moved:
+            # The same four the preset path calls, for the same reason: the
+            # variables are set, and these are what carry them into the session
+            # and into the labels that describe them.
+            self._sync_format()
+            self._sync_exposure()
+            self._sync_film()
+            self._show_estimate()
+            self._refresh_panels()
+        return moved
+
+    def on_reset_panel(self, title: str) -> None:
+        """The header's arrow: that panel, and nothing else."""
+        moved = self._reset_names(PANEL_CONTROLS.get(title, ()))
+        if moved:
+            self._say(f"{title}: put back {', '.join(moved)}")
+
+    def on_reset_control(self, name: str) -> None:
+        was = self.defaults.get(name)
+        if self._reset_names((name,)):
+            self._say(f"put {name} back to {was!r}")
+
+    def on_restore_settings(self) -> None:
+        """Every control back to what the window shipped with.
+
+        Not the shortcuts -- they have their own restore in their own editor, and
+        sweeping them up here would mean an operator who wanted his dpi back lost
+        his keys with it. Not the presets either: those are things he made.
+        """
+        names = self._resettable_names()
+        changed = changed_controls(self._values(names), self.defaults, names)
+        if not changed:
+            messagebox.showinfo("Restore settings",
+                                "Every control is already at its default.")
+            return
+        if not messagebox.askokcancel(
+            "Restore settings",
+            f"Put {len(changed)} control"
+            f"{'s' if len(changed) != 1 else ''} back to the defaults this "
+            f"window shipped with?\n\n"
+            "Your keyboard shortcuts and your presets are left alone -- the "
+            "shortcuts have their own restore, in their own editor. So is the "
+            "output folder, which has its own Clear.",
+        ):
+            return
+        moved = self._reset_names(names)
+        self._say(f"restored {len(moved)} controls to their defaults")
+
+    def _bind_control_menus(self) -> None:
+        """Right-click any resettable control to put just that one back.
+
+        The widgets are found by the variable each is bound to rather than
+        registered at every creation site: twenty call sites that each have to
+        remember to register is twenty places to forget, and the variable is
+        already the thing that identifies a control.
+
+        Right-click rather than the double-click NegPy uses on its sliders,
+        because these are entries and comboboxes -- double-click there already
+        means select-a-word, and taking it would break typing to gain a reset.
+        """
+        wanted = {}
+        for name in self._resettable_names():
+            variable = self._control(name)
+            if variable is not None:
+                wanted[str(variable)] = name
+        for box in self._panel_boxes.values():
+            for widget in _descendants(box):
+                for option in ("textvariable", "variable"):
+                    try:
+                        bound = str(widget.cget(option))
+                    except tk.TclError:
+                        continue
+                    name = wanted.get(bound)
+                    if name is None:
+                        continue
+                    for sequence in MENU_EVENTS:
+                        widget.bind(sequence,
+                                    lambda e, n=name: self._control_menu(e, n))
+                    break
+
+    def _control_menu(self, event: tk.Event, name: str) -> str:
+        """One item, and it says so when there is nothing to undo."""
+        if name not in self.defaults:
+            return "break"
+        default = self.defaults[name]
+        menu = tk.Menu(self.root, tearoff=0)
+        if changed_controls(self._values((name,)), self.defaults, (name,)):
+            menu.add_command(label=f"Reset to {default!r}",
+                             command=lambda n=name: self.on_reset_control(n))
+        else:
+            menu.add_command(label=f"Already {default!r}", state="disabled")
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
     def _scrollable(self, parent: ttk.PanedWindow) -> ttk.Frame:
         """A left column that scrolls, because it is taller than the window.
 
@@ -793,7 +1072,7 @@ class ScannerGui:
         return inner
 
     def _build_scan(self, parent: ttk.Frame) -> None:
-        box = ttk.LabelFrame(parent, text="Scan", padding=8)
+        box = self._panel(parent, "Scan")
         box.pack(fill="x")
 
         row = ttk.Frame(box)
@@ -841,8 +1120,12 @@ class ScannerGui:
         self.c_fast_ir = ttk.Checkbutton(
             box, text="infrared at scan resolution", variable=self.v_fast_ir,
             command=self._show_estimate)
+        # Packed once, here, and greyed by `_sync_infrared` -- not packed and
+        # unpacked by it, which is what it used to do.
+        self.c_fast_ir.pack(anchor="w", padx=(20, 0))
         self.l_fast_ir = ttk.Label(box, text="", foreground="#555555",
                                    wraplength=240, justify="left")
+        self.l_fast_ir.pack(anchor="w", padx=(38, 0))
         self.l_ir = ttk.Label(box, text="", foreground="#8a6d00",
                               wraplength=240, justify="left")
 
@@ -913,7 +1196,7 @@ class ScannerGui:
                   foreground="#777").pack(anchor="w")
 
     def _build_transport(self, parent: ttk.Frame) -> None:
-        box = ttk.LabelFrame(parent, text="Transport", padding=8)
+        box = self._panel(parent, "Transport")
         box.pack(fill="x", pady=(8, 0))
 
         row = ttk.Frame(box)
@@ -958,7 +1241,7 @@ class ScannerGui:
                         text="reverse the direction").pack(anchor="w")
 
     def _build_roll(self, parent: ttk.Frame) -> None:
-        box = ttk.LabelFrame(parent, text="Roll", padding=8)
+        box = self._panel(parent, "Roll")
         box.pack(fill="x", pady=(8, 0))
         for label, var, default in (("frames", "v_frames", "6"),
                                     ("start at", "v_startat", "1")):
@@ -1000,7 +1283,7 @@ class ScannerGui:
             anchor="w", pady=(4, 0))
 
     def _build_film(self, parent: ttk.Frame) -> None:
-        box = ttk.LabelFrame(parent, text="Film", padding=8)
+        box = self._panel(parent, "Film")
         box.pack(fill="x", pady=(8, 0))
         self.fields = {}
         for key in ("stock", "roll", "frame", "process", "subject", "notes",
@@ -1014,7 +1297,7 @@ class ScannerGui:
             self.fields[key] = var
 
     def _build_output(self, parent: ttk.Frame) -> None:
-        box = ttk.LabelFrame(parent, text="Save scans to", padding=8)
+        box = self._panel(parent, "Save scans to")
         box.pack(fill="x", pady=(8, 0))
         self.v_outdir = tk.StringVar(
             value=str(self.session.out_dir) if self.session.out_dir else "")
@@ -1033,15 +1316,21 @@ class ScannerGui:
             ttk.Radiobutton(fmt, text=label, value=value,
                             variable=self.v_outfmt,
                             command=self._sync_format).pack(side="left")
-        # Packed and unpacked by `_sync_format`, so the knob is only there when
-        # it does something. TIFF has no quality to set.
+        # Always there, and greyed by `_sync_format` when the format has no
+        # quality to set. It used to be packed and unpacked: a control that
+        # disappears is a control whose state you cannot see, and the value is
+        # still in force the moment JPEG is chosen again.
         self.quality_row = ttk.Frame(box)
-        ttk.Label(self.quality_row, text="Quality").pack(side="left")
+        self.quality_row.pack(fill="x", pady=(4, 0))
+        self.l_jpegq = ttk.Label(self.quality_row, text="Quality")
+        self.l_jpegq.pack(side="left")
         self.v_jpegq = tk.StringVar(value=str(export.DEFAULT_QUALITY))
-        spin = ttk.Spinbox(self.quality_row, from_=60, to=100, width=5,
-                           textvariable=self.v_jpegq,
-                           command=self._sync_format)
+        self.b_jpegq = spin = ttk.Spinbox(
+            self.quality_row, from_=60, to=100, width=5,
+            textvariable=self.v_jpegq, command=self._sync_format)
         spin.pack(side="left", padx=(6, 0))
+        self.l_jpegq_why = ttk.Label(self.quality_row, foreground="#999")
+        self.l_jpegq_why.pack(side="left", padx=(8, 0))
         # On leaving the box, not on every keystroke: typing "8" on the way to
         # "85" must not be corrected to 60 under the operator's hands.
         spin.bind("<FocusOut>", lambda _e: self._sync_format())
@@ -1061,10 +1350,11 @@ class ScannerGui:
         # saved verbatim and read back as a typo next launch.
         if self.v_jpegq.get() != str(quality):
             self.v_jpegq.set(str(quality))
-        if jpeg:
-            self.quality_row.pack(fill="x", pady=(4, 0))
-        else:
-            self.quality_row.pack_forget()
+        # Greyed with the reason rather than hidden, so the number in force is
+        # always readable -- it is what a switch back to JPEG will use.
+        for widget in (self.l_jpegq, self.b_jpegq):
+            widget.configure(state="normal" if jpeg else "disabled")
+        self.l_jpegq_why.configure(text="" if jpeg else "TIFF has none to set")
         self.v_outnote.set(output_note(self.session.out_format))
 
     def _build_preview(self, parent: ttk.PanedWindow) -> None:
@@ -1315,17 +1605,17 @@ class ScannerGui:
         else:
             self.c_ir.configure(state="normal")
             self.l_ir.pack_forget()
-        # Only meaningful when there is an infrared plane to acquire, so it
-        # appears with one and goes away with it rather than sitting greyed out.
-        if self.v_ir.get():
-            self.c_fast_ir.pack(anchor="w", padx=(20, 0))
-            self.l_fast_ir.configure(
-                text=infrared_cost_note(dpi_or(self.v_dpi.get()),
-                                        self.v_fast_ir.get()))
-            self.l_fast_ir.pack(anchor="w", padx=(38, 0))
-        else:
-            self.c_fast_ir.pack_forget()
-            self.l_fast_ir.pack_forget()
+        # Greyed rather than hidden when there is no infrared plane for it to
+        # govern. It stays ticked while it is greyed and the driver gates it on
+        # `infrared` for itself, so this is a setting that is still *set* -- and
+        # a set thing you cannot see is worse than a dead control you can.
+        infrared = self.v_ir.get()
+        self.c_fast_ir.configure(state="normal" if infrared else "disabled")
+        self.l_fast_ir.configure(
+            text=infrared_cost_note(dpi_or(self.v_dpi.get()),
+                                    self.v_fast_ir.get()) if infrared
+            else "nothing to tie: an RGB pass has no infrared plane",
+            foreground="#555555" if infrared else "#999999")
         self._show_estimate()
 
     def _show_exposure(self) -> None:
@@ -5972,6 +6262,17 @@ class _ContactSheet:
             return bool(self.top.winfo_exists())
         except tk.TclError:
             return False
+
+
+def _descendants(widget):
+    """Every widget under `widget`, depth first, including nested frames.
+
+    `winfo_children` is one level, and the panels are rows inside rows -- a
+    label and its combobox sit in a frame of their own so they line up.
+    """
+    for child in widget.winfo_children():
+        yield child
+        yield from _descendants(child)
 
 
 def _sash_positions(pane) -> list[int]:
