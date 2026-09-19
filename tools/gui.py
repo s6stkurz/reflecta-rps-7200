@@ -28,6 +28,7 @@ import json
 import math
 import queue
 import shutil
+import subprocess
 import sys
 import time
 import threading
@@ -248,6 +249,7 @@ class ScannerGui:
         self.sheet = None                    # the contact sheet, while it is open
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
+        self._loaded_roll = None             # which roll folder is open, if any
         self._saves: queue.Queue = queue.Queue()
 
         # -- the two live time estimates -----------------------------------
@@ -1605,7 +1607,13 @@ class ScannerGui:
         if self.browser is not None and self.browser.alive():
             self.browser.top.lift()
             return
-        rolls = rolls_on_disk(self.session.rolls)
+        rolls = rolls_on_disk(self.session.rolls, self.session.root)
+        # When each was last opened lives in the settings file, not in the roll
+        # folder -- see `_note_roll_opened` -- so it is laid over here.
+        stored = self.remembered.get("rolls") or {}
+        for summary in rolls:
+            summary["opened"] = (
+                stored.get(Path(summary["folder"]).name) or {}).get("opened")
         if not rolls:
             messagebox.showinfo(
                 "Open a roll",
@@ -1613,6 +1621,206 @@ class ScannerGui:
                 "appears there the first time a strip is walked or scanned.")
             return
         self.browser = _RollBrowser(self, rolls)
+
+    # -- acting on rolls from the browser ----------------------------------
+
+    def _note_roll_opened(self, folder) -> None:
+        """Record when this roll was last opened, for the browser's column.
+
+        In the settings file rather than in the roll folder: opening a roll to
+        look at it must not modify it, and a roll on a read-only backup should
+        still open.
+        """
+        rolls = self.remembered.setdefault("rolls", {})
+        if not isinstance(rolls, dict):
+            rolls = self.remembered["rolls"] = {}
+        rolls[Path(folder).name] = {"opened": time.time()}
+        self._remember()
+
+    def _roll_is_busy(self, summaries, what: str) -> bool:
+        """Refuse to touch a roll the scanner or the window is using."""
+        if self.busy:
+            messagebox.showinfo(
+                what, "The scanner is working. Wait for it to finish -- a roll "
+                "it is writing into is not one to move or remove.")
+            return True
+        loaded = self._loaded_roll and Path(self._loaded_roll).resolve()
+        for summary in summaries:
+            if loaded and Path(summary["folder"]).resolve() == loaded:
+                messagebox.showinfo(
+                    what, f"{summary['roll']} is the roll open in this window. "
+                    "Open another, or restart, before changing it on disk.")
+                return True
+        return False
+
+    def on_export_rolls(self, summaries) -> None:
+        """Every frame of these rolls into one folder, re-corrected.
+
+        From the library entries with *today's* correction code, which is the
+        repo's standing contract for anything exported -- not a copy of the
+        `frameNN.tif` the roll wrote at the time. On a thread for the same reason
+        `on_save_all` is: a long roll is minutes of re-correction.
+        """
+        if self._saving:
+            messagebox.showinfo(
+                "Export", "Still writing the last batch. The log says where it "
+                "has got to.")
+            return
+        plans = [(s, roll_exports(s)) for s in summaries]
+        total = sum(len(items) for _, items in plans)
+        if not total:
+            messagebox.showinfo(
+                "Export",
+                "None of the frames in "
+                + (summaries[0]["roll"] if len(summaries) == 1 else "those rolls")
+                + " has a library entry left, so there is nothing to re-correct "
+                  "from.\n\nThe roll's own frame files are still in its folder.")
+            return
+        missing = sum(len(s["done"]) - len(items) for s, items in plans)
+        folder = filedialog.askdirectory(
+            parent=self.root, title="Export these frames into ...",
+            initialdir=str(self.session.out_dir or Path.home()))
+        if not folder:
+            return
+        fmt = self.session.out_format
+        if not messagebox.askokcancel(
+            "Export",
+            f"Write {total} frame{'s' if total != 1 else ''} into "
+            f"{Path(folder).name} as {fmt.upper()}, re-corrected from the "
+            f"library at full resolution.\n\n"
+            + (f"{missing} scanned frame(s) have no library entry left and are "
+               f"skipped -- the log names them.\n\n" if missing > 0 else "")
+            + "This takes a moment per frame. Nothing already there is "
+              "overwritten.\n\nStart?",
+        ):
+            return
+
+        quality = jpeg_quality(self.v_jpegq.get())
+        mono, channel = self.v_mono.get(), self.v_mono_channel.get()
+        out = Path(folder)
+        self._saving = True
+        self._say(f"exporting {total} frames into {out} ...")
+
+        def run() -> None:
+            written = 0
+            for summary, items in plans:
+                for item in items:
+                    try:
+                        path = _unclaimed(
+                            out / f"{_safe(summary['roll'])}_"
+                                  f"{batch_name(item, fmt)}")
+                        said = self._deliver_one(item, path, quality, mono,
+                                                 channel)
+                    except Exception as exc:             # noqa: BLE001
+                        self._saves.put(("line", f"could not export "
+                                                 f"{summary['roll']} frame "
+                                                 f"{item.number}: {exc}"))
+                        continue
+                    if said:
+                        written += 1
+                        self._saves.put(("line", f"exported {said}"))
+            self._saves.put(("done", written, total))
+
+        threading.Thread(target=run, daemon=True, name="export-rolls").start()
+
+    def on_duplicate_roll(self, summary) -> None:
+        """A second copy of the roll under the next free name.
+
+        So a strip can be rescanned at different settings without losing the
+        first scan *or* the approvals that went with it -- the positions and
+        turns in `approved.json`, which are the one thing here that cannot be
+        rebuilt from the library.
+        """
+        if self._roll_is_busy([summary], "Duplicate"):
+            return
+        source = Path(summary["folder"])
+        try:
+            target = duplicate_name(source)
+        except ValueError as exc:
+            messagebox.showerror("Duplicate", str(exc))
+            return
+        if not messagebox.askokcancel(
+            "Duplicate",
+            f"Copy {source.name} to {target.name} -- "
+            f"{human_size(summary['size'])}.\n\nThe copy keeps the walk, the "
+            "approvals and the frames already scanned, so the original is safe "
+            "to rescan over.\n\nCopy?",
+        ):
+            return
+        try:
+            shutil.copytree(source, target)
+        except OSError as exc:
+            messagebox.showerror("Duplicate", f"Could not copy: {exc}")
+            return
+        self._say(f"duplicated {source.name} to {target.name}")
+
+    def on_delete_rolls(self, summaries) -> None:
+        """Remove roll folders. Never the library entries.
+
+        Everything in a roll folder is re-derivable from the library **except
+        `approved.json`** -- the frames and prescans can be rebuilt, the
+        operator's own positions and turns cannot. That is what the question
+        below says, because it is the only thing actually being risked.
+        """
+        if self._roll_is_busy(summaries, "Delete"):
+            return
+        names = ", ".join(s["roll"] for s in summaries)
+        size = human_size(sum(s["size"] for s in summaries))
+        decided = sum(1 for s in summaries
+                      if any(read_approved(s["folder"])[1:3]))
+        if not messagebox.askokcancel(
+            "Delete",
+            f"Delete {len(summaries)} roll folder"
+            f"{'s' if len(summaries) != 1 else ''} -- {names} -- and {size} "
+            f"with them?\n\nThe library entries are NOT touched: the raw bytes "
+            f"stay, and the frames can be rebuilt from them.\n\n"
+            + (f"What does go for good is the positions and turns you set by "
+               f"hand: {decided} of these has an approved.json, and that is the "
+               f"one thing here the library cannot rebuild.\n\n"
+               if decided else "")
+            + "Delete?",
+        ):
+            return
+        for summary in summaries:
+            try:
+                shutil.rmtree(summary["folder"])
+                self._say(f"deleted roll folder {summary['roll']}")
+            except OSError as exc:
+                self._say(f"could not delete {summary['roll']}: {exc}")
+
+    def on_rename_roll(self, summary) -> None:
+        """Rename the folder. The manifests keep the roll's own name inside."""
+        if self._roll_is_busy([summary], "Rename"):
+            return
+        source = Path(summary["folder"])
+        wanted = simpledialog.askstring(
+            "Rename", f"A new folder name for {source.name}:",
+            initialvalue=source.name, parent=self.root)
+        if not wanted or wanted.strip() == source.name:
+            return
+        target = source.with_name(_safe(wanted.strip()))
+        if target.exists():
+            messagebox.showerror("Rename", f"{target.name} is already there.")
+            return
+        try:
+            source.rename(target)
+        except OSError as exc:
+            messagebox.showerror("Rename", f"Could not rename: {exc}")
+            return
+        self._say(f"renamed {source.name} to {target.name}")
+
+    def on_reveal_roll(self, summary) -> None:
+        """Show the folder in the platform's own file manager."""
+        folder = str(summary["folder"])
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", folder], check=False)
+            elif sys.platform.startswith("win"):
+                subprocess.run(["explorer", folder], check=False)
+            else:
+                subprocess.run(["xdg-open", folder], check=False)
+        except OSError as exc:
+            self._say(f"could not open {folder}: {exc}")
 
     def open_roll(self, folder) -> None:
         """Load one roll folder: its walk, its decisions, and how far it got.
@@ -1624,6 +1832,8 @@ class ScannerGui:
         thing that still does.
         """
         folder = Path(folder)
+        self._note_roll_opened(folder)
+        self._loaded_roll = folder
         try:
             out = read_survey(folder)
         except (OSError, ValueError, KeyError) as exc:
@@ -3456,25 +3666,7 @@ def read_survey(folder) -> dict:
     turn = int(manifest.get("rotation") or 0)
     mirrored = bool(manifest.get("flipped"))
 
-    offsets: dict[int, float] = {}
-    rotations: dict[int, int] = {}
-    flips: dict[int, bool] = {}
-    entries: dict[int, str] = {}
-    approved_path = folder / "approved.json"
-    if approved_path.exists():
-        for record in json.loads(approved_path.read_text()).get("frames", []):
-            number = int(record["number"])
-            if record.get("offset_mm"):
-                offsets[number] = float(record["offset_mm"])
-            # `is not None` rather than truthiness: an explicit zero is a
-            # decision here, and a file written before this existed has no key
-            # at all rather than a zero.
-            if record.get("rotation") is not None:
-                rotations[number] = int(record["rotation"]) % 360
-            if record.get("flipped") is not None:
-                flips[number] = bool(record["flipped"])
-            if record.get("reference_entry"):
-                entries[number] = record["reference_entry"]
+    offsets, rotations, flips, entries = read_approved(folder)
 
     results = []
     for record in manifest.get("frames", []):
@@ -3610,7 +3802,153 @@ def restorable(settings: dict) -> dict:
     return out
 
 
-def roll_summary(folder) -> dict | None:
+def roll_exports(summary: dict) -> list:
+    """One item per frame of this roll that can be exported, in frame order.
+
+    An item carries what `_deliver_one` and `batch_name` need and nothing else:
+    the library entry to re-correct from, the arrangement that roll decided on,
+    and enough meta to name the file. Built here rather than in the window so
+    the join -- frame to entry to orientation -- is testable without Tk.
+
+    Frames with no library entry are left out. Export re-corrects from the
+    entries, so a frame without one cannot be exported at all, and a caller that
+    wants to say so compares this against `summary["done"]`.
+    """
+    from types import SimpleNamespace
+
+    folder = summary["folder"]
+    _, rotations, flips, _ = read_approved(folder)
+    settings = summary.get("settings") or {}
+    turn = int(settings.get("rotation") or 0)
+    mirrored = bool(settings.get("flipped"))
+    channels = 4 if settings.get("infrared") else 3
+    out = []
+    for number in sorted(summary.get("entries") or {}):
+        out.append(SimpleNamespace(
+            entry=Path(summary["entries"][number]),
+            # The frame's own decision where it made one, the roll's otherwise --
+            # the same precedence `_orientation_for` uses on the way out.
+            rotation=rotations.get(number, turn),
+            flipped=flips.get(number, mirrored),
+            image=None,
+            kind="frame",
+            number=number,
+            seq=-number,
+            meta={"resolution_dpi": settings.get("resolution") or 0,
+                  "channels": channels},
+        ))
+    return out
+
+
+def duplicate_name(folder) -> Path:
+    """The next free `<name>-2`, `-3`, ... beside `folder`.
+
+    Same idea as `session._unclaimed` for files: a duplicate must never land on
+    something that is already there, and the roll it would land on is somebody's
+    scan.
+    """
+    folder = Path(folder)
+    for suffix in range(2, 1000):
+        candidate = folder.with_name(f"{folder.name}-{suffix}")
+        if not candidate.exists():
+            return candidate
+    raise ValueError(f"no free name beside {folder.name}")
+
+
+def read_approved(folder):
+    """The operator's own per-frame decisions: `(offsets, rotations, flips, entries)`.
+
+    `approved.json` is the one thing in a roll folder that is **not** derivable
+    from the library -- the frames and the prescans can be rebuilt, these
+    positions and turns cannot -- which is why Delete names it and why this is
+    read on its own rather than only as part of loading a whole survey.
+    """
+    folder = Path(folder)
+    offsets: dict[int, float] = {}
+    rotations: dict[int, int] = {}
+    flips: dict[int, bool] = {}
+    entries: dict[int, str] = {}
+    approved_path = folder / "approved.json"
+    if not approved_path.exists():
+        return offsets, rotations, flips, entries
+    try:
+        records = json.loads(approved_path.read_text()).get("frames", [])
+    except (OSError, ValueError):
+        return offsets, rotations, flips, entries
+    for record in records:
+        try:
+            number = int(record["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if record.get("offset_mm"):
+            offsets[number] = float(record["offset_mm"])
+        # `is not None` rather than truthiness: an explicit zero is a decision
+        # here, and a file written before this existed has no key at all rather
+        # than a zero.
+        if record.get("rotation") is not None:
+            rotations[number] = int(record["rotation"]) % 360
+        if record.get("flipped") is not None:
+            flips[number] = bool(record["flipped"])
+        if record.get("reference_entry"):
+            entries[number] = record["reference_entry"]
+    return offsets, rotations, flips, entries
+
+
+def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
+    """Every library entry that belongs to a roll, by roll name and frame.
+
+    One glob for the whole library rather than one per roll: there are two
+    hundred entries and a dozen rolls, and asking the question per roll turns a
+    listing into a quadratic one.
+
+    The join is on `film.frame`, which `ScanSession._file` sets to
+    ``"{roll}-{NN}"`` for every roll frame. Nothing in a roll manifest records
+    its entries -- the entry is created on the writer thread *after* the frame's
+    record is written, and writing that file from both threads is a hazard worth
+    not introducing for a convenience.
+
+    `library.entries()` cannot be used here: it returns the records and throws
+    away the folder each came from, which is the only part this needs.
+    """
+    out: dict[str, dict[int, Path]] = {}
+    root = Path(library_root)
+    if not root.is_dir():
+        return out
+    for record_path in root.glob("*/scan.json"):
+        try:
+            record = json.loads(record_path.read_text())
+        except (OSError, ValueError):
+            continue
+        frame = str(((record.get("film") or {}).get("frame") or "")).strip()
+        roll, _, number = frame.rpartition("-")
+        if not roll or not number.isdigit():
+            continue
+        out.setdefault(roll, {})[int(number)] = record_path.parent
+    return out
+
+
+def folder_created(folder) -> float:
+    """When this roll was made, as a timestamp.
+
+    The **folder name wins when it parses as a date**, and that is the point
+    rather than a fallback: a roll duplicated or copied to another disk gets a
+    fresh birthtime while its name still says when the film was scanned. The
+    name is the roll's own answer; the filesystem's is about the copy.
+    """
+    folder = Path(folder)
+    try:
+        stamp = time.mktime(time.strptime(folder.name[:10], "%Y-%m-%d"))
+    except (ValueError, OverflowError):
+        stamp = 0.0
+    try:
+        status = folder.stat()
+    except OSError:
+        return stamp
+    from_disk = float(getattr(status, "st_birthtime", 0) or status.st_ctime or 0)
+    return stamp or from_disk
+
+
+def roll_summary(folder, entries: dict | None = None) -> dict | None:
     """What a roll folder holds, without reading a single pixel.
 
     This is what the browser lists from, so it has to be cheap: a roll
@@ -3635,8 +3973,28 @@ def roll_summary(folder) -> dict | None:
     settings = progress.get("settings") or manifest.get("settings") or {}
     wanted = wanted_frames(manifest, progress)
     done = scanned_frames(progress)
+    # `stat` only, no pixels: a roll directory can hold 38 frames at 142 MB, and
+    # the whole point of this function is that listing a shelf of them is cheap.
+    sizes, newest = 0, 0.0
+    for child in folder.iterdir():
+        try:
+            status = child.stat()
+        except OSError:
+            continue
+        if child.is_file():
+            sizes += status.st_size
+        newest = max(newest, float(status.st_mtime))
+    filed = dict(entries or {})
     return {
         "folder": folder,
+        "created": folder_created(folder),
+        #: When it was last scanned into, which is not when it was created.
+        "modified": newest,
+        "size": sizes,
+        #: Which frames still have a library entry. Export re-corrects from
+        #: those, so a roll without them cannot be exported and should say so in
+        #: the list rather than at the end of a failed export.
+        "entries": {n: p for n, p in filed.items()},
         "roll": progress.get("roll") or manifest.get("roll") or folder.name,
         "walked": survey_path.exists(),
         "scanned": roll_path.exists(),
@@ -3656,24 +4014,118 @@ def roll_summary(folder) -> dict | None:
     }
 
 
-def rolls_on_disk(root) -> list[dict]:
+def rolls_on_disk(root, library_root=None) -> list[dict]:
     """Every roll under `root`, newest first, as `roll_summary` describes them.
 
     Sorted by the directory name because that is the date the session wrote --
     `rolls/2026-09-14` -- which orders correctly as text and does not move when
-    a file inside is touched, as an mtime would.
+    a file inside is touched, as an mtime would. The table re-sorts it anyway;
+    this is the order it opens on.
+
+    `library_root` is where the entries are looked for, once for the whole
+    listing. Without it the rolls still list, and none of them knows whether it
+    can be exported.
     """
     root = Path(root)
     if not root.is_dir():
         return []
+    index = roll_entry_index(library_root) if library_root else {}
     out = []
     for folder in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
         if not folder.is_dir():
             continue
         summary = roll_summary(folder)
-        if summary is not None:
-            out.append(summary)
+        if summary is None:
+            continue
+        summary["entries"] = dict(index.get(summary["roll"], {}))
+        out.append(summary)
     return out
+
+
+#: What the table can be ordered by, and how. Each is a key function over a
+#: summary; the browser sorts with these rather than on the rendered text, so
+#: "2 of 10" does not sort before "2 of 4" and 900 MB does not sort before 1 GB.
+SORT_KEYS = {
+    "roll": lambda r: str(r["roll"]).lower(),
+    "frames": lambda r: (len(r["remaining"]), -len(r["wanted"])),
+    "dpi": lambda r: int(r["resolution"] or 0),
+    "film": lambda r: str(r["film"] or ""),
+    "created": lambda r: r["created"],
+    "opened": lambda r: r.get("opened") or 0.0,
+    "size": lambda r: r["size"],
+}
+
+
+def roll_cells(summary: dict) -> tuple:
+    """One table row: what this roll is and how far it got, column by column.
+
+    Kept out of the widget so the rendering is testable and so the sort keys in
+    `SORT_KEYS` can order on the *values* rather than on these strings -- "2 of
+    10" sorts before "2 of 4" as text, and 900 MB before 1 GB.
+    """
+    wanted, done = len(summary["wanted"]), len(summary["done"])
+    if not summary["scanned"]:
+        frames = f"walked, {wanted}"
+    elif wanted and done >= wanted:
+        frames = f"finished, {done}"
+    elif wanted:
+        frames = f"{done} of {wanted}"
+    else:
+        frames = f"{done} scanned"
+    depth = str(summary["resolution"] or "--")
+    if summary["resolution"]:
+        depth += " RGBI" if summary["infrared"] else " RGB"
+    # The **folder** name leads, not the manifest's roll name, because the
+    # folder is what is unique, what Finder shows and what Rename changes. A
+    # duplicate keeps the original's roll name inside its manifest, so two rows
+    # read identically without this -- which is exactly when you need to tell
+    # them apart. The roll's own name follows when the two differ.
+    folder = Path(summary["folder"]).name
+    named = (folder if folder == summary["roll"]
+             else f"{folder}  ({summary['roll']})")
+    return (
+        named,
+        frames,
+        depth,
+        str(summary["film"] or "--"),
+        when(summary["created"]),
+        when(summary.get("opened")),
+        human_size(summary["size"]),
+    )
+
+
+def matching(rolls: list[dict], text: str = "",
+             unfinished_only: bool = False) -> list[dict]:
+    """The rolls a search box and a tick leave showing.
+
+    Case-insensitive, and across the roll's name *and* its film, because "the
+    slide one" is as likely a way to look for a roll as its date is.
+    """
+    wanted = (text or "").strip().lower()
+    out = []
+    for roll in rolls:
+        if unfinished_only and not roll["remaining"]:
+            continue
+        if wanted and wanted not in (f"{roll['roll']} {roll['film'] or ''}"
+                                     .lower()):
+            continue
+        out.append(roll)
+    return out
+
+
+def human_size(count: int) -> str:
+    """Bytes as something a person can compare at a glance."""
+    for unit, scale in (("GB", 1e9), ("MB", 1e6), ("kB", 1e3)):
+        if count >= scale:
+            return f"{count / scale:.1f} {unit}"
+    return f"{count} B"
+
+
+def when(stamp: float | None) -> str:
+    """A timestamp as a date, or a dash. Never the epoch, which reads as 1970."""
+    if not stamp:
+        return "--"
+    return time.strftime("%Y-%m-%d", time.localtime(stamp))
 
 
 def roll_line(summary: dict) -> str:
@@ -4728,76 +5180,209 @@ class _FrameAdjuster:
 
 
 class _RollBrowser:
-    """The rolls on disk, newest first, with how far each one got.
+    """The rolls on disk as a table: sortable, filterable, and actionable.
 
-    A list rather than a folder picker, and the reason is the whole feature:
-    what decides which roll to open is whether it has frames left, and
-    `filedialog.askdirectory` cannot say that. It shows directory names, and a
-    roll directory is named by its date.
+    A table rather than a folder picker, and the reason is the whole feature:
+    what decides which roll to act on is how far it got, when it was last
+    opened and how much disk it is holding, and `filedialog.askdirectory`
+    shows directory names. A roll directory is named by its date.
 
-    Unfinished rolls are marked, because those are what anyone opens this for.
+    Everything it lists comes from two small JSON files and `stat`, never from
+    pixels -- a roll can hold 38 frames at 142 MB and a listing that opened them
+    would be unusable.
     """
 
-    UNFINISHED = "#e8b64c"                   # the sheet's amber, again
-    DONE = "#5b7a5b"
+    #: `(key, heading, width, anchor)`. The key is both the column id and the
+    #: name in `SORT_KEYS`, so a heading click needs no translation table.
+    COLUMNS = (
+        ("roll", "Roll", 155, "w"),
+        ("frames", "Frames", 95, "w"),
+        ("dpi", "Resolution", 100, "w"),
+        ("film", "Film", 80, "w"),
+        ("created", "Created", 95, "w"),
+        ("opened", "Last opened", 95, "w"),
+        ("size", "Size", 80, "e"),
+    )
+    UNFINISHED = "#a8761f"                   # the sheet's amber, legible on white
+    ORPHANED = "#8a3b3b"                     # nothing left in the library
 
     def __init__(self, gui, rolls):
         self.gui = gui
         self.rolls = list(rolls)
+        self.shown: list[dict] = []
+        #: Column and direction. Opens on newest first, which is what anybody
+        #: coming here for "the roll I was just doing" wants.
+        self._sort = ("created", True)
+
         self.top = tk.Toplevel(gui.root)
         self.top.title("Rolls")
-        self.top.geometry("660x420")
+        self.top.geometry("940x520")
         self.top.transient(gui.root)
-
         outer = ttk.Frame(self.top, padding=10)
         outer.pack(fill="both", expand=True)
-        left = sum(1 for r in self.rolls if r["remaining"])
-        ttk.Label(
-            outer, justify="left", wraplength=620,
-            text=(f"{len(self.rolls)} roll"
-                  f"{'s' if len(self.rolls) != 1 else ''} under "
-                  f"{gui.session.rolls}"
-                  + (f", {left} with frames left" if left else ""))
-        ).pack(anchor="w", pady=(0, 8))
 
-        row = ttk.Frame(outer)
-        row.pack(fill="both", expand=True)
-        self.list = tk.Listbox(row, activestyle="none", highlightthickness=0,
-                               font=("TkDefaultFont", 11))
-        bar = ttk.Scrollbar(row, orient="vertical", command=self.list.yview)
-        self.list.configure(yscrollcommand=bar.set)
+        head = ttk.Frame(outer)
+        head.pack(fill="x", pady=(0, 8))
+        ttk.Label(head, text="find").pack(side="left")
+        self.v_find = tk.StringVar()
+        find = ttk.Entry(head, textvariable=self.v_find, width=24)
+        find.pack(side="left", padx=(6, 12))
+        find.bind("<KeyRelease>", lambda _e: self._fill())
+        self.v_unfinished = tk.BooleanVar(value=False)
+        ttk.Checkbutton(head, text="only unfinished",
+                        variable=self.v_unfinished,
+                        command=self._fill).pack(side="left")
+        self.v_count = tk.StringVar()
+        ttk.Label(head, textvariable=self.v_count,
+                  foreground="#777").pack(side="right")
+
+        body = ttk.Frame(outer)
+        body.pack(fill="both", expand=True)
+        self.table = ttk.Treeview(
+            body, columns=[key for key, *_ in self.COLUMNS],
+            show="headings", selectmode="extended")
+        for key, heading, width, anchor in self.COLUMNS:
+            self.table.heading(key, text=heading,
+                               command=lambda k=key: self._sort_by(k))
+            self.table.column(key, width=width, anchor=anchor,
+                              stretch=(key == "roll"))
+        bar = ttk.Scrollbar(body, orient="vertical", command=self.table.yview)
+        self.table.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
-        self.list.pack(side="left", fill="both", expand=True)
-        for index, summary in enumerate(self.rolls):
-            self.list.insert("end", roll_line(summary))
-            if summary["remaining"]:
-                self.list.itemconfigure(index, foreground=self.UNFINISHED)
-            elif summary["scanned"]:
-                self.list.itemconfigure(index, foreground=self.DONE)
-        if self.rolls:
-            self.list.selection_set(0)
-            self.list.focus_set()
-        self.list.bind("<Double-Button-1>", lambda _e: self._open())
-        self.list.bind("<Return>", lambda _e: self._open())
+        self.table.pack(side="left", fill="both", expand=True)
+        self.table.tag_configure("unfinished", foreground=self.UNFINISHED)
+        self.table.tag_configure("orphaned", foreground=self.ORPHANED)
+        self.table.bind("<Double-Button-1>", lambda _e: self._open())
+        self.table.bind("<Return>", lambda _e: self._open())
+        for sequence in MENU_EVENTS:
+            self.table.bind(sequence, self._menu)
         self.top.bind("<Escape>", lambda _e: self.top.destroy())
 
         buttons = ttk.Frame(outer)
         buttons.pack(fill="x", pady=(10, 0))
         ttk.Button(buttons, text="Close",
                    command=self.top.destroy).pack(side="right")
-        ttk.Button(buttons, text="Open", default="active",
-                   command=self._open).pack(side="right", padx=(0, 8))
-        ttk.Label(buttons, foreground="#777", wraplength=430, justify="left",
-                  text=("Opening a roll with frames left offers to finish it, "
-                        "and puts its own settings back.")).pack(side="left")
+        for text, call in (("Open", self._open),
+                           ("Export ...", self._export),
+                           ("Duplicate", self._duplicate),
+                           ("Delete", self._delete)):
+            ttk.Button(buttons, text=text,
+                       command=call).pack(side="right", padx=(0, 6))
+        self.v_note = tk.StringVar(
+            value="Unfinished rolls are marked. Opening one offers to finish it.")
+        ttk.Label(buttons, textvariable=self.v_note, foreground="#777",
+                  wraplength=420, justify="left").pack(side="left")
+
+        self._fill()
+
+    # -- what is showing ---------------------------------------------------
+
+    def _fill(self) -> None:
+        """Apply the filter and the sort, and redraw the rows."""
+        rows = matching(self.rolls, self.v_find.get(),
+                        self.v_unfinished.get())
+        key, descending = self._sort
+        rows.sort(key=SORT_KEYS.get(key, SORT_KEYS["created"]),
+                  reverse=descending)
+        self.shown = rows
+        self.table.delete(*self.table.get_children())
+        for index, summary in enumerate(rows):
+            tags = []
+            if summary["remaining"]:
+                tags.append("unfinished")
+            # Scanned, but nothing left in the library to re-correct from, so
+            # Export cannot work on it. Said in the list rather than at the end
+            # of a failed export.
+            if summary["done"] and not summary["entries"]:
+                tags.append("orphaned")
+            self.table.insert("", "end", iid=str(index),
+                              values=roll_cells(summary), tags=tuple(tags))
+        left = sum(1 for r in rows if r["remaining"])
+        self.v_count.set(f"{len(rows)} of {len(self.rolls)} shown"
+                         + (f", {left} unfinished" if left else ""))
+
+    def _sort_by(self, key: str) -> None:
+        current, descending = self._sort
+        self._sort = (key, not descending if key == current else key != "roll")
+        self._fill()
+
+    def _reload(self) -> None:
+        """Re-read the shelf. After anything that changed it on disk."""
+        self.rolls = rolls_on_disk(self.gui.session.rolls,
+                                   self.gui.session.root)
+        for summary in self.rolls:
+            stored = (self.gui.remembered.get("rolls") or {}).get(
+                Path(summary["folder"]).name) or {}
+            summary["opened"] = stored.get("opened")
+        self._fill()
+
+    def _selected(self) -> list[dict]:
+        return [self.shown[int(iid)] for iid in self.table.selection()
+                if iid.isdigit() and int(iid) < len(self.shown)]
+
+    def _one(self, what: str):
+        picked = self._selected()
+        if len(picked) != 1:
+            messagebox.showinfo(what, f"Pick one roll to {what.lower()}.")
+            return None
+        return picked[0]
+
+    # -- the actions -------------------------------------------------------
+
+    def _menu(self, event: tk.Event) -> str:
+        row = self.table.identify_row(event.y)
+        if row and row not in self.table.selection():
+            self.table.selection_set(row)
+        menu = tk.Menu(self.top, tearoff=0)
+        menu.add_command(label="Open", command=self._open)
+        menu.add_command(label="Export ...", command=self._export)
+        menu.add_separator()
+        menu.add_command(label="Duplicate", command=self._duplicate)
+        menu.add_command(label="Rename ...", command=self._rename)
+        menu.add_command(label="Show in file manager", command=self._reveal)
+        menu.add_separator()
+        menu.add_command(label="Delete", command=self._delete)
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
 
     def _open(self) -> None:
-        picked = self.list.curselection()
-        if not picked:
+        summary = self._one("Open")
+        if summary is None:
             return
-        summary = self.rolls[int(picked[0])]
         self.top.destroy()
         self.gui.open_roll(summary["folder"])
+
+    def _export(self) -> None:
+        picked = self._selected()
+        if not picked:
+            messagebox.showinfo("Export", "Pick at least one roll to export.")
+            return
+        self.gui.on_export_rolls(picked)
+
+    def _duplicate(self) -> None:
+        summary = self._one("Duplicate")
+        if summary is not None:
+            self.gui.on_duplicate_roll(summary)
+            self._reload()
+
+    def _rename(self) -> None:
+        summary = self._one("Rename")
+        if summary is not None:
+            self.gui.on_rename_roll(summary)
+            self._reload()
+
+    def _reveal(self) -> None:
+        summary = self._one("Show")
+        if summary is not None:
+            self.gui.on_reveal_roll(summary)
+
+    def _delete(self) -> None:
+        picked = self._selected()
+        if not picked:
+            messagebox.showinfo("Delete", "Pick at least one roll to delete.")
+            return
+        self.gui.on_delete_rolls(picked)
+        self._reload()
 
     def alive(self) -> bool:
         try:

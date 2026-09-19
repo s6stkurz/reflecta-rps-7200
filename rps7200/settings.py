@@ -29,7 +29,13 @@ PATH_ENV = "RPS7200_SETTINGS"
 #: The shape, and what an empty file means. Anything not listed is dropped on
 #: load: a key that no longer exists in the window should not survive in the
 #: file for ever.
-SECTIONS = ("controls", "film", "output", "window", "presets", "shortcuts")
+#:
+#: `rolls` is per-roll state the roll folder itself must not carry -- when each
+#: was last opened, keyed by folder name. It lives here because opening a roll
+#: to look at it should not modify it, and a roll on a read-only backup should
+#: still open.
+SECTIONS = ("controls", "film", "output", "window", "presets", "shortcuts",
+            "rolls")
 
 
 def path(where: str | Path | None = None) -> Path:
