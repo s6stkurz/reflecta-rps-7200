@@ -42,10 +42,11 @@ bit is not evidence, not a new problem.
 
 - **Nothing has ever been scanned at the protocol revision `main` is on.**
   `PROTOCOL_REVISION` went to 3 when fast infrared became the default (7244cc1,
-  merged as 1b74ee7). Across all 217 library entries: **112 at revision 1, 36 at
-  revision 2, 69 prescans carrying none, and zero at revision 3.**
+  merged as 1b74ee7) and to 4 when the bit was gated on `infrared` (2026-09-19).
+  Across all 217 library entries: **112 at revision 1, 36 at revision 2, 69
+  prescans carrying none, and none at all at 3 or 4.**
 
-  The sweep that justified the change is real and is not in question -- but it
+  The sweep that justified revision 3 is real and is not in question -- but it
   was taken by `tools/fast_ir_probe.py` on the feature branch, with the flag
   passed *explicitly*, before the default moved. Every entry from it reads
   revision 2. What has never run on the device is the path an ordinary scan now
@@ -53,9 +54,12 @@ bit is not evidence, not a new problem.
   default rather than as an argument.
 
   So the next scan anybody takes is the first exercise of it. Worth doing
-  deliberately -- one RGB pass and one RGBI pass, filed -- rather than finding
-  out in the middle of a roll. The two entries below are the kind of thing that
-  hides in an unexercised default: both were found by reading, not by scanning.
+  deliberately -- one RGB pass and one RGBI pass, filed with `RPS7200_DEBUG=1`,
+  checking that the entries read `protocol_revision: 4` and that the RGB one
+  carries no fast-infrared bit -- rather than finding out in the middle of a
+  roll. Two of the entries below are the kind of thing that hides in an
+  unexercised default: both were found by reading, not by scanning, and both
+  are now fixed without the device having confirmed either.
 
 - **`make verify` reports 16 problems and has for a week, so it no longer
   reports anything.** All sixteen are the byte-14 ladder passes, filed between
@@ -77,11 +81,12 @@ bit is not evidence, not a new problem.
   recorded so that a red `verify` is known to mean these sixteen and nothing
   else, until someone makes it green.
 
-- **`library.corrected()` calls a shortfall a choice, and tells the operator
-  so.** It treats *any* non-empty `calibration.skipped` as a deliberate
-  `shading=False`. `verify` reads the identical field and correctly splits it:
-  a `skipped` reason other than an explicit request is "a thing that went
-  wrong". The two functions read one field with opposite meanings.
+- ~~**`library.corrected()` calls a shortfall a choice, and tells the operator
+  so.**~~ **Fixed 2026-09-19.** It treated *any* non-empty
+  `calibration.skipped` as a deliberate `shading=False`, where `verify` reads
+  the identical field and correctly splits it: a `skipped` reason other than an
+  explicit request is "a thing that went wrong". The two read one field with
+  opposite meanings, and the wrong one was what Save As printed.
 
   For anything scanned today they agree -- `scan()` can only ever write
   `"shading=False (explicit)"`, because it raises `ShadingUnavailable`
@@ -91,6 +96,14 @@ bit is not evidence, not a new problem.
   reason recorded at all and come back as "no reference"), and the two 7200 dpi
   passes of 2026-09-11, which carry "this pass is 10344 columns but the
   reference covers 5172".
+
+  Those four now read `"raw -- correction was asked for"`, and the 23 that
+  genuinely passed `shading=False` still read `"deliberately raw"`. The
+  sentinel moved to `SHADING_SKIPPED_EXPLICIT` in `direct.py` and is imported
+  rather than written out twice, so the producer and its two consumers cannot
+  drift apart again; one of the tests pins the constant rather than a copy of
+  its text, because a reworded string would otherwise silently make every
+  legacy entry read as deliberate again.
 
   **The wrong label reaches a person.** Save As prints the provenance verbatim,
   so saving one of those entries says *"(deliberately raw)"* -- telling the
@@ -310,39 +323,55 @@ bit is not evidence, not a new problem.
   `20260828T010052Z` has blue saturated on 2.07% of pixels from a metering
   error, and `strip6-01..03` are tagged blue-clipped / not-a-reference. Their
   raw bytes are fine; do not prune them as junk.
-- **The window sets the fast-infrared quality bit on RGB passes; both command
-  line tools deliberately clear it.** `set_mode` ORs `QUALITY_FAST_INFRARED` in
-  whenever `fast_infrared` is truthy, and `scan()` forwards it **without gating
-  on `infrared`** -- so it lands on a `passes=ONE_PASS_COLOR` pass just as
-  readily. `tools/scan.py` guards against that (`if not args.ir: args.fast_ir
-  = False`, with a comment saying the bit governs nothing when there is no
-  plane to acquire), and so does `tools/scan_roll.py` (`args.fast_ir and
-  args.ir`). The window passes `v_fast_ir` bare at all three of its call
-  sites, and `Scan.fast_infrared` defaults to `True`.
+- ~~**The window sets the fast-infrared quality bit on RGB passes; both command
+  line tools deliberately clear it.**~~ **Fixed 2026-09-19, and
+  `PROTOCOL_REVISION` moved to 4 with it.** `set_mode` ORs
+  `QUALITY_FAST_INFRARED` in whenever `fast_infrared` is truthy, and `scan()`
+  forwarded it **without gating on `infrared`** -- so it landed on a
+  `passes=ONE_PASS_COLOR` pass just as readily. `tools/scan.py` guarded against
+  that (`if not args.ir: args.fast_ir = False`, with a comment saying the bit
+  governs nothing when there is no plane to acquire), and so did
+  `tools/scan_roll.py` (`args.fast_ir and args.ir`). The window passed
+  `v_fast_ir` bare at all three of its call sites, and `Scan.fast_infrared`
+  defaults to `True`.
 
   So: infrared unticked, fast-infrared ticked -- which is what
-  `gui-settings.json` persists -- and an **RGB pass goes out carrying a quality
+  `gui-settings.json` persists -- and an **RGB pass went out carrying a quality
   bit that has only ever been measured on RGBI passes.**
   `docs/fast-infrared-plan.md` characterises it for infrared and says nothing
-  about RGB. It may well be inert; the point is that nobody knows, two of the
-  three callers thought it worth guarding, and the third ships the unmeasured
-  combination by default. Prescans are safe -- `prescan()` takes no
+  about RGB. It may well be inert; the point is that nobody knew, two of the
+  three callers thought it worth guarding, and the third shipped the unmeasured
+  combination by default. Prescans were never affected -- `prescan()` takes no
   `fast_infrared` at all.
 
-  The fix belongs in `scan()` (`fast_infrared and infrared`) rather than in the
-  window, because that closes all three callers at once. It changes the bytes
-  sent to the device, so it moves `PROTOCOL_REVISION`.
+  The gate went into `scan()` (`fast_infrared and infrared`) rather than into
+  the window, so one place closes all three callers and the tools' own guards
+  became redundant rather than load-bearing. `set_mode` is unchanged and still
+  writes what it is told: calibration and metering reach it directly and should
+  not be gated.
 
-- **`--no-fast-ir` is accepted and discarded on the bracket path.**
-  `scan_bracket` takes no `fast_infrared` parameter, and `tools/scan.py`'s
-  bracket call does not pass one -- where the single-scan branch fourteen lines
-  below it does. `--dpi 600 --ir --bracket 3 --no-fast-ir` parses the flag, sets
-  `args.fast_ir = False`, and then runs the bracket's infrared pass tied anyway,
-  because `scan()`'s own default is `True`. Nothing reports it.
+  Measured on the payload, driving a real `scan()` as far as MODE SELECT: an
+  RGB pass asked for the bit sent `0x0088` before and sends `0x0008` after,
+  which is what CyberView sends; RGBI is `0x0088` either way, and `--no-fast-ir`
+  still gives `0x0008`. **Only the RGB row moved**, and none of it has been
+  confirmed on the device -- see the first entry in this section.
+
+- ~~**`--no-fast-ir` is accepted and discarded on the bracket path.**~~
+  **Fixed 2026-09-19**, alongside the entry above. `scan_bracket` took no
+  `fast_infrared` parameter, and `tools/scan.py`'s bracket call passed none --
+  where the single-scan branch fourteen lines below it did. `--dpi 600 --ir
+  --bracket 3 --no-fast-ir` parsed the flag, set `args.fast_ir = False`, and
+  then ran the bracket's infrared pass tied anyway, because `scan()`'s own
+  default is `True`. Nothing reported it.
 
   Worse than a dropped flag usually is: below 1800 dpi the tied pass's *quality*
   was never measured and Stefan waived it (see "Untested" below). `--no-fast-ir`
-  is the escape hatch from that waiver, and on this path it does nothing.
+  is the escape hatch from that waiver, and on this path it did nothing.
+
+  The tests for it subscript `fast_infrared` rather than using `.get()`,
+  deliberately: the key used to be *absent*, and an absent flag reads as False
+  to any default-tolerant check -- which is how it went unnoticed, and which
+  made a first version of the test pass against the unfixed code.
 
 - **`tools/scan.py` and `tools/scan_roll.py` both write the three comparison
   TIFFs to the repo root**, so running them together clobbers one another.
