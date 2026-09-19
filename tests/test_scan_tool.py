@@ -238,3 +238,32 @@ def test_an_rgb_run_with_fast_ir_typed_explicitly_still_sends_nothing(
     s, code = run(tmp_path, monkeypatch, "--fast-ir")
     assert code == 0
     assert s.kwargs[-1]["fast_infrared"] is False
+
+
+def test_a_bracket_ties_its_infrared_pass_like_any_other(tmp_path, monkeypatch):
+    """A bracket takes one RGBI pass and the rest RGB, so the default has to
+    reach that one pass too -- otherwise `--bracket --ir` quietly costs the
+    ~220 s floor that every other path stopped paying."""
+    s, code = run(tmp_path, monkeypatch, "--ir", "--bracket", "3")
+    assert code == 0
+    assert s.kwargs, "no pass was taken"
+    assert all(k["fast_infrared"] is True for k in s.kwargs), s.kwargs
+
+
+def test_no_fast_ir_reaches_the_brackets_infrared_pass(tmp_path, monkeypatch):
+    """It did not. `scan_bracket` had no `fast_infrared` parameter and the
+    tool's bracket call passed none, so the flag was parsed, stored, and
+    dropped -- the pass ran tied whatever was typed, with nothing said.
+
+    Worth a test of its own rather than trusting the single-pass one beside it:
+    the two call sites are fourteen lines apart in `tools/scan.py` and only one
+    of them had it.
+    """
+    s, code = run(tmp_path, monkeypatch, "--ir", "--bracket", "3",
+                  "--no-fast-ir")
+    assert code == 0
+    assert s.kwargs, "no pass was taken"
+    # Subscripted, not `.get()`: before this was wired the key was simply
+    # absent, and an absent flag reads as False to any default-tolerant check.
+    # That is exactly the bug, so the test has to fail on absence.
+    assert all(k["fast_infrared"] is False for k in s.kwargs), s.kwargs
