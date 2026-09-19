@@ -412,6 +412,27 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
+- **Resuming a roll has never been driven on the scanner.** A roll that dies
+  part-way can now be reopened from *Rolls ...*, which brings back its contact
+  sheet, marks what is scanned, and restores the roll's own settings from its
+  manifest -- resolution, film, infrared, metering, and the exposure/gain/offset
+  the scanner was asked for. The remaining frames then go through the ordinary
+  *Scan chosen frames* path, which rewinds and advances by `SLIDE_NEXT` exactly
+  as a fresh roll does.
+
+  Every part is tested offline against synthetic manifests and driven in the
+  demo window, and **no real roll has ever been resumed** -- for the same reason
+  nothing else about rolls has: a commissioned multi-frame roll on real hardware
+  has still never run. The two things a real run would settle: whether the
+  restored exposure is still the right *request* a year on, and whether the
+  rewind lands where the walk's frame numbers assume when the strip has been
+  taken out and put back.
+
+  One limit by design rather than omission: the shading reference is not stored
+  and cannot be, so a resumed roll calibrates afresh. See
+  `docs/scanner-options-survey.md` for what is left on the scanner side.
+
+
 - **~~Fast infrared~~ -- answered and adopted 2026-09-16. The infrared plane is
   now tied to the resolution asked for.** Quality bit `0x80` removes the
   infrared floor: a tied pass costs `7.46 s + 59.88 ms/line`, an untied one a

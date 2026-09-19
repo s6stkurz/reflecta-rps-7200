@@ -925,6 +925,42 @@ class ScanSession:
             "rotation": self.rotation,
             "flipped": self.flip,
             "only": list(job.only) if job.only is not None else None,
+            # Everything a `Roll` needs to be rebuilt from this file alone, so a
+            # roll that died part-way can be finished later -- a year later, by
+            # which time the window's own `gui-settings.json` has long moved on
+            # to other film. That is the whole reason this is here and not left
+            # to the window: this file describes *this roll*, and it is the only
+            # thing that will still be true about it.
+            #
+            # `device` holds what the scanner was *asked* for rather than what
+            # metering landed on, which is the same distinction
+            # `library.signature` makes: a resumed roll should ask for the same
+            # exposure rather than inherit whatever the window happens to hold,
+            # and where metering was on it still runs again.
+            #
+            # **The shading reference is deliberately not in here.** It is
+            # acquired per session and the CCD mask per pass, so a resumed roll
+            # calibrates afresh. Storing one would be storing something that
+            # cannot be reused, and reusing it would be worse than re-measuring
+            # -- see CLAUDE.md.
+            "settings": {
+                "resolution": job.resolution,
+                "infrared": job.infrared,
+                "fast_infrared": job.fast_infrared,
+                "film": job.film,
+                "meter": job.meter,
+                "mono": job.mono,
+                "mono_channel": job.mono_channel,
+                "prescan_resolution": job.prescan_resolution,
+                "correct": job.correct,
+                "reverse_hold": job.reverse_hold,
+                "max_failures": job.max_failures,
+                "frames": job.frames,
+                "start_at": job.start_at,
+                "only": list(job.only) if job.only is not None else None,
+                "rotation": self.rotation,
+                "flipped": self.flip,
+            },
             "frames": [],
         }
 
@@ -1001,6 +1037,10 @@ class ScanSession:
                             path=surveyed,
                             roll=name,
                         )
+                # The scan's own meta, for the manifest below. Bound out here
+                # because `record` is written for a dry run too, where there is
+                # no scan and no exposure to record.
+                scanned: dict[str, Any] | None = None
                 if rf.error:
                     self._emit("log", text=f"frame {number}: {rf.error}")
                 elif rf.image is not None:
@@ -1013,6 +1053,7 @@ class ScanSession:
                     # is that the carriage reversed: see `_note_reversal`.
                     frame_meta = self._note_reversal(
                         rf.meta, rf.image, rf.prescan)
+                    scanned = frame_meta
                     seq = self._deliver(
                         "frame", label, rf.image, frame_meta,
                         registration=rf.registration, position=rf.position,
@@ -1038,7 +1079,18 @@ class ScanSession:
                     "transport_position": rf.position,
                     "registration": rf.registration,
                     "error": rf.error,
+                    # What a resume needs to know about this frame: whether it
+                    # is finished. A frame that errored is *not* done and gets
+                    # offered again -- that is the case a resume exists for.
+                    "done": bool(rf.error is None and rf.image is not None),
                 }
+                if scanned is not None:
+                    # Per frame rather than only in `settings`, because metering
+                    # each frame is the default and then no single exposure
+                    # describes the roll.
+                    for key in ("exposure", "gain", "offset"):
+                        if scanned.get(key) is not None:
+                            record[key] = scanned[key]
                 if job.dry_run and rf.prescan is not None:
                     record["prescan"] = f"prescan{number:02d}.tif"
                 manifest["frames"].append(record)

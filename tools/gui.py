@@ -57,6 +57,7 @@ from rps7200.session import (                             # noqa: E402
     Approved,
     Result,
     _safe,
+    _unclaimed,
     Calibrate,
     Move,
     Prescan,
@@ -245,6 +246,9 @@ class ScannerGui:
         self._survey_predpi = None
         self._transport = None               # last frame position the device gave
         self.sheet = None                    # the contact sheet, while it is open
+        self.browser = None                  # the rolls list, while it is open
+        self._saving = False                 # a batch save is on a thread
+        self._saves: queue.Queue = queue.Queue()
 
         # -- the two live time estimates -----------------------------------
         # One pass, interpolated from its own line count -- reset whenever the
@@ -431,6 +435,16 @@ class ScannerGui:
             "zoom_fit": lambda: self._set_zoom(0.0),
             "zoom_actual": lambda: self._set_zoom(self._finest()),
             "invert": self._toggle_invert,
+            # The only keys that reach the hardware, and the only ones that ask
+            # first. `roll` is not wrapped because `on_roll` already asks its
+            # own question and naming the cost twice would train the habit of
+            # dismissing both. See `rps7200/shortcuts.py`.
+            "prescan": lambda: self._confirm_then(
+                "a prescan", self._prescan_cost, self.on_prescan),
+            "scan": lambda: self._confirm_then(
+                "a scan of this frame", self._scan_cost, self.on_scan),
+            "roll": self.on_roll,
+            "save_all": self.on_save_all,
             "channel_next": lambda: self._cycle_channel(1),
             "channel_previous": lambda: self._cycle_channel(-1),
             "contact_sheet": self.on_contact_sheet,
@@ -503,6 +517,46 @@ class ScannerGui:
             return False
         return isinstance(widget, (tk.Entry, ttk.Entry, tk.Text,
                                    tk.Spinbox, ttk.Spinbox, ttk.Combobox))
+
+    def _confirm_then(self, what: str, cost, run) -> None:
+        """Ask before a key starts the scanner, then start it.
+
+        The whole reason these actions may have keys at all. `on_prescan` and
+        `on_scan` submit immediately with nothing asked -- which is right for a
+        button, because reaching for one is the decision, and wrong for a key,
+        because a slip is not. So the key asks and the button does not, and both
+        end in the same method.
+
+        `cost` is called rather than passed as text: the estimate depends on the
+        controls as they are *now*, and a string built when the table was made
+        would be describing whatever the window held at start-up.
+        """
+        if self.busy:
+            self._say(f"the scanner is working -- that key starts {what} once "
+                      "it has finished")
+            return
+        if messagebox.askokcancel(
+            what[0].upper() + what[1:],
+            f"Start {what} now?\n\n{cost()}\n\nThe key asks; the button "
+            "does not.", parent=self.root,
+        ):
+            run()
+
+    def _prescan_cost(self) -> str:
+        dpi = self._prescan_dpi()
+        if dpi is None:
+            return "The prescan resolution is not a number."
+        return (f"A framing pass over the whole transport at {dpi} dpi, "
+                f"about {_duration(estimate_seconds(dpi, False))}.")
+
+    def _scan_cost(self) -> str:
+        dpi = self._dpi()
+        if dpi is None:
+            return "The resolution is not a number."
+        per = estimate_seconds(dpi, self.v_ir.get(), self.v_fast_ir.get())
+        return (f"One frame at {dpi} dpi"
+                + (" with infrared" if self.v_ir.get() else "")
+                + f", about {_duration(per)}.")
 
     def _bind_shortcuts(self) -> None:
         """Put the current keys on the window, and take the old ones off.
@@ -932,7 +986,10 @@ class ScannerGui:
         self.b_sheet = ttk.Button(box, text="Contact sheet ...", state="disabled",
                                   command=self.on_contact_sheet)
         self.b_sheet.pack(fill="x", pady=(4, 0))
-        ttk.Button(box, text="Reopen a survey ...",
+        # "Rolls" rather than "Reopen a survey": it now lists both the walks
+        # and the rolls that were scanned from them, and finishing one that
+        # died part-way is the reason most likely to bring anyone here.
+        ttk.Button(box, text="Rolls ...",
                    command=self.on_reopen_survey).pack(fill="x", pady=(4, 0))
         ttk.Label(box, foreground="#777", wraplength=210, justify="left",
                   text=("A dry run walks the strip in about 20 seconds a frame "
@@ -1018,6 +1075,8 @@ class ScannerGui:
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
         self.canvas.bind("<Double-Button-1>", self.on_double_click)
+        self.canvas.bind("<Motion>", self.on_hover)
+        self.canvas.bind("<Leave>", lambda _e: self.v_readout.set(""))
         # The picture on screen is the one an operator wants to turn, and until
         # now it was the only one that could not be: the menu lived on the
         # filmstrip alone, so turning what you were looking at meant finding its
@@ -1054,6 +1113,12 @@ class ScannerGui:
         self.v_zoomtext = tk.StringVar(value="fit")
         ttk.Label(bar, textvariable=self.v_zoomtext, width=7,
                   anchor="e").pack(side="right", padx=(0, 8))
+        # Fixed width and monospaced: it changes on every mouse move, and a
+        # label that resizes with its text drags the whole toolbar with it.
+        self.v_readout = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.v_readout, width=40, anchor="w",
+                  font=("TkFixedFont", 9),
+                  foreground="#888").pack(side="left", padx=(12, 0))
         self.v_caption = tk.StringVar(value="nothing scanned yet")
         ttk.Label(top, textvariable=self.v_caption,
                   foreground="#777").pack(anchor="w", padx=6)
@@ -1519,37 +1584,81 @@ class ScannerGui:
                                 self.v_fast_ir.get()) + 70
 
     def on_reopen_survey(self) -> None:
-        """Open a strip walked earlier instead of walking it again.
+        """The rolls on disk, to look at again or to finish.
 
-        A survey is four minutes of transport and it used to die with the
-        window: `survey.json` has been written since rolls existed and was
-        never read back. Closing the app between walking a strip and deciding
-        on it meant doing the walk twice.
+        A survey is four minutes of transport and a roll is hours of it, and
+        both used to die with the window: `survey.json` has been written since
+        rolls existed and `roll.json` beside it, and neither was ever read back.
+        Closing the app between walking a strip and deciding on it meant walking
+        it twice; a roll that died at frame 11 of 24 could not be picked up at
+        all.
+
+        A list rather than a folder picker, because the thing worth knowing
+        before opening one is how far it got, and no file dialog can say that.
         """
         if self.busy:
             messagebox.showinfo(
-                "Reopen a survey",
+                "Open a roll",
                 "The scanner is working. Wait for it to finish, then try "
-                "again -- reopening replaces whatever survey is loaded now.")
+                "again -- opening a roll replaces whatever is loaded now.")
             return
-        folder = filedialog.askdirectory(
-            title="Reopen a survey", initialdir=str(self.session.rolls))
-        if not folder:
+        if self.browser is not None and self.browser.alive():
+            self.browser.top.lift()
             return
+        rolls = rolls_on_disk(self.session.rolls)
+        if not rolls:
+            messagebox.showinfo(
+                "Open a roll",
+                f"Nothing under {self.session.rolls} yet.\n\nA roll folder "
+                "appears there the first time a strip is walked or scanned.")
+            return
+        self.browser = _RollBrowser(self, rolls)
+
+    def open_roll(self, folder) -> None:
+        """Load one roll folder: its walk, its decisions, and how far it got.
+
+        The settings come back from the manifest rather than from
+        `gui-settings.json`, and that distinction is the whole point of
+        resuming: the window's own settings have moved on to other film, while
+        the manifest still describes *this* roll. A year later it is the only
+        thing that still does.
+        """
+        folder = Path(folder)
         try:
             out = read_survey(folder)
         except (OSError, ValueError, KeyError) as exc:
             messagebox.showerror(
-                "Reopen a survey",
-                f"{Path(folder).name} does not hold a survey this can read.\n\n"
-                f"{exc}\n\nA survey folder has a survey.json and the "
-                "prescanNN.tif files beside it.")
+                "Open a roll",
+                f"{folder.name} does not hold a roll this can read.\n\n"
+                f"{exc}\n\nA roll folder has a survey.json or a roll.json, "
+                "and the prescanNN.tif files beside it.")
             return
+
+        done = out["scanned"]
+        remaining = [n for n in out["wanted"] if n not in done]
+        restored = self._restore_roll_settings(out["settings"])
+
         if not out["results"]:
-            messagebox.showerror(
-                "Reopen a survey",
-                f"{Path(folder).name} has a survey.json but none of its "
-                "prescan files -- there is nothing to show.")
+            # A roll commissioned without a walk has no prescans, so there is
+            # no sheet to show -- but it can still be finished, which is what
+            # matters. Point the plain Roll button at the first frame left.
+            if not remaining:
+                messagebox.showinfo(
+                    "Open a roll",
+                    f"{out['roll']} has no prescans to show and nothing left "
+                    "to scan.")
+                return
+            if restored:
+                self.v_startat.set(str(remaining[0]))
+            messagebox.showinfo(
+                "Open a roll",
+                f"{out['roll']} was scanned without walking the strip first, "
+                f"so there is no contact sheet to show.\n\n"
+                f"{len(done)} frames are done and {len(remaining)} are left. "
+                f"Its settings are back and \"start at\" is set to frame "
+                f"{remaining[0]} -- put the strip in and press Roll.")
+            self._say(f"reopened {out['roll']}: {len(done)} scanned, "
+                      f"{len(remaining)} left, no sheet")
             return
 
         self.survey = out["results"]
@@ -1560,25 +1669,73 @@ class ScannerGui:
         self.b_sheet.configure(state="normal")
         self._redraw_strip()
         self._say(f"reopened {out['roll']}: {len(out['results'])} frames"
+                  + (f", {len(done)} already scanned" if done else "")
                   + (f", {len(out['offsets'])} with a position already set"
                      if out["offsets"] else "")
                   + (f", {len(out['rotations'])} already turned"
                      if out["rotations"] else "")
                   + (f", {sum(out['flips'].values())} flipped"
-                     if any(out["flips"].values()) else ""))
-        # The film is almost certainly not where the walk left it, and only
-        # Stefan can see that. Said rather than guessed at.
-        messagebox.showinfo(
-            "Reopen a survey",
-            f"{len(out['results'])} frames from {out['roll']}.\n\n"
-            "The frame numbers are counted from where that walk started, so "
-            "put the film back to the start of the strip before scanning "
-            "anything -- nothing here can see where it is now.")
+                     if any(out["flips"].values()) else "")
+                  + (f", settings restored: {', '.join(sorted(restored))}"
+                     if restored else ""))
         if self.sheet is not None and self.sheet.alive():
             self.sheet.top.destroy()
         self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"],
                                    rotations=out["rotations"],
-                                   flips=out["flips"])
+                                   flips=out["flips"], done=done)
+        # The film is almost certainly not where the walk left it, and only
+        # Stefan can see that. Said rather than guessed at, and the sentence
+        # differs by what he is about to do.
+        if done and remaining:
+            messagebox.showinfo(
+                "Continue this roll",
+                f"{out['roll']}: {len(done)} of {len(out['wanted'])} frames "
+                f"scanned, {len(remaining)} left "
+                f"({', '.join(str(n) for n in remaining)}).\n\n"
+                "Those are ticked in the sheet and the ones already done are "
+                "not. Its settings are back. Put the strip back at its start "
+                "and press \"Scan chosen frames\" -- the transport rewinds to "
+                "the beginning and advances to each frame itself.\n\n"
+                "It will calibrate again first: the shading reference is "
+                "per session and cannot be carried across one."
+                + (f"\n\nRestored: {', '.join(sorted(restored))}."
+                   if restored else ""))
+        else:
+            messagebox.showinfo(
+                "Open a roll",
+                f"{len(out['results'])} frames from {out['roll']}"
+                + (", all of them already scanned" if done and not remaining
+                   else "")
+                + ".\n\nThe frame numbers are counted from where that walk "
+                "started, so put the film back to the start of the strip "
+                "before scanning anything -- nothing here can see where it is "
+                "now.")
+
+    def _restore_roll_settings(self, settings: dict) -> list[str]:
+        """Put a roll's stored settings back into the controls.
+
+        Returns which ones moved, so the operator is told rather than having
+        the window silently change under him. Each is applied on its own and a
+        bad value costs that control alone -- the same line `_restore` takes
+        about a hand-edited settings file, and for the same reason: this file
+        may be a year old and written by an older version.
+        """
+        moved = []
+        for control, value in restorable(settings).items():
+            variable = getattr(self, f"v_{control}", None)
+            if variable is None:
+                continue
+            try:
+                variable.set(value)
+            except tk.TclError:
+                continue
+            moved.append(control)
+        if moved:
+            self._sync_format()
+            self._sync_exposure()
+            self._sync_film()
+            self._show_estimate()
+        return moved
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=()) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
@@ -1827,6 +1984,19 @@ class ScannerGui:
     def _pump(self) -> None:
         if not self._alive:
             return
+        while True:
+            try:
+                message = self._saves.get_nowait()
+            except queue.Empty:
+                break
+            if message[0] == "line":
+                self._say(message[1])
+            else:
+                self._saving = False
+                _, written, total = message
+                self._say(f"saved {written} of {total} passes"
+                          + ("" if written == total
+                             else " -- the rest are in the log above"))
         while True:
             try:
                 seq, image, problem = self._reads.get_nowait()
@@ -2354,6 +2524,11 @@ class ScannerGui:
         self.menu.add_command(label="Save as ...",
                               accelerator=self.accelerator("save_as"),
                               command=lambda r=target: self.on_save_as(r))
+        shown = sum(1 for r in self.results if not r.hidden)
+        self.menu.add_command(
+            label=f"Save all {shown} passes ..." if shown > 1 else "Save all ...",
+            state="normal" if shown > 1 else "disabled",
+            command=self.on_save_all)
         for label, degrees, action_id in (
                 ("Rotate right 90\u00b0", 90, "rotate_right"),
                 ("Rotate left 90\u00b0", 270, "rotate_left"),
@@ -2391,8 +2566,99 @@ class ScannerGui:
             filetypes=save_as_types(self.session.out_format))
         if not path:
             return
+        said = self._deliver_one(result, path, jpeg_quality(self.v_jpegq.get()),
+                                 self.v_mono.get(), self.v_mono_channel.get())
+        if said:
+            self._say(f"saved {said}")
+
+    def on_save_all(self) -> None:
+        """Every pass of this session into one folder, in one go.
+
+        *Save as ...* is one dialog per pass, which is right for one and is
+        thirty-eight of them after a roll.
+
+        **On a thread, because it is not quick.** Each filed pass is re-read
+        from its library entry and re-corrected at full resolution -- that is
+        what makes it the same picture the operator saw rather than the reduced
+        copy on screen -- and thirty-eight of those is minutes. Doing it on the
+        UI thread would freeze the window for all of them.
+        """
+        passes = [r for r in self.results if not r.hidden
+                  and (r.entry is not None or r.image is not None)]
+        if not passes:
+            messagebox.showinfo("Save all", "No passes to save yet.")
+            return
+        if self._saving:
+            messagebox.showinfo(
+                "Save all", "Still writing the last batch. It says so in the "
+                "log as each file lands.")
+            return
+        folder = filedialog.askdirectory(
+            parent=self.root, title="Save every pass into ...",
+            initialdir=str(self.session.out_dir or Path.home()))
+        if not folder:
+            return
+        fmt = self.session.out_format
+        filed = sum(1 for r in passes if r.entry is not None)
+        if not messagebox.askokcancel(
+            "Save all",
+            f"Write {len(passes)} passes into {Path(folder).name} as "
+            f"{fmt.upper()}.\n\n"
+            + (f"{filed} of them are re-corrected from their library entries at "
+               f"full resolution, which takes a moment each.\n\n"
+               if filed else "")
+            + (f"{len(passes) - filed} are the reduced previews on screen, "
+               "because their full-resolution pixels are not filed yet -- the "
+               "log says which.\n\n" if len(passes) - filed else "")
+            + "Nothing already there is overwritten; a clashing name gets the "
+              "next free one.\n\nStart?",
+        ):
+            return
+
+        # Read here, on the UI thread, and handed over. A worker that reached
+        # back into a Tk variable would work until the day it did not.
         quality = jpeg_quality(self.v_jpegq.get())
-        mono = self.v_mono.get()
+        mono, channel = self.v_mono.get(), self.v_mono_channel.get()
+        out = Path(folder)
+        self._saving = True
+        self._say(f"saving {len(passes)} passes into {out} ...")
+
+        def run() -> None:
+            written = 0
+            for result in passes:
+                try:
+                    path = _unclaimed(out / batch_name(result, fmt))
+                    said = self._deliver_one(result, path, quality, mono,
+                                             channel)
+                except Exception as exc:                 # noqa: BLE001
+                    # One pass that cannot be written costs that pass. The same
+                    # line `FrameWriter` takes about a frame it cannot file.
+                    self._saves.put(("line", f"could not save "
+                                             f"{result.label}: {exc}"))
+                    continue
+                if said:
+                    written += 1
+                    self._saves.put(("line", f"saved {said}"))
+            self._saves.put(("done", written, len(passes)))
+
+        threading.Thread(target=run, daemon=True,
+                         name="save-all").start()
+
+    def _deliver_one(self, result, path, quality: int, mono: bool,
+                     mono_channel: str) -> str:
+        """Write one pass to `path`, corrected, and say what was written.
+
+        The one place a delivered file is made from a pass, so *Save as ...* and
+        *Save all ...* cannot disagree about what "the picture" means. They did
+        not yet, and a second copy of this would be wrong the first time either
+        was changed.
+
+        Safe to call off the UI thread: it touches no widget. Everything it
+        needs is passed in, which is why `quality`, `mono` and `mono_channel`
+        are arguments rather than read from the controls here -- reading a Tk
+        variable from a worker is exactly the kind of thing that works until it
+        does not.
+        """
         if result.entry and (result.entry / "scan.tif").exists():
             # Corrected, always. The entry holds raw pixels and the reference
             # beside them; what leaves here is what the operator saw. This used
@@ -2402,25 +2668,26 @@ class ScannerGui:
             full, entry_record = library.corrected(result.entry)
             full = preview.orient(full, result.rotation, result.flipped)
             if mono:
-                full = to_monochrome(full, self.v_mono_channel.get())
+                full = to_monochrome(full, mono_channel)
             note = export.write(path, full, quality=quality)
             how = entry_record.get("corrected")
-            self._say(f"saved {Path(path).name} at full resolution"
-                      + (f", turned {result.rotation}\u00b0"
-                         if result.rotation else "")
-                      + (", one channel" if mono else "")
-                      + ("" if how == "applied" else f" ({how})")
-                      + (f" -- {note}" if note else ""))
-        elif result.image is not None:
+            return (f"{Path(path).name} at full resolution"
+                    + (f", turned {result.rotation}\u00b0"
+                       if result.rotation else "")
+                    + (", one channel" if mono else "")
+                    + ("" if how == "applied" else f" ({how})")
+                    + (f" -- {note}" if note else ""))
+        if result.image is not None:
             turned = preview.orient(result.image, result.rotation,
                                     result.flipped)
             note = export.write(
                 path,
-                to_monochrome(turned, self.v_mono_channel.get()) if mono else turned,
+                to_monochrome(turned, mono_channel) if mono else turned,
                 quality=quality)
-            self._say(f"saved {Path(path).name} -- reduced preview, the "
-                      "full-resolution file is not filed yet"
-                      + (f" -- {note}" if note else ""))
+            return (f"{Path(path).name} -- reduced preview, the "
+                    "full-resolution file is not filed yet"
+                    + (f" -- {note}" if note else ""))
+        return ""
 
     def on_rotate(self, result, degrees: int) -> None:
         """Turn this pass, and everything scanned after it.
@@ -2989,6 +3256,51 @@ class ScannerGui:
             return None
         return x0 + ix / scale, y0 + iy / scale
 
+    def on_hover(self, event: tk.Event) -> None:
+        """The pixel under the pointer, in the readout beside the zoom.
+
+        Off the picture clears it rather than holding the last value, which
+        would be a number describing somewhere the pointer no longer is.
+        """
+        where = self._to_source(event)
+        if where is None:
+            self.v_readout.set("")
+            return
+        sampled = self._pixel_at(*where)
+        if sampled is None:
+            self.v_readout.set("")
+            return
+        x, y, values, exact = sampled
+        self.v_readout.set(pixel_readout(x, y, values, exact))
+
+    def _pixel_at(self, sx: float, sy: float):
+        """`(x, y, values, exact)` at a source coordinate, or None.
+
+        Read from the scan's own pixels when they are loaded for this pass, and
+        from the working copy otherwise. Orienting the full array is free --
+        `preview.orient` is `rot90` and `flip`, both views -- so this costs no
+        copy of a 142 MB frame on every mouse move.
+        """
+        r = self.current
+        work = self._source()
+        if r is None or work is None:
+            return None
+        array = work
+        exact = False
+        if self._full is not None and self._full_seq == r.seq:
+            array = preview.orient(self._full, r.rotation, r.flipped)
+            exact = True
+        # The working copy's coordinates are what the view is measured in, so a
+        # finer array is indexed by the ratio between them rather than by the
+        # zoom, which does not know about either.
+        py = int(sy * array.shape[0] / max(work.shape[0], 1))
+        px = int(sx * array.shape[1] / max(work.shape[1], 1))
+        py = max(0, min(array.shape[0] - 1, py))
+        px = max(0, min(array.shape[1] - 1, px))
+        pixel = array[py, px]
+        values = (pixel,) if array.ndim == 2 else tuple(pixel)
+        return px, py, values, exact
+
     def on_press(self, event: tk.Event) -> None:
         if self.v_aim.get() and self.current is not None \
                 and self.current.kind == "prescan":
@@ -3125,7 +3437,19 @@ def read_survey(folder) -> dict:
     the sheet lays over the results afterwards.
     """
     folder = Path(folder)
-    manifest = json.loads((folder / "survey.json").read_text())
+    # Two manifests, one directory, and both matter. `survey.json` is the walk
+    # -- it is the only one with `prescanNN.tif` beside it, so it is the only
+    # one a contact sheet can be built from. `roll.json` is what was then
+    # scanned, and on a roll that died part-way it is the record of how far it
+    # got. Neither is required: a roll commissioned without a walk has no
+    # survey, and a walk nobody acted on has no roll.
+    survey_path = folder / "survey.json"
+    roll_path = folder / "roll.json"
+    if not survey_path.exists() and not roll_path.exists():
+        raise ValueError("no survey.json and no roll.json")
+    manifest = json.loads(
+        (survey_path if survey_path.exists() else roll_path).read_text())
+    progress = json.loads(roll_path.read_text()) if roll_path.exists() else {}
     turn = int(manifest.get("rotation") or 0)
     mirrored = bool(manifest.get("flipped"))
 
@@ -3185,7 +3509,233 @@ def read_survey(folder) -> dict:
         "roll": manifest.get("roll") or folder.name,
         "rotation": turn,
         "flipped": mirrored,
+        # What the roll got through, and what it was told to do. Empty for a
+        # walk nobody acted on, which is what makes "reopen" and "continue"
+        # one flow rather than two.
+        "scanned": scanned_frames(progress),
+        "settings": progress.get("settings") or manifest.get("settings") or {},
+        "wanted": wanted_frames(manifest, progress),
     }
+
+
+#: How a roll manifest's `settings` block maps onto the window's controls.
+#: Only the ones a resume should put back: `mono` is missing deliberately,
+#: because `_sync_film` derives it from the film type and restoring it would be
+#: overwritten a moment later by something that looks like it disagreed.
+RESTORABLE = {
+    "resolution": ("dpi", str),
+    "prescan_resolution": ("predpi", str),
+    "infrared": ("ir", bool),
+    "fast_infrared": ("fast_ir", bool),
+    "film": ("film", str),
+    "meter": ("meter", str),
+    "mono_channel": ("mono_channel", str),
+    "correct": ("correct", bool),
+    "reverse_hold": ("reverse", bool),
+    "frames": ("frames", str),
+    "start_at": ("startat", str),
+}
+
+
+def batch_name(result, fmt: str) -> str:
+    """What one pass is called when a whole session is saved at once.
+
+    Shaped like `ScanSession._out_name`, and for its reason: NegPy reads these
+    next, so what the file *is* leads and nothing sorts by when it was scanned.
+    The roll name is not available here -- a `Result` does not carry one -- so
+    the kind and the frame number stand in for it.
+
+    `_ir` names a pass that *was* infrared even where the format cannot carry
+    the plane, which is the same choice `_out_name` makes: it says what was
+    scanned, and the JPEG's own note says what arrived.
+    """
+    meta = result.meta or {}
+    dpi = meta.get("resolution_dpi") or 0
+    channels = meta.get("channels") or len(meta.get("channel_order") or "")
+    ir = "_ir" if channels and int(channels) >= 4 else ""
+    end = export.suffix_for(fmt)
+    kind = _safe(result.kind or "scan")
+    if result.number:
+        return f"{kind}{int(result.number):02d}_{dpi}dpi{ir}{end}"
+    return f"{kind}_{abs(int(result.seq)):03d}_{dpi}dpi{ir}{end}"
+
+
+def pixel_readout(x: int, y: int, values, exact: bool = True) -> str:
+    """One pixel, in the scan's own numbers.
+
+    The histogram answers "is anything at the rail" over the whole frame. This
+    answers "what is *this*", which is the question once something specific
+    looks suspect -- a highlight that may or may not be blown, two patches that
+    may or may not differ. Neither answers the other.
+
+    `exact` is False when the numbers come from the reduced working copy rather
+    than the scan itself, and then it says so: a working copy's pixels are
+    resampled averages, and quietly presenting them as the scan's values would
+    make this worse than nothing on the one question it exists for.
+    """
+    # Named by how many there are rather than from `_CHANNEL_NAMES`, which is
+    # "RGB" and would silently drop the infrared plane -- the one channel this
+    # window exists to show. A single plane is not called "R": a monochrome
+    # delivery is green by measurement, and naming it red would be a lie about
+    # which one survived.
+    names = {1: ("value",), 3: ("R", "G", "B"), 4: ("R", "G", "B", "I")}.get(
+        len(values), tuple(str(i) for i in range(len(values))))
+    named = "  ".join(f"{name} {int(value)}" for name, value
+                      in zip(names, values))
+    return f"{int(x)},{int(y)}   {named}" + ("" if exact else "   (approx)")
+
+
+def restorable(settings: dict) -> dict:
+    """The window controls a roll's stored settings should put back.
+
+    Keyed by control name, already the type that control's variable wants.
+
+    **A key that is absent is left alone rather than defaulted.** A manifest
+    written before a setting existed -- and `fast_infrared` is younger than the
+    rolls already on disk -- must not silently assert that setting's default
+    over whatever the window holds. Absent means "this roll has nothing to say
+    about it", which is not the same as "off".
+    """
+    out: dict = {}
+    for key, (control, kind) in RESTORABLE.items():
+        if settings.get(key) is None:
+            continue
+        try:
+            out[control] = kind(settings[key])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def roll_summary(folder) -> dict | None:
+    """What a roll folder holds, without reading a single pixel.
+
+    This is what the browser lists from, so it has to be cheap: a roll
+    directory can hold 38 frames at 142 MB each, and opening them to find out
+    whether the roll is finished would make the list unusable. Everything here
+    comes from the two small JSON files.
+
+    ``None`` for a directory that is not a roll at all, so the caller can scan
+    a folder of them without filtering first.
+    """
+    folder = Path(folder)
+    survey_path, roll_path = folder / "survey.json", folder / "roll.json"
+    if not survey_path.exists() and not roll_path.exists():
+        return None
+    try:
+        manifest = json.loads(
+            (survey_path if survey_path.exists() else roll_path).read_text())
+        progress = json.loads(roll_path.read_text()) if roll_path.exists() else {}
+    except (OSError, ValueError):
+        return None
+
+    settings = progress.get("settings") or manifest.get("settings") or {}
+    wanted = wanted_frames(manifest, progress)
+    done = scanned_frames(progress)
+    return {
+        "folder": folder,
+        "roll": progress.get("roll") or manifest.get("roll") or folder.name,
+        "walked": survey_path.exists(),
+        "scanned": roll_path.exists(),
+        # A sheet needs the walk's own prescans; a roll commissioned without a
+        # walk can still be resumed, just not looked at first.
+        "has_sheet": any(folder.glob("prescan*.tif")),
+        "settings": settings,
+        "resolution": settings.get("resolution") or progress.get("dpi")
+        or manifest.get("dpi"),
+        "film": settings.get("film") or progress.get("film")
+        or manifest.get("film"),
+        "infrared": settings.get("infrared", progress.get("infrared",
+                                                          manifest.get("infrared"))),
+        "wanted": wanted,
+        "done": sorted(done),
+        "remaining": [n for n in wanted if n not in done],
+    }
+
+
+def rolls_on_disk(root) -> list[dict]:
+    """Every roll under `root`, newest first, as `roll_summary` describes them.
+
+    Sorted by the directory name because that is the date the session wrote --
+    `rolls/2026-09-14` -- which orders correctly as text and does not move when
+    a file inside is touched, as an mtime would.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    out = []
+    for folder in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
+        if not folder.is_dir():
+            continue
+        summary = roll_summary(folder)
+        if summary is not None:
+            out.append(summary)
+    return out
+
+
+def roll_line(summary: dict) -> str:
+    """One row of the browser: what this roll is and how far it got."""
+    wanted, done = len(summary["wanted"]), len(summary["done"])
+    if not summary["scanned"]:
+        state = f"walked, {wanted} frames, none scanned"
+    elif wanted and done >= wanted:
+        state = f"finished, {done} frames"
+    elif wanted:
+        state = f"{done} of {wanted} scanned -- {wanted - done} left"
+    else:
+        state = f"{done} scanned"
+    parts = [summary["roll"], state]
+    if summary["resolution"]:
+        parts.append(f"{summary['resolution']} dpi"
+                     + (" RGBI" if summary["infrared"] else " RGB"))
+    if summary["film"]:
+        parts.append(str(summary["film"]))
+    return "  ·  ".join(parts)
+
+
+def scanned_frames(manifest: dict) -> set[int]:
+    """Which frames of a roll are finished, from its manifest.
+
+    A frame that errored is **not** finished. That is the case a resume exists
+    for, so it comes back offered again rather than counted as done.
+
+    Manifests written before `done` existed have no key at all; there an image
+    filed without an error is the best evidence available, which is the same
+    test `done` records.
+    """
+    out: set[int] = set()
+    for record in manifest.get("frames") or ():
+        try:
+            number = int(record["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        finished = record.get("done")
+        if finished is None:
+            finished = not record.get("error") and "prescan" not in record
+        if finished:
+            out.add(number)
+    return out
+
+
+def wanted_frames(manifest: dict, progress: dict) -> list[int]:
+    """Every frame this roll is meant to end up with, in order.
+
+    The operator's own choice where he made one -- `only` is what a contact
+    sheet's ticks become -- and otherwise every frame the walk found. Without
+    this a resume cannot say "11 of 24": it would know what was done and not
+    what was asked for.
+    """
+    for source in (progress, manifest):
+        only = source.get("only") or (source.get("settings") or {}).get("only")
+        if only:
+            return sorted({int(n) for n in only})
+    numbers = []
+    for record in manifest.get("frames") or ():
+        try:
+            numbers.append(int(record["number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(set(numbers))
 
 
 def snap_offset(millimetres: float) -> float:
@@ -4169,6 +4719,85 @@ class _FrameAdjuster:
             return False
 
 
+class _RollBrowser:
+    """The rolls on disk, newest first, with how far each one got.
+
+    A list rather than a folder picker, and the reason is the whole feature:
+    what decides which roll to open is whether it has frames left, and
+    `filedialog.askdirectory` cannot say that. It shows directory names, and a
+    roll directory is named by its date.
+
+    Unfinished rolls are marked, because those are what anyone opens this for.
+    """
+
+    UNFINISHED = "#e8b64c"                   # the sheet's amber, again
+    DONE = "#5b7a5b"
+
+    def __init__(self, gui, rolls):
+        self.gui = gui
+        self.rolls = list(rolls)
+        self.top = tk.Toplevel(gui.root)
+        self.top.title("Rolls")
+        self.top.geometry("660x420")
+        self.top.transient(gui.root)
+
+        outer = ttk.Frame(self.top, padding=10)
+        outer.pack(fill="both", expand=True)
+        left = sum(1 for r in self.rolls if r["remaining"])
+        ttk.Label(
+            outer, justify="left", wraplength=620,
+            text=(f"{len(self.rolls)} roll"
+                  f"{'s' if len(self.rolls) != 1 else ''} under "
+                  f"{gui.session.rolls}"
+                  + (f", {left} with frames left" if left else ""))
+        ).pack(anchor="w", pady=(0, 8))
+
+        row = ttk.Frame(outer)
+        row.pack(fill="both", expand=True)
+        self.list = tk.Listbox(row, activestyle="none", highlightthickness=0,
+                               font=("TkDefaultFont", 11))
+        bar = ttk.Scrollbar(row, orient="vertical", command=self.list.yview)
+        self.list.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.list.pack(side="left", fill="both", expand=True)
+        for index, summary in enumerate(self.rolls):
+            self.list.insert("end", roll_line(summary))
+            if summary["remaining"]:
+                self.list.itemconfigure(index, foreground=self.UNFINISHED)
+            elif summary["scanned"]:
+                self.list.itemconfigure(index, foreground=self.DONE)
+        if self.rolls:
+            self.list.selection_set(0)
+            self.list.focus_set()
+        self.list.bind("<Double-Button-1>", lambda _e: self._open())
+        self.list.bind("<Return>", lambda _e: self._open())
+        self.top.bind("<Escape>", lambda _e: self.top.destroy())
+
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill="x", pady=(10, 0))
+        ttk.Button(buttons, text="Close",
+                   command=self.top.destroy).pack(side="right")
+        ttk.Button(buttons, text="Open", default="active",
+                   command=self._open).pack(side="right", padx=(0, 8))
+        ttk.Label(buttons, foreground="#777", wraplength=430, justify="left",
+                  text=("Opening a roll with frames left offers to finish it, "
+                        "and puts its own settings back.")).pack(side="left")
+
+    def _open(self) -> None:
+        picked = self.list.curselection()
+        if not picked:
+            return
+        summary = self.rolls[int(picked[0])]
+        self.top.destroy()
+        self.gui.open_roll(summary["folder"])
+
+    def alive(self) -> bool:
+        try:
+            return bool(self.top.winfo_exists())
+        except tk.TclError:
+            return False
+
+
 class _ContactSheet:
     """The whole surveyed strip at once, with a tick against each picture.
 
@@ -4187,8 +4816,10 @@ class _ContactSheet:
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
+    DONE = "#5b7a5b"                         # already scanned: neither of those
 
-    def __init__(self, gui, frames, offsets=None, rotations=None, flips=None):
+    def __init__(self, gui, frames, offsets=None, rotations=None, flips=None,
+                 done=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
         # A frame that was walked but cannot be shown is not a cosmetic
@@ -4201,6 +4832,12 @@ class _ContactSheet:
                      f"picture and are not shown -- {dropped}. They cannot be "
                      f"ticked, so they will not be scanned.")
         self.ticks: dict[int, tk.BooleanVar] = {}
+        #: Frames this roll has already scanned, from `roll.json`. They open
+        #: unticked and say so, because a resumed roll should *finish* rather
+        #: than start again -- three hours of transport is exactly what a
+        #: resume exists to not spend twice. Ticking one anyway rescans it,
+        #: which is the right escape hatch for a frame that came out wrong.
+        self.done: set[int] = {int(n) for n in (done or ())}
         #: Where the operator says each frame should sit, in mm, relative to
         #: where it was surveyed. Absent means "as surveyed" -- an explicit
         #: zero never lands here, because snap_offset returns it as absent.
@@ -4408,7 +5045,9 @@ class _ContactSheet:
 
     def _cell(self, grid, result, row: int, column: int, index: int) -> None:
         number = result.number
-        var = tk.BooleanVar(value=True)      # everything ticked; untick the duds
+        # Everything ticked; untick the duds -- except on a resumed roll, where
+        # what is already scanned starts unticked.
+        var = tk.BooleanVar(value=number not in self.done)
         self.ticks[number] = var
 
         cell = ttk.Frame(grid, padding=6)
@@ -4656,6 +5295,9 @@ class _ContactSheet:
         if offset:
             caption.configure(text=f"moved {offset:+.2f} mm",
                               foreground=self.CHOSEN)
+            return
+        if number in self.done:
+            caption.configure(text="scanned", foreground=self.DONE)
             return
         marks = next((r.registration or {} for r in self.frames
                       if r.number == number), {})
