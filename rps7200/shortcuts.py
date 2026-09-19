@@ -4,15 +4,31 @@ The table lives here rather than in `tools/gui.py` for the reason `settings.py`
 does: it is data with rules about it, those rules are worth testing, and none of
 them need Tk. What is in `gui.py` is the binding and the editor.
 
-**No key drives the scanner.** Not scanning, not calibrating, not moving film.
-`on_scan`, `on_prescan` and the transport buttons submit their job immediately,
-with no confirmation -- they are behind buttons that have to be reached for, and
-CLAUDE.md is explicit that presence is not permission. A slip on a keyboard is
-not a decision to spend four minutes of hardware or to move somebody's negative,
-and there is no undo for either. `stop` is the exception: `request_stop` is
-cooperative, finishes the pass already running, and is always safe.
+**No key starts the scanner without asking first, and nothing moves film or
+calibrates by key at all.**
 
-`test_shortcuts.py` holds that line as a test rather than a convention.
+This used to be the stronger rule -- no key drove the scanner, full stop -- and
+the reason it gave was precise: `on_scan` and `on_prescan` "submit their job
+immediately, with no confirmation", so they were safe only behind a button that
+has to be reached for. CLAUDE.md is explicit that presence is not permission,
+and a slip on a keyboard is not a decision to spend four minutes of hardware.
+
+Starting a pass now has keys, and the premise is what changed rather than the
+principle: each goes through `ScannerGui._confirm_then`, which asks and says
+what the run will cost before anything is submitted. A key that asks is not a
+key that submits immediately. The *buttons* still ask nothing, because reaching
+for one is the decision.
+
+What still has no key on any terms is **moving film and calibrating** --
+`on_move_frames`, `on_nudge`, `on_calibrate`, `on_scan_chosen` -- and
+`on_abort`, which abandons a read and is what costs a power cycle. There is no
+undo for any of them, and a confirmation is not enough where the thing being
+risked is somebody's negative or a wedged device. `stop` is the one key that
+reaches a running scanner without asking, because `request_stop` is cooperative:
+it finishes the pass already running rather than abandoning a read.
+
+`test_shortcuts.py` and `test_gui.py` hold that line as tests rather than a
+convention -- the second checks what each action actually *calls*.
 
 A binding is a Tk sequence string -- `"<Key-r>"`, `"<Left>"`, `"<Command-Key-s>"`
 -- because that is what `widget.bind` takes and what a captured `<KeyPress>` can
@@ -89,6 +105,17 @@ ACTIONS: tuple[Action, ...] = (
     Action("contact_sheet", "window", "Open the contact sheet",
            f"<{ACCEL}-Key-k>"),
     Action("stop", "window", "Stop after this pass", "<Escape>"),
+    # Starting a pass. Return reads as "go" and cannot be mistaken for one of
+    # the viewing keys above, which matters more here than a mnemonic letter
+    # would: these are the only keys that reach the hardware. Each one asks
+    # first -- see the module docstring and `ScannerGui._confirm_then`.
+    Action("prescan", "window", "Prescan (asks first)", f"<{ACCEL}-Return>"),
+    Action("scan", "window", "Scan this frame (asks first)",
+           f"<{ACCEL}-Shift-Return>"),
+    # No Return for the roll: it is the three-hour one, and putting it a
+    # modifier away from "scan this frame" is how the wrong one gets started.
+    Action("roll", "window", "Scan a roll (asks first)", f"<{ACCEL}-Key-b>"),
+    Action("save_all", "window", "Save all passes ...", f"<{ACCEL}-Key-S>"),
     Action("shortcuts", "window", "Edit these shortcuts", f"<{ACCEL}-Key-comma>"),
 
     # -- the contact sheet -------------------------------------------------
@@ -132,8 +159,16 @@ ACTIONS: tuple[Action, ...] = (
 
 #: Actions that must never appear above, checked by a test rather than trusted
 #: to a reading of the table. See the module docstring.
+#: Moving film, calibrating, and abandoning a read. No key reaches these on any
+#: terms, confirmation or not: there is no undo for a moved negative or a wedged
+#: device, so the only safe answer is a control that has to be reached for.
+#:
+#: `on_scan`, `on_prescan` and `on_roll` were here too until they were given
+#: keys that ask first -- see the module docstring. They are *called* from
+#: `_actions`, so they cannot be checked by name any more; `test_gui.py` checks
+#: instead that each goes through `_confirm_then`.
 NEVER_BOUND = (
-    "on_scan", "on_prescan", "on_roll", "on_calibrate", "ask_to_calibrate",
+    "on_calibrate", "ask_to_calibrate",
     "on_move_frames", "on_nudge", "on_abort", "on_scan_chosen",
 )
 

@@ -11,20 +11,34 @@ import pytest
 from rps7200 import shortcuts
 
 
-def test_no_key_drives_the_scanner():
-    """A slip on the keyboard is not a decision to spend four minutes of
-    hardware or to move somebody's negative, and there is no undo for either.
-    `on_scan`, `on_prescan` and the transport buttons submit immediately with
-    no confirmation -- they are behind buttons that have to be reached for."""
+def test_no_key_moves_film_or_calibrates():
+    """There is no undo for a moved negative or a wedged device, so these have
+    no key on any terms -- a confirmation is not enough where that is what is
+    being risked.
+
+    Starting a *pass* is different and does have keys, because each asks first
+    and says what the run will cost. That half is checked in `test_gui.py`,
+    against what the actions actually call rather than against these names."""
     ids = {a.id for a in shortcuts.ACTIONS}
     assert not ids & set(shortcuts.NEVER_BOUND)
     # The list is only useful if it names things that really exist, or it
     # quietly protects nothing.
-    assert "on_scan" in shortcuts.NEVER_BOUND
     assert "on_nudge" in shortcuts.NEVER_BOUND
-    # What each action actually *calls* is the thing that matters, and the
-    # dispatch table is in the window -- so that half is checked in
-    # test_gui.py, against the methods rather than against these names.
+    assert "on_move_frames" in shortcuts.NEVER_BOUND
+    assert "on_calibrate" in shortcuts.NEVER_BOUND
+    assert "on_abort" in shortcuts.NEVER_BOUND, "abandoning a read costs a wedge"
+
+
+def test_starting_a_pass_has_a_key_and_says_it_asks():
+    """The keys that reach the hardware. Their labels carry "asks first",
+    because the editor's list is where anyone learns what a key does and a key
+    that starts a three-hour roll should not look like one that turns a
+    picture."""
+    for action_id in ("prescan", "scan", "roll"):
+        action = shortcuts.action(action_id)
+        assert action is not None, action_id
+        assert action.default, f"{action_id} has no key"
+        assert "asks" in action.label.lower(), action_id
 
 
 def test_stop_is_the_one_scanner_key_and_it_is_safe():

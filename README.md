@@ -209,6 +209,31 @@ hours, and a strip with four keepers on it should not cost the same as one with
 seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame beside
 it, so a strip can be looked at again tomorrow instead of walked again.
 
+**A roll that died can be finished, however much later.** *Rolls ...* lists
+every roll on disk with how far each one got -- "2 of 4 scanned -- 2 left" --
+and opening one with frames left brings back its contact sheet with the
+approvals, marks what is already scanned, ticks what is not, and puts **its own
+settings** back: resolution, film, infrared, metering, and the exposure, gain
+and offset the scanner was asked for. Those come from the roll's own manifest
+rather than from the window's settings, which is the whole point: a year later
+the window has moved on to other film and the manifest still describes that
+roll. Then *Scan chosen frames* rewinds and advances to each remaining frame
+itself. It calibrates again first, because a shading reference is per session
+and cannot be carried across one.
+
+**Hover the picture for the numbers under the pointer** -- the position in the
+scan and every channel's value, the infrared plane included. The histogram
+answers "is anything against the ceiling"; this answers "what is *this*", which
+is the question once one highlight looks suspect. It reads the scan's own pixels
+where they are loaded and says `(approx)` where it is reading the reduced copy,
+because a working copy's pixels are resampled averages and quietly offering them
+as the scan's values would be worse than nothing.
+
+**Save all passes ...** writes every pass of the session into one folder in one
+go, re-corrected from the library at full resolution, on a thread so the window
+stays usable. *Save as ...* is one dialog per pass, which is right for one and
+is thirty-eight of them after a roll.
+
 **The histogram is always on screen**, in the top right corner of the picture:
 where the values actually sit, unstretched, with how much of each channel is at
 nothing, at full scale and near it. The preview is stretched so a negative can
@@ -223,7 +248,12 @@ merely traces green.
 **Everything has a key, and the keys are yours.** They are ordinary shortcuts
 -- ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R turn the picture, ⌘M flips it, ⌘0
 straightens it, ⌘F fits it and ⌘1 shows it at one scanned pixel per screen
-pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves. Because they carry a
+pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves and ⌘⇧S saves all.
+⌘Return starts a prescan and ⌘⇧Return a scan -- **those two ask first**, and
+say what the run will cost, because a slip on a keyboard is not a decision to
+spend minutes of hardware where reaching for a button is. Moving film and
+calibrating have no key at all: there is no undo for a moved negative and a
+confirmation is not enough where that is what is being risked. Because they carry a
 modifier they work wherever the focus is, including in the middle of typing a
 subject line. The arrows are bare, because an arrow is already an arrow: they
 walk the filmstrip, move between frames in the contact sheet, and step the film

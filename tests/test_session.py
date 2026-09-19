@@ -255,6 +255,30 @@ def test_a_roll_writes_its_manifest_after_every_frame(tmp_path):
     assert recorded["frames"][0]["registration"]["offset_mm"] == 0.04
 
 
+def test_a_roll_records_what_it_would_take_to_finish_it(tmp_path):
+    """A roll that dies at frame 11 of 24 has to be finishable -- a year later,
+    by which time the window's own settings have moved on to other film. So the
+    manifest carries the job rather than relying on anything outside itself.
+
+    The shading reference is deliberately *not* in it: it is acquired per
+    session and the CCD mask per pass, so a resumed roll calibrates afresh.
+    """
+    run(Roll(frames=2, resolution=600, infrared=False, fast_infrared=False,
+             meter="once", name="strip3"), tmp_path)
+    recorded = json.loads(
+        (tmp_path / "rolls" / "strip3" / "roll.json").read_text())
+
+    settings = recorded["settings"]
+    assert settings["resolution"] == 600
+    assert settings["infrared"] is False
+    assert settings["fast_infrared"] is False, "younger than the rolls on disk"
+    assert settings["meter"] == "once"
+    assert "shading" not in settings and "reference" not in settings
+
+    # Which frames are finished, so a resume offers the rest and not all of it.
+    assert [f["done"] for f in recorded["frames"]] == [True, True]
+
+
 def test_a_dry_run_files_its_prescans(tmp_path):
     """They are the entire product of a dry run -- there is no frame to hang
     them off, and a walk that leaves nothing behind cannot be looked at later."""

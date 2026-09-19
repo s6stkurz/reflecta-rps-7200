@@ -1533,6 +1533,9 @@ def _window_actions():
         _finest=lambda: 1.0, _walk=lambda *a: None, _jump=lambda *a: None,
         _on_current=lambda *a: None, _straighten=lambda: None,
         _toggle_invert=lambda: None, _cycle_channel=lambda *a: None,
+        on_prescan=lambda: None, on_scan=lambda: None, on_roll=lambda: None,
+        on_save_all=lambda: None, _confirm_then=lambda *a: None,
+        _prescan_cost=lambda: "", _scan_cost=lambda: "",
     )
     return gui.ScannerGui._actions(stub)
 
@@ -1553,11 +1556,9 @@ def test_every_action_in_the_table_has_something_to_do():
             assert action.id in handled, action.id
 
 
-def test_no_shortcut_reaches_the_scanner():
-    """The rule this whole table is written under. `on_scan`, `on_prescan`
-    and the transport buttons submit immediately with no confirmation, and a
-    slip on the keyboard is not a decision to spend four minutes of hardware
-    or move somebody's negative."""
+def test_no_shortcut_moves_film_or_calibrates():
+    """The rule this table is written under. There is no undo for a moved
+    negative or a wedged device, so no key reaches those on any terms."""
     import inspect
     sources = [inspect.getsource(gui.ScannerGui._actions),
                inspect.getsource(gui._ContactSheet._actions),
@@ -1565,6 +1566,54 @@ def test_no_shortcut_reaches_the_scanner():
     for forbidden in shortcuts.NEVER_BOUND:
         for source in sources:
             assert forbidden not in source, forbidden
+
+
+def test_every_key_that_starts_a_pass_asks_first():
+    """The premise the old, stronger rule rested on was that `on_prescan` and
+    `on_scan` "submit their job immediately, with no confirmation". They still
+    do -- that is right for a button, where reaching for it is the decision --
+    so the *keys* go through `_confirm_then` instead. `on_roll` is the exception
+    because it asks its own question already, and asking twice would train the
+    habit of dismissing both.
+
+    This is the test that keeps the relaxation honest: without it, a later
+    edit could point the key straight at `on_scan` and nothing would notice."""
+    import inspect
+    # Whitespace-collapsed, because the table wraps these calls across lines.
+    table = " ".join(inspect.getsource(gui.ScannerGui._actions).split())
+    assert '"prescan": lambda: self._confirm_then(' in table
+    assert '"scan": lambda: self._confirm_then(' in table
+    assert '"roll": self.on_roll' in table
+    assert "askokcancel" in inspect.getsource(gui.ScannerGui.on_roll), \
+        "roll is unwrapped only because it asks for itself"
+    assert "askokcancel" in inspect.getsource(gui.ScannerGui._confirm_then)
+
+
+def test_confirming_a_key_actually_gates_it():
+    """`_confirm_then` must not run the action when the answer is no, and must
+    not reach the scanner at all while one is already running."""
+    import types
+    ran = []
+    stub = types.SimpleNamespace(
+        busy=False, root=None,
+        _say=lambda *a: None,
+    )
+    answers = iter([False, True])
+    real = gui.messagebox.askokcancel
+    gui.messagebox.askokcancel = lambda *a, **k: next(answers)
+    try:
+        gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
+                                     lambda: ran.append("went"))
+        assert ran == [], "a no still started it"
+        gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
+                                     lambda: ran.append("went"))
+        assert ran == ["went"]
+        stub.busy = True
+        gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
+                                     lambda: ran.append("again"))
+        assert ran == ["went"], "it asked while the scanner was working"
+    finally:
+        gui.messagebox.askokcancel = real
 
 
 def test_stop_is_the_one_exception_and_only_while_something_runs():
@@ -2005,3 +2054,137 @@ def test_the_saving_the_note_reports_is_the_measured_one():
     the default."""
     note = gui.infrared_cost_note(300, True)
     assert "little in it" not in note
+
+
+# --- resuming a roll -------------------------------------------------------
+
+
+def _roll_folder(tmp_path, survey=None, roll=None, prescans=0):
+    """A roll directory as the session writes one."""
+    import numpy as np
+    from rps7200 import tiff
+    folder = tmp_path / "2026-09-14"
+    folder.mkdir(parents=True, exist_ok=True)
+    if survey is not None:
+        (folder / "survey.json").write_text(json.dumps(survey))
+    if roll is not None:
+        (folder / "roll.json").write_text(json.dumps(roll))
+    for n in range(1, prescans + 1):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((8, 12, 3), 900 * n, np.uint16))
+    return folder
+
+
+def test_a_frame_that_errored_is_offered_again():
+    """The case a resume exists for. A frame counted as done because the roll
+    reached it would be the one thing worse than not resuming at all."""
+    done = gui.scanned_frames({"frames": [
+        {"number": 1, "done": True},
+        {"number": 2, "done": False, "error": "read timed out"},
+        {"number": 3, "done": True},
+    ]})
+    assert done == {1, 3}
+
+
+def test_a_manifest_written_before_done_existed_still_reads():
+    """The rolls already on disk have no `done` key. Treating them as nothing
+    finished would offer a whole roll again; treating them as all finished
+    would offer none of it."""
+    done = gui.scanned_frames({"frames": [
+        {"number": 1},                       # scanned, no error
+        {"number": 2, "error": "boom"},      # not scanned
+        {"number": 3, "prescan": "prescan03.tif"},   # a walk, not a scan
+    ]})
+    assert done == {1}
+
+
+def test_what_the_roll_was_asked_for_beats_what_it_walked():
+    """`only` is what the contact sheet's ticks become, so it is the answer to
+    "how many frames is this roll" -- not the number the walk found."""
+    manifest = {"frames": [{"number": n} for n in range(1, 7)]}
+    assert gui.wanted_frames(manifest, {"settings": {"only": [2, 4]}}) == [2, 4]
+    assert gui.wanted_frames(manifest, {}) == [1, 2, 3, 4, 5, 6]
+
+
+def test_a_roll_summary_needs_no_pixels(tmp_path):
+    """The browser lists these, and a roll directory can hold 38 frames at
+    142 MB. Opening them to find out whether the roll finished would make the
+    list unusable."""
+    folder = _roll_folder(
+        tmp_path,
+        survey={"roll": "strip", "frames": [{"number": n} for n in range(1, 5)]},
+        roll={"roll": "strip", "settings": {"resolution": 1800, "infrared": True,
+                                            "only": [1, 2, 3, 4]},
+              "frames": [{"number": 1, "done": True}, {"number": 2, "done": True}]})
+    summary = gui.roll_summary(folder)
+    assert summary["remaining"] == [3, 4]
+    assert summary["resolution"] == 1800
+    assert "2 of 4 scanned" in gui.roll_line(summary)
+    assert gui.roll_summary(tmp_path) is None, "not a roll directory"
+
+
+def test_a_roll_can_be_read_back_with_its_walk_and_its_progress(tmp_path):
+    """The two manifests live in one directory, and both matter: the walk is
+    the only one with prescans beside it, and the roll is how far it got."""
+    folder = _roll_folder(
+        tmp_path,
+        survey={"roll": "strip", "prescan_resolution": 300, "start_at": 1,
+                "frames": [{"number": n, "prescan": f"prescan{n:02d}.tif"}
+                           for n in range(1, 5)]},
+        roll={"roll": "strip", "settings": {"resolution": 3600, "only": [1, 2, 3, 4],
+                                            "fast_infrared": False},
+              "frames": [{"number": 1, "done": True}]},
+        prescans=4)
+    out = gui.read_survey(folder)
+    assert len(out["results"]) == 4, "the sheet comes from the walk"
+    assert out["scanned"] == {1}
+    assert out["wanted"] == [1, 2, 3, 4]
+    assert out["settings"]["resolution"] == 3600
+
+
+def test_a_walk_nobody_acted_on_still_reads(tmp_path):
+    """No roll.json at all. Nothing is done and everything is wanted."""
+    folder = _roll_folder(
+        tmp_path,
+        survey={"roll": "strip", "frames": [{"number": n,
+                                            "prescan": f"prescan{n:02d}.tif"}
+                                           for n in (1, 2)]},
+        prescans=2)
+    out = gui.read_survey(folder)
+    assert out["scanned"] == set()
+    assert out["wanted"] == [1, 2]
+    assert out["settings"] == {}
+
+
+def test_a_folder_that_is_neither_is_refused(tmp_path):
+    import pytest
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ValueError, match="no survey.json"):
+        gui.read_survey(tmp_path / "empty")
+
+
+def test_settings_a_roll_has_nothing_to_say_about_are_left_alone():
+    """`fast_infrared` is younger than the rolls already on disk. A manifest
+    without it must not assert its default over whatever the window holds --
+    absent is not the same as off."""
+    assert "fast_ir" not in gui.restorable({"resolution": 1800})
+    assert gui.restorable({"fast_infrared": False})["fast_ir"] is False
+    assert gui.restorable({"resolution": 1800})["dpi"] == "1800"
+    # `mono` is derived from the film type by `_sync_film`, so restoring it
+    # would be overwritten a moment later by something that looks like a
+    # disagreement.
+    assert "mono" not in gui.restorable({"mono": True})
+
+
+def test_a_batch_name_says_what_the_file_is():
+    """NegPy reads these next, so what it is leads. A timestamp sorts by when
+    it was scanned and says nothing about what it was."""
+    import types
+    frame = types.SimpleNamespace(
+        kind="frame", number=3, seq=7,
+        meta={"resolution_dpi": 1800, "channels": 4})
+    assert gui.batch_name(frame, "tiff") == "frame03_1800dpi_ir.tif"
+    assert gui.batch_name(frame, "jpeg") == "frame03_1800dpi_ir.jpg"
+    loose = types.SimpleNamespace(kind="scan", number=None, seq=-12,
+                                  meta={"resolution_dpi": 300, "channels": 3})
+    assert gui.batch_name(loose, "tiff") == "scan_012_300dpi.tif"
