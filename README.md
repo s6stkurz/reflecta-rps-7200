@@ -218,8 +218,10 @@ and offset the scanner was asked for. Those come from the roll's own manifest
 rather than from the window's settings, which is the whole point: a year later
 the window has moved on to other film and the manifest still describes that
 roll. Then *Scan chosen frames* rewinds and advances to each remaining frame
-itself. It calibrates again first, because a shading reference is per session
-and cannot be carried across one.
+itself. It calibrates again first -- the right default rather than a limit: a
+reference describes the sensor at the exposure and gain that measured it, and
+months on neither is the same. A saved one can still be loaded instead, with
+Calibrate set to "reuse".
 
 **Hover the picture for the numbers under the pointer** -- the position in the
 scan and every channel's value, the infrared plane included. The histogram
