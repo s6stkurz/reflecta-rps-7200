@@ -112,6 +112,13 @@ class FakeScanner:
             "width": 36,
             "height": 24,
             "depth": 16,
+            # What the scanner was asked for, as `DirectScanner.scan` returns
+            # it. Here because a roll's manifest records these so a roll that
+            # died can be resumed with the same request -- and without them the
+            # fake could not exercise the one part of that anybody asked for.
+            "exposure": [30766, 45619, 15017, 7745],
+            "gain": [39, 33, 21, 25],
+            "offset": [14, 12, 32, 8],
         }
 
     def scan_roll(self, frames=None, resolution=1800, infrared=True,
@@ -260,8 +267,10 @@ def test_a_roll_records_what_it_would_take_to_finish_it(tmp_path):
     by which time the window's own settings have moved on to other film. So the
     manifest carries the job rather than relying on anything outside itself.
 
-    The shading reference is deliberately *not* in it: it is acquired per
-    session and the CCD mask per pass, so a resumed roll calibrates afresh.
+    The shading reference is deliberately *not* in it, and not because it could
+    not be -- `load_shading` exists. It is that a reference describes the sensor
+    at the exposure and gain that measured it, so the one a roll started with is
+    the wrong thing to hand a resume months later.
     """
     run(Roll(frames=2, resolution=600, infrared=False, fast_infrared=False,
              meter="once", name="strip3"), tmp_path)
@@ -277,6 +286,55 @@ def test_a_roll_records_what_it_would_take_to_finish_it(tmp_path):
 
     # Which frames are finished, so a resume offers the rest and not all of it.
     assert [f["done"] for f in recorded["frames"]] == [True, True]
+
+    # And what the scanner was asked for, per frame -- metering each frame is
+    # the default, and then no single exposure describes the roll.
+    first = recorded["frames"][0]
+    assert first["exposure"] == [30766, 45619, 15017, 7745]
+    assert first["gain"] == [39, 33, 21, 25]
+    assert first["offset"] == [14, 12, 32, 8]
+
+
+def test_finishing_a_roll_keeps_what_the_first_attempt_did(tmp_path):
+    """A resumed run writes into the manifest its earlier attempt left.
+
+    Without carrying the earlier frames forward the second run *replaced* the
+    first: four frames scanned across two sessions came back as a two-frame
+    roll, with no record that the first two were ever taken -- in the one file
+    whose job is to still describe this roll a year from now. And `wanted` is
+    the union, because a resumed run is told only what is *left*, so its `only`
+    is not the roll's set.
+    """
+    run(Roll(frames=4, only=(1, 2), resolution=600, name="strip"), tmp_path)
+    run(Roll(frames=4, only=(3, 4), resolution=600, name="strip"), tmp_path)
+
+    recorded = json.loads(
+        (tmp_path / "rolls" / "strip" / "roll.json").read_text())
+    assert sorted(f["number"] for f in recorded["frames"]) == [1, 2, 3, 4]
+    assert recorded["wanted"] == [1, 2, 3, 4]
+    assert all(f["done"] for f in recorded["frames"])
+
+
+def test_a_frame_scanned_twice_appears_once(tmp_path):
+    """A frame rescanned after a failure must not be in the file twice saying
+    two different things about itself."""
+    run(Roll(frames=2, only=(1,), resolution=600, name="strip2b"), tmp_path)
+    run(Roll(frames=2, only=(1,), resolution=600, name="strip2b"), tmp_path)
+    recorded = json.loads(
+        (tmp_path / "rolls" / "strip2b" / "roll.json").read_text())
+    assert [f["number"] for f in recorded["frames"]] == [1]
+
+
+def test_a_walk_records_no_exposure_because_it_took_none(tmp_path):
+    """A dry run prescans and advances; there is no scan and so nothing to
+    record. The key is absent rather than zero, which is the difference between
+    "this roll did not scan that frame" and "it scanned it at nothing"."""
+    run(Roll(frames=2, dry_run=True, name="walk2"), tmp_path)
+    recorded = json.loads(
+        (tmp_path / "rolls" / "walk2" / "survey.json").read_text())
+    assert recorded["frames"], "the walk recorded nothing at all"
+    assert all("exposure" not in f for f in recorded["frames"])
+    assert all(f["done"] is False for f in recorded["frames"])
 
 
 def test_a_dry_run_files_its_prescans(tmp_path):

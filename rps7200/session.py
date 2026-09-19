@@ -907,6 +907,18 @@ class ScanSession:
         # of six frames walked was replaced by the record of the three that
         # were then scanned -- losing exactly what the walk was kept for.
         manifest_path = out / ("survey.json" if job.dry_run else "roll.json")
+        # A resumed roll writes into the manifest its earlier attempt left, so
+        # what is carried forward has to be read before anything is written.
+        # Without this the second run *replaced* the first: four frames scanned
+        # across two sessions came back as a two-frame roll, and the record of
+        # the first two was simply gone -- in the one file whose job is to still
+        # describe this roll a year from now.
+        earlier: dict[str, Any] = {}
+        if not job.dry_run and manifest_path.exists():
+            try:
+                earlier = json.loads(manifest_path.read_text())
+            except (OSError, ValueError):
+                earlier = {}
         manifest: dict[str, Any] = {
             "roll": name,
             "dpi": job.resolution,
@@ -938,11 +950,19 @@ class ScanSession:
             # exposure rather than inherit whatever the window happens to hold,
             # and where metering was on it still runs again.
             #
-            # **The shading reference is deliberately not in here.** It is
-            # acquired per session and the CCD mask per pass, so a resumed roll
-            # calibrates afresh. Storing one would be storing something that
-            # cannot be reused, and reusing it would be worse than re-measuring
-            # -- see CLAUDE.md.
+            # **The shading reference is deliberately not in here**, and the
+            # reason is not that it could not be: `load_shading` exists and
+            # `--reuse` uses it, and every library entry keeps the reference it
+            # would be corrected with. It is that a reference "describes the
+            # sensor at the exposure and gain of the pass that measured it" --
+            # so the one a roll started with is the wrong thing to hand a
+            # resume months later, when the lamp and the metered exposure have
+            # both moved. A resumed roll measures a new one, which is the
+            # vendor's own once-per-power-on behaviour.
+            #
+            # The CCD mask is a different matter and needs no storing at all:
+            # it is read fresh on every pass, because it says which CCD pixels
+            # *that* resolution sampled.
             "settings": {
                 "resolution": job.resolution,
                 "infrared": job.infrared,
@@ -961,7 +981,19 @@ class ScanSession:
                 "rotation": self.rotation,
                 "flipped": self.flip,
             },
-            "frames": [],
+            #: Every frame this roll is meant to end up with, across however
+            #: many sessions it takes. The union, because a resumed run is told
+            #: only what is *left* -- taking its `only` as the answer is what
+            #: made a four-frame roll report itself as two.
+            "wanted": sorted(
+                {int(n) for n in (earlier.get("wanted")
+                                  or (earlier.get("settings") or {}).get("only")
+                                  or earlier.get("only") or ())}
+                | {int(n) for n in (job.only or ())}
+            ) or None,
+            # Earlier attempts' frames, kept. This run's records replace the
+            # ones for the frames it scans and leave the rest alone.
+            "frames": list(earlier.get("frames") or []),
         }
 
         # How each chosen picture is arranged. Every approved frame appears,
@@ -1093,7 +1125,13 @@ class ScanSession:
                             record[key] = scanned[key]
                 if job.dry_run and rf.prescan is not None:
                     record["prescan"] = f"prescan{number:02d}.tif"
-                manifest["frames"].append(record)
+                # This frame's record replaces any earlier attempt's, so a
+                # frame rescanned after a failure is not in the file twice
+                # saying two different things about itself.
+                manifest["frames"] = [
+                    f for f in manifest["frames"]
+                    if str(f.get("number")) != str(number)
+                ] + [record]
                 # Rewritten after every frame. A roll takes hours and a crash
                 # should cost the frame it was on, not the roll.
                 manifest_path.write_text(json.dumps(manifest, indent=2, default=str))

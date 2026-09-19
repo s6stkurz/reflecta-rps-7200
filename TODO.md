@@ -428,9 +428,14 @@ bit is not evidence, not a new problem.
   rewind lands where the walk's frame numbers assume when the strip has been
   taken out and put back.
 
-  One limit by design rather than omission: the shading reference is not stored
-  and cannot be, so a resumed roll calibrates afresh. See
-  `docs/scanner-options-survey.md` for what is left on the scanner side.
+  A resumed roll measures a new shading reference rather than inheriting one.
+  That is a choice, not a limit -- `load_shading` and `--reuse` exist, and every
+  library entry keeps the reference it would be corrected with. But a reference
+  describes the sensor at the exposure and gain of the pass that measured it, so
+  the one a roll started with is the wrong thing to hand a resume months later.
+  Calibrate set to "reuse" still loads a saved one for anyone who wants to skip
+  the 3-4 minutes. See `docs/scanner-options-survey.md` for what is left on the
+  scanner side.
 
 
 - **~~Fast infrared~~ -- answered and adopted 2026-09-16. The infrared plane is

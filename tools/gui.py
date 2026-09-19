@@ -1696,8 +1696,11 @@ class ScannerGui:
                 "not. Its settings are back. Put the strip back at its start "
                 "and press \"Scan chosen frames\" -- the transport rewinds to "
                 "the beginning and advances to each frame itself.\n\n"
-                "It will calibrate again first: the shading reference is "
-                "per session and cannot be carried across one."
+                "It will calibrate again first, which is the right default "
+                "rather than a limitation: a reference describes the sensor at "
+                "the exposure and gain of the pass that measured it, and "
+                "months later neither is the same. Set Calibrate to \"reuse\" "
+                "before starting if you would rather load the saved one."
                 + (f"\n\nRestored: {', '.join(sorted(restored))}."
                    if restored else ""))
         else:
@@ -3725,6 +3728,11 @@ def wanted_frames(manifest: dict, progress: dict) -> list[int]:
     this a resume cannot say "11 of 24": it would know what was done and not
     what was asked for.
     """
+    # `wanted` first: a resumed run is told only what is *left*, so its `only`
+    # is not the roll's set. The session writes the union under this key.
+    for source in (progress, manifest):
+        if source.get("wanted"):
+            return sorted({int(n) for n in source["wanted"]})
     for source in (progress, manifest):
         only = source.get("only") or (source.get("settings") or {}).get("only")
         if only:
