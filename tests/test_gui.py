@@ -2188,3 +2188,161 @@ def test_a_batch_name_says_what_the_file_is():
     loose = types.SimpleNamespace(kind="scan", number=None, seq=-12,
                                   meta={"resolution_dpi": 300, "channels": 3})
     assert gui.batch_name(loose, "tiff") == "scan_012_300dpi.tif"
+
+
+# --- the rolls table -------------------------------------------------------
+
+
+def _shelf(tmp_path, *, name="2026-09-14", wanted=(1, 2, 3, 4), done=(1, 2),
+           dpi=1800, film="negative", ir=True, approved=None):
+    """A roll folder as the session writes one, without any pixels."""
+    folder = tmp_path / "rolls" / name
+    folder.mkdir(parents=True)
+    (folder / "survey.json").write_text(json.dumps(
+        {"roll": name, "frames": [{"number": n} for n in wanted]}))
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": name, "wanted": list(wanted),
+        "settings": {"resolution": dpi, "film": film, "infrared": ir},
+        "frames": [{"number": n, "done": n in done} for n in wanted]}))
+    if approved:
+        (folder / "approved.json").write_text(json.dumps({"frames": approved}))
+    return folder
+
+
+def _entry(tmp_path, roll, number, name=None):
+    """A library entry that says which roll frame it is."""
+    entry = tmp_path / "library" / (name or f"{roll}-{number}")
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text(json.dumps(
+        {"film": {"frame": f"{roll}-{number:02d}"}}))
+    return entry
+
+
+def test_entries_are_joined_to_rolls_by_the_frame_they_name(tmp_path):
+    """Nothing in a roll manifest records its entries -- the entry is created on
+    the writer thread after the frame's record is written. The join is on
+    `film.frame`, which `_file` sets to "{roll}-{NN}"."""
+    _entry(tmp_path, "strip", 1)
+    _entry(tmp_path, "strip", 2)
+    _entry(tmp_path, "other", 1)
+    # Entries that belong to no roll, and a malformed one, are not a crash.
+    loose = tmp_path / "library" / "loose"
+    loose.mkdir()
+    (loose / "scan.json").write_text(json.dumps({"film": {"frame": ""}}))
+    broken = tmp_path / "library" / "broken"
+    broken.mkdir()
+    (broken / "scan.json").write_text("{not json")
+
+    index = gui.roll_entry_index(tmp_path / "library")
+    assert sorted(index["strip"]) == [1, 2]
+    assert sorted(index["other"]) == [1]
+    assert "" not in index
+
+
+def test_a_rolls_own_date_beats_the_filesystems(tmp_path):
+    """A roll duplicated or copied to another disk gets a fresh birthtime while
+    its name still says when the film was scanned. The name is the roll's own
+    answer; the filesystem's is about the copy."""
+    named = gui.folder_created(_shelf(tmp_path, name="2026-09-14"))
+    assert time.strftime("%Y-%m-%d", time.localtime(named)) == "2026-09-14"
+    # A folder whose name is not a date still gets an answer.
+    assert gui.folder_created(_shelf(tmp_path, name="strip")) > 0
+
+
+def test_a_summary_reports_size_and_entries_without_reading_pixels(tmp_path):
+    _shelf(tmp_path)
+    _entry(tmp_path, "2026-09-14", 1)
+    listed = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")
+    assert len(listed) == 1
+    summary = listed[0]
+    assert summary["size"] > 0
+    assert summary["modified"] > 0
+    assert sorted(summary["entries"]) == [1]
+    # The library root is optional; without it nothing knows about entries.
+    assert gui.rolls_on_disk(tmp_path / "rolls")[0]["entries"] == {}
+
+
+def test_the_table_sorts_on_values_not_on_the_text_it_shows():
+    """"2 of 10" sorts before "2 of 4" as text, and "900 MB" before "1.0 GB"."""
+    few = {"roll": "a", "wanted": [1, 2, 3, 4], "done": [1, 2],
+           "remaining": [3, 4], "resolution": 900, "film": "bw",
+           "created": 1.0, "size": 900_000_000, "scanned": True, "entries": {}}
+    many = dict(few, roll="b", wanted=list(range(1, 11)),
+                remaining=list(range(3, 11)), resolution=3600,
+                size=1_000_000_000, created=2.0)
+    assert sorted([many, few], key=gui.SORT_KEYS["size"])[0] is few
+    assert sorted([many, few], key=gui.SORT_KEYS["dpi"])[0] is few
+    # Fewest frames left first, and a longer roll breaks the tie.
+    assert sorted([many, few], key=gui.SORT_KEYS["frames"])[0] is few
+    assert gui.human_size(900_000_000) == "900.0 MB"
+    assert gui.human_size(1_000_000_000) == "1.0 GB"
+    assert gui.when(None) == "--", "an unopened roll must not read as 1970"
+
+
+def test_the_filter_looks_at_the_film_as_well_as_the_name(tmp_path):
+    """"the slide one" is as likely a way to look for a roll as its date is."""
+    _shelf(tmp_path, name="2026-09-14", film="negative")
+    _shelf(tmp_path, name="2026-08-02", film="positive", done=(1, 2, 3, 4))
+    listed = gui.rolls_on_disk(tmp_path / "rolls")
+    assert [r["roll"] for r in gui.matching(listed, "positive")] == ["2026-08-02"]
+    assert [r["roll"] for r in gui.matching(listed, "09-14")] == ["2026-09-14"]
+    assert [r["roll"] for r in gui.matching(listed, unfinished_only=True)] \
+        == ["2026-09-14"]
+    assert len(gui.matching(listed)) == 2
+
+
+def test_a_duplicate_is_told_apart_from_its_original(tmp_path):
+    """A duplicate keeps the original's roll name inside its manifest, so two
+    rows read identically unless the folder name leads -- which is exactly when
+    you need to tell them apart."""
+    folder = _shelf(tmp_path, name="2026-09-14")
+    summary = gui.roll_summary(folder)
+    assert gui.roll_cells(summary)[0] == "2026-09-14"
+    copied = dict(summary, folder=folder.with_name("2026-09-14-2"))
+    assert gui.roll_cells(copied)[0] == "2026-09-14-2  (2026-09-14)"
+
+
+def test_a_duplicate_never_lands_on_something_already_there(tmp_path):
+    folder = _shelf(tmp_path, name="strip")
+    assert gui.duplicate_name(folder).name == "strip-2"
+    (folder.parent / "strip-2").mkdir()
+    assert gui.duplicate_name(folder).name == "strip-3"
+
+
+def test_an_export_plan_holds_each_frames_own_arrangement(tmp_path):
+    """The frame's own decision where it made one, the roll's otherwise -- the
+    same precedence the delivered files follow."""
+    _shelf(tmp_path, approved=[{"number": 2, "rotation": 270, "flipped": True}])
+    _entry(tmp_path, "2026-09-14", 1)
+    _entry(tmp_path, "2026-09-14", 2)
+    summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
+    summary["settings"]["rotation"] = 90
+    plan = {item.number: item for item in gui.roll_exports(summary)}
+    assert plan[1].rotation == 90 and plan[1].flipped is False
+    assert plan[2].rotation == 270 and plan[2].flipped is True
+    assert plan[1].meta["resolution_dpi"] == 1800
+    assert plan[1].meta["channels"] == 4, "the roll was infrared"
+
+
+def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):
+    """Export re-corrects from the entries, so a frame without one cannot be
+    exported at all. Left out here; the window counts the difference against
+    `done` and says how many were skipped."""
+    _shelf(tmp_path, done=(1, 2))
+    _entry(tmp_path, "2026-09-14", 1)
+    summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
+    assert [item.number for item in gui.roll_exports(summary)] == [1]
+    assert len(summary["done"]) == 2, "both were scanned; only one survives"
+
+
+def test_approvals_are_read_without_loading_a_survey(tmp_path):
+    """`approved.json` is the one thing in a roll folder the library cannot
+    rebuild, so Delete has to be able to ask about it without reading pixels."""
+    folder = _shelf(tmp_path, approved=[
+        {"number": 1, "offset_mm": 0.3, "rotation": 90, "flipped": True}])
+    offsets, rotations, flips, _ = gui.read_approved(folder)
+    assert offsets == {1: 0.3} and rotations == {1: 90} and flips == {1: True}
+    # A folder without one, and a corrupt one, both answer empty.
+    assert gui.read_approved(tmp_path) == ({}, {}, {}, {})
+    (folder / "approved.json").write_text("{nope")
+    assert gui.read_approved(folder) == ({}, {}, {}, {})

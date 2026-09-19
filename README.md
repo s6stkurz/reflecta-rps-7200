@@ -209,9 +209,25 @@ hours, and a strip with four keepers on it should not cost the same as one with
 seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame beside
 it, so a strip can be looked at again tomorrow instead of walked again.
 
-**A roll that died can be finished, however much later.** *Rolls ...* lists
-every roll on disk with how far each one got -- "2 of 4 scanned -- 2 left" --
-and opening one with frames left brings back its contact sheet with the
+**A roll that died can be finished, however much later.** *Rolls ...* is a
+table of every roll on disk -- **Roll, Frames, Resolution, Film, Created, Last
+opened, Size** -- sorted by any column and filtered by a search box or an "only
+unfinished" tick. Unfinished rolls are marked in amber, and a roll whose library
+entries have gone is marked too, because that is the one that cannot be
+exported. Everything in it comes from two small JSON files and `stat`: a roll
+holds 38 frames at 142 MB and a list that opened them would be unusable.
+
+From there a selection can be **exported** -- every frame re-corrected from the
+library at full resolution with today's correction code, not a copy of what the
+roll wrote at the time -- **duplicated** to the next free `-2` so a strip can be
+rescanned without losing the first scan *or* its approvals, **renamed**, shown in
+the file manager, or **deleted**. Delete removes the roll folder and never
+touches `library/`: the raw bytes stay and the frames can be rebuilt from them,
+and the only thing that goes for good is `approved.json` -- the positions and
+turns set by hand, which is what the question says. It refuses while the scanner
+is working or while that roll is the one open in the window.
+
+Opening one with frames left brings back its contact sheet with the
 approvals, marks what is already scanned, ticks what is not, and puts **its own
 settings** back: resolution, film, infrared, metering, and the exposure, gain
 and offset the scanner was asked for. Those come from the roll's own manifest
