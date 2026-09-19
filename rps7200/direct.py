@@ -200,6 +200,7 @@ __all__ = [
     "SCSI_VENDOR_E7",
     "SCSI_WRITE",
     "SCSI_WRITE_GAIN_OFFSET",
+    "SHADING_SKIPPED_EXPLICIT",
     "SLIDE_INIT",
     "SLIDE_NEXT",
     "SLIDE_PREV",
@@ -275,6 +276,24 @@ __all__ = [
 #: comparison -- pieusb 0.85, nkscan 0.97 -- which left about a fifth of a stop
 #: unused for no measured reason.
 EXPOSURE_TARGET = 0.80
+
+
+#: What :meth:`DirectScanner.scan` records in ``meta["shading_skipped"]`` when
+#: the caller asked for raw pixels outright, by passing ``shading=False``.
+#:
+#: **It is the only reason this driver still writes.** A pass that *wanted*
+#: correction and could not get one raises :class:`ShadingUnavailable` rather
+#: than returning raw pixels quietly, so on anything scanned today a skipped
+#: correction is always a choice.
+#:
+#: Entries filed before that was true carry other reasons -- four in this
+#: library, reading "no shading reference in this session" or "this pass is
+#: 10344 columns but the reference covers 5172" -- and those were a shortfall,
+#: not a choice. :func:`rps7200.library.corrected` compares against this
+#: constant to tell the two apart, and `verify` already draws the same line.
+#: They must not drift, which is why the string lives here rather than being
+#: written out in both places.
+SHADING_SKIPPED_EXPLICIT = "shading=False (explicit)"
 
 
 #: How far *above* its target a channel may land and still be accepted.
@@ -2590,7 +2609,7 @@ class DirectScanner:
                 "accept raw pixels deliberately."
             )
         else:
-            shading_skipped = "shading=False (explicit)"
+            shading_skipped = SHADING_SKIPPED_EXPLICIT
 
         meta = {
             "resolution_dpi": resolution,

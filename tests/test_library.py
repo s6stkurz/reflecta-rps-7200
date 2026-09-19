@@ -12,7 +12,8 @@ import json
 import numpy as np
 
 from rps7200 import library, tiff
-from rps7200.direct import CHANNEL_ORDER, INDEX_HEADER
+from rps7200.direct import (CHANNEL_ORDER, INDEX_HEADER,
+                            SHADING_SKIPPED_EXPLICIT)
 from rps7200.library import FilmNotes
 from rps7200.shading import ShadingReference
 
@@ -484,3 +485,44 @@ def test_a_pass_that_could_not_be_corrected_says_so_rather_than_lying(tmp_path):
     back, info = library.corrected(path)
     assert info["corrected"] == "deliberately raw"
     assert np.array_equal(back, image)
+
+
+def test_a_pass_that_wanted_correction_is_not_called_a_choice(tmp_path):
+    """The other half of the entry above, and the one that was wrong.
+
+    Both arrive as a non-empty `calibration.skipped` and they are opposite
+    things: one caller passed `shading=False`, the other asked for correction
+    and was filed without any. `verify` has always split them -- it calls the
+    second "correction was asked for" -- and `corrected()` called both a
+    deliberate choice, so Save As told the operator the rawness was intended.
+
+    Sixteen entries in the real library say exactly this, from before `scan()`
+    raised `ShadingUnavailable` rather than returning raw quietly.
+    """
+    stream, image = index_stream(16, 8, 3)
+    meta = {"resolution_dpi": 300, "channels": 3,
+            "channel_order": list(CHANNEL_ORDER[:3]),
+            "width": 16, "height": 8, "depth": 16, "bytes_per_line": 32,
+            "shading_skipped": "no shading reference in this session"}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
+                        reference=None, raw=stream, raw_layout=layout)
+    back, info = library.corrected(path)
+    assert info["corrected"] == "raw -- correction was asked for"
+    assert "deliberately" not in info["corrected"]
+    assert np.array_equal(back, image)
+
+
+def test_only_the_explicit_sentinel_counts_as_a_choice(tmp_path):
+    """Pinned against the constant rather than against a copy of its text, so
+    that changing the wording in `direct.py` cannot silently make every legacy
+    entry read as deliberate again."""
+    stream, image = index_stream(16, 8, 3)
+    meta = {"resolution_dpi": 300, "channels": 3,
+            "channel_order": list(CHANNEL_ORDER[:3]),
+            "width": 16, "height": 8, "depth": 16, "bytes_per_line": 32,
+            "shading_skipped": SHADING_SKIPPED_EXPLICIT}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
+                        reference=None, raw=stream, raw_layout=layout)
+    assert library.corrected(path)[1]["corrected"] == "deliberately raw"

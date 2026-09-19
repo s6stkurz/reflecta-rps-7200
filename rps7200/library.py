@@ -45,7 +45,7 @@ from typing import Any
 import numpy as np
 
 from . import tiff
-from .direct import DirectScanner, ScanParameters
+from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
 from .shading import ShadingReference, apply_shading
 
 DEFAULT_ROOT = Path("library")
@@ -326,14 +326,34 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
                      -- legacy entries, from before the library stored raw
         "no reference"  nothing to correct with; the pixels are returned raw
         "deliberately raw"  the pass asked for `shading=False`
+        "raw -- correction was asked for"  it wanted correction and was filed
+                     without any; the rawness was a shortfall, not a choice
+
+    The last two look identical in the record -- both are a non-empty
+    `calibration.skipped` -- and they are opposite things. Only
+    :data:`rps7200.direct.SHADING_SKIPPED_EXPLICIT` means the caller chose it.
+    `verify` already draws that line and calls the other one "a thing that went
+    wrong"; this used to call both a choice, so Save As told an operator that a
+    shortfall had been intended.
+
+    Four entries in this library are the second kind, all from 2026-09-11 and
+    all from before `scan()` raised `ShadingUnavailable` instead of returning
+    raw quietly: two filed with no reference in the session at all, and two
+    7200 dpi passes, for which the device will not produce a reference wider
+    than 5172 columns at any resolution. The reason itself stays in
+    `calibration.skipped` for a caller that wants to say which.
     """
     image, record = load(path)
     applied = (record.get("image") or {}).get("corrections_applied") or []
     if "shading" in applied:
         record["corrected"] = "already"
         return image, record
-    if (record.get("calibration") or {}).get("skipped"):
-        record["corrected"] = "deliberately raw"
+    skipped = (record.get("calibration") or {}).get("skipped")
+    if skipped:
+        record["corrected"] = (
+            "deliberately raw" if skipped == SHADING_SKIPPED_EXPLICIT
+            else "raw -- correction was asked for"
+        )
         return image, record
     if record.get("reference") is None:
         record["corrected"] = "no reference"
