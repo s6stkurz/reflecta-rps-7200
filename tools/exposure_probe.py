@@ -272,7 +272,13 @@ def main() -> int:
                     "frame": number, "rung": rung,
                     "transport_position": here,
                     "resolution": args.resolution,
-                    "entry": meta.get("library_entry"),
+                    # The join key back to the library, and the reason `--json`
+                    # is load-bearing rather than a convenience. Entries are
+                    # filed after `close()` and named from *flush* time, so
+                    # neither their names nor their order says which frame a
+                    # pass came from -- but `device_settings.exposure` is stored
+                    # verbatim, and every (frame, rung) has its own triple
+                    # because every frame metered for itself.
                     "duration_s": meta["duration_s"],
                     "exposure": list(meta["exposure"]),
                     "clamped": [e >= 65535 for e in meta["exposure"]],
