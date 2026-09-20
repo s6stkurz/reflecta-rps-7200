@@ -1,10 +1,20 @@
 # Exposure on colour negative: is 0.80 the right target there?
 
-## Status: the offline half is done and it moved the question. The hardware run is designed, costed and **not yet driven** -- it needs Stefan, film loaded, about 40 minutes.
+## Status: run 2026-09-20 on 15 negatives. Metering lands in band on all fifteen; the linearity figure that chose the target does **not** reproduce. `EXPOSURE_TARGET` stays at 0.80 on a different, measured justification. See **The answer** at the end.
 
-`tools/linearity.py` is the offline measure; `tools/exposure_probe.py` is the run,
-and `tests/test_exposure_probe.py` holds its shape with no device attached.
-Nothing has been driven.
+`tools/linearity.py` is the offline measure, `tools/exposure_probe.py` the run,
+`tests/test_exposure_probe.py` and `tests/test_linearity.py` hold both with no
+device attached.
+
+Every number below re-derives from the filed raw bytes, on a machine holding the
+library:
+
+    python3 tools/linearity.py --probe probe/exposure.json
+
+`probe/exposure.json` is gitignored, like the `library/` it indexes -- it is what
+maps each entry to the frame and rung it came from, since entries are named from
+flush time. The numbers themselves live in this document, which is the same
+bargain every other plan here makes.
 
 ## The question
 
@@ -178,4 +188,147 @@ happens with it in.
 
 ## What actually followed
 
-Not yet run.
+Run 2026-09-20 on a colour negative strip, 15 frames, 39 ladder passes plus 30
+metering probes, all filed. 24 minutes rather than the 40 budgeted -- passes at
+300 dpi came in at 15-22 s, not 33.
+
+### Metering lands in the band. Fifteen for fifteen.
+
+```
+    R  0.774 - 0.784        G  0.788 - 0.813        B  0.408 - 0.702
+```
+
+Every frame, red and green inside `0.72 … 0.82`. Not one miss, and the spread
+across fifteen different photographs is under a percent on red. The first thing
+this run establishes is the dullest and the most reassuring: metering does what
+it claims, and it does it frame to frame, not just on the one frame anybody had
+ever checked.
+
+Two things it *still* has not exercised, after fifteen frames. **Nothing landed
+above target** -- the highest reading is green at 0.813, inside the `+0.02` band
+-- so the over-band remains untested, and metering appears to sit systematically
+just under: red averages 0.778 against a target of 0.80. And **no frame spent the
+third, clipped-channel round.**
+
+### Blue is the real exposure problem on negative, and it is not metering
+
+Blue hit the 16-bit timer ceiling on **19 of 19** metered passes, and what varies
+is how far short the ceiling leaves it:
+
+```
+    frame  9  0.453      frame 10  0.441      frame 13  0.408
+    frame 15  0.702      frame 14  0.677      frame  7  0.674
+```
+
+That is a range of 0.29, from a third of a stop under target to a **full stop
+under**. The dense frames are the ones that suffer, which is the expected
+direction and a much larger effect than anything linearity contributes. It is
+also not fixable by metering: the timer is already at 65535. `CLAUDE.md` already
+says the way out is RGBI, where blue is ~5x more sensitive; this is fifteen
+frames of evidence for that, where there was one.
+
+### Drift across each ladder is small enough to ignore
+
+First `x1.00` against last, per frame:
+
+```
+    frame  1   R -0.27%  G -0.20%        frame  9   R -0.13%  G +0.06%
+    frame  5   R +0.10%  G +0.17%        frame 13   R -0.03%  G +0.07%
+```
+
+`agreement_z` on each frame's repeat pair reads **1.05-1.24** against a house
+baseline of ~1.03, so the pairs are consistent with noise. The random share of
+high-frequency content is 10-35%, in line with the 21-27% measured on the slide.
+
+That is fifteen repeat pairs, not the four the ladder frames provide, and it is
+the *filing rule* that produced the other eleven: `auto_exposure`'s second probe
+round lands on the scales it returns, so the metering probe and the metered pass
+are the same commanded exposure, and both are filed. The rule that says file
+every scan, including the throwaway ones, is what let the null below be measured
+on every frame rather than a quarter of them.
+
+### Linearity: real, consistent, and about half what was recorded
+
+Raw, largest departure at or above 70% of scale, one reading per frame:
+
+```
+    R   f1 -0.64%   f5 -0.57%   f9 -0.52%   f13 -0.64%      spread 0.12%
+    G   f1 -0.73%   f5 -0.61%   f9 -0.73%   f13 -0.66%      spread 0.12%
+```
+
+**Four different photographs agreeing to 0.12% is the sensor.** That is the
+library's own sensor-versus-picture test -- a fixed effect across different film
+positions -- applied to level instead of to column, and it is the thing three
+rungs on one frame could never have said.
+
+Blue reads 0.00% because it never reaches those bands. It is railed at 0.41-0.70,
+so the top half of this is a red-and-green measurement, exactly as the design
+said it would be.
+
+### The metric has a one-sided bias, and correcting it makes the effect larger
+
+Each frame's two `x1.00` passes are the same commanded exposure, so the metric
+must read 0.00% on them. It does not: **26 of 26 red and green null readings came
+back positive**, +0.01% to +1.06%. One-sided is not scatter. Banding on the
+brighter pass selects pixels whose noise went up, which biases the ratio in a
+high band upward relative to the base band.
+
+So the null is a bias to subtract, not a floor to clear. Paired against each
+frame's own null, on bands resting on 1500+ pixels:
+
+```
+    R   -0.45%  -0.88%  -1.06%      mean -0.80%
+    G   -0.44%  -0.49%  -0.72%      mean -0.55%
+```
+
+All six negative. The effect is **-0.6% to -0.8%**, and the uncorrected figure
+understates it.
+
+An earlier pass at this reported the null as 2.48% and nearly buried the result.
+That reading was **blue, on 580 pixels** -- blue has almost nothing above 70% of
+scale because it is railed, so whatever squeaked past `MIN_PIXELS` was noise. The
+lesson is the population, not the channel: at 300 dpi the analysis crop is
+114x171, and a band median resting on a few hundred pixels says nothing. Every
+figure above is quoted with the count behind it.
+
+### Corrected pixels agree with raw, which the slide's did not
+
+```
+    R   -0.32%  -0.70%  -0.54%  -0.72%        G   -0.95%  -0.71%  -0.71%  -0.86%
+```
+
+Same magnitude as raw. On the slide ladder the corrected number was **-15.96%**
+against a raw -0.64%, and this is the confirmation that the difference there was
+saturation and nothing else: here the brightest rung peaks at 0.89-0.92, nothing
+pins, and the two measures agree.
+
+## The answer
+
+**The 1.5-1.9% figure does not reproduce on colour negative, and it is not a
+slide-versus-negative difference.** Negative departs about **-0.6% to -0.8%**
+above 70% of scale; the slide departs -0.64% raw. The two films are alike, and
+both are roughly a third of what was recorded. The recorded number is best
+explained as the slide ladder's saturation artefact, measured on corrected
+pixels.
+
+So the argument that chose `EXPOSURE_TARGET = 0.80` over 0.90 -- *"linearity
+binds before clipping does"* -- is **about half as strong as stated**. Frame 13
+reads -0.62% in the 80-90% band and -0.64% in 90-97%, so the marginal linearity
+cost of operating at 0.90 instead of 0.80 is a further 0.1-0.2%, against a
+recorded clipping cost at 0.90 of 0.019% of blue. On linearity alone, 0.90 would
+be defensible.
+
+**But the walk supplies a better reason to stay at 0.80, which linearity was
+standing in for.** Metering's own frame-to-frame spread is now measured: green
+ranges 0.788 to 0.813 at a 0.80 target, and red 0.774 to 0.784. A 0.90 target
+would put green's top frames at ~0.91 with only 0.07 of headroom left for that
+spread plus whatever the metering error is on a frame nobody has scanned yet --
+and over-exposure is the one direction nothing downstream can undo. That is a
+headroom argument from measured spread, not a linearity argument from prose, and
+it is the first time the spread has been known.
+
+`EXPOSURE_TARGET` is therefore **unchanged**, with a different and measured
+justification. The linearity claim in `rps7200/direct.py` and `TODO.md` should be
+corrected to -0.6/-0.8% and re-attributed; that is a separate change, because
+those two also state the clipping figures and the whole passage wants rewriting
+against this run rather than patching.
