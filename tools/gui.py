@@ -390,6 +390,18 @@ class ScannerGui:
         self._survey_predpi = None
         self._transport = None               # last frame position the device gave
         self.sheet = None                    # the contact sheet, while it is open
+        #: What the contact sheet was last left holding -- ticks, offsets,
+        #: rotations, flips. The sheet is a Toplevel that is destroyed when it
+        #: closes, so without this the decisions die with the window: closing
+        #: it and pressing "Contact sheet ..." again rebuilt it from the survey
+        #: and every position set by hand was gone. Kept on the window rather
+        #: than in the sheet because the point is to outlive the sheet.
+        self.sheet_state: dict = {}
+        #: Frames this roll has already scanned, from its manifest. A fact
+        #: rather than a decision, so it is not stored with the state above --
+        #: but the sheet needs it to grey them out, and reopening the sheet
+        #: from the button has no manifest to hand.
+        self._sheet_done: set[int] = set()
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
         self._loaded_roll = None             # which roll folder is open, if any
@@ -566,6 +578,10 @@ class ScannerGui:
                 # because the payload is written whole, so the rolls table's
                 # "Last opened" column never survived a launch.
                 "rolls": self.remembered.get("rolls") or {},
+                # Carried through for the same reason as `rolls` above, and it
+                # is the same trap: this payload is written whole, so a key
+                # left out is not merely unsaved, it is erased.
+                "sheet": self.remembered.get("sheet") or {},
             }, self._settings_path)
         except Exception as exc:                         # noqa: BLE001
             self._say(f"could not save the settings: {exc}")
@@ -1920,6 +1936,11 @@ class ScannerGui:
             # numbers -- a different film, shown and written sideways. The
             # positions go too: the film has moved, so they name nothing now.
             self.orientations = {}
+            # And the sheet's own copy of all of that, for the same reason:
+            # ticks, positions and turns are keyed by frame number, and frame
+            # numbers on a new strip name different pictures.
+            self.sheet_state = {}
+            self._sheet_done = set()
             self._surveying = True
             self._survey_start = start_at
             self._survey_predpi = predpi
@@ -1960,9 +1981,25 @@ class ScannerGui:
             self.sheet.top.lift()
             self.sheet.top.focus_force()
             return
+        kept = self._recall_sheet_state()
+        # Said out loud, because a restored decision that is wrong is worse
+        # than none: the operator has to be able to see that the sheet came
+        # back holding something, and how much.
+        restored = ", ".join(
+            f"{len(kept[name])} {label}"
+            for name, label in (("offsets", "positioned"),
+                                ("rotations", "turned"),
+                                ("flips", "flipped"))
+            if kept[name])
         self._say(f"contact sheet: {len(self.survey)} walked "
-                  f"{[getattr(r, 'number', '?') for r in self.survey]}")
-        self.sheet = _ContactSheet(self, self.survey)
+                  f"{[getattr(r, 'number', '?') for r in self.survey]}"
+                  + (f" -- kept {restored}" if restored else ""))
+        self.sheet = _ContactSheet(self, self.survey,
+                                   offsets=kept["offsets"],
+                                   rotations=kept["rotations"],
+                                   flips=kept["flips"],
+                                   ticks=kept["ticks"],
+                                   done=self._sheet_done)
 
     def _per_frame_seconds(self) -> float:
         """Roughly what one frame of the roll will cost, metering included."""
@@ -2024,6 +2061,72 @@ class ScannerGui:
             rolls = self.remembered["rolls"] = {}
         rolls[Path(folder).name] = {"opened": time.time()}
         self._remember()
+
+    # -- what the contact sheet was left holding ---------------------------
+
+    def _sheet_key(self) -> str | None:
+        """Which roll the sheet's decisions belong to, if any.
+
+        Frame numbers only mean something within one strip, so a stored set
+        has to say which strip it came from. A walk that has not been
+        commissioned yet has no folder to name -- those decisions are kept for
+        this session only, which is the honest answer rather than filing them
+        under a roll they do not belong to.
+        """
+        return Path(self._loaded_roll).name if self._loaded_roll else None
+
+    @staticmethod
+    def _clean_sheet_state(raw) -> dict:
+        """A stored state made safe to hand to the sheet.
+
+        JSON has no integer keys, so a round trip through `gui-settings.json`
+        comes back with every frame number as a string and every offset as
+        whatever JSON made of it. Anything that will not convert is dropped
+        rather than raising: a file edited by hand should cost the one entry
+        it got wrong, which is how `_restore` treats the controls.
+        """
+        out: dict[str, dict] = {"ticks": {}, "offsets": {},
+                                "rotations": {}, "flips": {}}
+        if not isinstance(raw, dict):
+            return out
+        for name, cast in (("ticks", bool), ("offsets", float),
+                           ("rotations", int), ("flips", bool)):
+            section = raw.get(name)
+            if not isinstance(section, dict):
+                continue
+            for key, value in section.items():
+                try:
+                    out[name][int(key)] = cast(value)
+                except (TypeError, ValueError):
+                    continue
+        return out
+
+    def _store_sheet_state(self, state: dict) -> None:
+        """Keep the sheet's decisions past the window that made them."""
+        self.sheet_state = state
+        key = self._sheet_key()
+        if key is None:
+            return
+        sheets = self.remembered.setdefault("sheet", {})
+        if not isinstance(sheets, dict):
+            sheets = self.remembered["sheet"] = {}
+        sheets[key] = state
+        self._remember()
+
+    def _recall_sheet_state(self) -> dict:
+        """What the sheet should open holding.
+
+        This session's copy first: it is the one the operator has been
+        working in, and it is already in the right types. The settings file
+        is the fallback for a window that has been restarted since.
+        """
+        if self.sheet_state:
+            return self._clean_sheet_state(self.sheet_state)
+        key = self._sheet_key()
+        if key is None:
+            return self._clean_sheet_state(None)
+        return self._clean_sheet_state(
+            (self.remembered.get("sheet") or {}).get(key))
 
     def _roll_is_busy(self, summaries, what: str) -> bool:
         """Refuse to touch a roll the scanner or the window is using."""
@@ -2277,7 +2380,18 @@ class ScannerGui:
                   + (f", settings restored: {', '.join(sorted(restored))}"
                      if restored else ""))
         if self.sheet is not None and self.sheet.alive():
+            # Destroyed rather than dismissed: `_loaded_roll` already names the
+            # roll being opened, so keeping the old sheet's decisions here
+            # would file the outgoing roll's positions under the incoming one.
             self.sheet.top.destroy()
+        self._sheet_done = {int(n) for n in done}
+        # The manifest is the record for this roll, so it replaces whatever
+        # the window was holding -- including another roll's decisions, which
+        # are keyed by frame number and would otherwise be read as this one's.
+        self.sheet_state = {
+            "ticks": {}, "offsets": dict(out["offsets"]),
+            "rotations": dict(out["rotations"]), "flips": dict(out["flips"]),
+        }
         self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"],
                                    rotations=out["rotations"],
                                    flips=out["flips"], done=done)
@@ -5874,7 +5988,7 @@ class _ContactSheet:
     DONE = "#5b7a5b"                         # already scanned: neither of those
 
     def __init__(self, gui, frames, offsets=None, rotations=None, flips=None,
-                 done=None):
+                 done=None, ticks=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
         # A frame that was walked but cannot be shown is not a cosmetic
@@ -5887,6 +6001,12 @@ class _ContactSheet:
                      f"picture and are not shown -- {dropped}. They cannot be "
                      f"ticked, so they will not be scanned.")
         self.ticks: dict[int, tk.BooleanVar] = {}
+        #: Ticks this sheet was reopened with, by frame number. Absent means
+        #: "decide from `done`", which is the fresh-sheet rule. Kept separate
+        #: from `self.ticks` because those are Tk variables and only exist once
+        #: the cells are built.
+        self._initial_ticks: dict[int, bool] = {int(n): bool(v) for n, v
+                                                in dict(ticks or {}).items()}
         #: Frames this roll has already scanned, from `roll.json`. They open
         #: unticked and say so, because a resumed roll should *finish* rather
         #: than start again -- three hours of transport is exactly what a
@@ -5994,7 +6114,11 @@ class _ContactSheet:
         self.v_count = tk.StringVar()
         ttk.Label(foot, textvariable=self.v_count, foreground="#777").pack(
             side="left", padx=10)
-        ttk.Button(foot, text="Close", command=self.top.destroy).pack(side="right")
+        ttk.Button(foot, text="Close", command=self._dismiss).pack(side="right")
+        # The title bar's X as well: it is the way a window gets closed, and
+        # routing only the button through `_dismiss` would keep the decisions
+        # for one way out and drop them for the other.
+        self.top.protocol("WM_DELETE_WINDOW", self._dismiss)
         self.b_scan = ttk.Button(foot, text="Scan chosen frames",
                                  command=self._scan)
         self.b_scan.pack(side="right", padx=6)
@@ -6101,8 +6225,11 @@ class _ContactSheet:
     def _cell(self, grid, result, row: int, column: int, index: int) -> None:
         number = result.number
         # Everything ticked; untick the duds -- except on a resumed roll, where
-        # what is already scanned starts unticked.
-        var = tk.BooleanVar(value=number not in self.done)
+        # what is already scanned starts unticked, and except where the sheet
+        # is being reopened on a decision already made about this frame, which
+        # outranks both defaults because somebody made it on purpose.
+        var = tk.BooleanVar(
+            value=self._initial_ticks.get(number, number not in self.done))
         self.ticks[number] = var
 
         cell = ttk.Frame(grid, padding=6)
@@ -6363,6 +6490,44 @@ class _ContactSheet:
         """The positions set by hand, keyed by frame number."""
         return dict(self.offsets)
 
+    def state(self) -> dict:
+        """Every decision made here, in plain types, for reopening it.
+
+        Ticks are part of it: "scan these four" is a decision like any other,
+        and a sheet rebuilt without them comes back with the whole strip
+        ticked, which is the opposite of what was decided.
+
+        The three per-frame maps keep their own conventions rather than being
+        flattened together. `offsets` treats an absent entry and an explicit
+        zero as the same thing; `rotations` and `flips` must not, because
+        "rotate all" moves the session default and a frame straightened by
+        hand would fall back to it and be scanned sideways. That happened on
+        the first strip this was driven on.
+        """
+        return {
+            "ticks": {int(n): bool(v.get()) for n, v in self.ticks.items()},
+            "offsets": {int(n): float(v) for n, v in self.offsets.items()},
+            "rotations": {int(n): int(t) for n, t in self.rotations.items()},
+            "flips": {int(n): bool(f) for n, f in self.flips.items()},
+        }
+
+    def _dismiss(self) -> None:
+        """Close, keeping what was decided.
+
+        Every way out of this window goes through here -- the Close button,
+        the title bar's X, and commissioning the scan -- because the window is
+        destroyed on the way out and the decisions live in it. They used to
+        die with it: closing the sheet and opening it again rebuilt it from
+        the survey, and every position set by hand was gone with nothing said.
+        """
+        try:
+            self.gui._store_sheet_state(self.state())
+        except Exception as exc:                          # noqa: BLE001
+            # Remembering is never allowed to stop the window closing. A sheet
+            # that will not close is worse than one that forgets.
+            self.gui._say(f"could not keep the contact sheet settings: {exc}")
+        self.top.destroy()
+
     # -- picking -----------------------------------------------------------
 
     def _toggle(self, number: int) -> None:
@@ -6426,7 +6591,7 @@ class _ContactSheet:
         approved = approved_from_sheet(self.frames, picked, self.offsets)
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.top.destroy()
-        self.top.destroy()
+        self._dismiss()
         self.gui.on_scan_chosen(picked, approved)
 
     def alive(self) -> bool:
