@@ -248,8 +248,10 @@ def _ladder(transport: Transport) -> int:
     print("a command round trip and a payload read all succeeded.")
     print()
     print("Next, and only with the owner's agreement: one 300 dpi RGB frame,")
-    print("about 23 s, filed with RPS7200_DEBUG=1. That is the smallest run")
-    print("that exercises a real windowed image read.")
+    print("about 22 s at the median, filed with RPS7200_DEBUG=1. That is the")
+    print("smallest run that exercises a real windowed image read. Budget")
+    print("above the median -- scan time tracks the exposure sum as well as")
+    print("the line count, so a dense frame runs longer than a thin one.")
     return 0
 
 

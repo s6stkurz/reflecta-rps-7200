@@ -424,9 +424,12 @@ bit is not evidence, not a new problem.
   discovery, the IEEE1284 preamble, the 32 KB length handshake, the 16 KB bulk
   reads. Those go through WinUSB rather than IOKit and nothing has driven them.
 
-  The first real pass should be one 300 dpi RGB frame, ~23 s, RGB only so no
-  infrared floor, filed with `RPS7200_DEBUG=1`. A stall or a short read in the
-  windowed reader would show there immediately. **Wants Stefan's agreement and
+  The first real pass should be one 300 dpi RGB frame -- about 22 s at the
+  median, and budget above it, because scan time tracks `sum(exposure)` as well
+  as line count -- filed with `RPS7200_DEBUG=1`. RGB rather than RGBI to keep
+  the run short, not to dodge a floor: tied to the resolution, which is the
+  default, infrared at 300 dpi costs about 25 s against RGB's 22. A stall or a
+  short read in the windowed reader would show there immediately. **Wants Stefan's agreement and
   Zadig run first** -- and note that the Zadig swap stops CyberView and VueScan
   seeing the scanner until the driver is put back through Device Manager.
 
