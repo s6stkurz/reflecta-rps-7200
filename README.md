@@ -110,42 +110,6 @@ its own Image/WIA driver to it, which libusb cannot go through. Replace it with 
 or libusbK using Zadig -- see the README.
 ```
 
-### Getting rid of that step
-
-There is a way not to need Zadig at all, and it is half-built in `rps7200/usbscan.py`.
-`usbscan.sys` exposes raw USB to userspace, and CyberView drives this scanner through
-it — reading CyberView's own engine, `C:\Windows\System32\MF5000_x64.dll`, for the
-usbscan IOCTL codes:
-
-```
-IOCTL_WRITE_REGISTERS   0x80002010   ×59
-IOCTL_READ_REGISTERS    0x8000200C   ×27
-IOCTL_SEND_USB_REQUEST  0x80002024   ×0      <- never used
-libusb / WinUSB / UsbDk              absent
-```
-
-Those two build a vendor control transfer, with `bRequest` chosen by length: `0x04`
-above one byte, `0x0C` at one. This driver makes exactly three control transfers —
-one-byte `0x0C` in, one-byte `0x0C` out, eight-byte `0x04` out — so all three are
-covered with nothing left over. The byte-at-a-time protocol is not a quirk of the
-scanner; it is the Windows register model its firmware was built around.
-
-**It does not work yet.** The handle opens unelevated, the driver answers, and the
-device answers real USB requests through it (`05e3:0144 bcdDevice 0302`) — but the two
-register IOCTLs return `ERROR_SEM_TIMEOUT` across all seven marshallings tried. Nothing
-wedges; the device answers a descriptor request immediately after each one. The untested
-suspect is the Windows Image Acquisition service holding the device. See the module
-docstring for exactly what was measured.
-
-So it is opt-in, not the default:
-
-```powershell
-$env:RPS7200_USB_BACKEND = "usbscan"
-```
-
-Finishing it would remove the Zadig step and let CyberView keep working, which is the
-single biggest install-friction point every project in this space lives with.
-
 ## Use
 
 One calibration per power-on, then scan. **Load the film first**, wait for the lamp

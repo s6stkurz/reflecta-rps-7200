@@ -132,8 +132,7 @@ from .protocol import (
     supports_infrared,
 )
 from .shading import ShadingReference, apply_shading, calculate_shading
-from .usb_transport import (CheckCondition, NoDataYet, Transport, UsbError,
-                            open_transport)
+from .usb_transport import CheckCondition, NoDataYet, Transport, UsbError
 
 #: This module was one file; tools and tests import these names from here,
 #: so the split re-exports every one of them.
@@ -226,7 +225,6 @@ __all__ = [
     "ShadingReference",
     "State",
     "Transport",
-    "open_transport",
     "UsbError",
     "_cmd",
     "_is_unity",
@@ -452,11 +450,7 @@ class DirectScanner:
         self.log_hook = log_hook
         self.progress_hook = progress_hook
         self._own_transport = transport is None
-        # `open_transport` rather than `Transport`: on Windows the scanner
-        # arrives with its own driver bound and libusb cannot go through it,
-        # so there are two transports and the machine decides. Same bytes on
-        # the wire either way -- see rps7200.usbscan.
-        self.t = transport or open_transport(verbose=verbose)
+        self.t = transport or Transport(verbose=verbose)
         self._scanning = False
         self._inquiry: Inquiry | None = None
         # The shading reference this session has acquired. The scanner returns
