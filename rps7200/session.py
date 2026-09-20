@@ -1333,10 +1333,26 @@ class ScanSession:
         return f"{time.strftime('%Y%m%dT%H%M%S')}_{dpi}dpi{ir}{end}"
 
 
+#: Names Windows will not give a file or a folder, whatever the extension.
+#: They are device names, not reserved words, so `CON` fails where `CON-1`
+#: is fine -- and it fails as NotADirectoryError from `mkdir`, which reads
+#: like a bug in this driver rather than a name the operator chose.
+_RESERVED = frozenset(
+    ["con", "prn", "aux", "nul"]
+    + [f"com{n}" for n in range(1, 10)]
+    + [f"lpt{n}" for n in range(1, 10)]
+)
+
+
 def _safe(name: str) -> str:
     """`name` with anything a filename should not carry taken out."""
     kept = [c if (c.isalnum() or c in "-_.") else "-" for c in name.strip()]
-    return "".join(kept).strip("-.") or "roll"
+    cleaned = "".join(kept).strip("-.") or "roll"
+    # Checked against the part before the first dot, which is what Windows
+    # matches on: `con.tif` is refused as surely as `con`.
+    if cleaned.split(".")[0].lower() in _RESERVED:
+        cleaned = f"{cleaned}-roll"
+    return cleaned
 
 
 def _unclaimed(wanted: Path) -> Path:

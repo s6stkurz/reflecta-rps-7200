@@ -977,6 +977,28 @@ def test_a_roll_name_that_is_not_a_filename_is_made_into_one(tmp_path):
     assert _safe("///") == "roll"
 
 
+def test_a_roll_named_after_a_dos_device_can_still_be_created(tmp_path):
+    """`con`, `nul`, `com1` and the rest are device names on Windows.
+
+    Not reserved words -- devices -- so `mkdir("con")` fails there with
+    NotADirectoryError, which reads like a bug in this driver rather than a
+    name the operator chose. Verified against the filesystem below rather than
+    asserted, so the rule is checked where it applies and is a no-op elsewhere.
+    """
+    from rps7200.session import _safe
+
+    assert _safe("con") == "con-roll"
+    assert _safe("COM1") == "COM1-roll"
+    assert _safe("nul") == "nul-roll"
+    # Only the whole name is a device; a name that merely starts with one is
+    # fine and must not be mangled.
+    assert _safe("con-1") == "con-1"
+    assert _safe("console") == "console"
+
+    for name in ("con", "prn", "aux", "nul", "com1", "lpt1"):
+        (tmp_path / _safe(name)).mkdir()
+
+
 def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
     """A framing pass does not expose for the film -- it runs at the device's
     own settings -- but the entry should still say what was in the transport.
