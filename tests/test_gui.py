@@ -229,38 +229,78 @@ class _Wheel:
         self.delta, self.num, self.state = delta, num, state
 
 
+def _mac(delta=0, num=0, state=0):
+    """A wheel event read by the Aqua rule, whatever machine this is."""
+    return gui._wheel_amount(_Wheel(delta, num, state), platform="darwin")
+
+
+def _win(delta=0, num=0, state=0, carry=None):
+    """A wheel event read by the Windows rule, with its own carry."""
+    return gui._wheel_amount(_Wheel(delta, num, state), platform="win32",
+                             carry=carry or gui._WheelCarry())
+
+
 def test_a_mac_trackpad_scrolls_by_what_it_reports():
     """Single digits, not multiples of 120. Treating a 3 as one notch is what
     made two fingers feel like one click per gesture."""
-    assert gui._wheel_amount(_Wheel(delta=-3)) == (3, False)
-    assert gui._wheel_amount(_Wheel(delta=3)) == (-3, False)
+    assert _mac(delta=-3) == (3, False)
+    assert _mac(delta=3) == (-3, False)
 
 
 def test_a_windows_notch_is_one_line_not_a_hundred_and_twenty():
-    assert gui._wheel_amount(_Wheel(delta=-120)) == (1, False)
-    assert gui._wheel_amount(_Wheel(delta=240)) == (-2, False)
+    assert _win(delta=-120) == (1, False)
+    assert _win(delta=240) == (-2, False)
+
+
+def test_a_windows_touchpad_scrolls_by_the_finger_not_by_the_event():
+    """Windows reports a fraction of 120, and a Precision Touchpad sends 12 at
+    a time. Reading those as line counts -- which the rule that serves a Mac
+    does -- scrolled twelve times too far for the movement that caused it.
+
+    The other half is that they must still add up: rounding each one down to
+    nothing would leave a touchpad unable to scroll at all.
+    """
+    carry = gui._WheelCarry()
+    moved = [_win(delta=12, carry=carry)[0] for _ in range(9)]
+    assert moved == [0] * 9, "a part of a notch is not yet a line"
+    assert _win(delta=12, carry=carry)[0] == -1, "ten twelfths make a line"
+    assert carry.value == 0
+
+    # And it survives a change of direction rather than double-counting.
+    carry = gui._WheelCarry()
+    _win(delta=60, carry=carry)
+    assert _win(delta=-60, carry=carry)[0] == 0
+    assert carry.value == 0
 
 
 def test_x11_sends_buttons_and_no_delta_at_all():
-    assert gui._wheel_amount(_Wheel(num=4)) == (-1, False)
-    assert gui._wheel_amount(_Wheel(num=5)) == (1, False)
+    assert _mac(num=4) == (-1, False)
+    assert _win(num=4) == (-1, False)
+    assert _mac(num=5) == (1, False)
+    assert _win(num=5) == (1, False)
 
 
 def test_a_movement_too_small_to_matter_does_nothing():
     """A trackpad reports zeros between real movement; scrolling on them would
     be scrolling on nothing."""
-    assert gui._wheel_amount(_Wheel(delta=0)) == (0, False)
+    assert _mac(delta=0) == (0, False)
+    assert _win(delta=0) == (0, False)
 
 
 def test_shift_means_sideways():
-    assert gui._wheel_amount(_Wheel(delta=-3, state=1))[1] is True
-    assert gui._wheel_amount(_Wheel(delta=-3, state=0))[1] is False
+    assert _mac(delta=-3, state=1)[1] is True
+    assert _mac(delta=-3, state=0)[1] is False
+    assert _win(delta=-120, state=1)[1] is True
 
 
 def test_scrolling_up_and_down_are_opposite():
     for delta in (1, 3, 7, 120, 240):
-        up = gui._wheel_amount(_Wheel(delta=delta))[0]
-        down = gui._wheel_amount(_Wheel(delta=-delta))[0]
+        assert _mac(delta=delta)[0] == -_mac(delta=-delta)[0], delta
+    for delta in (120, 240, 360):
+        # A fresh carry each way: the Windows rule is a running total, so
+        # sharing one would be measuring the previous assertion.
+        up = _win(delta=delta, carry=gui._WheelCarry())[0]
+        down = _win(delta=-delta, carry=gui._WheelCarry())[0]
         assert up == -down, delta
 
 

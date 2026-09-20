@@ -212,16 +212,23 @@ def test_only_a_real_modifier_makes_a_key_unmistakable(sequence, modified):
 # -- what a Tk menu wants beside an item -------------------------------------
 
 
+#: Aqua's Tk parses this string itself and joins with "-", the form its own
+#: documentation uses. Every other Tk prints it verbatim, so there it has to
+#: be the finished thing -- and "Ctrl+S" is what Windows and every Linux
+#: desktop write.
+_MAC = sys.platform == "darwin"
+
+
 @pytest.mark.parametrize("sequence, expected", [
-    ("<Command-Key-r>", "Command-R"),
-    ("<Command-Key-R>", "Shift-Command-R"),
-    ("<Control-Key-s>", "Control-S" if sys.platform == "darwin" else "Ctrl-S"),
-    ("<Command-BackSpace>", "Command-Backspace"),
+    ("<Command-Key-r>", "Command-R" if _MAC else "Command+R"),
+    ("<Command-Key-R>", "Shift-Command-R" if _MAC else "Shift+Command+R"),
+    ("<Control-Key-s>", "Control-S" if _MAC else "Ctrl+S"),
+    ("<Command-BackSpace>", "Command-Backspace" if _MAC else "Command+Backspace"),
     ("<Left>", "Left"),
-    ("<Shift-Left>", "Shift-Left"),
+    ("<Shift-Left>", "Shift-Left" if _MAC else "Shift+Left"),
     ("<space>", "Space"),
     ("<Return>", "Return"),
-    ("<Command-Key-comma>", "Command-,"),
+    ("<Command-Key-comma>", "Command-," if _MAC else "Command+,"),
     ("", ""),
 ])
 def test_the_menu_form_is_what_tk_can_parse(sequence, expected):
@@ -241,11 +248,19 @@ def test_the_menu_form_never_contains_a_glyph():
 
 
 def test_the_minus_key_is_not_mistaken_for_a_separator():
-    """Everything else uses "-", the form Tk's own documentation uses. The
-    minus key cannot: it is the separator as well, and "Command--" has no
-    unambiguous reading. Tk splits on "+" too, so that one alone uses it."""
-    assert shortcuts.accelerator_text("<Command-Key-minus>") == "Command+-"
-    assert shortcuts.accelerator_text("<Command-Key-equal>") == "Command-="
+    """On a Mac everything else uses "-", the form Tk's own documentation
+    uses, and the minus key cannot: it is the separator as well, and
+    "Command--" has no unambiguous reading. Tk splits on "+" too, so that one
+    alone uses it.
+
+    Off Aqua the separator is already "+", so the key needs no exception --
+    "Ctrl+-" is unambiguous exactly because the separator is not also the key,
+    and it is what Windows itself writes for zoom out.
+    """
+    assert shortcuts.accelerator_text("<Command-Key-minus>") == (
+        "Command+-" if _MAC else "Command+-")
+    assert shortcuts.accelerator_text("<Command-Key-equal>") == (
+        "Command-=" if _MAC else "Command+=")
 
 
 def test_the_editor_still_shows_the_readable_form():

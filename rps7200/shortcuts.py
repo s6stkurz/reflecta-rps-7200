@@ -256,14 +256,27 @@ def conflicts(keys: dict[str, str]) -> dict[str, list[str]]:
             for (_scope, sequence), ids in seen.items() if len(ids) > 1}
 
 
+#: The bit Tk sets in `event.state` for the third modifier, which is a
+#: different bit on each of the three windowing systems -- and the reason this
+#: is not one constant. Aqua reports Command as Mod1 (0x08). Windows reports
+#: Alt as 0x20000, which Tk synthesises itself. X11 reports Alt as Mod1 too,
+#: 0x08, because Alt *is* Mod1 there.
+#:
+#: Written as "Aqua or else Windows", the X11 case took the Windows bit, which
+#: X11 never sets -- so the shortcut editor on Linux simply did not notice Alt
+#: being held and recorded the bare key instead.
+_THIRD_MODIFIER = {
+    "darwin": (0x0008, "Command"),
+    "win32": (0x20000, "Alt"),
+}.get(sys.platform, (0x0008, "Alt"))
+
 #: Modifier bits as Tk reports them in `event.state`, in the order a sequence
-#: names them. Command is Mod1 on Aqua; Alt is Mod2 there and Mod1 on X11,
-#: which is why only the two that are the same everywhere are offered besides
-#: it -- a modifier that means different things on different machines is worse
-#: than one that is missing.
+#: names them. Only Control and Shift are the same everywhere, which is why
+#: nothing else is offered besides the one above -- a modifier that means
+#: different things on different machines is worse than one that is missing.
 _MODIFIERS = (
     (0x0004, "Control"),
-    (0x0008, "Command") if sys.platform == "darwin" else (0x20000, "Alt"),
+    _THIRD_MODIFIER,
     (0x0001, "Shift"),
 )
 
@@ -369,12 +382,16 @@ def accelerator_text(sequence: str) -> str:
     # Control, Option, Shift, Command: the order the glyphs are read in.
     order = {"Control": 0, "Option": 1, "Alt": 1, "Shift": 2, "Command": 3}
     modifiers.sort(key=lambda m: order.get(m, 9))
-    if sys.platform != "darwin":
-        # Everywhere else Tk prints the string as it is given, so it has to be
-        # the finished thing rather than something to be parsed.
-        modifiers = ["Ctrl" if m == "Control" else m for m in modifiers]
-    separator = "+" if name == "-" else "-"
-    return separator.join([*modifiers, name])
+    if sys.platform == "darwin":
+        separator = "+" if name == "-" else "-"
+        return separator.join([*modifiers, name])
+    # Everywhere else Tk prints the string as it is given, so it has to be the
+    # finished thing rather than something to be parsed -- and off Aqua the
+    # finished thing is "Ctrl+S", which is what both Windows and every Linux
+    # desktop write. The minus key needs no exception here: "Ctrl+-" is
+    # unambiguous precisely because the separator is not also the key.
+    modifiers = ["Ctrl" if m == "Control" else m for m in modifiers]
+    return "+".join([*modifiers, name])
 
 
 def describe(sequence: str) -> str:
