@@ -280,8 +280,15 @@ before touching the scanner:
 
 ## Validation
 
-Hardware precondition: power-cycle with **no film loaded**, wait for solid green
-(documented warm-up), calibrate, then load film.
+Hardware precondition: **load the film first**, power-cycle, wait for solid green
+(documented warm-up), then calibrate with the strip still in.
+
+This said the opposite until now -- power-cycle empty, calibrate, then load --
+which is the reading that the Context section above exists to correct: the clear
+light path is a statement about `y=3431..6888`, not about the transport being
+empty, CyberView keeps film in throughout, and calibrating an empty transport
+preceded a wedge. The instruction outlived its own refutation by sitting in a
+different section of the same document.
 
 **After every significant step, regenerate the three files in the repo root and send
 them** — `1_nothing_done.tif`, `2_corrected.tif`, `3_corrected_inverted.tif` via
