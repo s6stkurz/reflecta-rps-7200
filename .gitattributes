@@ -1,0 +1,27 @@
+# Line endings, pinned rather than left to each machine's git config.
+#
+# There was no file here, and this checkout has core.autocrlf=true, so the
+# whole working tree is CRLF locally and LF in the repository. That works only
+# for as long as everyone's config agrees. A clone with autocrlf=false commits
+# CRLF back, and the next diff is the entire repository against itself.
+#
+# LF in the repository, everywhere. `uv.lock` matters most: uv writes it with
+# LF and rewrites it wholesale, so a CRLF copy is a spurious conflict on every
+# sync. A Makefile matters too -- make on macOS and Linux takes a trailing \r
+# as part of the command and fails on recipes that are otherwise fine.
+* text=auto eol=lf
+
+# Binary. Scanner output and captures are gitignored today, but an ignore rule
+# is not a promise: name them here so that a fixture added later cannot be
+# corrupted by newline translation on the way in or out.
+*.tif    -text
+*.tiff   -text
+*.npy    -text
+*.npz    -text
+*.bin    -text
+*.gz     -text
+*.png    -text
+*.jpg    -text
+*.jpeg   -text
+*.pcapng -text
+*.pcap   -text
