@@ -285,3 +285,23 @@ def test_the_vendor_never_sends_set_scan_head(pytestconfig):
         total += len(commands)
         assert not [c for c in commands if c[0] == 0xD2], f"0xD2 in {path.name}"
     assert total > 3000, f"only {total} commands parsed; the reader is missing traffic"
+
+
+@pytest.mark.slow
+def test_this_driver_sends_what_the_vendor_sends(pytestconfig):
+    """The whole offline check, as `tools/verify_capture.py` runs it.
+
+    It reproduces every MODE SELECT in the captures byte for byte from the
+    vendor's own field values, which is the strongest statement available
+    about this driver's protocol without a scanner: not "it works for us" but
+    "it is the same bytes".
+
+    Zero is the tool's own verdict, so this fails for anything it flags --
+    an opcode protocol.py does not define, a quality bit it cannot name, a
+    MODE SELECT that will not reproduce, or the vendor sending SET_SCAN_HEAD.
+    """
+    if not (Path(pytestconfig.rootpath) / "captures").exists():
+        pytest.skip("captures/ is not in this checkout")
+
+    from conftest import load_tool
+    assert load_tool("verify_capture").main() == 0
