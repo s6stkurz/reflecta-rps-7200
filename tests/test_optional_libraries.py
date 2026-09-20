@@ -34,6 +34,20 @@ PRELUDE = textwrap.dedent(
 
     os.path.exists = exists
     ctypes.util.find_library = lambda name: None
+
+    # And the bundled copy, which is a dependency on Windows. Without this the
+    # simulation would still pass -- the loader happens to check os.path.exists
+    # on that path too -- but only by luck of how it is written, and a test
+    # that proves "absent" by accident is not proving it.
+    class _NoLibusbPackage:
+        def find_spec(self, name, path=None, target=None):
+            if name == "libusb_package" or name.startswith("libusb_package."):
+                raise ModuleNotFoundError(
+                    f"No module named {{name!r}}", name=name)
+            return None
+
+    sys.modules.pop("libusb_package", None)
+    sys.meta_path.insert(0, _NoLibusbPackage())
     """
 )
 
@@ -115,3 +129,8 @@ def test_opening_a_transport_still_says_what_to_install(root):
     )
     assert out.returncode == 0, out.stderr
     assert "libusb" in out.stdout and "LIBUSB_PATH" in out.stdout
+    # And what to actually do about it, on the platform being asked. A message
+    # that says "brew install libusb" to a Windows user -- which is what this
+    # said -- names something that cannot be done.
+    expected = {"win32": "Zadig", "darwin": "brew"}.get(sys.platform, "libusb-1.0-0")
+    assert expected in out.stdout, out.stdout

@@ -52,6 +52,67 @@ against each other. `make test-all` runs the suite both ways:
 make test-all
 ```
 
+## Supported platforms
+
+**macOS, Linux and Windows.** Everything that does not touch the device — decoding,
+correcting, the TIFF and DNG writers, the library, the window in `--demo` — works on all
+three with nothing installed but Python and numpy. Driving the scanner needs libusb, and
+on two of the three it needs one more thing.
+
+The development commands are the same everywhere: `make test`, `make run`, `make all`.
+Each Makefile recipe is one call into `tasks.py`, because GNU make on Windows uses
+`cmd.exe` unless a POSIX `sh` is on PATH.
+
+### macOS
+
+```sh
+brew install libusb
+pip install uv && uv sync --all-groups
+```
+
+### Linux
+
+```sh
+sudo apt install libusb-1.0-0 python3-tk      # or libusbx, on Fedora and RHEL
+sudo cp packaging/99-rps7200.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+pip install uv && uv sync --all-groups
+```
+
+The udev rule is what lets you open the scanner without being root. Unplug it and plug
+it back in afterwards. The device is vendor-specific (`bDeviceClass 0xff`), so the kernel
+binds no driver to it and nothing needs detaching — permissions are the whole problem.
+
+### Windows
+
+```powershell
+pip install uv
+winget install ezwinports.make      # GNU Make 4.4.1, native, no MSYS needed
+uv sync --all-groups
+```
+
+libusb itself needs no install: `libusb-package` is a dependency here and bundles
+`libusb-1.0.dll`, because Windows has nowhere conventional to put one.
+
+**The scanner also needs its driver replaced, and that part is not reversible by
+itself.** Windows binds its own Image/WIA driver to the RPS 7200, and libusb cannot go
+through it — the device enumerates, and every attempt to open it returns NULL. Use
+[Zadig](https://zadig.akeo.ie/): select **Multiple Frames Film Scanner (05e3:0144)** and
+install **WinUSB** (libusbK also works).
+
+> **This stops CyberView and VueScan seeing the scanner.** They talk to it through the
+> WIA driver you are replacing. To get them back, open Device Manager, find the scanner,
+> *Update driver* → *Browse my computer* → *Let me pick*, and choose the original imaging
+> driver. Worth knowing before you start, not after.
+
+Until you do it, the driver says so rather than guessing:
+
+```
+the scanner (0x05e3:0x0144) is on the USB bus but could not be opened. Windows binds
+its own Image/WIA driver to it, which libusb cannot go through. Replace it with WinUSB
+or libusbK using Zadig -- see the README.
+```
+
 ## Use
 
 One calibration per power-on, then scan. **Load the film first**, wait for the lamp

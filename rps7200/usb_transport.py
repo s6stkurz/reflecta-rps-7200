@@ -25,6 +25,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import sys
 import time
 from enum import IntEnum
 
@@ -107,25 +108,89 @@ class ScannerNotFound(RuntimeError):
 # ---------------------------------------------------------------------------
 
 _LIBUSB_PATHS = (
+    # macOS, Homebrew on Intel and on Apple Silicon
     "/usr/local/lib/libusb-1.0.dylib",
     "/opt/homebrew/lib/libusb-1.0.dylib",
+    # Linux
     "/usr/lib/libusb-1.0.so.0",
     "/usr/local/lib/libusb-1.0.so.0",
+    "/usr/lib/x86_64-linux-gnu/libusb-1.0.so.0",
+    "/usr/lib/aarch64-linux-gnu/libusb-1.0.so.0",
+    "/usr/lib64/libusb-1.0.so.0",
+    # Windows, where there is no standard location at all -- these are only
+    # the two an installer might plausibly have used. The real answer there is
+    # the bundled copy, further down.
+    r"C:\Windows\System32\libusb-1.0.dll",
+    r"C:\Program Files\libusb\libusb-1.0.dll",
 )
+
+#: Names to try through `ctypes.util.find_library`, which behaves differently
+#: on each platform. POSIX wants the stem; Windows appends `.dll` to whatever
+#: it is given and searches PATH, so it needs the *full* name. Asking only for
+#: "usb-1.0" -- which is what this did -- could never match the shipped
+#: `libusb-1.0.dll`, so the search was dead code on Windows even with libusb
+#: correctly installed and on PATH. Measured: it returns None for all three of
+#: these there.
+_LIBUSB_NAMES = ("usb-1.0", "libusb-1.0", "libusb")
+
+
+def _dll(path: str) -> ctypes.CDLL:
+    """Open the shared library with this platform's calling convention.
+
+    libusb declares `LIBUSB_CALL` as `WINAPI`, i.e. `__stdcall`, on Win32.
+    x86-64 has only one convention so `CDLL` happens to work there, but a
+    32-bit build exists and would corrupt the stack on every call.
+    """
+    if sys.platform == "win32":
+        return ctypes.WinDLL(path)
+    return ctypes.CDLL(path)
+
+
+def _bundled() -> str | None:
+    """The copy `libusb-package` ships, if that is installed.
+
+    Last, deliberately: a system libusb should win wherever there is one, which
+    on macOS and Linux is the normal case. Windows has no conventional place
+    for it at all, so this is what makes an install there work without sending
+    someone to find a DLL by hand.
+    """
+    try:
+        import libusb_package
+    except Exception:
+        return None
+    try:
+        path = libusb_package.get_library_path()
+    except Exception:
+        return None
+    return str(path) if path and os.path.exists(str(path)) else None
 
 
 def _load_libusb() -> ctypes.CDLL:
     override = os.environ.get("LIBUSB_PATH")
     for path in ([override] if override else []) + list(_LIBUSB_PATHS):
         if path and os.path.exists(path):
-            return ctypes.CDLL(path)
-    found = ctypes.util.find_library("usb-1.0")
-    if found:
-        return ctypes.CDLL(found)
-    raise OSError(
-        "Could not locate libusb-1.0. Install it (brew install libusb) or set "
-        "LIBUSB_PATH."
-    )
+            return _dll(path)
+    for name in _LIBUSB_NAMES:
+        found = ctypes.util.find_library(name)
+        if found:
+            return _dll(found)
+    bundled = _bundled()
+    if bundled:
+        return _dll(bundled)
+    raise OSError("Could not locate libusb-1.0. " + _how_to_install())
+
+
+def _how_to_install() -> str:
+    """What to actually do about it, on the platform asking."""
+    if sys.platform == "win32":
+        return ("On Windows: `pip install libusb-package`, which bundles it. "
+                "Note that the scanner also needs a WinUSB or libusbK driver "
+                "bound to it with Zadig before libusb can open it -- see the "
+                "README. Or set LIBUSB_PATH to a libusb-1.0.dll.")
+    if sys.platform == "darwin":
+        return "On macOS: `brew install libusb`. Or set LIBUSB_PATH."
+    return ("On Linux: install libusb-1.0-0 (Debian, Ubuntu) or libusbx "
+            "(Fedora, RHEL). Or set LIBUSB_PATH.")
 
 
 class _LazyLib:
@@ -155,6 +220,25 @@ class _LazyLib:
 
 
 _lib = _LazyLib(_load_libusb)
+
+
+class _DeviceDescriptor(ctypes.Structure):
+    _fields_ = [
+        ("bLength", ctypes.c_uint8),
+        ("bDescriptorType", ctypes.c_uint8),
+        ("bcdUSB", ctypes.c_uint16),
+        ("bDeviceClass", ctypes.c_uint8),
+        ("bDeviceSubClass", ctypes.c_uint8),
+        ("bDeviceProtocol", ctypes.c_uint8),
+        ("bMaxPacketSize0", ctypes.c_uint8),
+        ("idVendor", ctypes.c_uint16),
+        ("idProduct", ctypes.c_uint16),
+        ("bcdDevice", ctypes.c_uint16),
+        ("iManufacturer", ctypes.c_uint8),
+        ("iProduct", ctypes.c_uint8),
+        ("iSerialNumber", ctypes.c_uint8),
+        ("bNumConfigurations", ctypes.c_uint8),
+    ]
 
 
 class _EndpointDescriptor(ctypes.Structure):
@@ -232,6 +316,24 @@ def _declare(lib: ctypes.CDLL) -> None:
     lib.libusb_claim_interface.restype = ctypes.c_int
     lib.libusb_release_interface.argtypes = [_handle_p, ctypes.c_int]
     lib.libusb_release_interface.restype = ctypes.c_int
+    # Linux only; macOS and Windows answer LIBUSB_ERROR_NOT_SUPPORTED, which
+    # is fine and expected. `getattr` because it arrived in libusb 1.0.16 and
+    # an older one should still load rather than fail at import.
+    if hasattr(lib, "libusb_set_auto_detach_kernel_driver"):
+        lib.libusb_set_auto_detach_kernel_driver.argtypes = [_handle_p, ctypes.c_int]
+        lib.libusb_set_auto_detach_kernel_driver.restype = ctypes.c_int
+    # Only used to tell "not plugged in" from "plugged in and unopenable",
+    # which are the same NULL handle but very different instructions.
+    lib.libusb_get_device_list.argtypes = [
+        _ctx_p, ctypes.POINTER(ctypes.POINTER(_dev_p))
+    ]
+    lib.libusb_get_device_list.restype = ctypes.c_ssize_t
+    lib.libusb_free_device_list.argtypes = [ctypes.POINTER(_dev_p), ctypes.c_int]
+    lib.libusb_free_device_list.restype = None
+    lib.libusb_get_device_descriptor.argtypes = [
+        _dev_p, ctypes.POINTER(_DeviceDescriptor)
+    ]
+    lib.libusb_get_device_descriptor.restype = ctypes.c_int
     lib.libusb_reset_device.argtypes = [_handle_p]
     lib.libusb_reset_device.restype = ctypes.c_int
     lib.libusb_clear_halt.argtypes = [_handle_p, ctypes.c_ubyte]
@@ -306,23 +408,84 @@ class Transport:
         if self.verbose:
             print(f"[usb] {message}")
 
+    def _on_the_bus(self) -> bool:
+        """Is the scanner enumerated, whether or not it can be opened?
+
+        These are different questions on Windows, and the answer to the second
+        was being reported as the answer to the first. libusb enumerates
+        through the hub driver and lists every device on the bus; it can only
+        *open* one whose driver is WinUSB or libusbK. Measured here: with the
+        stock Image/WIA driver bound, this scanner appears in the list and
+        `libusb_open_device_with_vid_pid` still returns NULL.
+        """
+        devices = ctypes.POINTER(_dev_p)()
+        count = _lib.libusb_get_device_list(self._ctx, ctypes.byref(devices))
+        if count < 0:
+            return False
+        try:
+            descriptor = _DeviceDescriptor()
+            for i in range(count):
+                if _lib.libusb_get_device_descriptor(
+                        devices[i], ctypes.byref(descriptor)) < 0:
+                    continue
+                if (descriptor.idVendor, descriptor.idProduct) == (
+                        VENDOR_ID, PRODUCT_ID):
+                    return True
+        finally:
+            _lib.libusb_free_device_list(devices, 1)
+        return False
+
     def _raw_open(self) -> None:
         handle = _lib.libusb_open_device_with_vid_pid(
             self._ctx, VENDOR_ID, PRODUCT_ID
         )
         if not handle:
-            raise ScannerNotFound(
-                f"no device {VENDOR_ID:#06x}:{PRODUCT_ID:#06x} on the USB bus "
-                "(is the scanner powered on?)"
-            )
+            raise ScannerNotFound(self._why_not_found())
         self._handle = handle
         self._discover_endpoints()
+        # Linux: the kernel may have bound a driver to interface 0, and the
+        # claim below would fail with LIBUSB_ERROR_BUSY. macOS and Windows
+        # answer NOT_SUPPORTED, which is the expected reply and not a problem.
+        # Cheap insurance rather than a known fix: this device reports
+        # bDeviceClass 0xff, vendor-specific, so Linux should bind nothing.
+        if hasattr(_lib, "libusb_set_auto_detach_kernel_driver"):
+            _lib.libusb_set_auto_detach_kernel_driver(self._handle, 1)
         rc = _lib.libusb_claim_interface(self._handle, 0)
         if rc < 0:
             _lib.libusb_close(self._handle)
             self._handle = None
             raise UsbError(f"could not claim interface 0: {_err(rc)}")
         self._interface = 0
+
+    def _why_not_found(self) -> str:
+        """A NULL handle means two different things. Say which.
+
+        The old message guessed one of them -- "is the scanner powered on?" --
+        and on Windows it is nearly always the other, so it sent someone to
+        the power switch over a driver binding.
+        """
+        where = f"{VENDOR_ID:#06x}:{PRODUCT_ID:#06x}"
+        if not self._on_the_bus():
+            return (f"no device {where} on the USB bus "
+                    "(is the scanner powered on, and the cable in?)")
+        if sys.platform == "win32":
+            return (
+                f"the scanner ({where}) is on the USB bus but could not be "
+                "opened. Windows binds its own Image/WIA driver to it, which "
+                "libusb cannot go through. Replace it with WinUSB or libusbK "
+                "using Zadig -- see the README. Note this also stops CyberView "
+                "and VueScan seeing the scanner until the driver is put back."
+            )
+        if sys.platform == "darwin":
+            return (f"the scanner ({where}) is on the USB bus but could not be "
+                    "opened. Something else may have it open -- close any "
+                    "other scanning software and try again.")
+        return (
+            f"the scanner ({where}) is on the USB bus but could not be opened, "
+            "which is usually permissions. Install the udev rule at "
+            "packaging/99-rps7200.rules and re-plug the scanner, or run as "
+            "root to confirm that is what it is."
+        )
 
     def open(self, reset: bool = False) -> Transport:
         """Open the scanner.

@@ -16,11 +16,20 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: Multimedia :: Graphics :: Capture :: Scanners",
 ]
-dependencies = ["numpy>=1.21"]
+dependencies = [
+    "numpy>=1.21",
+    # Windows only, and only because there is nowhere conventional for
+    # libusb-1.0.dll to live there: macOS has Homebrew and Linux has a package,
+    # so on both of those a system libusb is found and preferred. A 166 kB
+    # wheel is a smaller price than telling someone to go and find a DLL.
+    # The lazy loader still means host-side work never touches it.
+    "libusb-package>=1.0.26; sys_platform == 'win32'",
+]
 
 [project.optional-dependencies]
 # Only changes which TIFF implementation is used; the built-in one is complete.
@@ -29,6 +38,11 @@ tifffile = ["tifffile>=2021.7.2"]
 # built-in equivalent -- nothing here encodes a JPEG by hand -- so without this
 # the window says so and writes the TIFF, rather than losing the scan.
 jpeg = ["pillow>=9"]
+# A bundled libusb, for a macOS or Linux machine that would rather not install
+# one system-wide. It is already a dependency on Windows, where there is no
+# system-wide place to install one; here it is opt-in, and the loader still
+# prefers whatever the system has.
+usb = ["libusb-package>=1.0.26"]
 
 [tool.setuptools]
 packages = ["rps7200"]
