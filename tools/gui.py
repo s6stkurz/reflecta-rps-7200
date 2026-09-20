@@ -24,6 +24,7 @@ else. Nothing moves the mechanism until a button is pressed.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import math
 import queue
@@ -34,7 +35,7 @@ import time
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -194,6 +195,95 @@ MAX_TRAVEL_MM = MAX_FINE_MM * MAX_FINE_STEPS
 THUMB_H = 76
 POLL_MS = 120
 
+#: The body size this window's type was drawn against. Tk reports 13 for
+#: TkDefaultFont on macOS (.AppleSystemUIFont); Windows reports 9 (Segoe UI)
+#: and Linux around 10. Every size in this file was chosen *relative* to 13 --
+#: 9 is a caption, 11 and 12 are small, 13 bold is a heading -- but written as
+#: absolute points they did not merely shift off macOS, they inverted: 11 and
+#: 12 are smaller than body text on a Mac and larger than it on Windows, and
+#: the grey 9pt captions collapsed into body size. So `_font` is given the size
+#: the design used and works out what that means here.
+_DESIGNED_BODY = 13
+
+#: Below this a size stops being quieter and starts being unreadable. Windows'
+#: 9pt body would otherwise put a caption at 6.
+_MIN_POINTS = 8
+
+#: What the pixel measurements below were drawn against: 96 dpi, which is what
+#: Windows and X11 report at 100%.
+_DESIGNED_DPI = 96.0
+
+
+def _scale() -> float:
+    """Pixels per designed pixel, on whatever display this window is on.
+
+    Never less than 1. Tk on Aqua reports 72 dpi whatever the screen is really
+    doing, because macOS scales the backing store itself -- so without the
+    floor every fixed size would come out a quarter smaller on the machine
+    they were all chosen on.
+    """
+    root = getattr(tk, "_default_root", None)
+    if root is None:
+        return 1.0
+    try:
+        return max(1.0, float(root.winfo_fpixels("1i")) / _DESIGNED_DPI)
+    except tk.TclError:
+        return 1.0
+
+
+def _px(n: int) -> int:
+    """`n` pixels, as drawn at 96 dpi, in this display's pixels."""
+    return int(round(n * _scale()))
+
+
+def _geometry(width: int, height: int) -> str:
+    """A `geometry()` string for a window drawn at that size at 96 dpi."""
+    return f"{_px(width)}x{_px(height)}"
+
+
+def _fits(root: tk.Misc, geometry: str | None) -> str | None:
+    """`geometry` if this screen can still show it, else None.
+
+    What gets remembered is pixels, and pixels stop meaning the same thing:
+    the settings file can be carried to another machine, a monitor can be
+    unplugged, and the scaling can change under a window that was sized before
+    it. Any of those can restore a window mostly or entirely off-screen, which
+    on Windows leaves no way to drag it back.
+
+    Size only, not position -- the window manager places it, and second-
+    guessing that is how a window ends up somewhere no one asked for.
+    """
+    if not geometry:
+        return None
+    try:
+        size = geometry.split("+")[0].split("-")[0]
+        width, height = (int(n) for n in size.split("x"))
+        screen_w = int(root.winfo_screenwidth())
+        screen_h = int(root.winfo_screenheight())
+    except (ValueError, tk.TclError):
+        return None
+    if 0 < width <= screen_w and 0 < height <= screen_h:
+        return geometry
+    return f"{min(width, screen_w)}x{min(height, screen_h)}"
+
+
+def _font(designed: int = _DESIGNED_BODY, bold: bool = False,
+          fixed: bool = False) -> tuple:
+    """The font a size chosen against macOS's 13pt body becomes here.
+
+    `_font(13, bold=True)` is "body, emphasised" everywhere, rather than
+    "thirteen points" -- which is a heading on a Mac and oversized on Windows.
+    """
+    name = "TkFixedFont" if fixed else "TkDefaultFont"
+    try:
+        base = int(tkfont.nametofont(name).cget("size"))
+    except Exception:                                    # no root yet
+        base = _DESIGNED_BODY
+    # A negative size is pixels rather than points; the ratio is the same.
+    base = abs(base) or _DESIGNED_BODY
+    size = max(_MIN_POINTS, int(round(base * designed / _DESIGNED_BODY)))
+    return (name, size, "bold") if bold else (name, size)
+
 #: The three ways a context menu gets asked for, bound together everywhere one
 #: is offered. X11 and a two-button mouse send Button-3, a Mac trackpad's
 #: two-finger tap arrives as Button-2, and Control-click is the Mac convention
@@ -328,8 +418,9 @@ class ScannerGui:
         self._roll_seconds_per_frame = 0.0
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
-        root.geometry(self.remembered["window"].get("geometry") or "1280x860")
-        root.minsize(900, 600)
+        root.geometry(_fits(root, self.remembered["window"].get("geometry"))
+                      or _geometry(1280, 860))
+        root.minsize(_px(900), _px(600))
         self._build()
         # Between the two, deliberately: this is the one moment the window holds
         # its shipped defaults and nothing a settings file has said.
@@ -364,7 +455,7 @@ class ScannerGui:
                    command=self.on_restore_settings).pack(side="left")
         self.v_state = tk.StringVar(value="opening ...")
         ttk.Label(head, textvariable=self.v_state).pack(side="right")
-        self.light = tk.Canvas(head, width=14, height=14, highlightthickness=0)
+        self.light = tk.Canvas(head, width=_px(14), height=_px(14), highlightthickness=0)
         self.light.pack(side="right", padx=(0, 8))
         self._bulb = self.light.create_oval(2, 2, 12, 12, fill=LIGHT["idle"],
                                             outline="")
@@ -1062,7 +1153,8 @@ class ScannerGui:
         """
         host = ttk.Frame(parent)
         parent.add(host, weight=1)
-        canvas = tk.Canvas(host, width=262, highlightthickness=0, borderwidth=0)
+        canvas = tk.Canvas(host, width=_px(262), highlightthickness=0,
+                           borderwidth=0)
         bar = ttk.Scrollbar(host, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
@@ -1415,7 +1507,7 @@ class ScannerGui:
         # label that resizes with its text drags the whole toolbar with it.
         self.v_readout = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.v_readout, width=40, anchor="w",
-                  font=("TkFixedFont", 9),
+                  font=_font(9, fixed=True),
                   foreground="#888").pack(side="left", padx=(12, 0))
         self.v_caption = tk.StringVar(value="nothing scanned yet")
         ttk.Label(top, textvariable=self.v_caption,
@@ -1429,7 +1521,7 @@ class ScannerGui:
 
         middle = ttk.Frame(parent)
         parent.add(middle, weight=1)
-        self.strip = tk.Canvas(middle, height=THUMB_H + 12, background="#111",
+        self.strip = tk.Canvas(middle, height=_px(THUMB_H + 12), background="#111",
                                highlightthickness=0)
         self.strip.pack(fill="both", expand=True)
         self._scrolls(
@@ -1713,7 +1805,7 @@ class ScannerGui:
         top.resizable(False, False)
         frame = ttk.Frame(top, padding=16)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, font=("TkDefaultFont", 13, "bold"),
+        ttk.Label(frame, font=_font(13, bold=True),
                   text="Calibrate before scanning").pack(anchor="w")
         ttk.Label(
             frame, wraplength=430, justify="left", padding=(0, 8),
@@ -2905,7 +2997,7 @@ class ScannerGui:
                 continue
             arr = preview.render(
                 preview.fit(preview.orient(r.image, r.rotation, r.flipped),
-                            THUMB_H * 2, THUMB_H),
+                            _px(THUMB_H * 2), _px(THUMB_H)),
                 "RGB", self.v_invert.get(),
                 cuts=(preview.channel_levels(r.levels, "RGB")
                       if getattr(r, "levels", None) is not None else None))
@@ -2921,7 +3013,7 @@ class ScannerGui:
             self.strip.tag_bind(tag, "<Button-1>",
                                 lambda _e, s=r.seq: self._show_seq(s))
             x += photo.width() + 8
-        self.strip.configure(scrollregion=(0, 0, x, THUMB_H + 12))
+        self.strip.configure(scrollregion=(0, 0, x, _px(THUMB_H + 12)))
         self._keep_in_strip(here, x)
 
     def _keep_in_strip(self, span, total: int) -> None:
@@ -4830,14 +4922,50 @@ def _scroll_pixels(widget: tk.Misc, dx: int, dy: int) -> None:
         widget.xview_moveto(widget.xview()[0] - dx / width)
 
 
-def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
+#: One mouse notch, in the units Windows reports.
+_WHEEL_NOTCH = 120
+
+
+class _WheelCarry:
+    """What is left of a Windows wheel delta that was not yet worth a line.
+
+    Windows reports a *fraction* of 120 and says so in its own documentation;
+    how big the number looks decides nothing. A mouse notch sends exactly 120,
+    a Precision Touchpad sends 12 or 24 at a time for a smooth gesture.
+
+    So the fraction has to be carried. Rounding each small delta up to a line
+    scrolls about twelve times too far for the finger that moved it; rounding
+    each one down to zero means the picture never moves at all.
+    """
+
+    def __init__(self) -> None:
+        self.value = 0
+
+    def lines(self, delta: int) -> int:
+        """Whole lines this delta completes. A positive delta scrolls up."""
+        self.value += delta
+        sign = -1 if self.value < 0 else 1
+        whole, left = divmod(abs(self.value), _WHEEL_NOTCH)
+        self.value = sign * left
+        return -sign * whole
+
+
+_wheel_carry = _WheelCarry()
+
+
+def _wheel_amount(event: tk.Event, platform: str = sys.platform,
+                  carry: _WheelCarry | None = None) -> tuple[int, bool]:
     """How far to scroll, and whether sideways, from any platform's event.
 
-    X11 sends Button-4/5 with no delta at all. Windows sends multiples of 120.
-    A macOS trackpad sends small numbers -- single digits, and occasionally a
-    zero for a movement too small to matter -- so treating anything under 20 as
-    already being a line count is what makes two fingers feel like two fingers
-    rather than one notch per gesture.
+    X11 sends Button-4/5 with no delta at all. A macOS trackpad sends small
+    numbers -- single digits, and occasionally a zero for a movement too small
+    to matter -- so there anything small is already a line count, which is what
+    makes two fingers feel like two fingers rather than one notch per gesture.
+    Windows is the other rule entirely; see `_WheelCarry`.
+
+    `platform` and `carry` are arguments so that both rules can be driven from
+    a test on one machine. The rules disagree, and a rule that only its own
+    platform ever exercises is one nobody notices breaking.
     """
     number = getattr(event, "num", 0)
     if number in (4, 5):
@@ -4845,9 +4973,12 @@ def _wheel_amount(event: tk.Event) -> tuple[int, bool]:
     delta = int(getattr(event, "delta", 0) or 0)
     if delta == 0:
         return 0, False
+    sideways = bool(event.state & 0x0001)
+    if platform == "win32":
+        return (carry or _wheel_carry).lines(delta), sideways
     size = abs(delta)
-    step = size if size < 20 else max(1, size // 120)
-    return (-step if delta > 0 else step), bool(event.state & 0x0001)
+    step = size if size < 20 else max(1, size // _WHEEL_NOTCH)
+    return (-step if delta > 0 else step), sideways
 
 
 #: The colour each channel is drawn in. Infrared is grey because it is a
@@ -4901,13 +5032,19 @@ class _HistogramPanel:
     MARGIN = 12                              # from the corner, and from the picture
 
     def __init__(self, parent: tk.Misc):
+        # Scaled per instance rather than in the class body: there is no Tk
+        # root when that runs, so `_px` would have no display to measure. It
+        # has to cover the drawing coordinates below as well as the canvas --
+        # they are the same two numbers, and scaling only one would put the
+        # chart outside its own frame.
+        self.WIDTH, self.HEIGHT = _px(self.WIDTH), _px(self.HEIGHT)
         self.frame = tk.Frame(parent, background=self.BACK,
                               highlightthickness=1, highlightbackground=self.EDGE)
         self.v_source = tk.StringVar(value="nothing scanned yet")
         # One line, clipped rather than wrapped: this is a caption, and three
         # lines of it made the panel taller than the chart it describes.
         tk.Label(self.frame, textvariable=self.v_source, background=self.BACK,
-                 foreground="#777", font=("TkDefaultFont", 9), anchor="w",
+                 foreground="#777", font=_font(9), anchor="w",
                  width=1).pack(fill="x", padx=8, pady=(4, 0))
         self.canvas = tk.Canvas(self.frame, width=self.WIDTH, height=self.HEIGHT,
                                 background=self.BACK, highlightthickness=0)
@@ -4920,16 +5057,16 @@ class _HistogramPanel:
         self._cells: dict[tuple[int, int], tk.Label] = {}
         for column, text in enumerate(("", "at 0", "at full", "near full")):
             tk.Label(self.table, text=text, background=self.BACK,
-                     foreground="#666", font=("TkDefaultFont", 9)).grid(
+                     foreground="#666", font=_font(9)).grid(
                 row=0, column=column, sticky="e", padx=(0, 6))
         for row, name in enumerate(_CHANNEL_NAMES, start=1):
             tk.Label(self.table, text=name, background=self.BACK,
                      foreground=_CHANNEL_INK[row - 1],
-                     font=("TkDefaultFont", 9)).grid(row=row, column=0,
+                     font=_font(9)).grid(row=row, column=0,
                                                      sticky="w", padx=(0, 6))
             for column in range(1, 4):
                 cell = tk.Label(self.table, text="--", background=self.BACK,
-                                foreground="#999", font=("TkDefaultFont", 9))
+                                foreground="#999", font=_font(9))
                 cell.grid(row=row, column=column, sticky="e", padx=(0, 6))
                 self._cells[(row, column)] = cell
 
@@ -4994,10 +5131,10 @@ class _HistogramPanel:
                 points.extend((x, y))
             self.canvas.create_line(*points, fill=_CHANNEL_INK[channel], width=1)
         self.canvas.create_text(3, self.HEIGHT - 7, anchor="w", fill="#555",
-                                text="0", font=("TkDefaultFont", 9))
+                                text="0", font=_font(9))
         self.canvas.create_text(self.WIDTH - 3, self.HEIGHT - 7, anchor="e",
                                 fill="#555", text="full scale",
-                                font=("TkDefaultFont", 9))
+                                font=_font(9))
 
         self._blank()
         for channel in range(min(clipped.shape[0], len(_CHANNEL_NAMES))):
@@ -5032,11 +5169,11 @@ class _ShortcutSettings:
         self.top = tk.Toplevel(gui.root)
         self.top.title("Shortcuts")
         self.top.transient(gui.root)
-        self.top.geometry("620x760")
+        self.top.geometry(_geometry(620, 760))
 
         outer = ttk.Frame(self.top, padding=(12, 10))
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, font=("TkDefaultFont", 13, "bold"),
+        ttk.Label(outer, font=_font(13, bold=True),
                   text="Shortcuts").pack(anchor="w")
         ttk.Label(
             outer, foreground="#777", justify="left", wraplength=580,
@@ -5067,7 +5204,7 @@ class _ShortcutSettings:
         row = 0
         for scope in shortcuts.SCOPES:
             ttk.Label(table, text=shortcuts.SCOPE_NAMES[scope],
-                      font=("TkDefaultFont", 11, "bold")).grid(
+                      font=_font(11, bold=True)).grid(
                 row=row, column=0, sticky="w", pady=(12, 2))
             row += 1
             for action in shortcuts.ACTIONS:
@@ -5219,6 +5356,10 @@ class _FrameAdjuster:
     GUIDE = "#e8b64c"                        # the sheet's amber, reused
 
     def __init__(self, sheet, gui, index: int):
+        # Per instance, not in the class body: no Tk root exists there. These
+        # size the window and the insets computed from it further down, so
+        # both move together.
+        self.WIDTH, self.HEIGHT = _px(self.WIDTH), _px(self.HEIGHT)
         self.sheet = sheet
         self.gui = gui
         self.index = index
@@ -5236,7 +5377,7 @@ class _FrameAdjuster:
 
         self.v_title = tk.StringVar()
         ttk.Label(outer, textvariable=self.v_title,
-                  font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+                  font=_font(12, bold=True)).pack(anchor="w")
         ttk.Label(
             outer, foreground="#777",
             text=("Drag the picture, or use the arrow keys, to say where the "
@@ -5268,7 +5409,7 @@ class _FrameAdjuster:
                      state="readonly", values=list(ADJUST_STEPS)).pack(side="left")
         self.v_read = tk.StringVar()
         ttk.Label(row, textvariable=self.v_read,
-                  font=("TkDefaultFont", 11)).pack(side="left", padx=12)
+                  font=_font(11)).pack(side="left", padx=12)
 
         self.v_tick = tk.BooleanVar(value=True)
         ttk.Checkbutton(row, text="Scan this frame", variable=self.v_tick,
@@ -5537,7 +5678,7 @@ class _RollBrowser:
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Rolls")
-        self.top.geometry("940x520")
+        self.top.geometry(_geometry(940, 520))
         self.top.transient(gui.root)
         outer = ttk.Frame(self.top, padding=10)
         outer.pack(fill="both", expand=True)
@@ -5800,14 +5941,14 @@ class _ContactSheet:
         self.top = tk.Toplevel(gui.root)
         self.top.title("Contact sheet")
         self.top.transient(gui.root)
-        self.top.geometry("980x720")
+        self.top.geometry(_geometry(980, 720))
         # Its own menu, parented on this window, so closing the sheet takes it
         # with it rather than leaving one attached to the main window.
         self.menu = tk.Menu(self.top, tearoff=0)
 
         outer = ttk.Frame(self.top, padding=(10, 8))
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, font=("TkDefaultFont", 12, "bold"),
+        ttk.Label(outer, font=_font(12, bold=True),
                   text=f"{len(self.frames)} frames walked").pack(anchor="w")
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
                   text=("Tick what is worth scanning. Click a picture to tick "
@@ -6361,8 +6502,32 @@ def _duration(seconds: float) -> str:
 DEMO_ROOT = Path("demo")
 
 
+def _claim_real_pixels() -> None:
+    """Ask Windows not to stretch this window's bitmap.
+
+    Without it a process is "DPI unaware": at 150% Windows draws the window at
+    100% and scales the result up, so the whole thing is soft, and
+    `winfo_fpixels` reports 96 whatever the display is really doing -- which
+    would make `_px` a no-op exactly where it is needed. Must be called before
+    the first Tk root exists.
+
+    No-op anywhere else, and harmless if it fails: an unscaled window is worse
+    than a scaled one but better than no window.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)   # system-DPI aware
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()    # pre-8.1 fallback
+        except Exception:
+            pass
+
+
 def main() -> int:
     use_utf8_stdout()
+    _claim_real_pixels()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--demo", action="store_true",
                     help="drive the window from stored library entries, with "
