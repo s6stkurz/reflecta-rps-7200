@@ -42,38 +42,75 @@ the scanner attached and awake:
   real device request, so **the device is awake and answering through this
   driver**.
 - `IOCTL_READ_REGISTERS` and `IOCTL_WRITE_REGISTERS` both come back
-  `ERROR_SEM_TIMEOUT` (121), after the driver's full 120 s. Seven marshallings
-  were tried -- uOffset and uIndex swapped, both set, the data buffer as the
-  output buffer, no output buffer, the block itself as output -- and **all
-  seven failed identically**. A marshalling error would be expected to fail
-  differently for structurally different inputs, so the fault is more likely
-  upstream of this struct than in it.
-- Nothing wedged. The device answered a descriptor request immediately after
-  all seven, every time.
+  `ERROR_SEM_TIMEOUT` (121), after the driver's full 120 s -- for a one-byte
+  write, an eight-byte write, and reads from two different ports.
 
-The untested suspect is `stisvc`, the Windows Image Acquisition service, which
-is running and holds this device: WIA lists it as active and the vendor's
-user-mode driver `PIEWiaScnr.dll` is loaded in `dllhost`. A handle opened with
-`FILE_SHARE_READ | FILE_SHARE_WRITE` shares the device rather than controlling
-it, and vendor requests may not be getting through at all. Stopping that
-service and retrying one write is the next measurement, and it needs the
-machine's owner to agree.
+**And the struct is not the problem.** The driver validates the input size
+before it does anything: 4, 12 and 64-byte inputs are all refused instantly
+with `ERROR_INVALID_PARAMETER`, while the 24-byte `IO_BLOCK` is accepted and
+goes on to time out. Those are different answers to different questions --
+"I will not read that" against "I asked and got nothing" -- so the shape above
+is right, the driver builds a URB from it, and **the device does not answer
+what usbscan.sys puts on the wire**.
 
-`IOCTL_SET_TIMEOUT` is refused too, with `ERROR_INVALID_PARAMETER`, so the
-driver's 120 s default applies -- which is what makes each failed attempt cost
-two minutes and why probing this is expensive.
+**Nor is the request content.** `IOCTL_SEND_USB_REQUEST` takes an explicit
+`bRequest` and `bmRequestType`, so it can be handed exactly what the macOS path
+sends and is known to work: `0x0C` to a bridge port, type `0x40` out and `0xC0`
+in. Both its struct layouts -- the published 24-byte one and a 32-byte widening
+of it, since the header is already known to be wrong elsewhere -- were accepted
+by the driver, and both timed out.
 
-So `open_transport` does **not** choose this. It is reached only with
-`RPS7200_USB_BACKEND=usbscan`. A transport that has never carried a byte is not
-a default, however good the argument for it.
+**Nor is anything else holding the device.** Opening the interface with
+`dwShareMode = 0` succeeds, so the Image Acquisition service does not have a
+handle on it, and the same write times out on that exclusive handle too. That
+was the leading suspect and it is disproven.
 
-**The timeout is the sharp edge.** `IOCTL_SET_TIMEOUT` counts in whole seconds
-and is documented to a maximum of 214. The infrared pass has a floor of about
-212 s. Two seconds of margin, on precisely the failure CLAUDE.md says costs a
-power cycle -- and whether an expired `ReadFile` abandons the read or merely
-returns short is not known. The reads here are windowed at 32 KB and the status
-byte is polled before each, so the clock should only start once the device has
-data; that is a reason to expect it to be fine, not a measurement.
+So, eliminated in turn: the struct shape, the request content, contention for
+the device, and the device being asleep. Twenty-one vendor control transfers
+were attempted across all of it and **every one returned ERROR_SEM_TIMEOUT**,
+while `IOCTL_GET_DEVICE_DESCRIPTOR` answered immediately before and after every
+single one. Nothing wedged, ever.
+
+The conclusion is that `usbscan.sys` does not deliver vendor control transfers
+to this device on this machine, for a reason not visible from user space. Going
+further means a bus capture or a disassembler, which is a different kind of
+afternoon, and the rule agreed for this work was not to debug a closed kernel
+driver.
+
+**What would settle it**, for anyone picking this up with administrator rights:
+capture the USB bus with USBPcap while CyberView drives *this* scanner, and see
+whether its traffic goes through usbscan.sys at all. The premise here is that
+MF5000_x64.dll's 59 WRITE_REGISTERS calls are for this device -- but that DLL
+is 5.3 MB and serves a whole family of Pacific Image scanners, so they may
+belong to a model that is not this one. That assumption was never checked, and
+it is the one everything else rested on.
+
+Two smaller findings worth keeping, both of which cost time to learn:
+
+- `USBSCAN_TIMEOUT` is three **ULONGs**. The published `usbscan.h` declares
+  three USHORTs and this driver refuses that outright. So the header a search
+  turns up is not the header this driver was built from, and nothing else from
+  it should be trusted without being tried.
+- Setting that timeout does **not** shorten these failures. It governs
+  `ReadFile`/`WriteFile` on the data pipes; a control IOCTL still takes the
+  full 120 s. Which is why probing this is expensive, and worth saying out
+  loud before someone else plans an afternoon around it.
+
+So `open_transport` does **not** choose this; it is reached only with
+`RPS7200_USB_BACKEND=usbscan`, and the README tells people to run Zadig. A
+transport that has never carried a byte is not a default, however good the
+argument for it. The module is kept rather than deleted because that argument
+*is* still good -- it would remove the one real friction point in installing
+this on Windows -- and because whoever tries next deserves the twenty-one
+failures and the four eliminations, not just the idea.
+
+**One thing to know before finishing it.** `IOCTL_SET_TIMEOUT` counts in whole
+seconds and is documented to a maximum of 214. The infrared pass has a floor of
+about 212 s. Two seconds of margin, on precisely the failure CLAUDE.md says
+costs a power cycle -- and whether an expired `ReadFile` abandons the read or
+merely returns short is not known. The reads here are windowed at 32 KB and the
+status byte is polled before each, so the clock should only start once the
+device has data; that is a reason to expect it to be fine, not a measurement.
 """
 from __future__ import annotations
 
@@ -151,11 +188,18 @@ class _IO_BLOCK(ctypes.Structure):
 
 
 class _USBSCAN_TIMEOUT(ctypes.Structure):
-    """Whole seconds, not milliseconds. See MAX_TIMEOUT_S."""
+    """Whole seconds, not milliseconds. See MAX_TIMEOUT_S.
 
-    _fields_ = [("TimeoutRead", ctypes.c_ushort),
-                ("TimeoutWrite", ctypes.c_ushort),
-                ("TimeoutEvent", ctypes.c_ushort)]
+    Three ULONGs, measured: the published `usbscan.h` declares these as USHORT
+    and this driver rejects that with ERROR_INVALID_PARAMETER. Twelve bytes is
+    what it takes. Worth knowing beyond this one struct -- it means the header
+    a search turns up is not the header this driver was built from, so nothing
+    from it should be trusted without trying it.
+    """
+
+    _fields_ = [("TimeoutRead", ctypes.c_ulong),
+                ("TimeoutWrite", ctypes.c_ulong),
+                ("TimeoutEvent", ctypes.c_ulong)]
 
 
 class _GUID(ctypes.Structure):
