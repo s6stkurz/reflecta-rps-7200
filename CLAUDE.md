@@ -319,5 +319,21 @@ It needs a power cycle afterwards, so avoid these:
 They are gitignored; keep it that way. `scans/`, `library/`, `previews/` and
 `*.tif` are ignored for size.
 
+They are readable without tshark now -- `rps7200/usbpcap.py`, used by
+`tools/parse_capture.py` -- which matters because tshark is not on PATH on
+Windows even where Wireshark is installed, so these were unreadable on the
+machine that recorded them. That reader only ever returns **control setup
+packets** and payloads for a device the caller named; it never returns an
+interrupt payload, which is where a keystroke is. Keep it that way too:
+`tests/test_usbpcap.py` puts a keystroke on a synthetic bus and asserts it
+does not come back.
+
+What they are worth: across all six, every vendor control transfer CyberView
+makes is one of the three shapes `usb_transport.py` makes and there are no
+others -- 98,006 one-byte `0x0c` writes, 7,992 one-byte `0x0c` reads, 920
+eight-byte `0x04` writes, to the same five ports. So the control plane is
+verified against the vendor rather than against ourselves. And 3,987 commands
+parsed, zero `SET_SCAN_HEAD` -- the rule at the top of this file, checked.
+
 Prefer explicit paths over `git add -A`: this repo often has parallel work in
 the tree.
