@@ -740,6 +740,56 @@ def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
     assert s._debug_spool is None
 
 
+def test_the_spooled_array_is_let_go_before_its_file_is_unlinked(
+        tmp_path, monkeypatch):
+    """Windows will not unlink a file that is still mapped; POSIX will.
+
+    So the flush held an `np.load(..., mmap_mode="r")` open across its own
+    unlink and nothing complained on the machine it was written on, while on
+    Windows every frame's spool survived -- 43 GB of a 7200 dpi roll left in
+    the temporary directory, because the refusal was swallowed.
+
+    The refusal is simulated here rather than waited for, so the platform that
+    cannot see the bug is the one that guards against it.
+    """
+    import weakref
+    from pathlib import Path
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+
+    mapped: dict[str, weakref.ref] = {}
+    real_load = np.load
+
+    def load(path, *args, **kw):
+        array = real_load(path, *args, **kw)
+        mapped[str(path)] = weakref.ref(array)   # weak: the flush owns it
+        return array
+
+    real_unlink = Path.unlink
+
+    def unlink(self, *args, **kw):
+        held = mapped.get(str(self))
+        if held is not None and held() is not None:
+            raise PermissionError(32, "the file is still mapped")  # WinError 32
+        return real_unlink(self, *args, **kw)
+
+    monkeypatch.setattr(np, "load", load)
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    s = _debug_scanner(debug=True)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channels": 3,
+                      "channel_order": ["r", "g", "b"], "width": 16, "height": 8,
+                      "depth": 8, "frame": [0, 0, 10343, 6887],
+                      "bytes_per_line": 48, "film": "negative",
+                      "protocol_revision": 1})
+    spool = s._debug_spool
+    s.close()
+    assert mapped, "the flush never mapped anything; this test proves nothing"
+    assert not spool.exists(), "the spool was still mapped when it was unlinked"
+    assert s._debug_spool is None
+
+
 # ---------------------------------------------------------------------------
 # Stopping, and the bytes a prescan is filed with. Both of these were found on
 # the hardware rather than here, which is why they are here now.
