@@ -100,7 +100,13 @@ class NoDataYet(UsbError):
 
 
 class ScannerNotFound(RuntimeError):
-    """The scanner is not on the USB bus."""
+    """The scanner could not be opened, and `_why_not_found` says why.
+
+    Not "is not on the bus" any more, which is what this used to say and is
+    only one of the two things it means. On Windows the commoner one is that
+    the device is right there and another driver holds it -- and those want
+    opposite answers from whoever is reading the message.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +489,7 @@ class Transport:
         return (
             f"the scanner ({where}) is on the USB bus but could not be opened, "
             "which is usually permissions. Install the udev rule at "
-            "packaging/99-rps7200.rules and re-plug the scanner, or run as "
+            "packaging/60-rps7200.rules and re-plug the scanner, or run as "
             "root to confirm that is what it is."
         )
 

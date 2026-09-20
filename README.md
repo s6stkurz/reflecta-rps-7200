@@ -74,7 +74,7 @@ pip install uv && uv sync --all-groups
 
 ```sh
 sudo apt install libusb-1.0-0 python3-tk      # or libusbx, on Fedora and RHEL
-sudo cp packaging/99-rps7200.rules /etc/udev/rules.d/
+sudo cp packaging/60-rps7200.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 pip install uv && uv sync --all-groups
 ```
@@ -93,22 +93,53 @@ uv sync --all-groups
 
 **The scanner's driver has to be replaced, for now.** Windows binds its own
 `usbscan.sys` to it — via an INF from Pacific Image, the one CyberView installs — and
-libusb cannot open a device another driver holds. Use [Zadig](https://zadig.akeo.ie/):
-select **Multiple Frames Film Scanner (05e3:0144)** and install **WinUSB** (libusbK also
-works). This is what every comparable project does.
+libusb cannot open a device another driver holds. This is what every comparable project
+does; there is no way round it that has been made to work.
 
-> **This stops CyberView and VueScan seeing the scanner.** They talk to it through the
-> driver you are replacing. To get them back: Device Manager → the scanner → *Update
-> driver* → *Browse my computer* → *Let me pick*, and choose the original imaging driver.
-> Worth knowing before you start, not after.
+> **Read this before you start.** Replacing the driver **stops CyberView and VueScan
+> seeing the scanner**, because they talk to it through the driver you are replacing.
+> It is reversible, but not by itself — see *Putting it back* below.
 
-Until you do, the driver says which of the two problems it is rather than guessing:
+1. **Plug the scanner in and switch it on first.** Zadig only lists devices that are
+   enumerated; a scanner that is off simply will not be there to pick.
+2. Get [Zadig](https://zadig.akeo.ie/) — one `.exe`, nothing to install — and run it
+   **as administrator**.
+3. **Options → List All Devices.** This is the step everyone misses: by default Zadig
+   hides devices that already have a driver, which is exactly what this one is, so the
+   dropdown comes up without it.
+4. Pick **Multiple Frames Film Scanner**. Check the line underneath reads `USB ID
+   05E3 0144` — that is the scanner, and nothing else on your machine should match it.
+5. Set the target driver to **WinUSB** (libusbK works too), then **Replace Driver**.
+
+Then check it worked — one command, which sends nothing but INQUIRY and READ STATE and
+moves nothing:
+
+```powershell
+uv run python tools/check_scanner.py
+```
+
+It climbs a ladder and stops at the first thing that fails, saying what the failure
+means. Before Zadig it stops at rung 3 with exactly the message the driver would give
+you anyway:
 
 ```
 the scanner (0x05e3:0x0144) is on the USB bus but could not be opened. Windows binds
 its own Image/WIA driver to it, which libusb cannot go through. Replace it with WinUSB
-or libusbK using Zadig -- see the README.
+or libusbK using Zadig -- see the README. Note this also stops CyberView and VueScan
+seeing the scanner until the driver is put back.
 ```
+
+After it, the same command should reach rung 5 and report the model, firmware and CCD
+size. `uv run pytest tests/ -m hardware` asserts the same things, if you would rather
+have it as a test run.
+
+#### Putting it back
+
+Zadig does not have an undo. In **Device Manager**, find the scanner — after the swap it
+is under *Universal Serial Bus devices*, **not** *Imaging devices*, which is where it was
+and where people go looking. Then *Uninstall device*, tick **Delete the driver software
+for this device**, and unplug and replug the scanner. Windows re-binds the original
+Pacific Image driver and CyberView sees it again.
 
 ## Use
 
@@ -820,8 +851,14 @@ Individual steps are `make lint`, `make type` and `make test`; everything runs t
 No test needs a scanner attached. The suite covers channel derivation and both TIFF
 paths, the shading parse and two-point correction, metering and film types, the scan
 library (including that a stored entry still decodes to the pixels it was saved with),
-and the roll/registration logic. A test that genuinely needs the device is marked
-`hardware` and is skipped by default.
+and the roll/registration logic.
+
+The nine in `tests/test_hardware.py` are the exception: they open the device, claim the
+interface and send INQUIRY and READ STATE. They are marked `hardware`, deselected by
+default, and skip rather than fail where there is no scanner, so a bare machine runs
+the suite clean. `uv run pytest tests/ -m hardware` is how to ask for them, and
+`uv run python tools/check_scanner.py` is the same ladder as one command. Neither
+calibrates, scans, or moves the transport.
 
 `tifffile` is optional and the built-in TIFF path is complete, so both have to behave
 identically. `make test-all` runs the suite twice, once with it installed and once with

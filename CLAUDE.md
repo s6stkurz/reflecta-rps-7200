@@ -59,7 +59,14 @@ genuinely needs the device is marked `@pytest.mark.hardware` and is opt-in:
 
 ```bash
 uv run pytest tests/ -m hardware      # only with the scanner attached, and after asking
+uv run python tools/check_scanner.py  # the same ladder, as one command
 ```
+
+`tests/test_hardware.py` is what that marker collects: nine tests that open the
+device, claim the interface, and send INQUIRY and READ STATE. **Nothing there
+calibrates, scans or moves the transport** -- those still need Stefan's
+agreement each time. They skip rather than fail where there is no scanner, so
+running them on a bare machine is harmless.
 
 Fakes shared between test modules live in `tests/conftest.py`; `pythonpath` is
 set so `from conftest import ...` works.

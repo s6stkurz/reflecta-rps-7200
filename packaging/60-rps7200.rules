@@ -1,7 +1,7 @@
 # Reflecta RPS 7200 -- let the logged-in user talk to the scanner.
 #
 # Install with:
-#     sudo cp packaging/99-rps7200.rules /etc/udev/rules.d/
+#     sudo cp packaging/60-rps7200.rules /etc/udev/rules.d/
 #     sudo udevadm control --reload-rules && sudo udevadm trigger
 # then unplug the scanner and plug it back in.
 #
@@ -17,4 +17,10 @@
 # TAG+="uaccess" rather than MODE="0666": it grants access to whoever is
 # actually logged in at the seat, which is what systemd-logind is for, instead
 # of to every account on the machine.
+#
+# The 60- prefix is load-bearing, not a preference. The tag does nothing by
+# itself -- systemd's own 73-seat-late.rules is what sees it and runs the
+# uaccess builtin -- so a rule numbered above 73 applies the tag after the only
+# thing that reads it has already run, and the device stays root-only. This
+# file was 99- when it was written, which would have been silently inert.
 SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", ATTR{idProduct}=="0144", TAG+="uaccess"
