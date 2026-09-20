@@ -412,8 +412,33 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
+- **Driving the scanner through `usbscan.sys` does not work, and the reason is
+  not visible from user space (2026-09-20).** It would have removed the Zadig
+  step on Windows and let CyberView keep working, which is the one real
+  friction point in installing this there. `rps7200/usbscan.py` is written,
+  tested and reachable with `RPS7200_USB_BACKEND=usbscan`; its docstring holds
+  the measurements.
+
+  Eliminated, in order: the `IO_BLOCK` shape (the driver validates input size
+  -- 4, 12 and 64 bytes are refused instantly, 24 is accepted), the request
+  content (`IOCTL_SEND_USB_REQUEST` with an explicit `0x0C`/`0x40`, in two
+  struct layouts), contention for the device (it opens with `dwShareMode = 0`,
+  so the Image Acquisition service is not holding it), and the device being
+  asleep (`IOCTL_GET_DEVICE_DESCRIPTOR` answers throughout). Twenty-one vendor
+  control transfers, every one `ERROR_SEM_TIMEOUT`. Nothing wedged, ever.
+
+  One real bug came out of it: `USBSCAN_TIMEOUT` is three ULONGs, not the three
+  USHORTs the published `usbscan.h` declares. Which is the wider lesson -- that
+  header is not the one this driver was built from.
+
+  **Next, for someone with administrator rights:** capture the bus with USBPcap
+  while CyberView drives *this* scanner. The premise everything rested on was
+  that `MF5000_x64.dll`'s 59 `WRITE_REGISTERS` calls are for this device, and
+  that DLL is 5.3 MB serving a whole family of Pacific Image scanners. It was
+  never checked.
+
 - **The device path has never run on anything but macOS (2026-09-20).** The
-  driver now builds, tests and runs the window on Windows -- 1018 passed, 5
+  driver now builds, tests and runs the window on Windows -- 1034 passed, 5
   skipped, `make all` and `make test-all` both green, and CI covers Ubuntu,
   macOS and Windows on every push. None of that touches the scanner.
 
