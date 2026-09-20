@@ -3,9 +3,14 @@
 
     uv run python tools/parse_capture.py captures/bw.pcapng
 
-Needs `tshark`. The captures themselves are gitignored -- they carry keyboard
-HID traffic from the machine that recorded them -- so this reads whatever is
-put in front of it rather than assuming a path.
+Reads the pcapng itself, with no `tshark`. It used to shell out to one, which
+meant these could only be read where Wireshark was installed -- and on Windows
+tshark is not on PATH even then, so the captures were unreadable on the machine
+that recorded them. `rps7200.usbpcap` reads the format directly.
+
+The captures are gitignored because they carry keyboard HID traffic from the
+machine that recorded them, so this reads whatever is put in front of it rather
+than assuming a path -- and it reads only the scanner's own control transfers.
 
 Why this exists: the obvious extraction finds nothing. Commands do not travel
 as bulk payloads, so grepping `usb.capdata` for a 16-byte MODE SELECT returns
@@ -16,10 +21,24 @@ one byte per control transfer, so the capture holds them as a flat byte stream:
 a six-byte CDB whose bytes 3-4 are a big-endian length, then that many data
 bytes, then the next CDB.
 """
-import shutil
-import subprocess
 import sys
 from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from rps7200.console import use_utf8_stdout                       # noqa: E402
+from rps7200.usb_transport import (                               # noqa: E402
+    PORT_SCSI_CMD,
+    PRODUCT_ID,
+    VENDOR_ID,
+)
+from rps7200.usbpcap import (                                     # noqa: E402
+    CONTROL,
+    STAGE_SETUP,
+    packets,
+    scanner_devices,
+)
 
 OPS = {0x00:"TEST_UNIT_READY",0x03:"REQUEST_SENSE",0x08:"READ",0x0A:"WRITE",
        0x0F:"GET_PARAMETERS",0x12:"INQUIRY",0x15:"MODE_SELECT",0x18:"COPY",
@@ -30,24 +49,33 @@ SUBS = {0x12:"SET_SCAN_FRAME",0x13:"SET_EXPOSURE",0x14:"SET_HIGHLIGHT_SHADOW",
         0x15:"CAL_INFO",0x16:"CAL_DATA",0x17:"CMD_17"}
 
 def stream(path):
-    # tshark is not on PATH by default on Windows -- it installs under
-    # Program Files -- and without this the failure is a bare FileNotFoundError
-    # traceback out of the middle of a parse.
-    if shutil.which("tshark") is None:
+    """Every byte written to PORT_SCSI_CMD, in order.
+
+    Commands and their data-out payloads both go to that one port, a byte per
+    control transfer, so the capture holds them as a flat stream. USBPcap puts
+    an OUT transfer's data in the same record as its setup packet, right after
+    the eight setup bytes -- which is why this reads `payload[8:]` rather than
+    looking for a separate data stage.
+    """
+    raw = Path(path).read_bytes()
+    # Plural: the scanner re-enumerates, so a capture spanning a power-on holds
+    # it under more than one bus address and taking the first drops the rest.
+    devices = scanner_devices(path, VENDOR_ID, PRODUCT_ID)
+    if not devices:
         raise SystemExit(
-            "tshark is not on PATH. It ships with Wireshark; on Windows it "
-            "lives in C:\\Program Files\\Wireshark and has to be added.")
-    out = subprocess.run(
-        ["tshark","-r",path,"-Y","usb.setup.wValue == 0x0085",
-         "-T","fields","-e","usb.data_fragment"],
-        capture_output=True, text=True,
-        encoding="utf-8", errors="replace").stdout
-    b = bytearray()
-    for line in out.splitlines():
-        h = line.replace(":","").strip()
-        if len(h) == 2:
-            b.append(int(h,16))
-    return bytes(b)
+            f"no {VENDOR_ID:#06x}:{PRODUCT_ID:#06x} in {path} -- is this a "
+            "capture of the scanner?")
+    out = bytearray()
+    for packet in packets(raw):
+        if packet.device not in devices or packet.transfer != CONTROL:
+            continue
+        if packet.stage not in (None, STAGE_SETUP) or len(packet.payload) < 8:
+            continue
+        value = int.from_bytes(packet.payload[2:4], "little")
+        if value == PORT_SCSI_CMD:
+            out += packet.payload[8:]
+    return bytes(out)
+
 
 def parse(b):
     i, cmds = 0, []
@@ -67,6 +95,9 @@ def parse(b):
     return cmds
 
 if __name__ == "__main__":
+    use_utf8_stdout()
+    if len(sys.argv) < 2:
+        raise SystemExit(__doc__.strip().splitlines()[2].strip())
     b = stream(sys.argv[1])
     cmds = parse(b)
     print(f"{len(b)} command bytes -> {len(cmds)} commands\n")
