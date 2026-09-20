@@ -402,6 +402,13 @@ class ScannerGui:
         #: but the sheet needs it to grey them out, and reopening the sheet
         #: from the button has no manifest to hand.
         self._sheet_done: set[int] = set()
+        #: Which roll the sheet's decisions belong to. Set both by opening a
+        #: roll and by finishing a walk -- a strip walked in this session has
+        #: a folder too, and until the roll is commissioned its manifest holds
+        #: no positions, so that folder is the only thing the decisions can be
+        #: filed against. Kept apart from `_loaded_roll`, which answers the
+        #: different question of which roll the browser should mark as open.
+        self._sheet_roll = None
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
         self._loaded_roll = None             # which roll folder is open, if any
@@ -1941,6 +1948,10 @@ class ScannerGui:
             # numbers on a new strip name different pictures.
             self.sheet_state = {}
             self._sheet_done = set()
+            # Set again when the walk finishes and the folder is known. Cleared
+            # here so a walk that fails partway cannot leave the next set of
+            # decisions filed against the roll before it.
+            self._sheet_roll = None
             self._surveying = True
             self._survey_start = start_at
             self._survey_predpi = predpi
@@ -2073,7 +2084,7 @@ class ScannerGui:
         this session only, which is the honest answer rather than filing them
         under a roll they do not belong to.
         """
-        return Path(self._loaded_roll).name if self._loaded_roll else None
+        return Path(self._sheet_roll).name if self._sheet_roll else None
 
     @staticmethod
     def _clean_sheet_state(raw) -> dict:
@@ -2385,6 +2396,7 @@ class ScannerGui:
             # would file the outgoing roll's positions under the incoming one.
             self.sheet.top.destroy()
         self._sheet_done = {int(n) for n in done}
+        self._sheet_roll = folder
         # The manifest is the record for this roll, so it replaces whatever
         # the window was holding -- including another roll's decisions, which
         # are keyed by frame number and would otherwise be read as this one's.
@@ -2797,6 +2809,13 @@ class ScannerGui:
             self.v_roll_eta.set("")
             if self._surveying:
                 self._surveying = False
+                # Where the walk wrote its manifest, asked for rather than
+                # rebuilt from the roll's name. The decisions about to be made
+                # in the sheet belong to this strip, and until the roll is
+                # commissioned that folder is the only thing to file them
+                # against -- without it they would last only as long as the
+                # window, which is most of what was wrong here.
+                self._sheet_roll = getattr(self.session, "last_roll_dir", None)
                 self.b_sheet.configure(
                     state="normal" if self.survey else "disabled")
                 if self.survey:
