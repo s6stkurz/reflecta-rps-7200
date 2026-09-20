@@ -73,16 +73,22 @@ class ShadingReference:
         return bool(self.dark)
 
     def save(self, path: str | Path) -> None:
-        np.savez_compressed(
-            path,
-            pixels_per_line=self.pixels_per_line,
-            channels=np.array(self.channels),
-            dark_channels=np.array(sorted(self.dark), dtype=np.int64),
-            **{f"ref{c}": self.ref[c] for c in self.channels},
-            **{f"mean{c}": np.float64(self.mean[c]) for c in self.channels},
-            **{f"dark{c}": self.dark[c] for c in sorted(self.dark)},
-            **{f"darkmean{c}": np.float64(self.dark_mean[c]) for c in sorted(self.dark)},
-        )
+        # One dict, built then splatted. The per-channel arrays and their
+        # scalar means are different types, and splatting them as separate
+        # comprehensions asks `savez_compressed` to accept each comprehension's
+        # own narrow value type for every keyword it has.
+        arrays: dict[str, Any] = {
+            "pixels_per_line": self.pixels_per_line,
+            "channels": np.array(self.channels),
+            "dark_channels": np.array(sorted(self.dark), dtype=np.int64),
+        }
+        for c in self.channels:
+            arrays[f"ref{c}"] = self.ref[c]
+            arrays[f"mean{c}"] = np.float64(self.mean[c])
+        for c in sorted(self.dark):
+            arrays[f"dark{c}"] = self.dark[c]
+            arrays[f"darkmean{c}"] = np.float64(self.dark_mean[c])
+        np.savez_compressed(path, **arrays)
 
     @classmethod
     def load(cls, path: str | Path) -> "ShadingReference":

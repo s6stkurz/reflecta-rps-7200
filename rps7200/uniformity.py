@@ -320,7 +320,7 @@ def channel_report(image: np.ndarray, signature: OrientationSignature,
 
     means = strip.reshape(-1, 3).mean(axis=0)
     overall = float(means.mean())
-    spread = float(means.max() - means.min()) / overall if overall > 0 else float("inf")
+    spread = float(np.ptp(means)) / overall if overall > 0 else float("inf")
     live = [bool(data[:, :, c].std() > 0) for c in range(3)]
     return {
         "neutral": round(spread, 4),
@@ -570,8 +570,14 @@ class Field:
     @classmethod
     def load(cls, path: str | Path) -> "Field":
         with np.load(path) as z:
-            box = (tuple(float(v) for v in z["support_box"])
-                   if "support_box" in z else (-1.0, 1.0, -1.0, 1.0))
+            # Unpacked rather than comprehended: the field is four floats
+            # and a generator only ever produces `tuple[float, ...]`, which
+            # would let a three-element box through unnoticed.
+            if "support_box" in z:
+                u_lo, u_hi, v_lo, v_hi = (float(v) for v in z["support_box"])
+                box = (u_lo, u_hi, v_lo, v_hi)
+            else:
+                box = (-1.0, 1.0, -1.0, 1.0)
             return cls(
                 coefficients=z["coefficients"],
                 degree=int(z["degree"]),

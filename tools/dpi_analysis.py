@@ -167,7 +167,11 @@ def main() -> int:
     print("B  aliasing: power near each pass's own Nyquist, against 7200 dpi there")
     print("   ~1.0 = resolving.  >>1 = folding energy back.")
     print("=" * 72)
-    results: dict[str, dict[int, float]] = {}
+    # dict[int, float] was wrong: the value written at line 189 and read
+    # back at 196 and 202 is a two-key dict, not a float. The code was
+    # right and the declaration was the only thing saying otherwise --
+    # which also made four correct lines look like defects.
+    results: dict[str, dict[int, dict[str, float]]] = {}
     for c, name in enumerate(CHANNELS):
         ref_f, ref_p = radial_spectrum(plane(top, c), top["dpi"])
         results[name] = {}

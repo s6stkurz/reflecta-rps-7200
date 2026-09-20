@@ -28,7 +28,7 @@ from __future__ import annotations
 import struct
 import zlib
 from collections.abc import Sequence
-from typing import BinaryIO, cast
+from typing import Any, BinaryIO, cast
 
 import numpy as np
 
@@ -134,7 +134,11 @@ def write(
         import tifffile
 
         channels = image.shape[2]
-        kwargs: dict[str, object] = {
+        # `Any`, not `object`: these are splatted into `imwrite`, whose
+        # parameters are all differently typed, and `object` satisfies
+        # none of them. One annotation accounts for 35 of the package's
+        # 41 type diagnostics.
+        kwargs: dict[str, Any] = {
             "photometric": "rgb" if channels >= 3 else "minisblack",
         }
         if channels > 3:

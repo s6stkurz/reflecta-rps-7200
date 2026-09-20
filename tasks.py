@@ -37,21 +37,31 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-#: `ty` is deliberately narrow: it is pointed at the package only, and six rule
-#: classes are silenced, because numpy and tifffile stubs otherwise bury the
-#: real diagnostics. TODO.md records what that leaves uncovered -- `tools/`,
-#: including the largest file here -- and the argument for widening it.
+#: The package, with **nothing silenced**.
+#:
+#: This used to carry seven `--ignore` flags, and they were doing less than
+#: they looked. Measured across the whole repo with every rule on: five of the
+#: seven silenced nothing at all inside `rps7200/`, and one of those --
+#: `possibly-missing-attribute` -- fires zero times anywhere in the repo under
+#: any scope. What the list actually bought was 41 diagnostics over six lines,
+#: and 35 of those were a single `**kwargs` splat into `tifffile.imwrite`.
+#:
+#: So they are gone and the six sites are fixed instead. A blanket ignore hides
+#: the next real diagnostic as willingly as it hides the last false one, and
+#: this list read as a retreat from numpy far broader than the ground it was
+#: actually holding.
+#:
+#: `tools/` and `tests/` are still excluded, and that is a real gap rather than
+#: a decision: `tools/gui.py` is the largest file here and the one an operator
+#: drives. It is sized rather than hand-waved -- 27 diagnostics in `tools/`
+#: without gui.py (needing `--extra-search-path tests` and one for the skill
+#: scripts, which two tools import through a runtime `sys.path` insertion the
+#: checker cannot see), and 28 more in gui.py of which several want design
+#: changes, not annotations. See TODO.md.
 TY_ARGS = [
     "check",
     "--exclude", "tests/",
     "--exclude", "tools/",
-    "--ignore", "unresolved-import",
-    "--ignore", "unresolved-attribute",
-    "--ignore", "invalid-argument-type",
-    "--ignore", "invalid-assignment",
-    "--ignore", "possibly-missing-attribute",
-    "--ignore", "unsupported-operator",
-    "--ignore", "no-matching-overload",
 ]
 
 #: Build output and caches. Everything here is regenerated, so `clean` may

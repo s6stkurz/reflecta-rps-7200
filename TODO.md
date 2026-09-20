@@ -764,7 +764,15 @@ below are untouched by that and still stand. A third has been added to them:
 driven**, which is a new way for a green board to mean less than it looks
 (see *Untested*).
 
-- **The `hardware` and `slow` pytest markers are declared, documented, and used
+- ~~**The `hardware` and `slow` pytest markers are declared, documented, and
+  used by nothing.**~~ **Both fixed 2026-09-20.** `slow` now marks the tests
+  that read the real captures, and `tests/test_hardware.py` is nine tests that
+  open the device, claim interface 0 and send INQUIRY and READ STATE -- nothing
+  that calibrates, scans or moves the transport. `tools/check_scanner.py` is
+  the same ladder as one command. Both skip rather than fail with no scanner.
+  The original entry follows, because the *reason* it mattered has not changed:
+
+  **The `hardware` and `slow` pytest markers are declared, documented, and used
   by nothing.** `pyproject.toml` declares both, `addopts = "-m 'not hardware'"`
   deselects one, CLAUDE.md gives `uv run pytest tests/ -m hardware` as a
   workflow, and the README says "a test that genuinely needs the device is
@@ -778,7 +786,34 @@ driven**, which is a new way for a green board to mean less than it looks
   Either write the handful of tests or say plainly that confirmation is manual;
   declared-deselected-empty is the worst of the three.
 
-- **`make type` checks about a third of the tree and silences the rules that
+- **`make type` still checks about a third of the tree, but no longer silences
+  anything.** Half fixed 2026-09-20: the seven `--ignore` flags are gone and
+  `rps7200/` is clean with every rule on.
+
+  They were buying less than they looked. Measured with every rule on: five of
+  the seven silenced nothing at all inside the package, and
+  `possibly-missing-attribute` fires zero times anywhere in the repo under any
+  scope. What the whole list actually hid was 41 diagnostics over **six lines**,
+  and 35 of those were one `**kwargs` splat into `tifffile.imwrite`. The six
+  are now fixed rather than ignored -- including a real one, `dpi_analysis.py`
+  declaring `dict[int, float]` for a value that is a two-key dict, which made
+  four correct lines look like defects.
+
+  What is left is the scope, and it is sized rather than guessed: **27**
+  diagnostics in `tools/` without gui.py, and **28** in gui.py alone. The
+  tools/ ones need `--extra-search-path tests` and one for
+  `.claude/skills/measure-scan-quality/scripts`, because three tools import
+  through a runtime `sys.path` insertion the checker cannot see; the largest
+  cluster is nine in `uniformity.py` that one TypedDict on
+  `solve_components`'s return would clear. The gui.py ones are different in
+  kind: several want design changes, not annotations -- five fields are
+  monkeypatched onto `session.Result`, which declares none of them.
+
+  The original entry follows. Note two of its figures were wrong: it is 154
+  diagnostics not 148, seven ignores not six, and gui.py is 6,573 lines not
+  4,840.
+
+  **`make type` checks about a third of the tree and silences the rules that
   find bugs.** The target excludes `tests/` and `tools/` and ignores six rule
   classes, `unresolved-attribute` and `invalid-argument-type` among them. So
   `tools/gui.py` -- 6,573 lines, the largest file here and the one an operator

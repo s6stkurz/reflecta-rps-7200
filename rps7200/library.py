@@ -189,7 +189,10 @@ def save(
                 digest.update(raw)
                 fh.write(raw)
                 raw_bytes = len(raw)
-            else:
+            elif raw_path is not None:
+                # `elif`, not `else`: the outer guard is an `or`, so this arm is
+                # the one where raw_path is set -- said here rather than assumed,
+                # which is also the only way it can be checked.
                 # Streamed in chunks. A 7200 dpi frame is 570 MB, and reading it
                 # whole to hand over as `raw` would spike memory by that much for
                 # no reason -- the point of spooling it was to keep it off the
