@@ -4,10 +4,11 @@
     python3 tools/exposure_headroom.py
     python3 tools/exposure_headroom.py --entries 6 --json headroom.json
 
-`auto_exposure` aims the 99.5th percentile of each channel at 0.70 of full
-scale. That is the most conservative figure of any driver read for comparison
--- pieusb uses 0.85, nkscan 0.97 -- and a third of a stop of range is not
-nothing on a dense negative, where the shadows are what run out of bits.
+`auto_exposure` aims the 99.5th percentile of each channel at 0.80 of full
+scale. It aimed at 0.70 when this tool was written, and this is the measurement
+that moved it -- still the conservative end beside every driver read for
+comparison, pieusb at 0.85 and nkscan at 0.97, and a third of a stop of range is
+not nothing on a dense negative, where the shadows are what run out of bits.
 
 Copying pieusb's 0.85 would be a guess, though, and it would be *their* guess.
 Their comment says why they chose it (scanner.py:70-72):
@@ -63,9 +64,10 @@ from rps7200.direct import (                                        # noqa: E402
 from rps7200.protocol import ScanParameters                         # noqa: E402
 from rps7200.shading import ShadingReference, apply_shading         # noqa: E402
 
-#: Targets to try, as a fraction of full scale. 0.70 is what ships, 0.85 is
+#: Targets to try, as a fraction of full scale. 0.80 is what ships, 0.85 is
 #: pieusb's, 0.97 is nkscan's; the rest fill in between so the knee is visible
-#: rather than inferred from three points.
+#: rather than inferred from three points. 0.70 stays in as the floor this
+#: shipped with, so the run still spans what was replaced.
 TARGETS = (0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
 
 #: Where the metering percentile is read. The same one auto_exposure uses, so

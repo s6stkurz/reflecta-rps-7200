@@ -3204,12 +3204,15 @@ class DirectScanner:
                         # `infrared` here says the scan that follows is RGBI;
                         # it does not make the probe infrared. auto_exposure
                         # always probes in RGB. What the flag buys is blue's
-                        # headroom: blue comes back 2-3.7x brighter in RGBI than
-                        # in RGB at the same exposure, so a blue metered to fill
-                        # the range on an RGB probe clips in the scan. Passing
-                        # False here cost exactly that -- one roll metered blue
-                        # to 10.07x, which on a 6506 base pins the 16-bit timer
-                        # at its 65535 ceiling before the RGBI gain is applied.
+                        # headroom: blue comes back several times brighter in
+                        # RGBI than in RGB at the same exposure -- measured
+                        # 4.98-5.02 on colour negative and ~9.6 on black and
+                        # white, which is why `BLUE_RGBI_HEADROOM` is per film --
+                        # so a blue metered to fill the range on an RGB probe
+                        # clips in the scan. Passing False here cost exactly
+                        # that -- one roll metered blue to 10.07x, which on a
+                        # 6506 base pins the 16-bit timer at its 65535 ceiling
+                        # before the RGBI gain is applied.
                         self.set_gain_offset(baseline, infrared=infrared)
                         scales = self.auto_exposure(
                             target=exposure_target, infrared=infrared, film=film
