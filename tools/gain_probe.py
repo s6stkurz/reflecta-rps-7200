@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Is the gain field in SET GAIN OFFSET analog, or a digital multiplier?
 
-    RPS7200_DEBUG=1 python3 tools/gain_probe.py
+    RPS7200_DEBUG=1 uv run python tools/gain_probe.py
 
 See `docs/analog-gain-plan.md` for why this is worth two minutes and why it is
 not the SET_SCAN_HEAD situation. In one line: blue cannot reach its target in

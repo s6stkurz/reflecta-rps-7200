@@ -63,14 +63,14 @@ which the film does not cover.
 
 ```sh
 # calibrate, scan, correct, and file the result with its raw bytes
-python3 tools/scan.py --dpi 1800 --ir \
+uv run python tools/scan.py --dpi 1800 --ir \
     --stock "Kodak Gold 200" --frame 3 --notes "test frame"
 
-python3 tools/scan.py --dpi 600                  # faster, RGB only
-python3 tools/scan.py --dpi 1800 --no-shading    # raw pixels, for comparison
-python3 tools/scan.py --dpi 1800 --reuse         # reuse the cached reference
-python3 tools/scan.py --film positive            # a slide: keeps its colour cast
-python3 tools/scan.py --film bw                  # one channel out, infrared refused
+uv run python tools/scan.py --dpi 600                  # faster, RGB only
+uv run python tools/scan.py --dpi 1800 --no-shading    # raw pixels, for comparison
+uv run python tools/scan.py --dpi 1800 --reuse         # reuse the cached reference
+uv run python tools/scan.py --film positive            # a slide: keeps its colour cast
+uv run python tools/scan.py --film bw                  # one channel out, infrared refused
 ```
 
 ### What `--film` changes
@@ -104,8 +104,8 @@ wrong here, where red's ceiling is a rail the lock propagates to the other two.
 A whole strip or roll, unattended:
 
 ```sh
-python3 tools/scan_roll.py --dry-run --frames 6                 # prescan and advance only
-python3 tools/scan_roll.py --dpi 1800 --ir --frames 6 \
+uv run python tools/scan_roll.py --dry-run --frames 6                 # prescan and advance only
+uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
     --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 ```
 
@@ -114,10 +114,10 @@ session's shading reference and that pass's CCD mask. None of those can be recov
 a TIFF, and without them a scan can never be re-decoded or re-corrected:
 
 ```sh
-python3 tools/library.py list          # what is stored
-python3 tools/library.py verify        # checksums and completeness
-python3 tools/library.py reconstruct   # re-decode every scan with current code
-python3 tools/make_comparison.py       # raw / corrected / inverted, for eyeballing
+uv run python tools/library.py list          # what is stored
+uv run python tools/library.py verify        # checksums and completeness
+uv run python tools/library.py reconstruct   # re-decode every scan with current code
+uv run python tools/make_comparison.py       # raw / corrected / inverted, for eyeballing
 ```
 
 From Python:
@@ -541,7 +541,10 @@ later no longer existed.
 
 `DirectScanner` can now do it itself:
 
-    RPS7200_DEBUG=1 python3 my_script.py          # or DirectScanner(debug=True)
+    RPS7200_DEBUG=1 uv run python my_script.py          # macOS, Linux
+    $env:RPS7200_DEBUG=1; uv run python my_script.py    # PowerShell
+
+or `DirectScanner(debug=True)` in code, which needs no shell at all.
 
 Every `scan()` is then filed, tagged `debug`, with raw bytes, shading reference and
 CCD mask — everything needed to re-decode it later.
@@ -646,8 +649,8 @@ SANE_DEBUG_PIEUSB=11 scanimage --mode Gray --preview=yes --format=tiff -o /tmp/c
 ## Whole-roll scanning
 
 ```sh
-python3 tools/scan_roll.py --dry-run --frames 6          # prescan and advance only
-python3 tools/scan_roll.py --dpi 1800 --ir --frames 6 \
+uv run python tools/scan_roll.py --dry-run --frames 6          # prescan and advance only
+uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
     --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 ```
 
@@ -773,7 +776,7 @@ make test-all
 After any change to how the scanner's bytes become pixels, re-check every stored scan:
 
 ```sh
-make reconstruct          # python3 tools/library.py reconstruct
+make reconstruct          # uv run python tools/library.py reconstruct
 ```
 
 ## Solved: what the stock backend gets wrong

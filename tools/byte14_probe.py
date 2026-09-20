@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drives every value byte 14 of MODE SELECT has ever been seen to carry.
 
-    RPS7200_DEBUG=1 python3 tools/byte14_probe.py
+    RPS7200_DEBUG=1 uv run python tools/byte14_probe.py
 
 Run once, 2026-09-11: the question it was written to answer (does the upper
 nibble explain a 2.8x scan-time spread seen across three vendor captures) came

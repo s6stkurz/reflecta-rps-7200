@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure what the film transport actually does, before a roll depends on it.
 
-    python3 tools/transport_probe.py
+    uv run python tools/transport_probe.py
 
 Six USB captures of the vendor software contain exactly one film-advance
 command -- `SLIDE 04 01 00 01`, sent three times, plus `04 01 00 02` once for a

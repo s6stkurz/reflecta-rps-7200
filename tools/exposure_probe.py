@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Walks a strip of negatives, metering each, with an exposure ladder on some.
 
-    RPS7200_DEBUG=1 python3 tools/exposure_probe.py --json probe/exposure.json
+    RPS7200_DEBUG=1 uv run python tools/exposure_probe.py --json probe/exposure.json
                                                              # background it
 
 **Ask before running this.** About 40 minutes with a colour negative strip

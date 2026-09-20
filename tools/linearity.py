@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """How far this sensor departs from linear, by level, from stored passes.
 
-    python3 tools/linearity.py --match '20260904T1043*_slide_3600dpi'
-    python3 tools/linearity.py --probe probe/exposure.json     # a whole strip
+    uv run python tools/linearity.py --match '20260904T1043*_slide_3600dpi'
+    uv run python tools/linearity.py --probe probe/exposure.json     # a whole strip
 
 **No scanner.** It reads an exposure ladder already in the library and measures
 the one thing that decided `EXPOSURE_TARGET`: whether a pass at twice the

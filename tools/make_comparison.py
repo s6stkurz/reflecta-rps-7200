@@ -7,7 +7,7 @@
 
 Run after any change to the correction pipeline:
 
-    python3 tools/make_comparison.py [scan.tif] [flat.tif]
+    uv run python tools/make_comparison.py [scan.tif] [flat.tif]
 
 There is no vignette correction here and none should be added. The ~39% falloff
 across the frame is real but lives entirely in x, which shading already takes to

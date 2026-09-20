@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Drive each command and record what it actually does.
 
-    python3 tools/verify_protocol.py 2          # sense, 0xE7, state -- no film
-    python3 tools/verify_protocol.py 1 3 4 5    # the rest -- needs film loaded
+    uv run python tools/verify_protocol.py 2          # sense, 0xE7, state -- no film
+    uv run python tools/verify_protocol.py 1 3 4 5    # the rest -- needs film loaded
 
 `docs/protocol.md` mixes three kinds of claim: counted in the captures, checked
 against Stefan's notes, and *inferred*. This settles the inferred ones against the

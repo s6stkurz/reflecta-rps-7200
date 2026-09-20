@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Inspect the scan library.
 
-    python3 tools/library.py list
-    python3 tools/library.py verify
-    python3 tools/library.py reconstruct        # re-decode every entry
-    python3 tools/library.py duplicates         # what is redundant, and why
-    python3 tools/library.py duplicates --delete
+    uv run python tools/library.py list
+    uv run python tools/library.py verify
+    uv run python tools/library.py reconstruct        # re-decode every entry
+    uv run python tools/library.py duplicates         # what is redundant, and why
+    uv run python tools/library.py duplicates --delete
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says

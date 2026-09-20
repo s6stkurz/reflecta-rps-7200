@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scan with the scanner's own shading correction applied.
 
-    python3 tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
+    uv run python tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
 
 The scanner returns raw pixels: it measures its per-column response during a
 calibration pass and hands that back, but never applies it. So a session runs

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """What exposure target this scanner can actually carry, measured offline.
 
-    python3 tools/exposure_headroom.py
-    python3 tools/exposure_headroom.py --entries 6 --json headroom.json
+    uv run python tools/exposure_headroom.py
+    uv run python tools/exposure_headroom.py --entries 6 --json headroom.json
 
 `auto_exposure` aims the 99.5th percentile of each channel at 0.80 of full
 scale. It aimed at 0.70 when this tool was written, and this is the measurement

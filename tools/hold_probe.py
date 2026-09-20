@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Does holding a frame to an approved position work on the real scanner?
 
-    RPS7200_DEBUG=1 python3 tools/hold_probe.py --dry-run   # the plan, no device
-    RPS7200_DEBUG=1 python3 tools/hold_probe.py             # the real thing
+    RPS7200_DEBUG=1 uv run python tools/hold_probe.py --dry-run   # the plan, no device
+    RPS7200_DEBUG=1 uv run python tools/hold_probe.py             # the real thing
 
 **Ask before running this.** It moves the film, in sub-frame steps, on one
 frame. Nothing advances: no SLIDE_NEXT, no SLIDE_PREV, no frame counter

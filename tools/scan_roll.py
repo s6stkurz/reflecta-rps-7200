@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Scan a whole roll or strip, unattended, filing every frame in the library.
 
-    python3 tools/scan_roll.py --dry-run --frames 6
-    python3 tools/scan_roll.py --dpi 1800 --ir --frames 6 \
+    uv run python tools/scan_roll.py --dry-run --frames 6
+    uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
         --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 
 The film is already at the first picture when this starts, so the first frame is

@@ -28,7 +28,7 @@ It refuses what the device refuses: infrared on black and white or Kodachrome.
 A stand-in that accepts what the hardware rejects teaches the window a shape
 that does not exist.
 
-    python3 tools/gui.py --demo
+    uv run python tools/gui.py --demo
 """
 from __future__ import annotations
 

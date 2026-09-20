@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does compressing in the background disturb a scan in progress?
 
-    RPS7200_DEBUG=0 python3 tools/filing_load_test.py
+    RPS7200_DEBUG=0 uv run python tools/filing_load_test.py
 
 The question this answers is whether library filing can overlap the *next* frame's
 scan, instead of waiting for the session to close. That would remove the spool

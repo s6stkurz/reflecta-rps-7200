@@ -161,9 +161,9 @@ bit is not evidence, not a new problem.
   position that decides the reversal is *device* state, so it survives process
   exit. Scanning a strip by hand the obvious way --
 
-      python3 tools/scan.py --dpi 1800 --ir --frame 1     # normal
-      python3 tools/scan.py --dpi 1800 --ir --frame 2     # reversed
-      python3 tools/scan.py --dpi 1800 --ir --frame 3     # normal
+      uv run python tools/scan.py --dpi 1800 --ir --frame 1     # normal
+      uv run python tools/scan.py --dpi 1800 --ir --frame 2     # reversed
+      uv run python tools/scan.py --dpi 1800 --ir --frame 3     # normal
 
   -- gives every second frame upside down, filed that way, with
   `reversal_against` unable to help because it judges a pass against the prescan

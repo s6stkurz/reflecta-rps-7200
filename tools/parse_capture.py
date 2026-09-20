@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reconstruct the SCSI command stream from a CyberView USB capture.
 
-    python3 tools/parse_capture.py captures/bw.pcapng
+    uv run python tools/parse_capture.py captures/bw.pcapng
 
 Needs `tshark`. The captures themselves are gitignored -- they carry keyboard
 HID traffic from the machine that recorded them -- so this reads whatever is

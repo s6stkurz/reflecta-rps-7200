@@ -4,16 +4,16 @@
 Two phases. Phase 1 is the study proper -- RGB, 600 dpi, empty transport then
 clear film then the IT8::
 
-    python3 tools/uniformity.py capture --tag vignette-study
+    uv run python tools/uniformity.py capture --tag vignette-study
 
 Phase 2 is a smaller follow-on that asks only whether the field *differs* in
 infrared, using the IT8 alone so nothing in the transport has to change::
 
-    python3 tools/uniformity.py capture --ir --tag vignette-study-ir
+    uv run python tools/uniformity.py capture --ir --tag vignette-study-ir
 
 Then, with no scanner attached and re-runnable against any future pipeline::
 
-    python3 tools/uniformity.py analyse --tag vignette-study
+    uv run python tools/uniformity.py analyse --tag vignette-study
 
 `analyse` rebuilds every image from its stored raw bytes through the *current*
 correction code rather than reading the saved TIFF. Corrections here are still
@@ -758,7 +758,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
             print("    redoing this pass")
 
     print(f"\n{len(done)} passes filed with tag {args.tag!r}")
-    print(f"now run: python3 tools/uniformity.py analyse --tag {args.tag}")
+    print(f"now run: uv run python tools/uniformity.py analyse --tag {args.tag}")
     return 0
 
 

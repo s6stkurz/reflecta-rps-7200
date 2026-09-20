@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drives MODE SELECT quality bit 0x80 -- "fast infrared" -- on and off.
 
-    RPS7200_DEBUG=1 python3 tools/fast_ir_probe.py        # background it
+    RPS7200_DEBUG=1 uv run python tools/fast_ir_probe.py        # background it
 
 **Ask before running this.** Nothing moves -- the transport is untouched and no
 scan frame is advanced -- but it costs about 25 minutes of scanner time and the
