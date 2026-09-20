@@ -412,43 +412,6 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
-- **Driving the scanner through `usbscan.sys` does not work, and the reason is
-  not visible from user space (2026-09-20).** It would have removed the Zadig
-  step on Windows and let CyberView keep working, which is the one real
-  friction point in installing this there. `rps7200/usbscan.py` is written,
-  tested and reachable with `RPS7200_USB_BACKEND=usbscan`; its docstring holds
-  the measurements.
-
-  Eliminated, in order: the `IO_BLOCK` shape (the driver validates input size
-  -- 4, 12 and 64 bytes are refused instantly, 24 is accepted), the request
-  content (`IOCTL_SEND_USB_REQUEST` with an explicit `0x0C`/`0x40`, in two
-  struct layouts), contention for the device (it opens with `dwShareMode = 0`,
-  so the Image Acquisition service is not holding it), and the device being
-  asleep (`IOCTL_GET_DEVICE_DESCRIPTOR` answers throughout). Twenty-one vendor
-  control transfers, every one `ERROR_SEM_TIMEOUT`. Nothing wedged, ever.
-
-  One real bug came out of it: `USBSCAN_TIMEOUT` is three ULONGs, not the three
-  USHORTs the published `usbscan.h` declares. Which is the wider lesson -- that
-  header is not the one this driver was built from.
-
-  **What the captures settled, and what they did not.** Stefan's six CyberView
-  captures are now readable here (`rps7200/usbpcap.py`), and they show
-  CyberView sending this scanner exactly the three control transfers this
-  driver sends -- 107,000 of them, same ports, same wIndex, as
-  `URB_FUNCTION_VENDOR_DEVICE`. So the wire format is not in question, and
-  transfers identical to ours demonstrably do reach this device on this
-  machine.
-
-  They do not settle which IOCTL produced them, because USBPcap sits below the
-  class driver. And `ERROR_SEM_TIMEOUT` means our URB *was* submitted and went
-  unanswered -- so what is needed is a capture of **our own** attempts, to see
-  what usbscan.sys actually put on the wire for them. That needs USBPcap
-  installed, which is a kernel driver and needs administrator rights.
-
-  Still unchecked: `MF5000_x64.dll` is 5.3 MB serving a whole family of Pacific
-  Image scanners, so its 59 `WRITE_REGISTERS` calls may belong to a different
-  model. The captures cannot distinguish that either.
-
 - **The device path has never run on anything but macOS (2026-09-20).** The
   driver now builds, tests and runs the window on Windows -- 1034 passed, 5
   skipped, `make all` and `make test-all` both green, and CI covers Ubuntu,
@@ -717,6 +680,71 @@ driver for Nikon Coolscans:
 
 ## Decided against
 
+- **Driving the scanner through `usbscan.sys` does not work, and the code for
+  it has been deleted (2026-09-20).** It would have removed the Zadig step on
+  Windows and let CyberView keep working, which is the one real friction point
+  in installing this there. It got as far as opening the device unelevated and
+  reading real answers out of it, and no further. The code is gone because a
+  transport that cannot carry a byte is not worth carrying; what it measured is
+  here, because that is the part that cost time. `git log` has the module if it is ever
+  wanted -- `git show 6c51249:rps7200/usbscan.py`, on the merge that
+  precedes the deletion. Do not go looking for a branch: `docs/usbscan-final`
+  was local and is not on the remote.
+
+  What worked: the interface opens unelevated, `IOCTL_GET_VERSION` answers
+  1.0.0, `IOCTL_GET_PIPE_CONFIGURATION` returns the same endpoints libusb
+  finds (bulk IN 0x81 at 512, bulk OUT 0x02, interrupt IN 0x83), and
+  `IOCTL_GET_DEVICE_DESCRIPTOR` returns `05e3:0144 bcdDevice 0302` -- a real
+  device request, so the device is awake and answering by this route.
+
+  What never worked: `IOCTL_READ_REGISTERS` and `IOCTL_WRITE_REGISTERS`.
+  Twenty-three attempts, every one `ERROR_SEM_TIMEOUT` after the driver's full
+  120 s. Nothing wedged, ever -- a descriptor request answered immediately
+  before and after each one.
+
+  Eliminated, in order, so nobody repeats them:
+  1. **The `IO_BLOCK` shape.** The driver validates input size before acting:
+     4, 12 and 64-byte inputs are refused instantly with
+     `ERROR_INVALID_PARAMETER`, 24 is accepted and goes on to time out. Those
+     are different answers to different questions.
+  2. **The request content.** `IOCTL_SEND_USB_REQUEST` takes an explicit
+     `bRequest`, so it was handed the exact `0x0C`/`0x40` the macOS path sends
+     on every scan. Both struct layouts, both directions, all timed out.
+  3. **Contention.** It opens with `dwShareMode = 0`, so the Image Acquisition
+     service is not holding it, and the write times out on that exclusive
+     handle too.
+  4. **The device being asleep.** It answers descriptor requests throughout.
+  5. **The device path.** WIA reports the Port as the legacy `Usbscan0`
+     symlink; it opens, reaches the same device, and fails identically.
+
+  Two findings worth keeping beyond this:
+  - `USBSCAN_TIMEOUT` is three ULONGs, not the three USHORTs the published
+    `usbscan.h` declares -- so that header is not the one this driver was built
+    from, and nothing else taken from it should be trusted without being tried.
+  - Setting that timeout does not shorten these failures anyway. It governs
+    `ReadFile`/`WriteFile` on the data pipes; a control IOCTL takes the full
+    120 s regardless. Probing this costs two minutes a try.
+
+  **What the captures settled, and what they did not.** Stefan's six CyberView
+  captures are now readable here (`rps7200/usbpcap.py`), and they show
+  CyberView sending this scanner exactly the three control transfers this
+  driver sends -- 107,000 of them, same ports, same wIndex, as
+  `URB_FUNCTION_VENDOR_DEVICE`. So the wire format is not in question, and
+  transfers identical to ours demonstrably do reach this device on this
+  machine.
+
+  They do not settle which IOCTL produced them, because USBPcap sits below the
+  class driver. And `ERROR_SEM_TIMEOUT` means our URB *was* submitted and went
+  unanswered -- so what is needed is a capture of **our own** attempts, to see
+  what usbscan.sys actually put on the wire for them, compared against the
+  vendor's bytes that `tools/verify_capture.py` now knows exactly. One run
+  would name the difference. That needs USBPcap installed, which is a kernel
+  driver and needs administrator rights.
+
+  Still unchecked: `MF5000_x64.dll` is 5.3 MB serving a whole family of Pacific
+  Image scanners, so its 59 `WRITE_REGISTERS` calls may belong to a different
+  model. The captures cannot distinguish that either.
+
 - **IR dust removal** — NegPy does it, and does it well. The point of this
   driver is handing the infrared plane over untouched.
 
@@ -753,9 +781,9 @@ driven**, which is a new way for a green board to mean less than it looks
 - **`make type` checks about a third of the tree and silences the rules that
   find bugs.** The target excludes `tests/` and `tools/` and ignores six rule
   classes, `unresolved-attribute` and `invalid-argument-type` among them. So
-  `tools/gui.py` -- 4,840 lines, the largest file here and the one an operator
+  `tools/gui.py` -- 6,573 lines, the largest file here and the one an operator
   actually drives -- gets **zero** type checking. A full `uv run ty check`
-  reports 148 diagnostics where `make type` reports none.
+  reports 154 diagnostics where `make type` reports none.
 
   Most of the 148 are numpy and tifffile stub noise, which is presumably why the
   ignores exist. The same silencing hides real ones: `tools/uniformity.py:496`

@@ -100,7 +100,13 @@ class NoDataYet(UsbError):
 
 
 class ScannerNotFound(RuntimeError):
-    """The scanner is not on the USB bus."""
+    """The scanner could not be opened, and `_why_not_found` says why.
+
+    Not "is not on the bus" any more, which is what this used to say and is
+    only one of the two things it means. On Windows the commoner one is that
+    the device is right there and another driver holds it -- and those want
+    opposite answers from whoever is reading the message.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +489,7 @@ class Transport:
         return (
             f"the scanner ({where}) is on the USB bus but could not be opened, "
             "which is usually permissions. Install the udev rule at "
-            "packaging/99-rps7200.rules and re-plug the scanner, or run as "
+            "packaging/60-rps7200.rules and re-plug the scanner, or run as "
             "root to confirm that is what it is."
         )
 
@@ -867,34 +873,3 @@ class CheckCondition(UsbError):
             f"command {opcode:#04x} returned CHECK CONDITION (sense available)"
         )
 
-
-# ---------------------------------------------------------------------------
-# Which transport this machine can use
-# ---------------------------------------------------------------------------
-
-#: Force a transport rather than letting the machine decide. "libusb" or
-#: "usbscan"; anything else, including unset, means work it out.
-BACKEND_ENV = "RPS7200_USB_BACKEND"
-
-
-def open_transport(verbose: bool = False,
-                   max_window: int = MAX_WINDOW) -> Transport:
-    """The transport this machine should use.
-
-    libusb everywhere, until `rps7200.usbscan` has driven a scan. That
-    transport would be the better answer on Windows if it worked -- it goes
-    through the driver the scanner already has, so CyberView and VueScan keep
-    working and nothing needs replacing -- but it does not work yet: its
-    register IOCTLs come back ERROR_SEM_TIMEOUT, and a transport that has
-    never carried a byte is not a default. It is reachable deliberately::
-
-        RPS7200_USB_BACKEND=usbscan
-
-    and that is how it will be finished. See `rps7200/usbscan.py` for what is
-    established and what is not.
-    """
-    forced = os.environ.get(BACKEND_ENV, "").strip().lower()
-    if forced == "usbscan":
-        from .usbscan import UsbscanTransport
-        return UsbscanTransport(verbose=verbose, max_window=max_window)
-    return Transport(verbose=verbose, max_window=max_window)
