@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (
     COORD_PER_INCH,
     MM_PER_INCH,
@@ -61,6 +62,7 @@ def look(scanner: DirectScanner, dpi: int) -> dict:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -137,7 +139,8 @@ def main() -> int:
     )
 
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2))
+        Path(args.json).write_text(json.dumps(results, indent=2),
+                                   encoding="utf-8")
         print(f"\nwrote {args.json}")
     return 0
 

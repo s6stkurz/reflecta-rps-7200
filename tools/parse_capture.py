@@ -16,6 +16,7 @@ one byte per control transfer, so the capture holds them as a flat byte stream:
 a six-byte CDB whose bytes 3-4 are a big-endian length, then that many data
 bytes, then the next CDB.
 """
+import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -29,10 +30,18 @@ SUBS = {0x12:"SET_SCAN_FRAME",0x13:"SET_EXPOSURE",0x14:"SET_HIGHLIGHT_SHADOW",
         0x15:"CAL_INFO",0x16:"CAL_DATA",0x17:"CMD_17"}
 
 def stream(path):
+    # tshark is not on PATH by default on Windows -- it installs under
+    # Program Files -- and without this the failure is a bare FileNotFoundError
+    # traceback out of the middle of a parse.
+    if shutil.which("tshark") is None:
+        raise SystemExit(
+            "tshark is not on PATH. It ships with Wireshark; on Windows it "
+            "lives in C:\\Program Files\\Wireshark and has to be added.")
     out = subprocess.run(
         ["tshark","-r",path,"-Y","usb.setup.wValue == 0x0085",
          "-T","fields","-e","usb.data_fragment"],
-        capture_output=True, text=True).stdout
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace").stdout
     b = bytearray()
     for line in out.splitlines():
         h = line.replace(":","").strip()

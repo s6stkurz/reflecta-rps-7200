@@ -72,9 +72,15 @@ def provenance() -> dict[str, Any]:
     that kind of failure is unattributable months later.
     """
     def git(*args: str) -> str | None:
+        # `text=True` alone decodes with the machine's locale encoding, which
+        # is cp1252 on a German Windows. A filename git could not represent
+        # there would raise UnicodeDecodeError -- not caught below, and this
+        # runs inside every `save()`, so it would abort a roll mid-frame over
+        # a provenance field. Nothing here is worth that: replace and move on.
         try:
             out = subprocess.run(
                 ["git", *args], capture_output=True, text=True, timeout=10,
+                encoding="utf-8", errors="replace",
                 cwd=Path(__file__).resolve().parent.parent,
             )
             return out.stdout.strip() or None if out.returncode == 0 else None
@@ -279,7 +285,8 @@ def save(
         "tags": sorted(set(tags or [])),
         "provenance": provenance(),
     }
-    (path / "scan.json").write_text(json.dumps(record, indent=2, default=str))
+    (path / "scan.json").write_text(json.dumps(record, indent=2, default=str),
+                                    encoding="utf-8")
     reindex(root)
     return path
 
@@ -292,7 +299,7 @@ def load(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     at scan time.
     """
     path = Path(path)
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     image = tiff.read(str(path / "scan.tif"))
 
     ref_file = (record.get("calibration") or {}).get("shading")
@@ -394,7 +401,7 @@ def decode_raw(path: Path | str) -> np.ndarray | None:
     if raw is None:
         return None
     try:
-        record = json.loads((path / "scan.json").read_text())
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
         layout = (record.get("raw") or {}).get("layout") or {}
         params = ScanParameters(
             width=int(layout["width"]),
@@ -423,7 +430,7 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
     if raw is None:
         return None, "no raw bytes stored for this entry"
 
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     layout = (record.get("raw") or {}).get("layout") or {}
     try:
         params = ScanParameters(
@@ -584,7 +591,7 @@ def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:
     out = []
     for candidate in sorted(root.glob("*/scan.json")):
         try:
-            out.append(json.loads(candidate.read_text()))
+            out.append(json.loads(candidate.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError):
             continue
     return out
@@ -609,7 +616,7 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
     ]
     root.mkdir(parents=True, exist_ok=True)
     index = root / INDEX
-    index.write_text(json.dumps(summary, indent=2))
+    index.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return index
 
 

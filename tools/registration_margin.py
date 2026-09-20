@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import library, tiff
+from rps7200.console import use_utf8_stdout
 from rps7200.framing import CONFIDENCE_FLOOR, MAX_DY_PX, SEARCH_MM
 from rps7200.protocol import MM_PER_INCH
 from rps7200.uniformity import luminance, register
@@ -163,7 +164,7 @@ def cohort(folder: Path, dpi: int) -> list[tuple[str, np.ndarray]]:
         return out
     for record in sorted(folder.glob("*/scan.json")):
         try:
-            scan = json.loads(record.read_text()).get("scan") or {}
+            scan = json.loads(record.read_text(encoding="utf-8")).get("scan") or {}
             if int(scan.get("resolution_dpi") or 0) != dpi:
                 continue
             # Corrected, to match the rolls/ prescans in the other branch:
@@ -308,6 +309,7 @@ def self_similar(images: list[tuple[str, np.ndarray]], dpi: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rolls", type=Path, nargs="*",

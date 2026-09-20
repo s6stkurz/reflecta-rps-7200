@@ -684,7 +684,7 @@ def test_nothing_is_written_while_the_device_is_open(tmp_path, monkeypatch):
 def test_a_filing_failure_never_breaks_the_session(tmp_path, monkeypatch):
     """Losing the record beats losing the session that produced it."""
     blocker = tmp_path / "a-file-not-a-directory"
-    blocker.write_text("")
+    blocker.write_text("", encoding="utf-8")
     # The library cannot create a directory underneath a regular file, so this
     # makes filing fail for a real reason rather than a contrived one.
     monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(blocker / "library"))

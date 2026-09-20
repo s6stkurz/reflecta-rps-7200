@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import DEPTH_8, FULL_FRAME, DirectScanner
 
 
@@ -62,6 +63,7 @@ class Grinder:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=4,
                     help="quiet/loaded pairs to time")

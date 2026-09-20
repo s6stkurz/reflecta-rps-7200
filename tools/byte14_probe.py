@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent
                        / ".claude" / "skills" / "measure-scan-quality" / "scripts"))
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
     FILM_NEGATIVE,
     FULL_FRAME,
@@ -84,6 +85,7 @@ def centre(image: np.ndarray) -> np.ndarray:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--resolution", type=int, default=600)
     ap.add_argument("--ladder", default=None,
@@ -227,7 +229,8 @@ def main() -> int:
 
     if args.json:
         Path(args.json).write_text(json.dumps(
-            {"passes": results, "summary": summary}, indent=2))
+            {"passes": results, "summary": summary}, indent=2),
+            encoding="utf-8")
         print(f"\nwritten to {args.json}")
     return 0
 

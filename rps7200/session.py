@@ -916,7 +916,7 @@ class ScanSession:
         earlier: dict[str, Any] = {}
         if not job.dry_run and manifest_path.exists():
             try:
-                earlier = json.loads(manifest_path.read_text())
+                earlier = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 earlier = {}
         manifest: dict[str, Any] = {
@@ -1134,7 +1134,9 @@ class ScanSession:
                 ] + [record]
                 # Rewritten after every frame. A roll takes hours and a crash
                 # should cost the frame it was on, not the roll.
-                manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2, default=str),
+                    encoding="utf-8")
 
                 if self._stop.is_set():
                     stopped = f"stopped after frame {number}, as asked"

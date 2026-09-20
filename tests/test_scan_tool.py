@@ -171,7 +171,7 @@ def test_the_merge_is_recorded_in_the_sidecar(tmp_path, monkeypatch):
     import json
 
     run(tmp_path, monkeypatch, "--bracket", "3")
-    meta = json.loads((tmp_path / "out.json").read_text())
+    meta = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
     assert meta["bracket"]["passes"] == 3
     assert len(meta["bracket"]["ratios"]) == 3
 

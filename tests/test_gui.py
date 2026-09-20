@@ -98,7 +98,7 @@ def test_durations_read_the_way_a_person_says_them(seconds, expected):
 def test_the_window_never_writes_the_comparison_files():
     """`tools/scan.py` and `tools/scan_roll.py` both write 1_/2_/3_*.tif to the
     repo root and clobber each other. The GUI must not join in."""
-    source = (__import__("pathlib").Path(gui.__file__)).read_text()
+    source = (__import__("pathlib").Path(gui.__file__)).read_text(encoding="utf-8")
     for name in ("1_nothing_done", "2_corrected", "3_corrected_inverted"):
         assert name not in source
 
@@ -980,7 +980,7 @@ def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None,
     (folder / "survey.json").write_text(json.dumps({
         "roll": "a-strip", "start_at": 1, "prescan_resolution": 300,
         "rotation": rotation, "flipped": flipped, "frames": records,
-    }))
+    }), encoding="utf-8")
     if offsets or rotations or flips:
         numbers = sorted(set(offsets or {}) | set(rotations or {})
                          | set(flips or {}))
@@ -992,7 +992,7 @@ def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None,
                         "flipped": (flips or {}).get(n, False),
                         "reference_entry": f"library/frame{n}"}
                        for n in numbers],
-        }))
+        }), encoding="utf-8")
     return images
 
 
@@ -2113,9 +2113,10 @@ def _roll_folder(tmp_path, survey=None, roll=None, prescans=0):
     folder = tmp_path / "2026-09-14"
     folder.mkdir(parents=True, exist_ok=True)
     if survey is not None:
-        (folder / "survey.json").write_text(json.dumps(survey))
+        (folder / "survey.json").write_text(json.dumps(survey),
+                                            encoding="utf-8")
     if roll is not None:
-        (folder / "roll.json").write_text(json.dumps(roll))
+        (folder / "roll.json").write_text(json.dumps(roll), encoding="utf-8")
     for n in range(1, prescans + 1):
         tiff.write(str(folder / f"prescan{n:02d}.tif"),
                    np.full((8, 12, 3), 900 * n, np.uint16))
@@ -2246,13 +2247,16 @@ def _shelf(tmp_path, *, name="2026-09-14", wanted=(1, 2, 3, 4), done=(1, 2),
     folder = tmp_path / "rolls" / name
     folder.mkdir(parents=True)
     (folder / "survey.json").write_text(json.dumps(
-        {"roll": name, "frames": [{"number": n} for n in wanted]}))
+        {"roll": name, "frames": [{"number": n} for n in wanted]}),
+        encoding="utf-8")
     (folder / "roll.json").write_text(json.dumps({
         "roll": name, "wanted": list(wanted),
         "settings": {"resolution": dpi, "film": film, "infrared": ir},
-        "frames": [{"number": n, "done": n in done} for n in wanted]}))
+        "frames": [{"number": n, "done": n in done} for n in wanted]}),
+        encoding="utf-8")
     if approved:
-        (folder / "approved.json").write_text(json.dumps({"frames": approved}))
+        (folder / "approved.json").write_text(json.dumps({"frames": approved}),
+                                              encoding="utf-8")
     return folder
 
 
@@ -2261,7 +2265,7 @@ def _entry(tmp_path, roll, number, name=None):
     entry = tmp_path / "library" / (name or f"{roll}-{number}")
     entry.mkdir(parents=True)
     (entry / "scan.json").write_text(json.dumps(
-        {"film": {"frame": f"{roll}-{number:02d}"}}))
+        {"film": {"frame": f"{roll}-{number:02d}"}}), encoding="utf-8")
     return entry
 
 
@@ -2275,10 +2279,11 @@ def test_entries_are_joined_to_rolls_by_the_frame_they_name(tmp_path):
     # Entries that belong to no roll, and a malformed one, are not a crash.
     loose = tmp_path / "library" / "loose"
     loose.mkdir()
-    (loose / "scan.json").write_text(json.dumps({"film": {"frame": ""}}))
+    (loose / "scan.json").write_text(json.dumps({"film": {"frame": ""}}),
+                                     encoding="utf-8")
     broken = tmp_path / "library" / "broken"
     broken.mkdir()
-    (broken / "scan.json").write_text("{not json")
+    (broken / "scan.json").write_text("{not json", encoding="utf-8")
 
     index = gui.roll_entry_index(tmp_path / "library")
     assert sorted(index["strip"]) == [1, 2]
@@ -2391,7 +2396,7 @@ def test_approvals_are_read_without_loading_a_survey(tmp_path):
     assert offsets == {1: 0.3} and rotations == {1: 90} and flips == {1: True}
     # A folder without one, and a corrupt one, both answer empty.
     assert gui.read_approved(tmp_path) == ({}, {}, {}, {})
-    (folder / "approved.json").write_text("{nope")
+    (folder / "approved.json").write_text("{nope", encoding="utf-8")
     assert gui.read_approved(folder) == ({}, {}, {}, {})
 
 

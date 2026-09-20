@@ -49,6 +49,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                  # noqa: E402
     CheckCondition,
     DirectScanner,
@@ -81,6 +82,7 @@ def show(label: str, held: dict) -> None:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--offset", type=float, default=PROBE_MM,
                     help="the deliberate offset to ask for (default: %(default)s mm)")
@@ -234,7 +236,8 @@ def main() -> int:
         except BaseException as exc:                          # noqa: BLE001
             print(f"close: {exc}", file=sys.stderr)
         if args.json:
-            Path(args.json).write_text(json.dumps(out, indent=2, default=str))
+            Path(args.json).write_text(json.dumps(out, indent=2, default=str),
+                                       encoding="utf-8")
             print(f"written to {args.json}")
     return 0
 

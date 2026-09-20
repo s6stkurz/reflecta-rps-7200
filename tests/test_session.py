@@ -257,7 +257,7 @@ def test_a_roll_writes_its_manifest_after_every_frame(tmp_path):
     manifest = tmp_path / "rolls" / "strip2" / "roll.json"
     assert manifest.exists()
     import json
-    recorded = json.loads(manifest.read_text())
+    recorded = json.loads(manifest.read_text(encoding="utf-8"))
     assert len(recorded["frames"]) == 3
     assert recorded["frames"][0]["registration"]["offset_mm"] == 0.04
 
@@ -275,7 +275,7 @@ def test_a_roll_records_what_it_would_take_to_finish_it(tmp_path):
     run(Roll(frames=2, resolution=600, infrared=False, fast_infrared=False,
              meter="once", name="strip3"), tmp_path)
     recorded = json.loads(
-        (tmp_path / "rolls" / "strip3" / "roll.json").read_text())
+        (tmp_path / "rolls" / "strip3" / "roll.json").read_text(encoding="utf-8"))
 
     settings = recorded["settings"]
     assert settings["resolution"] == 600
@@ -309,7 +309,7 @@ def test_finishing_a_roll_keeps_what_the_first_attempt_did(tmp_path):
     run(Roll(frames=4, only=(3, 4), resolution=600, name="strip"), tmp_path)
 
     recorded = json.loads(
-        (tmp_path / "rolls" / "strip" / "roll.json").read_text())
+        (tmp_path / "rolls" / "strip" / "roll.json").read_text(encoding="utf-8"))
     assert sorted(f["number"] for f in recorded["frames"]) == [1, 2, 3, 4]
     assert recorded["wanted"] == [1, 2, 3, 4]
     assert all(f["done"] for f in recorded["frames"])
@@ -321,7 +321,7 @@ def test_a_frame_scanned_twice_appears_once(tmp_path):
     run(Roll(frames=2, only=(1,), resolution=600, name="strip2b"), tmp_path)
     run(Roll(frames=2, only=(1,), resolution=600, name="strip2b"), tmp_path)
     recorded = json.loads(
-        (tmp_path / "rolls" / "strip2b" / "roll.json").read_text())
+        (tmp_path / "rolls" / "strip2b" / "roll.json").read_text(encoding="utf-8"))
     assert [f["number"] for f in recorded["frames"]] == [1]
 
 
@@ -331,7 +331,7 @@ def test_a_walk_records_no_exposure_because_it_took_none(tmp_path):
     "this roll did not scan that frame" and "it scanned it at nothing"."""
     run(Roll(frames=2, dry_run=True, name="walk2"), tmp_path)
     recorded = json.loads(
-        (tmp_path / "rolls" / "walk2" / "survey.json").read_text())
+        (tmp_path / "rolls" / "walk2" / "survey.json").read_text(encoding="utf-8"))
     assert recorded["frames"], "the walk recorded nothing at all"
     assert all("exposure" not in f for f in recorded["frames"])
     assert all(f["done"] is False for f in recorded["frames"])
@@ -386,8 +386,8 @@ def test_a_scan_of_chosen_frames_does_not_overwrite_the_survey(tmp_path):
     run(Roll(frames=3, dry_run=True, name="both"), tmp_path)
     run(Roll(frames=3, resolution=600, only=(2,), name="both"), tmp_path)
     out = tmp_path / "rolls" / "both"
-    surveyed = json.loads((out / "survey.json").read_text())
-    scanned = json.loads((out / "roll.json").read_text())
+    surveyed = json.loads((out / "survey.json").read_text(encoding="utf-8"))
+    scanned = json.loads((out / "roll.json").read_text(encoding="utf-8"))
     assert [f["number"] for f in surveyed["frames"]] == [1, 2, 3]
     assert [f["number"] for f in scanned["frames"]] == [2]
 
@@ -399,7 +399,7 @@ def test_a_survey_leaves_its_prescans_beside_the_manifest(tmp_path):
     assert sorted(f.name for f in out.glob("prescan*.tif")) == [
         "prescan01.tif", "prescan02.tif", "prescan03.tif"
     ]
-    recorded = json.loads((out / "survey.json").read_text())
+    recorded = json.loads((out / "survey.json").read_text(encoding="utf-8"))
     assert [f["prescan"] for f in recorded["frames"]] == [
         "prescan01.tif", "prescan02.tif", "prescan03.tif"
     ]
@@ -988,7 +988,7 @@ def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
     entries = library.entries(tmp_path)
     assert len(entries) == 1
     record = json.loads(
-        (tmp_path / str(entries[0]["id"]) / "scan.json").read_text()
+        (tmp_path / str(entries[0]["id"]) / "scan.json").read_text(encoding="utf-8")
     )
     assert record["scan"]["film"] == "bw"
 

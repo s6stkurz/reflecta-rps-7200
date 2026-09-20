@@ -70,6 +70,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library                                 # noqa: E402
+from rps7200.console import use_utf8_stdout
 
 #: Level bands, as fractions of full scale. Finer at the top, which is where the
 #: question is: 0.80 was chosen over 0.90 on what happens between them.
@@ -112,7 +113,7 @@ def ladder(match: str, root="library", corrected: bool = False) -> list[dict]:
     out = []
     for entry in sorted(Path(root).glob(match)):
         try:
-            record = json.loads((entry / "scan.json").read_text())
+            record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         scale = (record.get("scan") or {}).get("exposure_scale")
@@ -142,7 +143,7 @@ def entries_by_exposure(root="library") -> dict[tuple[int, ...], list[Path]]:
         return out
     for entry in sorted(directory.iterdir()):
         try:
-            record = json.loads((entry / "scan.json").read_text())
+            record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
         except (OSError, ValueError, NotADirectoryError):
             continue
         exposure = (record.get("device_settings") or {}).get("exposure")
@@ -161,7 +162,7 @@ def by_frame(probe: str, root="library",
     The `x1.00` anchor is dropped from any frame with a real chain -- it sits 4%
     from `x0.96`, too close for an adjacent ratio to mean anything.
     """
-    data = json.loads(Path(probe).read_text())
+    data = json.loads(Path(probe).read_text(encoding="utf-8"))
     found = entries_by_exposure(root)
     rows_by_frame: dict[int, list[dict]] = {}
     for row in data.get("passes", []):
@@ -319,6 +320,7 @@ def report(passes: list[dict], corrected: bool) -> int:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--match", default="*_slide_3600dpi",
                     help="library entry glob; the whole ladder of one frame. "

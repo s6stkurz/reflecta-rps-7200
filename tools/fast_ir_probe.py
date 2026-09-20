@@ -79,6 +79,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent
                        / ".claude" / "skills" / "measure-scan-quality" / "scripts"))
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
     FILM_TYPES,
     FULL_FRAME,
@@ -139,6 +140,7 @@ def speck_depth(plane: np.ndarray, picks: np.ndarray) -> float:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--resolution", type=int, default=1800,
                     help="1800 by default: the floor dominates there and the "
@@ -389,7 +391,8 @@ def report(results: list[dict], frames: dict[bool, list[np.ndarray]],
 
     if out:
         Path(out).write_text(json.dumps(
-            {"passes": results, "summary": summary}, indent=2, default=float))
+            {"passes": results, "summary": summary}, indent=2, default=float),
+            encoding="utf-8")
         print(f"\nwritten to {out}")
     return 0
 
@@ -509,7 +512,8 @@ def sweep_report(rows: list[dict], out: str | None) -> int:
               f"it halved the pass the percentage column would be")
     if out:
         Path(out).write_text(json.dumps({"passes": rows, "table": table},
-                                        indent=2, default=float))
+                                        indent=2, default=float),
+            encoding="utf-8")
         print(f"\nwritten to {out}")
     return 0
 

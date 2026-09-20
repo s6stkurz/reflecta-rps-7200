@@ -27,9 +27,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library
+from rps7200.console import use_utf8_stdout
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action",
@@ -177,7 +179,7 @@ def main() -> int:
 
         if args.write:
             for path, plain, _applied, _shape in planned:
-                record = json.loads((path / "scan.json").read_text())
+                record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
                 resolution = ((record.get("scan") or {}).get("resolution_dpi")
                               or None)
                 tiff.write(str(path / "scan.tif"), plain, resolution=resolution)
@@ -187,7 +189,8 @@ def main() -> int:
                 image["dtype"] = str(plain.dtype)
                 image["sha256"] = library._sha256(path / "scan.tif")
                 (path / "scan.json").write_text(
-                    json.dumps(record, indent=2, default=str))
+                    json.dumps(record, indent=2, default=str),
+                    encoding="utf-8")
             library.reindex(root)
 
         print(f"\n{len(planned)} entr{'y' if len(planned) == 1 else 'ies'} "

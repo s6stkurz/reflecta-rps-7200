@@ -81,7 +81,7 @@ def test_an_entry_keeps_everything_needed_to_use_it_again(tmp_path):
     for name in ("scan.tif", "scan.json", "shading.npz", "ccd_mask.bin", "raw.bin.gz"):
         assert (path / name).exists(), f"{name} was not written"
 
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     assert record["film"]["stock"] == "Kodak Gold 200"
     assert "stripe-test" in record["tags"]
     assert record["scan"]["resolution_dpi"] == 1800
@@ -186,7 +186,7 @@ def test_the_metering_telemetry_reaches_the_sidecar(tmp_path):
         {"resolution_dpi": 600, "channels": 3, "metering": probe},
         root=tmp_path,
     )
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     assert record["metering"] == probe
 
 
@@ -194,14 +194,14 @@ def test_a_scan_given_its_exposure_records_no_metering(tmp_path):
     raw, image = index_stream(8, 4, 3)
     path = library.save(image, {"resolution_dpi": 600, "channels": 3},
                         root=tmp_path)
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     assert record["metering"] is None
 
 
 def test_the_index_summarises_every_entry(tmp_path):
     make_entry(tmp_path)
     make_entry(tmp_path, width=8, lines=4)
-    summary = json.loads((tmp_path / "index.json").read_text())
+    summary = json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))
     assert len(summary) == 2
     assert {e["film"] for e in summary} == {"Kodak Gold 200"}
     assert all(e["dpi"] == 1800 for e in summary)
@@ -378,8 +378,8 @@ def test_raw_can_be_streamed_from_a_file(tmp_path):
     from_file = library.save(image, meta, root=tmp_path / "b", raw_path=spool,
                              raw_layout=layout)
 
-    a = json.loads((from_bytes / "scan.json").read_text())["raw"]
-    b = json.loads((from_file / "scan.json").read_text())["raw"]
+    a = json.loads((from_bytes / "scan.json").read_text(encoding="utf-8"))["raw"]
+    b = json.loads((from_file / "scan.json").read_text(encoding="utf-8"))["raw"]
     assert a["sha256"] == b["sha256"], "streaming changed the bytes"
     assert a["bytes"] == b["bytes"] == len(stream)
     assert library.read_raw(from_file) == stream
@@ -405,7 +405,7 @@ def test_the_scan_block_carries_everything_scan_records(tmp_path):
         "metering": {"target": 0.8, "rounds": []},
     }
     path = library.save(image, meta, root=tmp_path)
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
 
     assert record["scan"]["filter_offsets"] == [12, 12]
     assert record["metering"] == meta["metering"]
@@ -449,7 +449,7 @@ def test_an_entry_stores_raw_pixels_and_recomputes_the_correction(tmp_path):
     path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
                         reference=reference, raw=stream, raw_layout=layout)
 
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     assert record["image"]["corrections_applied"] == [], \
         "a shading report describes the pass, it does not mean the pixels are corrected"
     assert np.array_equal(tiff.read(str(path / "scan.tif")), image)

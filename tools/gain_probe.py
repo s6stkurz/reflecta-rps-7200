@@ -53,6 +53,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
     FILM_NEGATIVE,
     FULL_FRAME,
@@ -93,6 +94,7 @@ def measure(image: np.ndarray) -> dict[str, float]:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--resolution", type=int, default=300)
     ap.add_argument("--ladder", default=None,
@@ -223,7 +225,8 @@ def main() -> int:
             pass
 
     if args.json and results:
-        Path(args.json).write_text(json.dumps(results, indent=2))
+        Path(args.json).write_text(json.dumps(results, indent=2),
+                                   encoding="utf-8")
         print(f"written to {args.json}")
     return 0 if results else 1
 
