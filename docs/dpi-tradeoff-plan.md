@@ -196,7 +196,9 @@ the library, with no scanner.
 ## The recommendation
 
 **RGB: 3600 dpi** for quality, **1800 dpi** when time matters.
-**RGBI: 3600 dpi**, because there resolution is nearly free.
+**RGBI: the same trade-off, for the same reasons** — see the re-derivation below.
+This said "RGBI: 3600 dpi, because there resolution is nearly free", which was
+true of an untied infrared pass and is no longer true of the default one.
 
 | dpi | seconds | MB | verdict |
 |---|---|---|---|
@@ -220,19 +222,52 @@ calibration hardware, landing on the same conclusion: **do not scan at 7200
 dpi.** The vendor agrees by omission — 7200 dpi appears in none of the nine
 CyberView captures, whose highest resolution is 3600.
 
-## The infrared floor does not move with resolution
+## The infrared floor did not move with resolution — and then it was removed
 
-The most useful number here, and it needed no new scanning — timing does not care
-which frame it is, so existing library entries answer it:
+The measurement, which needed no new scanning, because timing does not care which
+frame it is:
 
 ```
 RGBI  300 dpi   248.3 s        RGBI 3600 dpi   253.1 - 256.5 s  (7 passes)
 RGBI  600 dpi   231.8, 248.7   RGBI 3600 dpi   254.9, 291.2
 ```
 
-A twelve-fold resolution increase costs about **six seconds**. The ~250 s
-infrared floor dominates everything. So there is no reason to scan infrared at
-low resolution — take RGBI at 3600 and it is essentially free.
+A twelve-fold resolution increase cost about **six seconds**: the infrared floor
+dominated everything, so resolution in RGBI was nearly free and the conclusion
+drawn here was "take RGBI at 3600".
+
+**That conclusion is void, and the measurement above is why it was believable.**
+`docs/fast-infrared-plan.md` found that `MODE SELECT`'s quality bit `0x80` ties
+the infrared plane to the scan resolution, turning the flat floor into
+`7.46 s + 59.88 ms/line`. It has been the default since 2026-09-16
+(`PROTOCOL_REVISION` 3), so every figure in the block above describes a pass this
+driver no longer takes unless asked with `--no-fast-ir`.
+
+Tied, RGBI costs roughly:
+
+| dpi | untied (as measured above) | tied (the default) |
+|---|---|---|
+| 300 | ~248 s | **~25 s** |
+| 600 | ~232-249 s | **~44 s** |
+| 1800 | ~250 s | **~110 s** |
+| 3600 | ~253-256 s | **~214 s** |
+
+So the saving is 88.8% at 300 dpi and 3.4% at 3600 — largest exactly where the
+old floor was most absurd, and nearly nothing at the top.
+
+**Re-derived, RGBI now behaves like RGB.** Going from 1800 to 3600 dpi in RGBI
+costs about 104 s rather than the ~3 s the floor used to hide, which is the same
+order as RGB's own 85 s → 138 s step. There is no longer a resolution that is
+free because infrared is paying for it, so infrared stops being a reason to choose
+a resolution at all: **pick the resolution on the aliasing argument, and add
+infrared for what infrared is worth.** Method B's finding is untouched by any of
+this — 3600 dpi is the least aliased rate whatever the plane costs, because that
+is a statement about sampling and optics rather than about time.
+
+The inverse also follows, and it is new: a *low*-resolution RGBI pass is now
+cheap. A 300 dpi RGBI prescan costs 25 s where it used to cost four minutes,
+which is what makes an infrared contact sheet or an IR-bearing survey pass
+affordable for the first time.
 
 ## What each method actually returned
 

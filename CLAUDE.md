@@ -148,9 +148,10 @@ they were simply gone. The convention above says *file every scan*; it was true 
 the tools and quietly false of everything else.
 
 Off by default is deliberate: ordinary use should not be burdened, and a 1800 dpi
-RGBI entry is ~35 MB. But **you are not ordinary use**. You write throwaway scripts
-that turn out to matter, and you cannot tell in advance which scan will be the one
-somebody asks for later.
+RGBI entry is ~63 MB -- measured across the seventeen of them here, and it is two
+files, the gzipped raw bytes and the decode, not one. But **you are not ordinary
+use**. You write throwaway scripts that turn out to matter, and you cannot tell in
+advance which scan will be the one somebody asks for later.
 
 **A single scan compresses nothing while the device is open.** Each is spooled to a
 temporary file as it is taken -- a plain sequential write, a second or two -- and the
@@ -243,11 +244,23 @@ It needs a power cycle afterwards, so avoid these:
   the hazard below. Asking for a longer timeout does not help: the value is
   clamped silently, so a 14-minute run dies at 10 with no warning. That is how
   one wedge here happened, and it cost the whole run as well as a power cycle.
-  Estimate first: roughly 23 s per pass at 300 dpi, 55 s at 1800, 110 s at 3600
-  for RGB, and add the ~212 s infrared floor per pass when infrared is on.
-- **Never abandon a read mid-scan.** Infrared holds the device busy for its own
-  ~212 s floor however few lines were asked for, which is why a low-resolution
-  IR pass once expired a 60 s timeout and wedged it.
+  Estimate first, from the medians across the library rather than from memory:
+  RGB is about 22 s a pass at 300 dpi, 32 s at 600, 72 s at 900, 85 s at 1800,
+  138 s at 3600 and 314 s at 7200. Infrared **tied to the resolution**, which is
+  the default, adds `7.5 s + 59.9 ms/line`: about 25 s at 300 dpi, 110 s at 1800,
+  214 s at 3600. Untied -- `--no-fast-ir` -- it costs a flat ~220 s whatever was
+  asked for, so a low-resolution IR pass is the one that surprises you.
+
+  Budget above the median, not at it. Scan time tracks `sum(exposure)` as well as
+  line count, so a dense frame runs longer than a thin one at the same dpi: the
+  1800 dpi RGB entries here span 36-162 s around that 85 s median.
+- **Never abandon a read mid-scan.** An *untied* infrared pass holds the device
+  busy for its own ~220 s however few lines were asked for, which is why a
+  low-resolution IR pass once expired a 60 s timeout and wedged it -- that
+  happened before infrared could be tied to the resolution, and `--no-fast-ir`
+  still reaches it. 212 s survives in the code as `INFRARED_FLOOR_S` because it
+  guards a timeout and wants the conservative end of the range; it is not what a
+  pass costs.
 - **Do not hold the session open through heavy local work.** Gzipping a 140 MB
   library entry with the device open and idle preceded one wedge.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both
@@ -277,18 +290,25 @@ It needs a power cycle afterwards, so avoid these:
   to go through each scan's `exposure_scale`.
 - Meter in **RGB only, two rounds** — the vendor's sequence, plus one further
   round only when a channel came back clipped, because there the correction is
-  a retreat rather than a measurement. An infrared probe costs the 212 s floor
-  per round. Blue returns several times brighter in RGBI at the same exposure,
-  which is handled by metering blue lower (`blue_rgbi_headroom(film)`), not by
-  probing in IR.
+  a retreat rather than a measurement. Blue returns several times brighter in
+  RGBI at the same exposure, which is handled by metering blue lower
+  (`blue_rgbi_headroom(film)`), not by probing in IR.
+
+  The old reason for that -- "an infrared probe costs the 212 s floor per round"
+  -- has mostly gone: a probe would be tied to the resolution like any other
+  pass, so at 300 dpi it costs about 25 s against RGB's 22 s. The rule stands on
+  the two arguments that were always the real ones. It is the vendor's sequence,
+  and blue's ratio is a *known divisor* rather than something a probe has to
+  rediscover, so an IR round would spend a pass to learn a constant.
 - **How much brighter blue comes back in RGBI depends on the film**, by about a
   factor of two: measured 4.98-5.02 on colour negative and ~9.6 on black and
   white. One constant for all films put 34% of a B&W scan's blue channel at the
   rail. Unmeasured films take the safe end. See `BLUE_RGBI_HEADROOM`.
 - **Infrared does nothing for traditional black and white.** Silver-halide
   grain is opaque to IR, so the plane comes back holding the picture rather
-  than the dust -- measured at +0.97 correlation with green -- and the pass
-  still costs its ~212 s floor. Chromogenic (C-41) B&W is the exception.
+  than the dust -- measured at +0.97 correlation with green -- and the pass is
+  still paid for: about 110 s at 1800 dpi tied to the resolution, ~220 s untied.
+  Chromogenic (C-41) B&W is the exception.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
 - **MODE SELECT byte 14, bit 0, can reverse every row of a scan with no
