@@ -65,11 +65,16 @@ by the driver, and both timed out.
 handle on it, and the same write times out on that exclusive handle too. That
 was the leading suspect and it is disproven.
 
+**Nor is it the device path.** WIA reports this device's `Port` as the legacy
+symlink ``\\\\.\\Usbscan0``, which is the name the vendor's own software would
+have used, and it opens and reaches the same device -- a descriptor read
+through it answers `05e3:0144`. The identical write times out through it too.
+
 So, eliminated in turn: the struct shape, the request content, contention for
-the device, and the device being asleep. Twenty-one vendor control transfers
-were attempted across all of it and **every one returned ERROR_SEM_TIMEOUT**,
-while `IOCTL_GET_DEVICE_DESCRIPTOR` answered immediately before and after every
-single one. Nothing wedged, ever.
+the device, the device being asleep, and the device path. Twenty-three vendor
+control transfers were attempted across all of it and **every one returned
+ERROR_SEM_TIMEOUT**, while `IOCTL_GET_DEVICE_DESCRIPTOR` answered immediately
+before and after every single one. Nothing wedged, ever.
 
 The conclusion is that `usbscan.sys` does not deliver vendor control transfers
 to this device on this machine, for a reason not visible from user space. Going
@@ -78,12 +83,17 @@ afternoon, and the rule agreed for this work was not to debug a closed kernel
 driver.
 
 **What would settle it**, for anyone picking this up with administrator rights:
-capture the USB bus with USBPcap while CyberView drives *this* scanner, and see
-whether its traffic goes through usbscan.sys at all. The premise here is that
-MF5000_x64.dll's 59 WRITE_REGISTERS calls are for this device -- but that DLL
-is 5.3 MB and serves a whole family of Pacific Image scanners, so they may
-belong to a model that is not this one. That assumption was never checked, and
-it is the one everything else rested on.
+capture the bus with USBPcap while *this code* makes one of these calls.
+`ERROR_SEM_TIMEOUT` means the URB was submitted and went unanswered, so
+whatever usbscan.sys put on the wire is visible -- it just cannot be seen from
+user space. Comparing that against what CyberView sends, which is now known
+exactly (see `tools/verify_capture.py`), would name the difference in one run.
+
+The premise everything rested on was never checked either: that
+MF5000_x64.dll's 59 WRITE_REGISTERS calls are for *this* device. That DLL is
+5.3 MB and serves a whole family of Pacific Image scanners, and the captures
+cannot distinguish which model those calls belong to, because USBPcap sits
+below the class driver and records the wire rather than the IOCTL.
 
 Two smaller findings worth keeping, both of which cost time to learn:
 
