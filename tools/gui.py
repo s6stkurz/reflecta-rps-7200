@@ -344,7 +344,8 @@ class ScannerGui:
         for sequence in ("<MouseWheel>", "<Shift-MouseWheel>",
                          "<Button-4>", "<Button-5>"):
             root.bind_all(sequence, self._on_wheel, add="+")
-        root.bind_all("<TouchpadScroll>", self._on_touchpad, add="+")
+        _bind_optional(root, "<TouchpadScroll>", self._on_touchpad,
+                       everywhere=True)
         self.session.start()
         self._bind_shortcuts()
         self._later(POLL_MS, self._pump)
@@ -800,6 +801,10 @@ class ScannerGui:
         under Tk 9 sends <TouchpadScroll> in pixels, and never a MouseWheel at
         all -- which is why binding only the wheel left the trackpad dead.
 
+        The second of those exists only from Tk 8.7, so it goes through
+        `_bind_optional` rather than `bind`: Windows and most Linux ship 8.6,
+        where asking for it is a TclError.
+
         Bound on each widget itself rather than at the root: a widget's own
         bindings run before its class's and before the "all" tag, so nothing
         can swallow the event first.
@@ -837,7 +842,7 @@ class ScannerGui:
         for sequence in ("<MouseWheel>", "<Shift-MouseWheel>",
                          "<Button-4>", "<Button-5>"):
             widget.bind(sequence, wheel, add="+")
-        widget.bind("<TouchpadScroll>", touchpad, add="+")
+        _bind_optional(widget, "<TouchpadScroll>", touchpad)
         if deep:
             for child in widget.winfo_children():
                 self._bind_scroll(child, wheel, touchpad)
@@ -4768,6 +4773,27 @@ _MAX_ZOOM = 16.0
 #: slack is what lets a zoom hold its anchor near an edge; too much and the
 #: picture can be pushed out of sight altogether.
 _OFF_CANVAS = 0.75
+
+
+def _bind_optional(widget: tk.Misc, sequence: str, handler, *,
+                   everywhere: bool = False) -> bool:
+    """Bind `sequence` if this Tk knows it, and say whether it took.
+
+    `<TouchpadScroll>` arrived in Tk 8.7. Windows and most Linux distributions
+    ship 8.6, where binding it raises TclError -- and it raised during
+    `_build`, so the window never reached the screen at all. That one line is
+    what made this driver macOS-only in practice.
+
+    Nothing is lost where it does not exist: the wheel sequences bound beside
+    it carry those machines, because a trackpad off Tk 9 sends <MouseWheel>
+    like everything else.
+    """
+    bind = widget.bind_all if everywhere else widget.bind
+    try:
+        bind(sequence, handler, add="+")
+        return True
+    except tk.TclError:
+        return False
 
 
 def _touchpad_deltas(event: tk.Event) -> tuple[int, int]:
