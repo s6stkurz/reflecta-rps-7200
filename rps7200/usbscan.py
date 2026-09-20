@@ -42,26 +42,43 @@ the scanner attached and awake:
   real device request, so **the device is awake and answering through this
   driver**.
 - `IOCTL_READ_REGISTERS` and `IOCTL_WRITE_REGISTERS` both come back
-  `ERROR_SEM_TIMEOUT` (121), after the driver's full 120 s. Seven marshallings
-  were tried -- uOffset and uIndex swapped, both set, the data buffer as the
-  output buffer, no output buffer, the block itself as output -- and **all
-  seven failed identically**. A marshalling error would be expected to fail
-  differently for structurally different inputs, so the fault is more likely
-  upstream of this struct than in it.
-- Nothing wedged. The device answered a descriptor request immediately after
-  all seven, every time.
+  `ERROR_SEM_TIMEOUT` (121), after the driver's full 120 s -- for a one-byte
+  write, an eight-byte write, and reads from two different ports.
 
-The untested suspect is `stisvc`, the Windows Image Acquisition service, which
-is running and holds this device: WIA lists it as active and the vendor's
-user-mode driver `PIEWiaScnr.dll` is loaded in `dllhost`. A handle opened with
-`FILE_SHARE_READ | FILE_SHARE_WRITE` shares the device rather than controlling
-it, and vendor requests may not be getting through at all. Stopping that
-service and retrying one write is the next measurement, and it needs the
-machine's owner to agree.
+**And the struct is not the problem.** The driver validates the input size
+before it does anything: 4, 12 and 64-byte inputs are all refused instantly
+with `ERROR_INVALID_PARAMETER`, while the 24-byte `IO_BLOCK` is accepted and
+goes on to time out. Those are different answers to different questions --
+"I will not read that" against "I asked and got nothing" -- so the shape above
+is right, the driver builds a URB from it, and **the device does not answer
+what usbscan.sys puts on the wire**.
 
-`IOCTL_SET_TIMEOUT` is refused too, with `ERROR_INVALID_PARAMETER`, so the
-driver's 120 s default applies -- which is what makes each failed attempt cost
-two minutes and why probing this is expensive.
+Which narrows it to the request itself. usbscan derives `bRequest` from the
+length and there is no way to say otherwise through these two IOCTLs, so if
+what it derives is not the `0x0C`/`0x04` this bridge answers, no marshalling
+will ever fix it. `IOCTL_SEND_USB_REQUEST` is the one that takes an explicit
+`bRequest`, and is the next thing to try -- see `derived_request` below for
+the rule this rests on.
+
+Nothing wedged, at any point. The device answered a descriptor request
+immediately after every single attempt.
+
+Two smaller findings worth keeping, both of which cost time to learn:
+
+- `USBSCAN_TIMEOUT` is three **ULONGs**. The published `usbscan.h` declares
+  three USHORTs and this driver refuses that outright. So the header a search
+  turns up is not the header this driver was built from, and nothing else from
+  it should be trusted without being tried.
+- Setting that timeout does **not** shorten these failures. It governs
+  `ReadFile`/`WriteFile` on the data pipes; a control IOCTL still takes the
+  full 120 s. Which is why probing this is expensive, and worth saying out
+  loud before someone else plans an afternoon around it.
+
+An untested suspect remains: `stisvc`, the Windows Image Acquisition service,
+is running and holds this device -- WIA lists it as active and the vendor's
+`PIEWiaScnr.dll` is loaded in `dllhost`. A handle opened `FILE_SHARE_READ |
+FILE_SHARE_WRITE` shares the device rather than controlling it. Stopping the
+service needs administrator rights, which this has not had.
 
 So `open_transport` does **not** choose this. It is reached only with
 `RPS7200_USB_BACKEND=usbscan`. A transport that has never carried a byte is not
@@ -151,11 +168,18 @@ class _IO_BLOCK(ctypes.Structure):
 
 
 class _USBSCAN_TIMEOUT(ctypes.Structure):
-    """Whole seconds, not milliseconds. See MAX_TIMEOUT_S."""
+    """Whole seconds, not milliseconds. See MAX_TIMEOUT_S.
 
-    _fields_ = [("TimeoutRead", ctypes.c_ushort),
-                ("TimeoutWrite", ctypes.c_ushort),
-                ("TimeoutEvent", ctypes.c_ushort)]
+    Three ULONGs, measured: the published `usbscan.h` declares these as USHORT
+    and this driver rejects that with ERROR_INVALID_PARAMETER. Twelve bytes is
+    what it takes. Worth knowing beyond this one struct -- it means the header
+    a search turns up is not the header this driver was built from, so nothing
+    from it should be trusted without trying it.
+    """
+
+    _fields_ = [("TimeoutRead", ctypes.c_ulong),
+                ("TimeoutWrite", ctypes.c_ulong),
+                ("TimeoutEvent", ctypes.c_ulong)]
 
 
 class _GUID(ctypes.Structure):

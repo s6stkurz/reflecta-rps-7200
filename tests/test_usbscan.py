@@ -128,8 +128,17 @@ def test_the_io_block_has_the_layout_the_driver_reads():
     assert fields["uIndex"] == pointer + pointer
 
 
-def test_the_timeout_struct_is_three_shorts_of_seconds():
-    assert ctypes.sizeof(usbscan._USBSCAN_TIMEOUT) == 6
+def test_the_timeout_struct_is_three_longs_not_the_three_shorts_published():
+    """Measured, against the documentation. `usbscan.h` declares these USHORT
+    and this driver answers ERROR_INVALID_PARAMETER; twelve bytes is accepted.
+
+    Pinned because of what it implies rather than for its own sake: the header
+    a search turns up is not the header this driver was built from, so no other
+    struct from it should be trusted without being tried.
+    """
+    assert ctypes.sizeof(usbscan._USBSCAN_TIMEOUT) == 12
+    assert all(kind is ctypes.c_ulong
+               for _, kind in usbscan._USBSCAN_TIMEOUT._fields_)
 
 
 def test_the_timeout_ceiling_is_recorded_against_the_infrared_floor():
