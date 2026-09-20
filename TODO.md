@@ -412,6 +412,33 @@ bit is not evidence, not a new problem.
 
 ## Untested
 
+- **The device path has never run on anything but macOS (2026-09-20).** The
+  driver now builds, tests and runs the window on Windows -- 1018 passed, 5
+  skipped, `make all` and `make test-all` both green, and CI covers Ubuntu,
+  macOS and Windows on every push. None of that touches the scanner.
+
+  What is confirmed on Windows without the device: the loader finds libusb,
+  `libusb_init` succeeds, the bus enumerates, `05e3:0144` is seen on it, and
+  the open is correctly refused because the stock Image/WIA driver holds it.
+  What is **not** confirmed is everything after the open -- the claim, endpoint
+  discovery, the IEEE1284 preamble, the 32 KB length handshake, the 16 KB bulk
+  reads. Those go through WinUSB rather than IOKit and nothing has driven them.
+
+  The first real pass should be one 300 dpi RGB frame, ~23 s, RGB only so no
+  infrared floor, filed with `RPS7200_DEBUG=1`. A stall or a short read in the
+  windowed reader would show there immediately. **Wants Stefan's agreement and
+  Zadig run first** -- and note that the Zadig swap stops CyberView and VueScan
+  seeing the scanner until the driver is put back through Device Manager.
+
+  Linux is further back still: nothing has been run there at all beyond CI.
+  The udev rule in `packaging/` is written from the device reporting
+  `bDeviceClass 0xff` and has not been exercised.
+
+- **`force_abort` under Windows is unknown, and should stay that way for now.**
+  It closes the handle and calls `libusb_exit` while a bulk transfer may be in
+  flight; the docstring already calls that undefined. macOS survives it. Do not
+  find out casually what WinUSB does -- a wedge costs a power cycle.
+
 - **Resuming a roll has never been driven on the scanner.** A roll that dies
   part-way can now be reopened from *Rolls ...*, which brings back its contact
   sheet, marks what is scanned, and restores the roll's own settings from its
@@ -662,6 +689,15 @@ Found 2026-09-19, reading the repo rather than the code. `make all` is green --
 ruff clean, `make type` clean, 947 passed and 3 skipped in 31 s -- and `make
 verify` is red with the sixteen entries at the top of this file. Most of what
 follows lives in the gap between those two.
+
+One of them has closed since: there is CI now, over Ubuntu, macOS and Windows.
+It would have caught both of the bugs the port turned up -- a window that could
+not open on either of the other two platforms, and a spool never freed on one
+of them -- because nothing but one Mac had ever run this suite. The two items
+below are untouched by that and still stand. A third has been added to them:
+**the suite is now green on a platform where the scanner has never been
+driven**, which is a new way for a green board to mean less than it looks
+(see *Untested*).
 
 - **The `hardware` and `slow` pytest markers are declared, documented, and used
   by nothing.** `pyproject.toml` declares both, `addopts = "-m 'not hardware'"`
