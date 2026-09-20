@@ -673,7 +673,9 @@ class DirectScanner:
             return
 
         root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT
+        stuck = 0
         for n, item in enumerate(pending, 1):
+            image = None
             try:
                 # mmap the image rather than loading it: tiff.write walks it
                 # once, so a 570 MB frame need not be resident.
@@ -693,6 +695,14 @@ class DirectScanner:
             except Exception as exc:
                 self._log(f"debug: could not file scan {n} ({exc})")
             finally:
+                # Drop the mapping before unlinking what it maps. POSIX lets a
+                # file be unlinked while it is mapped and keeps the inode until
+                # the mapping goes; Windows refuses outright, with WinError 32.
+                # That refusal was swallowed below, so on Windows nothing was
+                # ever freed -- a 38-frame roll at 7200 dpi left 43 GB in the
+                # temporary directory, for ever. Letting go of the array is
+                # enough: `library.save` keeps no reference to it.
+                image = None
                 # Free each frame's spool as soon as it is filed, not at the
                 # end. At 7200 dpi a frame spools 1.1 GB, so holding all 38 of
                 # a roll through the flush would want 43 GB of disk on top of
@@ -704,11 +714,20 @@ class DirectScanner:
                         try:
                             Path(path).unlink(missing_ok=True)
                         except Exception:
-                            pass
+                            stuck += 1
+        if stuck:
+            # Said out loud rather than swallowed. The silence is what let the
+            # leak above run for a whole platform without anyone noticing.
+            self._log(f"debug: {stuck} spooled file(s) could not be removed; "
+                      f"{self._debug_spool} is still on disk")
         try:
             if self._debug_spool is not None:
                 shutil.rmtree(self._debug_spool, ignore_errors=True)
-                self._debug_spool = None
+                # Only forget it once it is actually gone: this is the one
+                # handle to the directory, and dropping it on a failed clean
+                # loses the chance to say where the leftovers are.
+                if not self._debug_spool.exists():
+                    self._debug_spool = None
         except Exception:
             pass
 
