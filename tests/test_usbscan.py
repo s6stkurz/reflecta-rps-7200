@@ -143,37 +143,31 @@ def test_the_timeout_ceiling_is_recorded_against_the_infrared_floor():
 # -- choosing a transport ---------------------------------------------------
 
 
-def test_the_backend_can_be_forced_either_way(monkeypatch):
-    """A knob for the session where the question is which of the two is at
-    fault, which is exactly when you do not want it deciding for itself."""
+def test_an_unproven_transport_is_not_the_default(monkeypatch):
+    """It would be the better answer on Windows if it worked -- nothing to
+    replace, CyberView keeps working -- but its register IOCTLs come back
+    ERROR_SEM_TIMEOUT and it has never carried a byte. A transport in that
+    state is opt-in, whatever its promise, and on whatever platform."""
     monkeypatch.setattr("rps7200.usb_transport.Transport.__init__",
                         lambda self, **kw: None)
-
-    monkeypatch.setenv("RPS7200_USB_BACKEND", "libusb")
     monkeypatch.setattr(usbscan, "available", lambda: True)
-    # available, and still not chosen, because it was told not to
+    for value in ("", "libusb", "anything else"):
+        monkeypatch.setenv("RPS7200_USB_BACKEND", value)
+        assert not isinstance(open_transport(), usbscan.UsbscanTransport)
+    monkeypatch.delenv("RPS7200_USB_BACKEND")
     assert not isinstance(open_transport(), usbscan.UsbscanTransport)
 
+
+def test_but_it_can_be_asked_for_deliberately(monkeypatch):
+    """Which is how it gets finished, and how the next session drives it."""
     monkeypatch.setenv("RPS7200_USB_BACKEND", "usbscan")
     monkeypatch.setattr(usbscan, "available", lambda: False)
-    # unavailable, and chosen anyway, so the failure is this transport's own
+    # unavailable, and chosen anyway: asking for it means asking for its own
+    # failure, not a quiet fall back to the other one
     assert isinstance(open_transport(), usbscan.UsbscanTransport)
 
 
-def test_without_the_scanner_interface_it_falls_through_to_libusb(monkeypatch):
-    """Which is what a machine that *has* been through Zadig looks like: the
-    still-image interface is gone, because WinUSB replaced it. Both keep
-    working with nothing to configure."""
-    monkeypatch.delenv("RPS7200_USB_BACKEND", raising=False)
-    monkeypatch.setattr(usbscan, "available", lambda: False)
-    monkeypatch.setattr("rps7200.usb_transport.Transport.__init__",
-                        lambda self, **kw: None)
-    chosen = open_transport()
-    assert not isinstance(chosen, usbscan.UsbscanTransport)
-
-
-def test_it_is_never_chosen_off_windows(monkeypatch):
-    monkeypatch.delenv("RPS7200_USB_BACKEND", raising=False)
+def test_it_reports_itself_unavailable_off_windows(monkeypatch):
     monkeypatch.setattr(usbscan.sys, "platform", "darwin")
     assert usbscan.available() is False
 

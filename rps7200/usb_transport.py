@@ -879,32 +879,22 @@ BACKEND_ENV = "RPS7200_USB_BACKEND"
 
 def open_transport(verbose: bool = False,
                    max_window: int = MAX_WINDOW) -> Transport:
-    """The transport this machine can actually use, already chosen.
+    """The transport this machine should use.
 
-    On macOS and Linux there is one answer and this is `Transport`. On Windows
-    there are two, and the default is the one that does **not** require the
-    scanner's driver to be replaced: `usbscan.sys` is already bound to it,
-    already exposes the register IOCTLs this protocol is built from, and is
-    what CyberView itself uses. Replacing it with WinUSB via Zadig also works
-    and stops CyberView and VueScan seeing the scanner until it is put back,
-    so it is the fallback rather than the default.
+    libusb everywhere, until `rps7200.usbscan` has driven a scan. That
+    transport would be the better answer on Windows if it worked -- it goes
+    through the driver the scanner already has, so CyberView and VueScan keep
+    working and nothing needs replacing -- but it does not work yet: its
+    register IOCTLs come back ERROR_SEM_TIMEOUT, and a transport that has
+    never carried a byte is not a default. It is reachable deliberately::
 
-    Falls through to libusb when there is no still-image interface for this
-    device -- which is exactly what a machine that *has* been through Zadig
-    looks like, so both keep working with nothing to configure.
+        RPS7200_USB_BACKEND=usbscan
+
+    and that is how it will be finished. See `rps7200/usbscan.py` for what is
+    established and what is not.
     """
     forced = os.environ.get(BACKEND_ENV, "").strip().lower()
-    if forced == "libusb":
-        return Transport(verbose=verbose, max_window=max_window)
-    if sys.platform == "win32" or forced == "usbscan":
-        try:
-            from .usbscan import UsbscanTransport, available
-        except Exception as exc:                            # pragma: no cover
-            if forced == "usbscan":
-                raise
-            if verbose:
-                print(f"[usb] usbscan transport unavailable ({exc})")
-        else:
-            if forced == "usbscan" or available():
-                return UsbscanTransport(verbose=verbose, max_window=max_window)
+    if forced == "usbscan":
+        from .usbscan import UsbscanTransport
+        return UsbscanTransport(verbose=verbose, max_window=max_window)
     return Transport(verbose=verbose, max_window=max_window)

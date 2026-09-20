@@ -31,12 +31,41 @@ All three are covered with nothing left over, which is also why the protocol is
 byte-at-a-time in the first place: it is not a quirk of the scanner, it is the
 Windows register model its firmware was designed around.
 
-**What is proven and what is not.** The handle opens unelevated, the driver
-answers `IOCTL_GET_VERSION`, and `IOCTL_GET_PIPE_CONFIGURATION` returns the
-same endpoints libusb discovers -- bulk IN 0x81 at 512 bytes, bulk OUT 0x02,
-interrupt IN 0x83. No *write* has been sent through it. That `WRITE_REGISTERS`
-reaches the wire as 0x40/0x0C is documented, not measured, and the same goes
-for `ReadFile` landing on 0x81 rather than some other pipe.
+**This does not work yet, and here is exactly how far it gets.** Measured with
+the scanner attached and awake:
+
+- The interface enumerates and `CreateFileW` opens it **unelevated**.
+- `IOCTL_GET_VERSION` answers 1.0.0 -- the driver is talking.
+- `IOCTL_GET_PIPE_CONFIGURATION` returns the same endpoints libusb discovers:
+  bulk IN 0x81 at 512 bytes, bulk OUT 0x02, interrupt IN 0x83.
+- `IOCTL_GET_DEVICE_DESCRIPTOR` returns `05e3:0144 bcdDevice 0302`. That is a
+  real device request, so **the device is awake and answering through this
+  driver**.
+- `IOCTL_READ_REGISTERS` and `IOCTL_WRITE_REGISTERS` both come back
+  `ERROR_SEM_TIMEOUT` (121), after the driver's full 120 s. Seven marshallings
+  were tried -- uOffset and uIndex swapped, both set, the data buffer as the
+  output buffer, no output buffer, the block itself as output -- and **all
+  seven failed identically**. A marshalling error would be expected to fail
+  differently for structurally different inputs, so the fault is more likely
+  upstream of this struct than in it.
+- Nothing wedged. The device answered a descriptor request immediately after
+  all seven, every time.
+
+The untested suspect is `stisvc`, the Windows Image Acquisition service, which
+is running and holds this device: WIA lists it as active and the vendor's
+user-mode driver `PIEWiaScnr.dll` is loaded in `dllhost`. A handle opened with
+`FILE_SHARE_READ | FILE_SHARE_WRITE` shares the device rather than controlling
+it, and vendor requests may not be getting through at all. Stopping that
+service and retrying one write is the next measurement, and it needs the
+machine's owner to agree.
+
+`IOCTL_SET_TIMEOUT` is refused too, with `ERROR_INVALID_PARAMETER`, so the
+driver's 120 s default applies -- which is what makes each failed attempt cost
+two minutes and why probing this is expensive.
+
+So `open_transport` does **not** choose this. It is reached only with
+`RPS7200_USB_BACKEND=usbscan`. A transport that has never carried a byte is not
+a default, however good the argument for it.
 
 **The timeout is the sharp edge.** `IOCTL_SET_TIMEOUT` counts in whole seconds
 and is documented to a maximum of 214. The infrared pass has a floor of about
@@ -389,10 +418,11 @@ class UsbscanTransport(Transport):
         block = _USBSCAN_TIMEOUT(TimeoutRead=seconds, TimeoutWrite=seconds,
                                  TimeoutEvent=seconds)
         got = wintypes.DWORD()
+        # No output buffer: this one only takes. Passing the struct as output
+        # as well is what ERROR_INVALID_PARAMETER means here.
         ok = self._k32.DeviceIoControl(
             self._handle, IOCTL_SET_TIMEOUT, ctypes.byref(block),
-            ctypes.sizeof(block), ctypes.byref(block), ctypes.sizeof(block),
-            ctypes.byref(got), None)
+            ctypes.sizeof(block), None, 0, ctypes.byref(got), None)
         if not ok:
             self._log("IOCTL_SET_TIMEOUT refused: "
                       f"WinError {ctypes.get_last_error()}; the driver's "
