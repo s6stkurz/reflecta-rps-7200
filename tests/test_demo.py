@@ -146,7 +146,7 @@ def test_it_shows_the_film_that_was_asked_for(tmp_path):
     for film in ("negative", "bw"):
         source = s._source_for(film)
         assert source is not None, film
-        record = json.loads((source / "scan.json").read_text())
+        record = json.loads((source / "scan.json").read_text(encoding="utf-8"))
         assert record["scan"]["film"] == film, (
             f"asked for {film}, was shown {record['scan']['film']}"
         )
@@ -315,7 +315,7 @@ def test_a_roll_walks_the_film_it_was_asked_for(tmp_path):
         walked = s._strip_for("bw")
     films = set()
     for path in walked:
-        films.add((json.loads((path / "scan.json").read_text())
+        films.add((json.loads((path / "scan.json").read_text(encoding="utf-8"))
                    ["scan"]).get("film"))
     assert films == {"bw"}
 

@@ -1,57 +1,51 @@
 # Developer commands. Everything runs through `uv run`, so the pinned dev tools
 # in pyproject.toml's [dependency-groups] are what execute -- never whatever
 # happens to be on PATH.
-UV = uv run
+#
+# Every recipe below is a single command with no shell syntax in it, and that
+# is deliberate: GNU make on Windows hands recipes to cmd.exe unless a POSIX
+# `sh` is on PATH, where an inline `VAR=1 cmd` prefix and `rm -rf` are both
+# syntax errors. The bodies live in tasks.py, which does those two things the
+# same way on all three platforms. `make test` is still what to type.
+PY = uv run python
 
 .PHONY: all
-all: fix lint type test
+all:
+	@$(PY) tasks.py all
 
 .PHONY: install sync
 install sync:
-	@uv sync --all-groups
+	@$(PY) tasks.py sync
 
 .PHONY: lint
 lint:
-	@echo "Running lint checks (ruff)..."
-	@$(UV) ruff check .
+	@$(PY) tasks.py lint
 
 .PHONY: type
 type:
-	@echo "Running type checks (ty)..."
-	@$(UV) ty check \
-		--exclude "tests/" \
-		--exclude "tools/" \
-		--ignore "unresolved-import" \
-		--ignore "unresolved-attribute" \
-		--ignore "invalid-argument-type" \
-		--ignore "invalid-assignment" \
-		--ignore "possibly-missing-attribute" \
-		--ignore "unsupported-operator" \
-		--ignore "no-matching-overload"
+	@$(PY) tasks.py type
 
 .PHONY: test
 test:
-	@echo "Running unit tests (pytest)..."
-	@$(UV) pytest tests/ --cov=rps7200 --cov-report=term-missing
+	@$(PY) tasks.py test
 
 # The optional tifffile dependency has to be genuinely optional: the built-in
 # TIFF path is the one a bare install uses, and the two must not disagree about
 # what comes back. conftest.py blocks the import for the whole run.
 .PHONY: test-no-tifffile
 test-no-tifffile:
-	@echo "Running unit tests with tifffile absent..."
-	@RPS7200_NO_TIFFFILE=1 $(UV) pytest tests/ -q
+	@$(PY) tasks.py test-no-tifffile
 
-# Both TIFF paths, which is what CI should run.
+# Both TIFF paths, which is what CI runs.
 .PHONY: test-all
-test-all: test test-no-tifffile
+test-all:
+	@$(PY) tasks.py test-all
 
 # Safe autofixes only -- unused imports, redundant f-strings and the like.
 # This is what `all` runs, and what to run before committing.
 .PHONY: fix
 fix:
-	@echo "Applying safe autofixes (ruff check --fix)..."
-	@$(UV) ruff check --fix .
+	@$(PY) tasks.py fix
 
 # Run the scanning GUI locally. Opening the window claims the device and asks
 # it who it is, and nothing else: no calibration, no mechanism, until a button
@@ -59,13 +53,11 @@ fix:
 # stored library entries.
 .PHONY: run
 run:
-	@echo "Starting the RPS 7200 scanner GUI..."
-	@$(UV) python tools/gui.py
+	@$(PY) tasks.py run
 
 .PHONY: run-demo
 run-demo:
-	@echo "Starting the GUI in demo mode (no scanner)..."
-	@$(UV) python tools/gui.py --demo
+	@$(PY) tasks.py run-demo
 
 # Whole-file reformat. Deliberately NOT part of `all`, and not to be run
 # casually: this source is hand-wrapped at ~79 columns with aligned comment
@@ -74,21 +66,19 @@ run-demo:
 # only on a file you are already rewriting, and only with the user's agreement.
 .PHONY: format
 format:
-	@echo "Reformatting every file -- see the note in the Makefile before using this."
-	@$(UV) ruff format .
+	@$(PY) tasks.py format
 
 # Re-decode every stored scan with the current code and report what no longer
 # matches. Run after any change to how the scanner's bytes become pixels: it
 # tests the change against every scan ever taken, not just the next one.
 .PHONY: reconstruct
 reconstruct:
-	@$(UV) python tools/library.py reconstruct
+	@$(PY) tasks.py reconstruct
 
 .PHONY: verify
 verify:
-	@$(UV) python tools/library.py verify
+	@$(PY) tasks.py verify
 
 .PHONY: clean
 clean:
-	rm -rf .pytest_cache .ruff_cache .coverage build dist
-	find . -type d -name "__pycache__" -exec rm -rf {} +
+	@$(PY) tasks.py clean

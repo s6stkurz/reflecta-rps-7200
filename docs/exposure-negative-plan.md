@@ -9,7 +9,7 @@ device attached.
 Every number below re-derives from the filed raw bytes, on a machine holding the
 library:
 
-    python3 tools/linearity.py --probe probe/exposure.json
+    uv run python tools/linearity.py --probe probe/exposure.json
 
 `probe/exposure.json` is gitignored, like the `library/` it indexes -- it is what
 maps each entry to the frame and rung it came from, since entries are named from

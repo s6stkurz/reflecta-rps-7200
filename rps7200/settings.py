@@ -56,7 +56,7 @@ def load(where: str | Path | None = None) -> dict[str, Any]:
     blank: dict[str, Any] = {name: {} for name in SECTIONS}
     blank["output"] = ""
     try:
-        stored = json.loads(path(where).read_text())
+        stored = json.loads(path(where).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return blank
     if not isinstance(stored, dict):
@@ -80,7 +80,8 @@ def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(target.name + ".part")
-        temporary.write_text(json.dumps(values, indent=2, sort_keys=True))
+        temporary.write_text(json.dumps(values, indent=2, sort_keys=True),
+                             encoding="utf-8")
         temporary.replace(target)
         return target
     except (OSError, TypeError, ValueError):

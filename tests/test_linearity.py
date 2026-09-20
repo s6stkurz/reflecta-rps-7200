@@ -47,7 +47,7 @@ def fake_library(tmp_path, monkeypatch):
         (entry / "scan.json").write_text(json.dumps({
             "scan": {"resolution_dpi": 300, "exposure_scale": [1.0, 1.0, 1.0]},
             "device_settings": {"exposure": list(exposure)},
-        }))
+        }), encoding="utf-8")
         # A gradient, so a band selection has something to select.
         image = np.linspace(1000, level, 100 * 100 * 3, dtype=np.float64)
         made[name] = image.reshape(100, 100, 3).astype(np.uint16)
@@ -60,7 +60,8 @@ def fake_library(tmp_path, monkeypatch):
 
 def probe_file(tmp_path, passes) -> str:
     path = tmp_path / "exposure.json"
-    path.write_text(json.dumps({"target": 0.8, "passes": passes}))
+    path.write_text(json.dumps({"target": 0.8, "passes": passes}),
+                    encoding="utf-8")
     return str(path)
 
 
@@ -88,7 +89,7 @@ def test_an_entry_with_no_recorded_exposure_is_skipped(fake_library, tmp_path):
     add("has-one", (100, 200, 300))
     bare = root / "has-none"
     bare.mkdir()
-    (bare / "scan.json").write_text(json.dumps({"scan": {}}))
+    (bare / "scan.json").write_text(json.dumps({"scan": {}}), encoding="utf-8")
     assert list(linearity.entries_by_exposure(root)) == [(100, 200, 300)]
 
 

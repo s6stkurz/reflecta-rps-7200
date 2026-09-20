@@ -493,7 +493,7 @@ def build_entry(root, name, image, orientation, dpi=600, tag="vignette-study"):
             "index_header": 2, "width": w, "lines": h, "channels": c,
             "byte_order": "little", "lines_received": h * c}},
         "calibration": {},
-    }, indent=2))
+    }, indent=2), encoding="utf-8")
     return entry
 
 

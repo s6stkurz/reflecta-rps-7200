@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Is the gain field in SET GAIN OFFSET analog, or a digital multiplier?
 
-    RPS7200_DEBUG=1 python3 tools/gain_probe.py
+    RPS7200_DEBUG=1 uv run python tools/gain_probe.py
 
 See `docs/analog-gain-plan.md` for why this is worth two minutes and why it is
 not the SET_SCAN_HEAD situation. In one line: blue cannot reach its target in
@@ -53,6 +53,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
     FILM_NEGATIVE,
     FULL_FRAME,
@@ -93,6 +94,7 @@ def measure(image: np.ndarray) -> dict[str, float]:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--resolution", type=int, default=300)
     ap.add_argument("--ladder", default=None,
@@ -223,7 +225,8 @@ def main() -> int:
             pass
 
     if args.json and results:
-        Path(args.json).write_text(json.dumps(results, indent=2))
+        Path(args.json).write_text(json.dumps(results, indent=2),
+                                   encoding="utf-8")
         print(f"written to {args.json}")
     return 0 if results else 1
 

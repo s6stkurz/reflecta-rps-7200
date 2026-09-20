@@ -4,16 +4,16 @@
 Two phases. Phase 1 is the study proper -- RGB, 600 dpi, empty transport then
 clear film then the IT8::
 
-    python3 tools/uniformity.py capture --tag vignette-study
+    uv run python tools/uniformity.py capture --tag vignette-study
 
 Phase 2 is a smaller follow-on that asks only whether the field *differs* in
 infrared, using the IT8 alone so nothing in the transport has to change::
 
-    python3 tools/uniformity.py capture --ir --tag vignette-study-ir
+    uv run python tools/uniformity.py capture --ir --tag vignette-study-ir
 
 Then, with no scanner attached and re-runnable against any future pipeline::
 
-    python3 tools/uniformity.py analyse --tag vignette-study
+    uv run python tools/uniformity.py analyse --tag vignette-study
 
 `analyse` rebuilds every image from its stored raw bytes through the *current*
 correction code rather than reading the saved TIFF. Corrections here are still
@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import library, uniformity as un
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import DirectScanner, ScanParameters
 from rps7200.shading import apply_shading
 from rps7200.uniformity import AS_IS, MIRROR_X, MIRROR_Y, ROT180
@@ -117,7 +118,7 @@ def rebuild(entry: Path) -> tuple[np.ndarray, dict]:
     this and the answer moves -- which is the property that makes the study
     worth keeping rather than repeating.
     """
-    record = json.loads((entry / "scan.json").read_text())
+    record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
     raw = library.read_raw(entry)
     if raw is None:
         raise SystemExit(f"{entry.name}: no raw bytes; it cannot be re-corrected")
@@ -162,7 +163,7 @@ def select(root: Path, tag: str) -> list[Path]:
     out = []
     for candidate in sorted(root.glob("*/scan.json")):
         try:
-            record = json.loads(candidate.read_text())
+            record = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if tag in (record.get("tags") or []):
@@ -326,7 +327,7 @@ def profile_span(image: np.ndarray, trim: int = 10) -> dict[str, list[float]]:
 
 def raw_image(entry: Path) -> np.ndarray:
     """Decode an entry's bytes with NO correction applied."""
-    record = json.loads((entry / "scan.json").read_text())
+    record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
     layout = ((record.get("raw") or {}).get("layout")) or {}
     raw = library.read_raw(entry)
     params = ScanParameters(
@@ -526,7 +527,7 @@ def decompose_and_report(it8, detected, meta, args, flats=None) -> int:
             "flats": flats,
             "even_component": "see flats -- not measurable by rotation",
         }
-        out.write_text(json.dumps(payload, indent=2))
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"\nwrote {out}")
     return 0
 
@@ -631,10 +632,11 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
         if reply in ("r", "redo"):
             (entry / "REJECTED").write_text(
                 "rejected at capture time; kept because how a pass went wrong "
-                "is evidence about handling\n")
-            record = json.loads((entry / "scan.json").read_text())
+                "is evidence about handling\n", encoding="utf-8")
+            record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
             record["tags"] = list(record.get("tags") or []) + ["rejected"]
-            (entry / "scan.json").write_text(json.dumps(record, indent=2))
+            (entry / "scan.json").write_text(json.dumps(record, indent=2),
+                                             encoding="utf-8")
             return entry, "redo"
         if reply in ("abort", "q", "quit"):
             return entry, "abort"
@@ -756,11 +758,12 @@ def cmd_capture(args: argparse.Namespace) -> int:
             print("    redoing this pass")
 
     print(f"\n{len(done)} passes filed with tag {args.tag!r}")
-    print(f"now run: python3 tools/uniformity.py analyse --tag {args.tag}")
+    print(f"now run: uv run python tools/uniformity.py analyse --tag {args.tag}")
     return 0
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)

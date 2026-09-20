@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scan with the scanner's own shading correction applied.
 
-    python3 tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
+    uv run python tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
 
 The scanner returns raw pixels: it measures its per-column response during a
 calibration pass and hands that back, but never applies it. So a session runs
@@ -26,12 +26,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import export, library
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import DirectScanner, supports_infrared
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
 from rps7200.library import FilmNotes
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dpi", type=int, default=1800)
@@ -261,7 +263,8 @@ def main() -> int:
                     channel_order=[args.mono_channel], channels=1)
     note = export.write(out, delivered, resolution=args.dpi,
                         quality=args.quality)
-    out.with_suffix(".json").write_text(json.dumps(meta, indent=2, default=str))
+    out.with_suffix(".json").write_text(
+        json.dumps(meta, indent=2, default=str), encoding="utf-8")
     print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
           + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
     if note:

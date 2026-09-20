@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Walks a strip of negatives, metering each, with an exposure ladder on some.
 
-    RPS7200_DEBUG=1 python3 tools/exposure_probe.py --json probe/exposure.json
+    RPS7200_DEBUG=1 uv run python tools/exposure_probe.py --json probe/exposure.json
                                                              # background it
 
 **Ask before running this.** About 40 minutes with a colour negative strip
@@ -83,6 +83,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
     EXPOSURE_TARGET,
     FILM_NEGATIVE,
@@ -168,6 +169,7 @@ def levels_of(image: np.ndarray, percentile: float = 99.5) -> list[float]:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--frames", type=int, default=15,
                     help="how many negatives to walk")
@@ -299,7 +301,8 @@ def main() -> int:
                     Path(args.json).write_text(json.dumps(
                         {"schedule": [[n, list(r)] for n, r in schedule],
                          "target": args.target, "ladder": list(LADDER),
-                         "passes": passes}, indent=2, default=float))
+                         "passes": passes}, indent=2, default=float),
+                        encoding="utf-8")
 
             if index < len(schedule) - 1:
                 if scanner.advance() is None:

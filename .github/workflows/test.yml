@@ -1,0 +1,65 @@
+# Every push, on all three platforms.
+#
+# There was no CI at all, and the Makefile carried a comment -- "Both TIFF
+# paths, which is what CI should run" -- describing one that did not exist.
+# Nothing ran this suite anywhere but one Mac, which is how a window that could
+# not open on Windows or Linux, and a spool that was never freed on Windows,
+# both went unnoticed.
+#
+# `tasks.py` is called directly rather than through `make`, so a runner needs
+# no make installed and the matrix does not depend on which shell it would
+# otherwise pick.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not hide the other two: the whole point is
+      # seeing which of them disagrees.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tk is not in the Ubuntu runner's Python. Without it the GUI tests skip
+      # rather than run, and skipping is how the Tk 8.6 bug would have survived
+      # a green board.
+      - name: Install Tk (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --all-groups
+
+      - name: Lint
+        run: uv run python tasks.py lint
+
+      - name: Types
+        run: uv run python tasks.py type
+
+      # A display, so the window is really built rather than skipped. The other
+      # two runners have one of their own.
+      - name: Tests
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}uv run python tasks.py test
+
+      - name: Tests without tifffile
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}uv run python tasks.py test-no-tifffile
+
+# Deliberately not run here: `reconstruct` and `verify`. Both read `library/`,
+# which is gitignored and so is never in a checkout -- there would be nothing
+# to reconstruct, and `tools/library.py verify` exits 1 on the sixteen known
+# problems recorded at the top of TODO.md. They belong on a machine that has
+# the library, which is Stefan's.

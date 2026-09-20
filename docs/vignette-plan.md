@@ -663,7 +663,7 @@ mechanism and a strong confirmation. If it is uniformly flat, y-dependence is sm
 
 ## Verification
 
-- `python3 -m pytest tests/ -q` stays green.
+- `uv run pytest tests/ -q` stays green.
 - New `tests/test_uniformity.py`, synthetic and offline, following the `block()`
   fixture pattern in `tests/test_shading.py:23`:
   - synthesise a known field with all four components plus a random target, generate

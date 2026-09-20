@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """What exposure target this scanner can actually carry, measured offline.
 
-    python3 tools/exposure_headroom.py
-    python3 tools/exposure_headroom.py --entries 6 --json headroom.json
+    uv run python tools/exposure_headroom.py
+    uv run python tools/exposure_headroom.py --entries 6 --json headroom.json
 
 `auto_exposure` aims the 99.5th percentile of each channel at 0.80 of full
 scale. It aimed at 0.70 when this tool was written, and this is the measurement
@@ -54,6 +54,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library                                          # noqa: E402
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
     BLUE_RGBI_HEADROOM,
     CHANNEL_ORDER,
@@ -83,7 +84,7 @@ MEASURED_BLUE_RATIO = 4.98
 
 def decode(path: Path) -> tuple[np.ndarray, dict[str, Any]] | None:
     """An entry's raw pixels and its record, or None if it has no bytes."""
-    record = json.loads((path / "scan.json").read_text())
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     raw = library.read_raw(path)
     if raw is None:
         return None
@@ -261,6 +262,7 @@ def report(results: list[dict[str, Any]]) -> None:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=str(library.DEFAULT_ROOT),
@@ -285,7 +287,7 @@ def main() -> int:
         if not record_path.exists():
             continue
         if args.dpi is not None:
-            record = json.loads(record_path.read_text())
+            record = json.loads(record_path.read_text(encoding="utf-8"))
             if (record.get("scan") or {}).get("resolution_dpi") != args.dpi:
                 continue
         got = study(path)
@@ -299,7 +301,8 @@ def main() -> int:
 
     report(results)
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2))
+        Path(args.json).write_text(json.dumps(results, indent=2),
+                                   encoding="utf-8")
         print(f"\nwritten to {args.json}")
     return 0
 

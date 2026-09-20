@@ -37,6 +37,7 @@ import numpy as np
 
 from metrics import dark_mask, noise_split
 from rps7200 import library
+from rps7200.console import use_utf8_stdout
 
 MM_PER_INCH = 25.4
 CHANNELS = ("red", "green", "blue")
@@ -46,7 +47,7 @@ def ladder(root: Path, after: str, before: str) -> list[dict]:
     """The RGB passes of the series, plus whatever RGBI exists for timing."""
     out = []
     for meta in sorted(root.glob("*/scan.json")):
-        d = json.loads(meta.read_text())
+        d = json.loads(meta.read_text(encoding="utf-8"))
         s = d.get("scan") or {}
         if not (after <= d["created"] <= before):
             continue
@@ -109,6 +110,7 @@ def band_density(freq: np.ndarray, power: np.ndarray,
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="library")
     ap.add_argument("--after", default="2026-09-11T10:19")
@@ -264,7 +266,8 @@ def main() -> int:
         {"aliasing": results, "noise_floor_dn": floors,
          "absolute": absolute, "steps": steps,
          "series": [{k: (str(v) if isinstance(v, Path) else v)
-                     for k, v in e.items()} for e in series]}, indent=2))
+                     for k, v in e.items()} for e in series]}, indent=2),
+        encoding="utf-8")
     print(f"\nwritten to {out / 'results.json'}")
     return 0
 

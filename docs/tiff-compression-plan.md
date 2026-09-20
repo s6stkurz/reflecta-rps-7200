@@ -159,11 +159,11 @@ no longer be true.
 The change is only safe if the pixels are provably untouched, so the checks are
 about equality, not size.
 
-1. **Existing suite passes unchanged** — `python3 -m pytest tests/ -q`.
+1. **Existing suite passes unchanged** — `uv run pytest tests/ -q`.
    `TestCrossImplementation::test_roundtrip` already covers 6 shape/dtype
    combinations including a strip boundary crossing and the 4-channel RGBI
    case, and now exercises the compressed path for free. Run it a second time
-   as `RPS7200_NO_TIFFFILE=1 python3 -m pytest tests/ -q`, which makes the
+   as `RPS7200_NO_TIFFFILE=1 uv run pytest tests/ -q`, which makes the
    import genuinely fail rather than only monkeypatching `_has_tifffile`, so
    the dependency-free promise is tested as a whole package and not per call.
 

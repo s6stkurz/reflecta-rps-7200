@@ -28,7 +28,7 @@ It refuses what the device refuses: infrared on black and white or Kodachrome.
 A stand-in that accepts what the hardware rejects teaches the window a shape
 that does not exist.
 
-    python3 tools/gui.py --demo
+    uv run python tools/gui.py --demo
 """
 from __future__ import annotations
 
@@ -494,7 +494,7 @@ class DemoScanner:
         best, best_dpi = None, -1
         for path in self._entries:
             try:
-                record = json.loads((path / "scan.json").read_text())
+                record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             scan = record.get("scan") or {}
@@ -524,7 +524,7 @@ class DemoScanner:
         found = None
         for path in self._entries:
             try:
-                scan = (json.loads((path / "scan.json").read_text())
+                scan = (json.loads((path / "scan.json").read_text(encoding="utf-8"))
                         .get("scan") or {})
             except (OSError, ValueError):
                 continue
@@ -577,7 +577,7 @@ class DemoScanner:
         if raw is None:
             return None
         try:
-            record = json.loads((path / "scan.json").read_text())
+            record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
             layout = (record.get("raw") or {}).get("layout") or {}
             params = ScanParameters(
                 width=int(layout["width"]),
@@ -634,7 +634,7 @@ class DemoScanner:
             entry = path.parent
             any_prescan.append(entry)
             try:
-                record = json.loads((entry / "scan.json").read_text())
+                record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if (record.get("scan") or {}).get("film") == film:
@@ -738,7 +738,7 @@ def best_pair(root: Path) -> Path | None:
         if not (entry / "prescan.tif").exists():
             continue
         try:
-            record = json.loads(candidate.read_text())
+            record = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         dpi = int((record.get("scan") or {}).get("resolution_dpi") or 0)
@@ -749,7 +749,7 @@ def best_pair(root: Path) -> Path | None:
 
 def _entry_channels(path: Path) -> int:
     try:
-        record = json.loads((path / "scan.json").read_text())
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
         return int((record.get("scan") or {}).get("channels") or 0)
     except Exception:                                    # noqa: BLE001
         return 0

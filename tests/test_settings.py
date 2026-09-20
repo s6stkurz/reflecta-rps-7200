@@ -27,13 +27,14 @@ def test_a_missing_file_reads_as_a_fresh_install(tmp_path):
 def test_rubbish_reads_as_a_fresh_install(tmp_path, rubbish):
     """A file edited by hand into nonsense must cost the settings, nothing more."""
     path = tmp_path / "gui.json"
-    path.write_text(rubbish)
+    path.write_text(rubbish, encoding="utf-8")
     assert settings.load(path)["controls"] == {}
 
 
 def test_a_section_of_the_wrong_type_is_dropped_not_kept(tmp_path):
     path = tmp_path / "gui.json"
-    path.write_text(json.dumps({"controls": "not a dict", "output": 17}))
+    path.write_text(json.dumps({"controls": "not a dict", "output": 17}),
+                    encoding="utf-8")
     values = settings.load(path)
     assert values["controls"] == {}
     assert values["output"] == ""
@@ -57,7 +58,8 @@ def test_a_key_the_window_no_longer_has_does_not_survive_for_ever(tmp_path):
     """Sections are filtered on load, so a control removed from the window does
     not leave its value in the file being read back at every launch."""
     path = tmp_path / "gui.json"
-    path.write_text(json.dumps({"controls": {"dpi": "600"}, "gone": {"x": 1}}))
+    path.write_text(json.dumps({"controls": {"dpi": "600"}, "gone": {"x": 1}}),
+                    encoding="utf-8")
     assert "gone" not in settings.load(path)
 
 

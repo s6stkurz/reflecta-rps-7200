@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Scan a whole roll or strip, unattended, filing every frame in the library.
 
-    python3 tools/scan_roll.py --dry-run --frames 6
-    python3 tools/scan_roll.py --dpi 1800 --ir --frames 6 \
+    uv run python tools/scan_roll.py --dry-run --frames 6
+    uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
         --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 
 The film is already at the first picture when this starts, so the first frame is
@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import tiff
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
     METER_MODES,
@@ -121,6 +122,7 @@ def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = build_parser()
     args = ap.parse_args()
     if args.ir and not supports_infrared(args.film):
@@ -154,7 +156,8 @@ def main() -> int:
 
     def checkpoint() -> None:
         """Rewritten after every frame: a crash must not lose the record."""
-        manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
+        manifest_path.write_text(json.dumps(manifest, indent=2, default=str),
+                                 encoding="utf-8")
 
     checkpoint()
     started = time.monotonic()

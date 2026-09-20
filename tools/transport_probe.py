@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure what the film transport actually does, before a roll depends on it.
 
-    python3 tools/transport_probe.py
+    uv run python tools/transport_probe.py
 
 Six USB captures of the vendor software contain exactly one film-advance
 command -- `SLIDE 04 01 00 01`, sent three times, plus `04 01 00 02` once for a
@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (
     COORD_PER_INCH,
     MM_PER_INCH,
@@ -61,6 +62,7 @@ def look(scanner: DirectScanner, dpi: int) -> dict:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -137,7 +139,8 @@ def main() -> int:
     )
 
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2))
+        Path(args.json).write_text(json.dumps(results, indent=2),
+                                   encoding="utf-8")
         print(f"\nwrote {args.json}")
     return 0
 

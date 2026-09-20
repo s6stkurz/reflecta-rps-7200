@@ -3,8 +3,8 @@
 ``RPS7200_NO_TIFFFILE=1`` makes ``import tifffile`` fail for the whole run, so
 the suite can be executed as it would be on a bare install::
 
-    python3 -m pytest tests/ -q                       # tifffile present
-    RPS7200_NO_TIFFFILE=1 python3 -m pytest tests/ -q # tifffile absent
+    uv run pytest tests/ -q                       # tifffile present
+    RPS7200_NO_TIFFFILE=1 uv run pytest tests/ -q # tifffile absent
 
 Both must pass. ``tests/test_tiff.py`` monkeypatches ``_has_tifffile`` per test,
 which is what makes the cross-implementation matrix possible, but a monkeypatch

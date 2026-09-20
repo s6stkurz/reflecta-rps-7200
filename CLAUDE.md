@@ -22,6 +22,24 @@ uv run pytest tests/test_shading.py::test_the_two_phases_are_separated -v
 
 All commands run through `uv run`; never invoke pytest/ruff/ty directly.
 
+**The same commands work on macOS, Linux and Windows.** Each recipe in the
+Makefile is a single call into `tasks.py`, which is where the bodies live --
+because GNU make on Windows hands recipes to `cmd.exe` unless a POSIX `sh`
+happens to be on PATH, and an inline `VAR=1 cmd` prefix or `rm -rf` is a plain
+error there. `python tasks.py test` also works directly, for a machine with no
+make; that is a fallback, not the documented path.
+
+On Windows, get the two tools first:
+
+```powershell
+pip install uv
+winget install ezwinports.make      # GNU Make 4.4.1, native, no MSYS
+```
+
+Then `uv sync --all-groups` as everywhere else. `python3` does not exist on
+Windows -- it is a Microsoft Store stub that exits 9009 -- which is why every
+example here says `uv run python`.
+
 `make format` reformats every file and is **not** part of `make all`. This source
 is hand-wrapped with aligned comment blocks; a wholesale reformat rewrites
 thousands of lines, buries the real change and conflicts with any parallel
@@ -108,10 +126,13 @@ legacy entries and is a dry run unless given `--write`.
 on, and debug mode is OFF by default. You must always turn it on. This is not
 optional and it is not a preference.**
 
-    RPS7200_DEBUG=1 python3 your_script.py        # the way to do it
+    RPS7200_DEBUG=1 uv run python your_script.py          # macOS, Linux
+    $env:RPS7200_DEBUG=1; uv run python your_script.py    # PowerShell
 
 or `DirectScanner(debug=True)` in code. Either works; the environment variable is
-better because a script inherits it without having to remember.
+better because a script inherits it without having to remember. Note the two
+shells: `VAR=1 cmd` is Bourne syntax and is a plain error in PowerShell, which
+is where the value silently would not reach the script.
 
 Why this rule exists, in one sentence: a week of probe scans left no library entries
 at all, because filing lived only in `tools/scan.py` and `tools/scan_roll.py` and

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Drive each command and record what it actually does.
 
-    python3 tools/verify_protocol.py 2          # sense, 0xE7, state -- no film
-    python3 tools/verify_protocol.py 1 3 4 5    # the rest -- needs film loaded
+    uv run python tools/verify_protocol.py 2          # sense, 0xE7, state -- no film
+    uv run python tools/verify_protocol.py 1 3 4 5    # the rest -- needs film loaded
 
 `docs/protocol.md` mixes three kinds of claim: counted in the captures, checked
 against Stefan's notes, and *inferred*. This settles the inferred ones against the
@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import tiff
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (
     DEPTH_8,
     FULL_FRAME,
@@ -572,6 +573,7 @@ NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9}
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("stages", nargs="+", type=int, choices=sorted(STAGES))
     ap.add_argument("--out", default="probe")
@@ -593,9 +595,9 @@ def main() -> int:
             results[f"stage{n}"] = STAGES[n](s)
 
     path = OUT / "results.json"
-    prev = json.loads(path.read_text()) if path.exists() else {}
+    prev = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     prev.update(results)
-    path.write_text(json.dumps(prev, indent=2))
+    path.write_text(json.dumps(prev, indent=2), encoding="utf-8")
     print(f"\nwritten to {path}")
     return 0
 

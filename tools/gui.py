@@ -39,6 +39,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import export, library, preview, settings, shortcuts, tiff  # noqa: E402
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
@@ -2359,7 +2360,7 @@ class ScannerGui:
                             "flipped": bool(a.flipped),
                             "reference_entry": str(a.reference_entry or "")}
                            for a in approved],
-            }, indent=2, default=str))
+            }, indent=2, default=str), encoding="utf-8")
         except Exception as exc:                          # noqa: BLE001
             # Broad on purpose. This file is a note about what was asked for;
             # the scan is the work. Losing the note must never cost the roll,
@@ -3956,8 +3957,10 @@ def read_survey(folder) -> dict:
     if not survey_path.exists() and not roll_path.exists():
         raise ValueError("no survey.json and no roll.json")
     manifest = json.loads(
-        (survey_path if survey_path.exists() else roll_path).read_text())
-    progress = json.loads(roll_path.read_text()) if roll_path.exists() else {}
+        (survey_path if survey_path.exists()
+         else roll_path).read_text(encoding="utf-8"))
+    progress = (json.loads(roll_path.read_text(encoding="utf-8"))
+                if roll_path.exists() else {})
     turn = int(manifest.get("rotation") or 0)
     mirrored = bool(manifest.get("flipped"))
 
@@ -4167,7 +4170,7 @@ def read_approved(folder):
     if not approved_path.exists():
         return offsets, rotations, flips, entries
     try:
-        records = json.loads(approved_path.read_text()).get("frames", [])
+        records = json.loads(approved_path.read_text(encoding="utf-8")).get("frames", [])
     except (OSError, ValueError):
         return offsets, rotations, flips, entries
     for record in records:
@@ -4211,7 +4214,7 @@ def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
         return out
     for record_path in root.glob("*/scan.json"):
         try:
-            record = json.loads(record_path.read_text())
+            record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         frame = str(((record.get("film") or {}).get("frame") or "")).strip()
@@ -4260,8 +4263,10 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         return None
     try:
         manifest = json.loads(
-            (survey_path if survey_path.exists() else roll_path).read_text())
-        progress = json.loads(roll_path.read_text()) if roll_path.exists() else {}
+            (survey_path if survey_path.exists()
+             else roll_path).read_text(encoding="utf-8"))
+        progress = (json.loads(roll_path.read_text(encoding="utf-8"))
+                    if roll_path.exists() else {})
     except (OSError, ValueError):
         return None
 
@@ -6357,6 +6362,7 @@ DEMO_ROOT = Path("demo")
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--demo", action="store_true",
                     help="drive the window from stored library entries, with "

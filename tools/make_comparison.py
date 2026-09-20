@@ -7,7 +7,7 @@
 
 Run after any change to the correction pipeline:
 
-    python3 tools/make_comparison.py [scan.tif] [flat.tif]
+    uv run python tools/make_comparison.py [scan.tif] [flat.tif]
 
 There is no vignette correction here and none should be added. The ~39% falloff
 across the frame is real but lives entirely in x, which shading already takes to
@@ -20,6 +20,7 @@ import numpy as np
 from PIL import Image
 
 from rps7200 import preview, tiff
+from rps7200.console import use_utf8_stdout
 from rps7200.direct import (
     destripe,
     find_column_defects,
@@ -89,6 +90,7 @@ def invert(image: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
+    use_utf8_stdout()
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     scan_path = args[0] if args else "scans/negatives/state_1800dpi.tif"
     flat_path = args[1] if len(args) > 1 else "scans/flat/flat_clearfilm_3600dpi.tif"
