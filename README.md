@@ -6,33 +6,33 @@ Console and Python scanning for the **Reflecta RPS 7200** film scanner, capturin
 The infrared plane is handed to you untouched rather than being spent internally on dust
 removal, so you can run your own IR-based cleanup.
 
+> **This is hobby reverse engineering, and it drives your hardware.** See
+> [Legal](#legal) before you point it at a scanner you care about.
+
 ## Why this exists instead of just calling `scanimage`
 
-The scanner works fine under SANE's `pieusb` backend, but three things stop the stock
+The scanner works under SANE's `pieusb` backend, but three things stop the stock
 command-line frontend from getting the data out.
 
 **1. `scanimage` cannot write the 4-channel RGBI frame.** In `pieusb.c`, RGBI mode sets
 `colors = 4` but reports the frame type as `SANE_FRAME_RGB` — the source comment reads
 `/* was: SANE_FRAME_RGBI */`. `scanimage` hardcodes 3 channels for that frame type, so it
 writes a header claiming 3 samples/pixel over a stream carrying 4. The result is sheared,
-with the IR smeared through the visible channels. (The backend declares a
-`write_tiff_rgbi_header` helper for exactly this problem and then never calls it.)
+with the IR smeared through the visible channels.
 
 **2. The device name changes on every open.** The backend resets the scanner during
 discovery, so it re-enumerates and its SANE name moves — `020:057`, `020:060`, `020:010`,
-`020:021`, … A name captured from one `scanimage -L` is already stale by the next command,
-which is why `scanimage -d pieusb:libusb:020:057` fails with "Invalid argument".
-Enumeration and open have to happen in the same process.
+… A name from one `scanimage -L` is already stale by the next command. Enumeration and
+open have to happen in the same process.
 
 **3. Prescan calibration lives on the open handle.** `sanei_pieusb_analyze_preview` stores
 the per-channel bounds on the scanner handle, and `calibration="from preview"` reads them
-back. Close the handle and the calibration is gone — so a shell loop cannot prescan and
+back. Close the handle and the calibration is gone, so a shell loop cannot prescan and
 then scan.
 
-This package does not use SANE at all. It drives the scanner directly over USB, the way
-the vendor software does, holds one session across prescan and scan, and writes the
-4-channel data itself. The three problems above are why: a SANE frontend cannot get this
-data out, and the backend cannot apply the shading correction either.
+This package does not use SANE at all. It drives the scanner directly over USB the way the
+vendor software does, holds one session across prescan and scan, and writes the 4-channel
+data itself.
 
 ## Install
 
@@ -40,28 +40,23 @@ data out, and the backend cannot apply the shading correction either.
 pip install -e .
 ```
 
-numpy is the only hard dependency; the GUI adds none, because Tk ships with
-Python and its `PhotoImage` reads the raw PPM bytes `rps7200.preview` produces. libusb is needed to talk to the scanner, and is loaded
-the first time something actually does — so decoding a stored scan, merging a bracket or
-writing a TIFF works on a machine with no scanner drivers at all. SANE is not required. `tifffile` is optional; it is used automatically when
-present, and the built-in TIFF reader/writer is complete on its own. The two are held to
-the same behaviour by `tests/test_tiff.py`, which runs every write/read pairing of them
-against each other. `make test-all` runs the suite both ways:
-
-```sh
-make test-all
-```
+numpy is the only hard dependency, plus a bundled libusb on Windows, where there is
+nowhere conventional for a system one to live. The GUI adds nothing, because Tk ships with
+Python and its `PhotoImage` reads the raw PPM bytes `rps7200.preview` produces. libusb is
+loaded the first time something actually talks to the device, so decoding a stored scan,
+merging a bracket or writing a TIFF works on a machine with no scanner drivers at all.
+`tifffile` is optional and used automatically when present; the built-in TIFF
+reader/writer is complete on its own.
 
 ## Supported platforms
 
 **macOS, Linux and Windows.** Everything that does not touch the device — decoding,
 correcting, the TIFF and DNG writers, the library, the window in `--demo` — works on all
-three with nothing installed but Python and numpy. Driving the scanner needs libusb, and
-on two of the three it needs one more thing.
+three with nothing but Python and numpy. Driving the scanner needs libusb, and on two of
+the three it needs one more thing.
 
-The development commands are the same everywhere: `make test`, `make run`, `make all`.
-Each Makefile recipe is one call into `tasks.py`, because GNU make on Windows uses
-`cmd.exe` unless a POSIX `sh` is on PATH.
+The development commands are the same everywhere. Each Makefile recipe is one call into
+`tasks.py`, because GNU make on Windows uses `cmd.exe` unless a POSIX `sh` is on PATH.
 
 ### macOS
 
@@ -79,76 +74,62 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 pip install uv && uv sync --all-groups
 ```
 
-The udev rule is what lets you open the scanner without being root. Unplug it and plug
-it back in afterwards. The device is vendor-specific (`bDeviceClass 0xff`), so the kernel
-binds no driver to it and nothing needs detaching — permissions are the whole problem.
+The udev rule is what lets you open the scanner without being root; replug it afterwards.
+The device is vendor-specific (`bDeviceClass 0xff`), so the kernel binds no driver and
+nothing needs detaching — permissions are the whole problem.
 
 ### Windows
 
 ```powershell
 pip install uv
-winget install ezwinports.make      # GNU Make 4.4.1, native, no MSYS needed
+winget install ezwinports.make      # GNU Make, native, no MSYS needed
 uv sync --all-groups
 ```
 
-**The scanner's driver has to be replaced, for now.** Windows binds its own
-`usbscan.sys` to it — via an INF from Pacific Image, the one CyberView installs — and
-libusb cannot open a device another driver holds. This is what every comparable project
-does; there is no way round it that has been made to work.
+**The scanner's driver has to be replaced, for now.** Windows binds its own `usbscan.sys`
+to it — via an INF from Pacific Image, the one CyberView installs — and libusb cannot open
+a device another driver holds. Every comparable project does the same thing; there is no
+way round it that has been made to work.
 
-> **Read this before you start.** Replacing the driver **stops CyberView and VueScan
-> seeing the scanner**, because they talk to it through the driver you are replacing.
-> It is reversible, but not by itself — see *Putting it back* below.
+> **Read this first.** Replacing the driver **stops CyberView and VueScan seeing the
+> scanner**, because they talk to it through the driver you are replacing. It is
+> reversible, but not by itself — see *Putting it back*.
 
 1. **Plug the scanner in and switch it on first.** Zadig only lists devices that are
-   enumerated; a scanner that is off simply will not be there to pick.
-2. Get [Zadig](https://zadig.akeo.ie/) — one `.exe`, nothing to install — and run it
-   **as administrator**.
+   enumerated.
+2. Get [Zadig](https://zadig.akeo.ie/) — one `.exe` — and run it **as administrator**.
 3. **Options → List All Devices.** This is the step everyone misses: by default Zadig
-   hides devices that already have a driver, which is exactly what this one is, so the
-   dropdown comes up without it.
-4. Pick **Multiple Frames Film Scanner**. Check the line underneath reads `USB ID
-   05E3 0144` — that is the scanner, and nothing else on your machine should match it.
+   hides devices that already have a driver, which is exactly what this one is.
+4. Pick **Multiple Frames Film Scanner**, and check the line underneath reads `USB ID
+   05E3 0144`.
 5. Set the target driver to **WinUSB** (libusbK works too), then **Replace Driver**.
 
-Then check it worked — one command, which sends nothing but INQUIRY and READ STATE and
-moves nothing:
+Then check it worked. This sends nothing but INQUIRY and READ STATE and moves nothing:
 
 ```powershell
 uv run python tools/check_scanner.py
 ```
 
-It climbs a ladder and stops at the first thing that fails, saying what the failure
-means. Before Zadig it stops at rung 3 with exactly the message the driver would give
-you anyway:
-
-```
-the scanner (0x05e3:0x0144) is on the USB bus but could not be opened. Windows binds
-its own Image/WIA driver to it, which libusb cannot go through. Replace it with WinUSB
-or libusbK using Zadig -- see the README. Note this also stops CyberView and VueScan
-seeing the scanner until the driver is put back.
-```
-
-After it, the same command should reach rung 5 and report the model, firmware and CCD
-size. `uv run pytest tests/ -m hardware` asserts the same things, if you would rather
-have it as a test run.
+It climbs a ladder, stops at the first rung that fails, and prints what the failure means
+— including, before Zadig, the whole paragraph about replacing the driver. After it, the
+same command reaches rung 5 and reports model, firmware and CCD size. `uv run pytest
+tests/ -m hardware` asserts the same nine things as a test run.
 
 #### Putting it back
 
-Zadig does not have an undo. In **Device Manager**, find the scanner — after the swap it
-is under *Universal Serial Bus devices*, **not** *Imaging devices*, which is where it was
-and where people go looking. Then *Uninstall device*, tick **Delete the driver software
-for this device**, and unplug and replug the scanner. Windows re-binds the original
-Pacific Image driver and CyberView sees it again.
+Zadig has no undo. In **Device Manager** the scanner is under *Universal Serial Bus
+devices* after the swap, **not** *Imaging devices*, which is where it was and where people
+look. *Uninstall device*, tick **Delete the driver software for this device**, then replug.
+Windows re-binds the original Pacific Image driver and CyberView sees it again.
 
 ## Use
 
 One calibration per power-on, then scan. **Load the film first**, wait for the lamp
-(about 80 s), then calibrate and scan without unloading it -- CyberView does everything
+(about 80 s), then calibrate and scan without unloading it — CyberView does everything
 with the film in the transport, and calibrating an empty one is a state the vendor
-software never puts the scanner in. The calibration still measures the sensor rather
-than the film: its frame is `(0, 3431, 10343, 6888)`, the lower part of the transport,
-which the film does not cover.
+software never creates. The calibration still measures the sensor rather than the film:
+its frame is `(0, 3431, 10343, 6888)`, the lower part of the transport, which the film
+does not cover.
 
 ```sh
 # calibrate, scan, correct, and file the result with its raw bytes
@@ -159,36 +140,39 @@ uv run python tools/scan.py --dpi 600                  # faster, RGB only
 uv run python tools/scan.py --dpi 1800 --no-shading    # raw pixels, for comparison
 uv run python tools/scan.py --dpi 1800 --reuse         # reuse the cached reference
 uv run python tools/scan.py --film positive            # a slide: keeps its colour cast
-uv run python tools/scan.py --film bw                  # one channel out, infrared refused
+uv run python tools/scan.py --dpi 1800 --ir --no-fast-ir   # the old untied IR pass
 ```
+
+`--fast-ir` is the default and is the largest single cost switch in the tool: it ties the
+infrared plane to the scan resolution instead of paying a flat floor. See
+[Resolution](#resolution).
 
 ### What `--film` changes
 
-It is a metering and delivery decision, not a mode the scanner has. Every pass this
-driver takes is RGB or RGBI; there is no black and white mode worth using, and CyberView
-does not use one either.
+It is a metering and delivery decision, not a mode the scanner has. Every pass is RGB or
+RGBI; there is no hardware black and white mode worth using, and CyberView does not use
+one either.
 
 | `--film` | metering | infrared | delivered |
 |---|---|---|---|
 | `negative` | per channel — takes the orange mask off before the ADC | allowed | 3 or 4 channels |
-| `bw` | per channel — silver halide has no colour record to protect | **refused** | one channel |
+| `bw` | per channel — silver halide has no colour record to protect | **refused** | one channel, the average of R, G and B (`--mono G` for a single one) |
 | `positive` | locked — the cast *is* the picture | allowed | 3 or 4 channels |
-| `kodachrome` | locked | **refused** | 3 or 4 channels |
+| `kodachrome` | locked | **refused** | 3 channels |
 
 **Infrared is refused on black and white and Kodachrome** rather than warned about.
-Silver grain blocks infrared exactly as dust does, and Kodachrome's cyan layer absorbs
-it — so the plane comes back holding the photograph instead of what is lying on top of
-it, measured here at +0.97 correlation with green, and the pass still costs its ~212 s
-floor. Chromogenic black and white (XP2, BW400CN, anything C-41) is the exception: it is
-dye-based and cleans properly, so scan it as `--film negative`.
+Silver grain blocks infrared exactly as dust does and Kodachrome's cyan layer absorbs it,
+so the plane comes back holding the photograph instead of what is lying on top of it —
+measured at +0.97 correlation with green. Chromogenic black and white (XP2, BW400CN,
+anything C-41) is dye-based and cleans properly, so scan it as `--film negative`.
 
-**Locking matters, and black and white is not locked.** A slide and a Kodachrome keep
-their balance because the cast is the picture. Silver halide has no dye layers, so what
-looks like a cast is the film base and the sensor's own response — holding the channels
-together to preserve it cost green and blue about half a stop each, measured on repeat
-pairs at 900 dpi. This diverges from `nkscan`, which locks monochrome; that is right for
-a Coolscan, whose exposure register is 26 bits wide with no channel that runs out, and
-wrong here, where red's ceiling is a rail the lock propagates to the other two.
+**Black and white is deliberately not locked**, unlike a slide or a Kodachrome whose cast
+*is* the picture. Silver halide has no dye layers, so what looks like a cast is the film
+base and the sensor's own response; holding the channels together to preserve it cost
+green and blue about half a stop each on repeat pairs at 900 dpi. This diverges from
+`nkscan`, which locks monochrome — right for a Coolscan, whose exposure register is 26
+bits wide with no channel that runs out, and wrong here, where red's ceiling is a rail the
+lock propagates to the other two.
 
 A whole strip or roll, unattended:
 
@@ -206,14 +190,18 @@ a TIFF, and without them a scan can never be re-decoded or re-corrected:
 uv run python tools/library.py list          # what is stored
 uv run python tools/library.py verify        # checksums and completeness
 uv run python tools/library.py reconstruct   # re-decode every scan with current code
-uv run python tools/make_comparison.py       # raw / corrected / inverted, for eyeballing
+uv run python tools/library.py duplicates    # what is redundant, and why
+
+uv run python tools/make_comparison.py scan.tif flat.tif   # raw / corrected / inverted
 ```
+
+`make_comparison.py` needs Pillow (`uv sync --extra jpeg`, or the dev group) and takes its
+two files as arguments.
 
 From Python:
 
 ```python
 from rps7200.direct import DirectScanner
-from rps7200.shading import apply_shading
 
 with DirectScanner() as s:
     s.calibrate_shading()                        # once per power-on
@@ -221,245 +209,144 @@ with DirectScanner() as s:
     rgb, ir = image[..., :3], image[..., 3]      # (H,W,3) and (H,W), uint16
 ```
 
-### A window instead of a command line
+## The window
 
 ```sh
 make run                        # the scanner
 make run-demo                   # no scanner: stored library entries drive the window
 ```
 
-The demo decodes each entry's **raw bytes**, not the TIFF beside them -- so it runs the
-same deinterleave and the same shading correction a real pass runs, and files entries
-that `library.py reconstruct` reads back as identical. It picks its picture by film type,
-answers at the resolution asked for, and refuses what the device refuses. Where it cannot
-honour a request with the bytes in hand -- asking a four-channel entry for RGB -- it drops
-the bytes and says so, rather than filing raw that decodes to a different photograph.
+The demo decodes each entry's **raw bytes**, not the TIFF beside them, so it runs the same
+deinterleave and the same shading correction a real pass runs. It picks its picture by
+film type, answers at the resolution asked for, refuses what the device refuses, and where
+it cannot honour a request with the bytes in hand it drops them and says so rather than
+filing raw that decodes to a different photograph. Its output goes under `demo/`.
 
-Prescan, scan, walk a roll, and look at what came off -- the filmstrip along the
-bottom holds every pass of the session, prescans included, and clicking one puts
-it back on the canvas. The channel selector switches between RGB and R, G, B or
-**infrared alone**, which is the one plane no ordinary viewer will show you.
+Prescan, scan, walk a roll, and look at what came off. The filmstrip along the bottom
+holds every pass of the session; the channel selector switches between RGB and R, G, B or
+**infrared alone**, which is the one plane no ordinary viewer will show you. The preview
+is inverted by default so a negative can be judged by eye, and that inversion is display
+only — what reaches `library/` is the raw negative. Inverting for real is NegPy's job.
 
-The preview is inverted by default so a negative can be judged by eye, and that
-inversion is display only: what reaches `library/` is the raw negative with its
-raw bytes, exactly as `tools/scan.py` files it. Inverting for real is NegPy's
-job.
+Opening the window claims the device and asks it who it is, and nothing else: no
+calibration, no lamp, no transport until a button is pressed.
 
-The film selector drives what is beside it. Set it to black and white and the
-infrared box clears and greys out, "deliver one channel" ticks, and the view
-switches to that channel -- which `preview.render` draws grey rather than
-tinted, so the prescan and the scan both come up as photographs rather than as a
-green separation. Set it back and the box returns, unchecked: silently re-arming
-a 212-second pass is not something a settings change should do.
+**The contact sheet.** A dry run walks the strip prescanning and advancing only — about 20
+seconds a frame — and opens every picture it found in a grid with its frame number and its
+measured contrast. (A position you set by hand replaces the contrast with the offset in
+millimetres; a frame already scanned reads *scanned*.) Tick what is worth having and only
+those frames are scanned: the film rewinds to where the walk started, and an unticked
+frame costs its ~7 s advance instead of the minutes a scan would. Seventeen frames at 3600
+dpi RGBI is about an hour and a half, and a strip with four keepers should not cost the
+same as one with seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame,
+so a strip can be looked at again tomorrow instead of walked again.
 
-Opening the window claims the device and asks it who it is, and nothing else --
-no calibration, no lamp, no transport until a button is pressed.
+**A roll that died can be finished, however much later.** *Rolls …* is a table of every
+roll on disk — Roll, Frames, Resolution, Film, Created, Last opened, Size — sortable by
+any column, with a search box and an "only unfinished" tick. Unfinished rolls are marked
+in amber, and so is one whose library entries have gone, because that is the one that
+cannot be exported. A selection can be **exported** (every frame re-corrected from the
+library at full resolution with today's correction code, not a copy of what was written at
+the time), **duplicated** to the next free `-2`, **renamed**, revealed in the file manager,
+or **deleted**. Delete removes the roll folder and never touches `library/`: the raw bytes
+stay and the frames can be rebuilt, and the only thing that goes for good is
+`approved.json`. It refuses while the scanner is working or while that roll is open.
 
-**Stopping.** A pass in flight cannot be interrupted safely: infrared holds the
-device for its ~212 s floor however few lines were asked for, and an abandoned
-read is what costs a power cycle. So *Stop* is cooperative -- it ends a roll
-after the frame in flight, and a single scan after the pass finishes -- and says
-which it will do. *Force abort* closes the transport out from under the read,
-which is the only thing that actually unblocks it; the frame is lost and the
-scanner will almost certainly need a power cycle at its own switch. It asks you
-to type ABORT first.
+Opening a roll with frames left brings back its contact sheet and approvals, marks what is
+already scanned, and restores **the roll's own settings** from its manifest rather than the
+window's: resolution and prescan resolution, film, infrared and infrared-at-scan-
+resolution, metering, the mono channel, and the frame count and start-at. A year later the
+window has moved on to other film and the manifest still describes that roll. It
+calibrates again first — a reference describes the sensor at the exposure and gain that
+measured it, and months on neither is the same — though a saved one can be loaded instead.
 
-#### Trying the contact sheet without a scanner
+**Hover the picture for the numbers under the pointer**, every channel's value including
+infrared. The histogram answers "is anything against the ceiling"; this answers "what is
+*this*". It says `(approx)` where it is reading a reduced copy, because a working copy's
+pixels are resampled averages.
 
-`make run-demo` walks a strip of real stored pictures, so the whole
-survey-and-pick sequence can be exercised and checked with nothing plugged in:
+**The histogram is always on screen**, top right, showing where values actually sit,
+unstretched, with how much of each channel is at nothing, at full scale and near it. The
+preview is stretched so a negative can be judged by eye, and a stretch puts the brightest
+pixel at white whether it was against the ceiling or merely near it — on this scanner blue
+reaches the rail first and looks no different for it. Infrared is not in it: it is a dust
+measurement rather than an exposure.
 
-1. **Roll** panel: set *frames* to 6 and tick **dry run**.
-2. Press **Scan roll**. It walks six frames -- a different stored picture each
-   time -- and the contact sheet opens by itself when it reaches the end.
-3. Every cell shows one frame with its number, its contrast and its offset in
-   millimetres. Those numbers come from the real `registration()` and
-   `frame_contrast()` measuring the real pictures, so they differ frame to
-   frame; if every caption reads the same, something is wrong.
-4. Click pictures to untick them, or use **All** / **None**. The footer counts
-   what is chosen and estimates what scanning it would cost.
-5. **Scan chosen frames** asks to rewind five frames and scan the ticked ones.
-   Accept it and watch the log: the frames nobody ticked say *"not chosen,
-   advancing past it"* and are never prescanned.
-6. Close the sheet and press **Contact sheet ...** to get it back.
+**Every panel says what you have changed, and puts it back.** A panel header reads `Scan ·
+3` with a `↺` beside it when three of its controls differ from what the window shipped
+with, and both appear only then. The arrow resets that panel, right-clicking a single
+control offers `Reset to '1800'` for just that one, and **Restore settings …** puts
+everything back. Your shortcuts and presets are left alone. The defaults are *captured*
+when the window finishes building itself and before any settings file is read, rather than
+written down a second time, because a table of default values would disagree with the
+controls the first time either moved.
 
-What is worth checking, because these are the ways it could quietly be wrong:
-the cells are six *different* pictures; the rewind in the dialog is one less
-than the number walked; and only the ticked numbers appear as `frameNN.tif`
-under `rolls/<name>/`, while `survey.json` there still lists all six.
+**A control that cannot apply greys out with the reason rather than disappearing.** JPEG
+quality stays readable while TIFF is selected; the infrared-at-scan-resolution box stays
+readable on an RGB pass, because it is a setting that is still *set* and the driver gates
+it. A setting you cannot see the state of is worse than a dead control you can.
 
-**The contact sheet.** A dry run walks the strip prescanning and advancing only
--- about 20 seconds a frame -- and opens every picture it found in a grid, with
-its number, its contrast and how far off centre it sits. Tick what is worth
-having and only those frames are scanned: the film is rewound to where the walk
-started, and a frame nobody ticked costs its ~7 s advance instead of the three
-to six minutes a scan of it would. Seventeen frames at 3600 dpi RGBI is three
-hours, and a strip with four keepers on it should not cost the same as one with
-seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame beside
-it, so a strip can be looked at again tomorrow instead of walked again.
+**Everything has a key, and the keys are yours.** ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R
+turn the picture, ⌘M flips it, ⌘0 straightens it, ⌘F fits it, ⌘1 shows one scanned pixel
+per screen pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves and ⌘⇧S saves all. The
+arrows are bare — they walk the filmstrip, move between contact-sheet frames and step the
+film in the position window, where Space ticks a frame and Return keeps it and moves on.
+Every right-click menu shows its key as it is *now* rather than as it shipped, and
+**Shortcuts …** lists them all: click a key to change it, × to clear, ↺ to restore. Only
+what you changed is written to `gui-settings.json`, so a default improved later still
+reaches you.
 
-**A roll that died can be finished, however much later.** *Rolls ...* is a
-table of every roll on disk -- **Roll, Frames, Resolution, Film, Created, Last
-opened, Size** -- sorted by any column and filtered by a search box or an "only
-unfinished" tick. Unfinished rolls are marked in amber, and a roll whose library
-entries have gone is marked too, because that is the one that cannot be
-exported. Everything in it comes from two small JSON files and `stat`: a roll
-holds 38 frames at 142 MB and a list that opened them would be unusable.
+**No key submits without asking.** Prescan (⌘Return), scan (⌘⇧Return) and a whole roll
+(⌘B) all have keys, and every one of them confirms first and says what the run will cost,
+because a slip on a keyboard is not a decision to spend minutes of hardware. Moving film
+and calibrating have no key at all: there is no undo for a moved negative. Escape stops
+after the current pass.
 
-From there a selection can be **exported** -- every frame re-corrected from the
-library at full resolution with today's correction code, not a copy of what the
-roll wrote at the time -- **duplicated** to the next free `-2` so a strip can be
-rescanned without losing the first scan *or* its approvals, **renamed**, shown in
-the file manager, or **deleted**. Delete removes the roll folder and never
-touches `library/`: the raw bytes stay and the frames can be rebuilt from them,
-and the only thing that goes for good is `approved.json` -- the positions and
-turns set by hand, which is what the question says. It refuses while the scanner
-is working or while that roll is the one open in the window.
+**Stopping.** A pass in flight cannot be interrupted safely, and an abandoned read is what
+costs a power cycle. *Stop* is cooperative — it ends a roll after the frame in flight and
+a single scan after the pass finishes — and says which it will do. *Force abort* closes
+the transport out from under the read, which is the only thing that actually unblocks it;
+the frame is lost and the scanner will almost certainly need a power cycle at its own
+switch. It asks you to type ABORT first.
 
-Opening one with frames left brings back its contact sheet with the
-approvals, marks what is already scanned, ticks what is not, and puts **its own
-settings** back: resolution, film, infrared, metering, and the exposure, gain
-and offset the scanner was asked for. Those come from the roll's own manifest
-rather than from the window's settings, which is the whole point: a year later
-the window has moved on to other film and the manifest still describes that
-roll. Then *Scan chosen frames* rewinds and advances to each remaining frame
-itself. It calibrates again first -- the right default rather than a limit: a
-reference describes the sensor at the exposure and gain that measured it, and
-months on neither is the same. A saved one can still be loaded instead, with
-Calibrate set to "reuse".
+**Right-click arranges a picture wherever it is shown**, and **the arrangement belongs to
+the photograph, not to the window**: turn a frame in the contact sheet and the preview
+behind it turns too, and a scan comes back the way its prescan was left however many other
+pictures were arranged in between. Quarter turns and a left-right flip, kept per frame, so
+a portrait among landscapes comes out right; the turn reaches the files you get and never
+the library entry, whose pixels have to keep matching the raw bytes beside them. Turns
+survive closing the window, in `approved.json`.
 
-**Hover the picture for the numbers under the pointer** -- the position in the
-scan and every channel's value, the infrared plane included. The histogram
-answers "is anything against the ceiling"; this answers "what is *this*", which
-is the question once one highlight looks suspect. It reads the scan's own pixels
-where they are loaded and says `(approx)` where it is reading the reduced copy,
-because a working copy's pixels are resampled averages and quietly offering them
-as the scan's values would be worse than nothing.
+**A pass that comes back the wrong way up is turned to match its prescan.** The scanner
+does this with nothing to say it has — `MODE SELECT` byte 14 bit 0 skips the re-home for
+bidirectional speed, and a pass following another bit-0 pass reads reversed with no status
+bit and no sense condition. The only evidence is that the picture does not match the
+framing pass of the same frame, so that is what it is judged against. It refuses far more
+readily than it corrects: being wrong stands a photograph on its head, so a frame with
+nothing to correlate is left exactly as it came.
 
-**Save all passes ...** writes every pass of the session into one folder in one
-go, re-corrected from the library at full resolution, on a thread so the window
-stays usable. *Save as ...* is one dialog per pass, which is right for one and
-is thirty-eight of them after a roll.
+The resolution box offers 300, 600, 900, 1200, 1800, 3600 and 7200, and accepts any whole
+number from 25 to 7200 typed in; the device refuses what it dislikes with sense
+`0x26/0x82` before a byte of image data moves. **Bracketing is absent from the window**
+deliberately — see `docs/multi-exposure-plan.md`, which measured it and found it does not
+pay — though `tools/scan.py` still has `--bracket` and `--stops` behind it.
 
-**The histogram is always on screen**, in the top right corner of the picture:
-where the values actually sit, unstretched, with how much of each channel is at
-nothing, at full scale and near it. The preview is stretched so a negative can
-be judged by eye, and a stretch puts the brightest pixel at white whether it was
-against the ceiling or merely near it -- on this scanner blue reaches the rail
-first and looks no different for it. It follows whatever is on screen and
-re-reads itself on the scan's own pixels when those arrive, because a reduced
-copy understates how much is at the rail. Infrared is not in it: it is a dust
-measurement rather than an exposure, and on traditional black and white it
-merely traces green.
-
-**Every panel says what you have changed, and puts it back.** A panel header
-reads `Scan · 3` with a `↺` beside it when three of its controls differ from
-what the window shipped with, and both appear only then -- a reset button that is
-always there is one more thing to read past. The arrow resets that panel;
-right-clicking any single control offers `Reset to '1800'` for just that one; and
-**Restore settings ...** in the header puts everything back. Your keyboard
-shortcuts and your presets are left alone, because the shortcuts have their own
-restore and the presets are things you made.
-
-The defaults are *captured* the moment the window finishes building itself and
-before any settings file is read, rather than written down a second time -- a
-table of default values would disagree with the controls the first time either
-moved, and the disagreement would show up as a reset that quietly changed a
-setting.
-
-**A control that cannot apply greys out with the reason rather than
-disappearing.** JPEG quality is still readable while TIFF is selected, and the
-infrared-at-scan-resolution box is still readable on an RGB pass -- it stays
-ticked, and the driver gates it, so it is a setting that is still *set*. A
-setting you cannot see the state of is worse than a dead control you can.
-
-**Everything has a key, and the keys are yours.** They are ordinary shortcuts
--- ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R turn the picture, ⌘M flips it, ⌘0
-straightens it, ⌘F fits it and ⌘1 shows it at one scanned pixel per screen
-pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves and ⌘⇧S saves all.
-⌘Return starts a prescan and ⌘⇧Return a scan -- **those two ask first**, and
-say what the run will cost, because a slip on a keyboard is not a decision to
-spend minutes of hardware where reaching for a button is. Moving film and
-calibrating have no key at all: there is no undo for a moved negative and a
-confirmation is not enough where that is what is being risked. Because they carry a
-modifier they work wherever the focus is, including in the middle of typing a
-subject line. The arrows are bare, because an arrow is already an arrow: they
-walk the filmstrip, move between frames in the contact sheet, and step the film
-in the position window. There Space ticks a frame and Return keeps it and goes
-to the next, which is the whole job that window exists for, done without
-reaching for the mouse. One press moves the frame to the next position the
-transport can actually reach -- 0.27 mm off centre, 0.11 mm everywhere above
-that -- and the **step** box beside the arrows takes a coarser one when you
-want to cross the aperture rather than land on it. Every right-click menu carries its
-key beside the item, which is where anybody actually finds out these exist, and
-it shows the key as it is now rather than as it shipped. **Shortcuts ...** in
-the top bar lists every one of them: click a key to change it, × to clear it, ↺
-to put it back, and Restore all defaults at the foot. Only what you changed is written to `gui-settings.json`, so a default
-improved later still reaches you.
-
-**No shortcut touches the scanner.** Nothing scans, calibrates or moves film
-from the keyboard -- those cost minutes of the hardware or move your negative,
-they submit with no confirmation, and a slip on the keyboard is not a decision
-to do either. Escape stops after the current pass, which is the one that is
-always safe.
-
-**Right-click arranges a picture, wherever it is shown** -- the big preview,
-the filmstrip, or a cell of the contact sheet -- and a frame is scanned the way
-it was left. **The arrangement belongs to the photograph, not to the window**:
-turn a frame in the contact sheet and the preview behind it turns too, and the
-scan of a prescan comes back the way that prescan was left however many other
-pictures were arranged differently in between.
-
-**A pass that comes back the wrong way up is turned to match its prescan.** The
-scanner does this with nothing to say it has -- `MODE SELECT` byte 14 bit 0
-skips the re-home for bidirectional speed, and a pass following another bit-0
-pass reads reversed with no status bit and no sense condition. The only
-evidence is that the picture does not match the framing pass of the same frame,
-so that is what it is judged against, and the correction reaches the delivered
-file as well as the screen. It refuses far more readily than it corrects: being
-wrong stands a photograph on its head, so a frame with nothing to correlate is
-left exactly as it came. Quarter turns and a left-right flip: a strip loaded the other way
-up comes off this scanner reading backwards, and no amount of turning fixes
-that. The sheet keeps both per frame, so a portrait among landscapes comes out
-right; "rotate all" and "flip all" agree the whole strip and set what everything
-scanned afterwards follows. The turn reaches the files you get -- the output
-folder's copy and the roll's own `frameNN.tif` -- and never the library entry,
-whose pixels have to keep matching the raw bytes filed beside them. Turns
-survive closing the window, in `approved.json` beside the positions.
-
-The options are the ones the driver implements: resolution, infrared, film type,
-exposure (metered or by hand), shading (measure or reuse), and for a roll the
-frame count, a start-at for resuming, the metering mode and a dry run.
-Bracketing is deliberately absent -- see `docs/multi-exposure-plan.md`, which
-measured it and found it does not pay.
-
-The resolutions on the menu are the ones this scanner has been driven at --
-300, 600, 900, 1800, 3600 -- plus the 7200 dpi it reports as its optical
-maximum. The box is editable and there is no client-side validation, so anything
-else can be typed: it goes into MODE SELECT and the device refuses what it
-dislikes with sense `0x26/0x82` before a byte of image data moves.
-
-**It remembers the setup.** Resolution, infrared, film, exposure, metering,
-where the files go, the window size and the pane widths all come back next
-launch, from `gui-settings.json` beside the library (`RPS7200_SETTINGS` moves
-it, `--settings` overrides it). Scan settings can be saved as named presets.
-Losing that file costs a few seconds of resetting controls and nothing else: a
-missing or corrupt one opens the window on its defaults rather than not opening
-it.
-
-What is deliberately *not* remembered is the roll name, frame, subject and
-notes. Those describe one shot, and a stale value would file today's scan under
+**It remembers the setup**: resolution, infrared, film, exposure, metering, where files
+go, the window size and the pane widths, from `gui-settings.json` beside the library
+(`RPS7200_SETTINGS` moves it, `--settings` overrides it). Scan settings can be saved as
+named presets. A missing or corrupt file opens the window on its defaults rather than not
+opening it. What is deliberately *not* remembered is the roll name, frame, subject and
+notes: those describe one shot, and a stale value would file today's scan under
 yesterday's name.
 
 **Files are named by roll and frame**, because NegPy reads them next:
 
     2026-09-09-gold200_frame03_3600dpi_ir.tif
 
-in whichever folder the window is pointed at, prescans in a `prescans/`
-subdirectory beside them. A frame rescanned after a failure gets a suffix rather
-than overwriting the first attempt -- the better of the two is not always the
-second. The library entry keeps its own timestamped id, which is what makes it
-findable years later.
+with prescans in a `prescans/` subdirectory. A frame rescanned after a failure gets a
+suffix rather than overwriting the first attempt — the better of the two is not always the
+second. The library entry keeps its own timestamped id, which is what makes it findable
+years later.
 
 ## How scans are corrected
 
@@ -469,357 +356,170 @@ applying it is the host's job. Run the calibration and discard the result — as
 did for a long time — and nothing changes in the image, which reads like a broken
 calibration rather than a missing step.
 
-The pass returns two phases per channel, unlit then lit: a dark reference averaging ~170
-counts and a light reference averaging ~47,000. Correction is one division per column:
+The reference is two-point per column: a dark level with the lamp off and a light level
+with it on, from which the host builds a per-column gain and offset. Applying it took the
+worst column defect from 13.01% to 1.44%. Blue has no fixed column pattern to remove.
+`docs/shading-calibration-plan.md` has the derivation and the numbers.
 
-```
-value = (raw - dark[c][j]) * (mean_light[c] - mean_dark[c]) / (light[c][j] - dark[c][j])
-```
+**The library holds raw pixels; everything a person sees is corrected.** `scan.tif` in an
+entry is the decode alone with `shading.npz` beside it, and `library.corrected(entry)` is
+what computes the usable image — with *today's* correction code rather than whatever ran
+that day. A corrected file cannot be un-corrected, so storing one would foreclose every
+later improvement on every scan ever taken.
 
-`j` is not the output column. The reference spans the whole CCD including pixels a given
-pass never reads, so the **CCD mask** — read fresh on every pass — maps output columns to
-reference columns. At 600 dpi it marks 860 of 5172 pixels used, starting at pixel 5; at
-300 dpi, 428 starting at pixel 11. That per-pass mapping is what keeps the correction
-aligned at any resolution.
-
-Measured on a real frame at 1800 dpi, as how well the top half of the frame predicts the
-bottom — which separates a reproducible sensor pattern from picture content:
-
-| | raw | corrected |
-|---|---|---|
-| red | 0.897 | 0.265 |
-| green | 0.782 | 0.242 |
-| infrared | — | worst column defect 4.67% → 0.89% |
-
-Blue does not improve, and should not: its raw figure is 0.153, so it has no fixed pattern
-to remove. Blue carries the least signal on this scanner, so its column variation is noise.
-
-The reference belongs to the power-on that measured it. `calibrate_shading()` is therefore
-run once per session, exactly as the vendor software does at power-on.
+There is **no vignette and no vignette correction**, which was measured rather than
+assumed: the ~39% falloff across the frame lives entirely in x, where shading already
+takes it to 1.4%, and along y it is 1.1% *before* correction. An optic falls off in both
+directions; this falls off in neither. See `docs/vignette-plan.md`.
 
 ## Exposure
 
-`--auto-exposure` probes at 300 dpi and aims each channel's 99.5th percentile at
-**0.80** of full scale, measured **inside the film** rather than across the whole
-transport window. The probe is always RGB, in two rounds, plus one further round
-only if a channel came back clipped — there the correction is a retreat rather than a
-measurement, and everything else is settled in one proportional step because the sensor
-is linear (r² = 0.9999 over a 4× range).
-
-Three things about it are worth knowing before changing anything:
+`--auto-exposure` probes at 300 dpi and aims each channel's 99.5th percentile at **0.80**
+of full scale, measured **inside the film** rather than across the whole transport window.
+The probe is always RGB, in two rounds, plus one further round only if a channel came back
+clipped — there the correction is a retreat rather than a measurement.
 
 - **Exposure is a 16-bit timer that wraps.** Past 65535 a pass comes back *darker*, not
   brighter. `READ GAIN/OFFSET` hands back a fixed reference — `9604, 6506, 6506, 7745` —
   rather than what is in force, so every scan is `base × scale` and exposure cannot
-  compound. Red's base is the highest, so its ceiling is ×6.82 where green and blue get
-  ×10.07, and red is the channel that runs out first.
+  compound. Red's base is highest, so its ceiling is ×6.82 where green and blue get
+  ×10.07, and red runs out first.
 - **The band above the target is tighter than the band below it.** 0.08 under, 0.02 over.
   Landing under costs a little noise; landing over clips, and nothing downstream undoes
-  that. When the target moved from 0.70 to 0.80 with a symmetric band, the top of the
-  acceptance window went to 0.88 and a frame duly landed at 87% with samples at the rail.
-- **Blue comes back several times brighter in an RGBI pass than in the RGB probe**, so
-  its target is divided before an infrared scan. How much depends on the film —
-  4.98–5.02 on colour negative, ~9.6 on black and white, each from a matched pair minutes
-  apart with red and green confirming the mode was the only variable. One constant for
-  every film put 34% of a B&W scan's blue channel at the rail.
+  that. With a symmetric band the top of the window went to 0.88 and a frame duly landed
+  at 87% with samples at the rail.
+- **Blue comes back several times brighter in an RGBI pass than in the RGB probe**, so its
+  target is divided before an infrared scan: by **5.2** on colour negative, where the
+  measurement is 4.98–5.02, and by **11.0** on anything unmeasured, where black and white
+  measures ~9.6. Every divisor sits above its measurement on purpose, because too low
+  clips blue — one constant for every film put 34% of a B&W scan's blue channel at the
+  rail.
+- **Metering looks inside the film, and finds it once.** It keeps 81% of the pass of
+  whatever the film detector returned. The empty aperture beside a strip is far brighter
+  than any part of a negative — 143/153/153 against the film's 34/15/7 on a C-41 prescan —
+  so metering the whole window lets however much aperture is in view set the exposure: it
+  read the percentile 5.9–11.1% high and the scan came out 5.6–10.0% short, silently and
+  differently per frame. The film is located on the first probe *while it is still dark*,
+  because metering's job is to brighten the film until that contrast is gone.
 
-- **Metering looks inside the film, and finds it once.** It keeps 90% of the width and
-  90% of the height — **81% of the pass** — of whatever the film detector returned, which
-  is the whole window when no aperture is in view. The empty aperture beside a
-  strip is far brighter than any part of a negative -- 143/153/153 against the film's
-  34/15/7 on a C-41 prescan -- so metering the whole window lets however much aperture is
-  in view set the exposure. Measured on real prescans it read the percentile 5.9-11.1%
-  high, and the scan came out that much short, silently and differently for each frame.
-  The film is located on the first probe *while it is still dark*: the detector needs the
-  aperture to be twice the median, and metering's job is to brighten the film until it is
-  nearly as bright as the aperture, so by the round that settles the exposure that
-  contrast is gone.
-
-What the probe measured is filed with the scan, so the numbers above stay checkable from
-ordinary work rather than needing a special run.
+What the probe measured is filed with the scan, so these numbers stay checkable from
+ordinary work. Fifteen frames of colour negative were walked that way:
+metering landed in band on all fifteen, and the sensor's departure from linear above 70%
+of scale is **−0.6% to −0.8%**, not the 1.5–1.9% long quoted for it. See
+`docs/exposure-negative-plan.md`.
 
 ## Resolution
 
-`--dpi` goes straight into MODE SELECT as a 16-bit field, so the device refuses what it
-dislikes with sense `0x26/0x82` rather than the driver guessing. The default is **1800**.
-
-Sizes are the geometry the device actually reports, not a calculation — it rounds its own
-way, and 600 dpi returns 573 or 574 lines depending on the pass:
-
-| `--dpi` | pixels | 3ch × 16-bit | 4ch × 16-bit | seen in a capture |
+| dpi | pixels | RGB | RGBI | driven |
 |---|---|---|---|---|
-| 300 | 428 × 286 | ~0.7 MB | ~1 MB | yes |
-| 600 | 860 × 573 | ~3 MB | ~4 MB | yes |
-| 900 | 1292 × 860 | ~7 MB | ~9 MB | yes |
-| 1200 | 1724 × 1148 | ~12 MB | ~16 MB | yes |
-| 1800 | 2584 × 1721 | ~27 MB | ~36 MB | yes |
-| 3600 | 5172 × 3443 | ~107 MB | ~142 MB | yes |
-| 7200 | 10344 × 6888 | ~427 MB | ~570 MB | no — the INQUIRY maximum only |
+| 300 | 431 × 287 | ~22 s | ~25 s | yes |
+| 600 | 862 × 574 | ~34 s | ~44 s | yes |
+| 1800 | 2586 × 1722 | ~85 s | ~110 s | yes |
+| 3600 | 5172 × 3444 | ~138 s | ~214 s | yes |
+| 7200 | 10344 × 6887 | ~314 s | — | yes, and not worth it |
 
-Only those marked have been driven, by CyberView or by this driver. The window's ladder
-offers exactly them; the box is not a limit, but a menu of guesses reads as a menu of
-capabilities. The divisors of 7200 nobody has asked for are in
-`docs/dpi-tradeoff-plan.md` as candidates, not as claims.
+**Scan time tracks line count, and exposure moves it.** Roughly `8 + 0.036 × lines` for
+RGB; an infrared pass tied to the resolution adds `7.5 s + 59.9 ms/line`. It used to look
+flat in resolution, and that was the *untied* infrared floor — a flat ~220 s whatever was
+asked for — which `--fast-ir` removes and which is no longer the default. Untied, a 300
+dpi RGBI pass cost 219 s; tied, it costs 25 s. At 3600 dpi the saving is only 3.4%, so the
+switch matters most where the pass is cheapest. (212 s survives in the code as the
+conservative end of that range, because it guards a timeout rather than describing a cost.)
 
-**Scan time is set by exposure, not only by line count.** Thirteen 3600 dpi RGB scans
-fit `ms/line = 2.60 + 4.851e-4 × sum(exposure)` at r² = 1.0000, which is why a dense
-negative can take four times as long as a slide at the same resolution. An infrared pass
-had its own floor of ~212 s whatever the resolution, so it dominated below about
-1800 dpi -- **until the infrared plane was tied to the resolution asked for**, which
-is now the default. A tied pass costs `7.5 s + 59.9 ms/line` and no floor at all:
-25 s at 300 dpi against 219 s, 110 s at 1800 against 220. Above about 3600 dpi the
-line count has already overtaken the floor and there is nothing left to save. The
-untied pass is still there -- `--no-fast-ir`, or the box in the window -- and nothing
-measured says it is better. See `docs/fast-infrared-plan.md`.
+**7200 dpi has been driven and is not recommended**: softer than 3600, twice the time and
+four times the bytes. It also **cannot be shading-corrected** — the device caps its
+reference at 5172 columns and will not produce one for a 10344-column pass — so `scan()`
+refuses a 7200 dpi pass with shading on rather than shipping it uncorrected. 3600 dpi is
+the least aliased rate. See `docs/dpi-tradeoff-plan.md` and `docs/7200dpi-plan.md`.
 
-A prescan is a separate, cheap pass — 300 dpi, RGB, 8-bit, the whole transport — and takes
-its own resolution rather than the scan's.
+The device accepts far more rates than the window lists; a dpi probe has driven 150, 400,
+450, 1000, 1440, 2000, 2400 and 3000 as well.
 
 ## Output
 
-One TIFF per frame, uint16, plus a JSON sidecar recording resolution, geometry,
-exposure/gain/offset, what the metering probe measured, and the settings used.
+16-bit TIFF by default, RGB or RGBI, written by `rps7200/tiff.py` or by `tifffile` when it
+is installed — held to identical behaviour by `tests/test_tiff.py`, which runs every
+write/read pairing of the two against each other. Writes are deflate-compressed with a
+horizontal predictor, which is lossless and 8–18% smaller (13.4% on average, RGBI best);
+`docs/tiff-compression-plan.md` verified the pixels come back identical.
 
-A delivered file can be a **JPEG** instead — `--out frame.jpg` on `tools/scan.py`,
-or the TIFF/JPEG choice beside the output folder in the window. The extension is
-what picks the format. A JPEG is the same picture at eight bits and is still an
-uninverted negative, so it looks orange. It needs Pillow (`uv sync --extra jpeg`),
-and without it the file is written as a TIFF rather than lost. Library entries and
-a roll's own files under `rolls/` are always TIFF.
+JPEG output needs Pillow (`uv sync --extra jpeg`) and falls back to TIFF with a note
+rather than losing the scan. A DNG companion can be written beside the TIFF with the same
+stem; it is uncompressed, because the writer only deflates float data.
 
-**An infrared pass delivered as JPEG leaves a `.dng` beside it**, same stem, holding
-R, G, B and infrared at full depth. Three channels is all a JPEG has, and the plane
-is what dust removal runs on, so it goes into the one container the consumer reads it
-from: NegPy's raw loader looks for a four-sample LinearRaw page and hands the fourth
-back as infrared, while its JPEG loader reports none whatever sits next to the file.
-Nothing extra is installed for this — `rps7200/dng.py` writes the file by hand, the
-way `rps7200/tiff.py` does. Two consequences worth knowing: the DNG is uncompressed,
-because DNG blesses deflate for floating-point samples only, so JPEG *with* infrared
-uses more disk than a TIFF would (142 MB against 117 MB at 3600 dpi); and in NegPy
-the two files appear as separate assets — open the DNG, not the JPEG, to get the
-dust removal. A TIFF delivery needs none of this and carries the plane in-band.
+The fourth channel is tagged `ExtraSamples = unspecified`, which is what makes the IR
+plane survive a round trip through readers that would otherwise treat it as alpha.
+`rolls/` output is always TIFF.
 
-The shape depends on what was asked for:
+## Filing every scan automatically
 
-| | shape | channels |
-|---|---|---|
-| `--ir` | `(H, W, 4)` | R, G, B, IR |
-| plain | `(H, W, 3)` | R, G, B |
-| `--film bw` | `(H, W)` | one, green by default |
+`tools/scan.py` and `tools/scan_roll.py` file in `library/` by default. Anything else —
+an ad-hoc script, a probe — files too if `RPS7200_DEBUG=1` is set, which is worth doing
+for anything whose result might matter later:
 
-The IR plane is tagged `ExtraSamples = 0 (unspecified)` — meaning "data, not alpha".
-Some viewers (macOS Preview included) still report `hasAlpha: yes` and may composite it.
-That is a viewer convention, not a problem with the file.
+```sh
+RPS7200_DEBUG=1 uv run python your_script.py          # macOS, Linux
+$env:RPS7200_DEBUG=1; uv run python your_script.py    # PowerShell
+```
 
-**A black and white scan is delivered flat, as `(H, W)` and not `(H, W, 1)`.** That
-distinction decides whether a consumer recognises it: NegPy classifies by the minimum
-correlation between channels, and measured across this library, black and white spans
-0.926–0.988 while colour negative spans 0.008–0.976. They overlap, so no threshold
-separates them — a three-channel B&W scan came back from NegPy's own classifier as
-**Transparency**, processed as a slide. One channel makes it certain. The library still
-files all three; only what leaves is reduced.
+It is off by default because ordinary use should not be burdened: an 1800 dpi RGBI entry
+is about 63 MB. `RPS7200_DEBUG_ROOT` moves where they go.
 
-Nothing consumes or alters the IR plane on the way out.
-
-### Filing every scan automatically
-
-`tools/scan.py` and `tools/scan_roll.py` file each scan in the library with its raw
-bytes. Anything calling `DirectScanner` directly used to file nothing — which is how a
-week of diagnostic scans left no record at all, and why some evidence that was wanted
-later no longer existed.
-
-`DirectScanner` can now do it itself:
-
-    RPS7200_DEBUG=1 uv run python my_script.py          # macOS, Linux
-    $env:RPS7200_DEBUG=1; uv run python my_script.py    # PowerShell
-
-or `DirectScanner(debug=True)` in code, which needs no shell at all.
-
-Every `scan()` is then filed, tagged `debug`, with raw bytes, shading reference and
-CCD mask — everything needed to re-decode it later.
-
-**Off by default**, because an 1800 dpi RGBI entry is ~35 MB and routine use should not
-pay for that. Turn it on for anything exploratory, where the scan you did not think
-mattered is exactly the one you will want.
-
-Each scan is spooled to a temporary file as it is taken, and the entries are assembled
-and compressed after the device is closed — gzipping one with the device open and idle
-has preceded a wedge. Spooled rather than kept in memory because a 7200 dpi RGBI frame
-is 570 MB of pixels plus as much again of raw bytes, so a seventeen-frame roll would
-otherwise want 19 GB of RAM; only paths stay resident, and the spool is deleted once
-filing is done.
-
-A filing failure is logged and swallowed — losing the record beats losing the session
-that produced it.
-
-Set `RPS7200_DEBUG_ROOT` to file somewhere other than `library/`.
-
-`tools/scan.py` and `tools/scan_roll.py` pass `debug=False` explicitly, because they
-file their own entries and letting the driver file as well writes every frame twice.
+Each scan is spooled to a temporary file as it is taken — a plain sequential write — and
+the entries are assembled and gzipped **after the device is closed**, because gzipping one
+with the scanner open and idle preceded a wedge. It is spooled rather than held in memory
+because a 7200 dpi RGBI frame is 570 MB of pixels and about as much again of raw bytes, so
+a seventeen-frame roll in RAM would want 19 GB.
 
 ### What a roll costs on disk
 
-Film grain barely compresses — a real `raw.bin.gz` is 96.7% of the raw size — so
-plan for close to the uncompressed figures. A 38-frame roll:
+Film grain barely compresses — the median `raw.bin.gz` across the library is about 94% of
+the raw size — so a library entry is close to twice the pixel size. A 38-frame roll, with
+deflate-compressed TIFFs:
 
-| dpi | `rolls/` TIFFs | library | total |
-|---|---|---|---|
-| 1800 | 1.4 GB | 2.7 GB | **4.0 GB** |
-| 3600 | 5.4 GB | 10.7 GB | **16.1 GB** |
-| 7200 | 21.7 GB | 42.6 GB | **64.3 GB** |
-
-With `RPS7200_DEBUG=1` on an ad-hoc script, add one frame of spool on top —
-1.1 GB at 7200 dpi — not the whole roll, because each frame's spool is freed as soon
-as its entry is written.
-
-## Checking that the IR is real
-
-A genuine IR plane sees through the dye layers, so it should **not** track the visible
-channels: dust and scratches show as marks while the picture content is largely absent.
-Correlate channel 3 against 0–2 — anything above ~0.9 means the IR is contaminated,
-usually a channel mix-up:
-
-```python
-import numpy as np
-from rps7200 import tiff
-
-image = tiff.read("scan.tif").astype(float)
-for i, name in enumerate("RGB"):
-    print(name, np.corrcoef(image[..., i].ravel(), image[..., 3].ravel())[0, 1])
-```
-
-## Notes and limitations
-
-- **A scan reports nothing until a batch of lines is ready.** Reads are paced against how
-  far the scanner has physically scanned, so the driver spends most of a pass waiting.
-  Run with `-v` to see the line counter move.
-- **The lamp needs to warm up after a power cycle** — about 80 seconds. Until it does, the
-  scanner answers `NOT READY` to every command, `READ STATE` included, so it cannot even
-  be asked for its state. `DirectScanner.wait_warm()` polls through it and every scan
-  calls it, up to 300 s.
-- **The scanner can drop off the USB bus** after a failed scan and then needs a power
-  cycle before it reappears. `DirectScanner().inquiry()` is the cheap way to check whether
-  it is there at all.
-- **`sane-find-scanner` reports "could not fetch string descriptor: Pipe error".** This
-  device exposes no USB string descriptors (`iProduct = 0`), so the message is expected —
-  but see below, because a flaky USB link produces similar symptoms.
-
-### If scans fail during shading data
-
-A scan that gets through warm-up and then dies here:
-
-```
-sanei_pieusb_get_shading_data()
-sanei_pieusb_cmd_get_scanned_lines(): 4 lines (82752 bytes)
-_pieusb_scsi_command read data failed for size 32768: 9
-sanei_pieusb_usb_reset()
-```
-
-means the scanner accepted the SCSI READ but the **32 KB bulk transfer timed out** (30 s,
-status 9 = `SANE_STATUS_IO_ERROR`). Small commands — INQUIRY, read state, gain/offset,
-every option read — still work fine, so the driver and the device are talking; only bulk
-data fails.
-
-This is **not** a USB link problem, though it looks like one at first. The stall is
-deterministic to the byte -- exactly 32768 every run -- whereas a marginal cable or hub
-fails at varying offsets. Reproducing it needs neither: an independent implementation in
-this repo, talking straight to the device over libusb, stalls at the same 32768.
-
-The scanner also drives fine under CyberView and VueScan on the same cable and port, so
-hardware, media and link are all good. This is solved — see "What the stock backend gets
-wrong" below — and is kept here because the symptom is what you hit first.
-
-Diagnose with:
-
-```sh
-SANE_DEBUG_PIEUSB=11 scanimage --mode Gray --preview=yes --format=tiff -o /tmp/control.tif
-```
+| dpi | entry | 38 frames |
+|---|---|---|
+| 1800 RGBI | ~63 MB | ~2.4 GB |
+| 3600 RGBI | ~246 MB | ~9.3 GB |
 
 ## Whole-roll scanning
 
-```sh
-uv run python tools/scan_roll.py --dry-run --frames 6          # prescan and advance only
-uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
-    --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
-```
+`tools/scan_roll.py` walks a strip: prescan, decide, scan, advance. A frame is about 3 to
+5 minutes all in — ~16 s prescan, up to 48 s metering, the scan itself, ~7 s advance — so
+a 36-frame roll at 1800 dpi RGBI is a couple of hours and one calibration (3–4 min) covers
+all of it.
 
-The film is already at the first picture when this starts, so the first frame is scanned
-before anything moves and the transport advances between frames. Shading is calibrated
-**once** for the whole roll — which is what the vendor does, and why a 17-pass session in
-the captures contains no calibration at all.
-
-Every frame reaches disk the moment it exists: a library entry with the raw bytes, the
-shading reference and the CCD mask beside the pixels, plus a `roll.json` manifest
-rewritten after each one. A roll takes hours; a crash should cost the frame it was on and
-not the roll. `--start-at N` resumes.
-
-Start with `--dry-run`. It prescans and advances only, so it walks a six-frame strip in
-about two and a half minutes and shows where each picture sits before three hours are
-committed to scanning them. Its manifest is `survey.json`, so a walk and the roll that
-follows it into the same directory do not overwrite each other.
-
-The roll stops on whichever comes first: `--frames`, a prescan with no picture in it, an
-advance that does not move the film, or three consecutive failures. A single failed frame
-is recorded in the manifest and the roll goes on.
+`--start-at` resumes a roll that stopped, `--max-failures 3` gives up after three bad
+frames rather than grinding through a whole strip, and a resumed roll carries forward what
+the earlier session already did instead of overwriting its manifest.
 
 ### What drives the transport
 
-This does not go through SANE, so nothing here depends on `FLAG_SLIDE_TRANSPORT` in
-`pieusb.conf` — the flag that is `0x00` for this model and stops the stock backend
-advancing film at all. The commands come from `captures/600_ICE_FILM_STRIP_5.pcapng`,
-CyberView walking a 5-frame strip end to end:
+Whole-frame moves are `SLIDE_NEXT` and `SLIDE_PREV` (`04 01 00 01` / `05 01 00 01`),
+measured and safe. Sub-frame positioning also works and was calibrated from the host:
+`SLIDE 00 <param> 00 04` forward and `01 <param> 00 04` back move `0.1057 × param +
+0.1662` mm, to ±0.02 mm. It ships as `nudge()` and the hold loop behind
+`scan_roll.py --correct`, which is **off by default** — the vendor does not reposition
+during a roll either, so drift is reported and only corrected when asked.
 
-| | |
-|---|---|
-| advance | `SLIDE` (`d1 00 00 00 04 00`) with data **`04 01 00 01`** |
-| confirmation | `READ_STATE` **byte 2** is the transport position |
+**`SET_SCAN_HEAD` (0xD2) is never sent by anything here**, and should not be. It drives a
+mechanism with a step count whose unit is unknown and reports nothing at all: no error, no
+sense condition, no byte of `READ_STATE` changing. 10 and 100 steps looked like a clean
+no-op; 1000 turned the gears audibly and needed a power cycle. CyberView sends it zero
+times across every capture, and the `pieusb` backend refuses the neighbouring mode as
+"unreliable, possibly dangerous".
 
-Byte 2 stepped `0 → 1 → 2 → 3 → 4` across that session's four advances and stayed put
-through a session that never advanced, 1.6–6.2 s after the command. The `READ_STATE`
-issued immediately after the advance came back empty every time, so the poll has to
-survive a failed read rather than read it as the end of the film. This driver previously
-sent `04 16 00 00` — a zero where every observed advance carried a 1.
-
-`State.media_loaded` is not usable for any of this: its bit is clear in every state seen
-across six captures, including ones taken with film demonstrably loaded.
+`State.media_loaded` is byte 8 and **is inverted** — 1 with an empty transport, 0 with
+film. The captures cannot corroborate it, because all nine were taken with film in, so the
+driver reports it and lets the scanner refuse rather than gating on it.
 
 ### Registration
 
-The transport window is 36.5 mm and a 35 mm frame is 36 mm, so there is half a millimetre
-of slack, and a frame that drifts is a frame with its edge outside the aperture that no
-scan window can recover. It happens: CyberView's own detected windows over its 5-frame
-strip started at `x=96` for four frames and then at `x=1727` for the fifth, losing 6 mm of
-picture.
-
-Each frame's prescan is therefore measured — `registration()` reports a signed offset and
-how far short of a whole frame the film measures, both in millimetres, and both go into the
-manifest and the frame's metadata. A drifted frame cannot be seen directly — the prescan
-only covers the aperture — but film *narrower* than a whole frame can, and that is the same
-thing.
-
-The measurement keys on **level, not variance**, and that distinction is load-bearing.
-Film attenuates and an empty aperture does not, so the film's edge is a step in brightness:
-measured on a C-41 negative, the clear strip read 143/153/153 in R/G/B against the film's
-34/15/7, and every threshold from 60% to 90% of the clear level returned the same edges.
-Keying on *variance* cannot work here: a dark, low-contrast frame varies less than the
-film's own slightly-skewed edge, so any threshold set as a fraction of the peak selects the
-border and discards the photograph. `film_bounds()` is what registration uses. **Drift is reported, not corrected.** No capture contains a command that moves
-the film by less than a whole frame, and `SET_SCAN_HEAD` (`0xD2`) is never sent by
-anything. `tools/transport_probe.py` measures whether one exists; until it says otherwise,
-a drifting strip is a thing to be told about, not something the driver quietly papers over.
-
-### Time and space
-
-Scan time barely depends on resolution — the carriage traverse dominates. Measured on the
-vendor: 216 s at 600 dpi, 218 s at 900, 218 s at 1800, 217 s at 3600, all RGBI 16-bit.
-Ours agrees (227 s at 900 and 1800, 334 s at 3600). A 300 dpi RGB prescan is ~16 s, which
-is what makes per-frame metering affordable.
-
-Per frame: ~16 s prescan + up to 48 s metering + 217–334 s scan + ~7 s advance, so **4.7 to
-6.9 minutes**. A 36-frame roll is 3–4 hours, plus one 3–4 minute calibration. `--meter
-once` saves about 30 minutes and keeps the frames comparable to each other; `--meter each`
-is the default and is what CyberView does. At 3600 dpi a library entry is ~250 MB, so a
-roll is about 9 GB.
+`film_bounds()` finds the frame in the aperture by looking for the bright clear gap beside
+it, using the same contrast the metering crop relies on. Across 3850 pairs no wrong match
+ever beat a confidence of 55, and the weakest right match scored 54.9, which is where the
+floor sits. Seventeen slides showed no drift at all: every reading fell inside the
+aperture's own 0.49 mm of slack. See `docs/registration-confidence-plan.md`.
 
 ## Scanner details
 
@@ -830,7 +530,7 @@ Read from the device's own INQUIRY response:
 | vendor / product | `PIE` / `MF Scanner` |
 | USB id | `0x05e3:0x0144` (Genesys Logic USB→SCSI bridge) |
 | model | `0x0031` |
-| firmware | `1.70` (2007) |
+| firmware | `1.70` |
 | optical resolution | 7200 dpi |
 | filters | Infrared, Red, Green, Blue |
 | colour depths | 16 / 12 / 8 / 1 bit |
@@ -838,106 +538,111 @@ Read from the device's own INQUIRY response:
 | fast preview | 300 dpi |
 | scan area | 36.4913 × 24.2993 mm |
 
+`Reflecta` / `RPS 7200` is what this driver writes into DNG `Make`/`Model`; it is not what
+the device calls itself.
+
+## Documentation
+
+Each of these is an investigation with its measurements kept, not a design note. Four of
+them record something that was tried and **rejected**, which is the part worth reading
+before proposing it again.
+
+| Doc | Contents | Status |
+|---|---|---|
+| `protocol.md` | The wire protocol, decoded from 8,133 vendor SCSI commands across nine captures | reference |
+| `scanner-options-survey.md` | Every SilverFast/VueScan/pieusb scanning option and what this driver does about each | reference |
+| `shading-calibration-plan.md` | Applying the scanner's own two-point reference — what removed the column stripes | shipped |
+| `exposure-negative-plan.md` | Is the 0.80 exposure target right on colour negative? Fifteen metered frames walked | shipped |
+| `fast-infrared-plan.md` | The quality bit that ties the infrared plane to the scan resolution | shipped |
+| `dpi-tradeoff-plan.md` | Which resolution is worth it, measured by aliasing at each pass's Nyquist | shipped |
+| `tiff-compression-plan.md` | Lossless deflate plus horizontal predictor, pixels verified identical | shipped |
+| `whole-roll-plan.md` | Driving the transport for a whole roll, and hunting phantom drift | shipped |
+| `registration-confidence-plan.md` | Can frame-finding be confidently wrong on self-similar frames? | shipped |
+| `7200dpi-plan.md` | Why 7200 dpi cannot be shading-corrected, and the even/odd column stagger fix | mixed |
+| `multi-exposure-plan.md` | N-exposure bracketing and inverse-variance merge, built and measured | **rejected** |
+| `analog-gain-plan.md` | Is the gain field analog? A five-rung blue ladder answers | **rejected** |
+| `vignette-plan.md` | Whether this scanner has a vignette, measured by rotating an IT8 | **rejected** |
+| `byte14-plan.md` | Does MODE SELECT byte 14 change the line rate? And the silent row reversal | **rejected** |
+
 ## Development
 
 ```sh
-make install      # sync the dev tools with uv
-make all          # fix + lint + type + tests -- run this before committing
+make all          # fix + lint + type + tests, before committing
+make test         # pytest with coverage
+make test-all     # both TIFF paths: tifffile present and absent
+make fix          # safe autofixes only
+make lint         # ruff
+make type         # ty (not mypy)
+make clean        # caches and build artefacts
+make reconstruct  # re-decode every stored scan with current code
+make verify       # the library's checksums and completeness
 ```
 
-Individual steps are `make lint`, `make type` and `make test`; everything runs through
-`uv run`, so the pinned tools in `pyproject.toml` are what execute.
+`make format` reformats every file and is deliberately **not** part of `make all`: this
+source is hand-wrapped, and a wholesale reformat rewrites thousands of lines and buries
+the real change.
 
-No test needs a scanner attached. The suite covers channel derivation and both TIFF
-paths, the shading parse and two-point correction, metering and film types, the scan
-library (including that a stored entry still decodes to the pixels it was saved with),
-and the roll/registration logic.
+The suite runs with no scanner on the bus — `addopts = -m 'not hardware'` deselects the
+nine tests in `tests/test_hardware.py`, which open the device and send nothing but INQUIRY
+and READ STATE. CI runs the whole thing on macOS, Linux and Windows.
 
-The nine in `tests/test_hardware.py` are the exception: they open the device, claim the
-interface and send INQUIRY and READ STATE. They are marked `hardware`, deselected by
-default, and skip rather than fail where there is no scanner, so a bare machine runs
-the suite clean. `uv run pytest tests/ -m hardware` is how to ask for them, and
-`uv run python tools/check_scanner.py` is the same ladder as one command. Neither
-calibrates, scans, or moves the transport.
+Host-side behaviour is tested against **stored bytes, not against the scanner**: every
+library entry keeps its raw bytes, shading reference and CCD mask, so decoding, correction
+and merging are all re-runnable offline.
 
-`tifffile` is optional and the built-in TIFF path is complete, so both have to behave
-identically. `make test-all` runs the suite twice, once with it installed and once with
-the import blocked:
+## Notes and limitations
 
-```sh
-make test-all
-```
-
-After any change to how the scanner's bytes become pixels, re-check every stored scan:
-
-```sh
-make reconstruct          # uv run python tools/library.py reconstruct
-```
-
-## Solved: what the stock backend gets wrong
-
-A USB capture of CyberView scanning this exact scanner resolved this. The image
-read now works from Python. The differences that mattered, CyberView vs pieusb:
-
-| | CyberView | pieusb |
-|---|---|---|
-| `CMD_17` after the scan frame | `0a 00 00 00 06 00` + `17 00 02 00 01 00` | only sent when the config marks a slide transport, which is 0 for model 0x31 -- so never |
-| SLIDE second byte | `0x16` | `0x01` |
-| READ_STATE size | 13 | 12 |
-| READ_GAIN_OFFSET size | 123 | 103 |
-| MODE SELECT byte 12 | `0x02` | halftone pattern (0) |
-| CCD mask (SCSI COPY) size | 5172 | 10344 (`shading_width`) |
-| shading data read | **never performed** | performed, and stalls at 32768 bytes |
-
-The chain: without `CMD_17` the scanner refuses to grant "skip shading analysis"
-(sense `0x82` = "calibration disable not granted"), so it insists on a shading
-pass -- and that shading read is the one that stalls and drops the device off the
-USB bus. CyberView skips shading entirely and reads image data directly.
-
-Also learned from the capture:
-
-- **`available_lines` paces the read.** It rises as the scanner physically
-  scans, and asking for more lines than are ready stalls the read until it times
-  out -- which is unrecoverable and costs a power cycle. This is why the vendor
-  software's reads come in uneven sizes (216, 3, 216, 216, 105, 105): it takes
-  whatever is ready. (It reads a constant 0 or 7 when the command sequence is
-  wrong, which is misleading; with the correct sequence it behaves properly.)
-- **INDEX colour format delivers one colour plane per line**, each with a 2-byte
-  index header, so a scan is `channels x height` lines of `2*width + 2` bytes.
-  CyberView's reads were 216+3+216+216+105+105 = 861 lines = 3 x 287 rows.
-- CyberView never sends INQUIRY; it opens with READ_STATE polling.
+- Dust removal is not done here. The infrared plane is delivered raw, which is the point.
+- Infrared does nothing for traditional silver-halide black and white, and is refused
+  there. Chromogenic C-41 black and white is the exception.
+- The gain field is a digital multiplier and buys nothing: measured ×1.484 signal against
+  ×1.476 noise. Blue's rail limit in RGB cannot be lifted that way — scan RGBI, where blue
+  is about 5× more sensitive.
+- `SET GAIN OFFSET` does not persist across a scan sequence; exposure goes through each
+  scan's `exposure_scale`.
+- The captures are not distributed. They record traffic from every device on the bus,
+  keyboard HID reports included.
 
 ### Recovering a wedged scanner
 
-A bulk read that times out mid-transfer leaves the scanner unresponsive to
-control transfers. `libusb_clear_halt` sometimes clears it; re-plugging does not,
-as it re-enumerates without recovering. **Power-cycle at the unit's own switch.**
+Power-cycle it at its own switch. Unplugging USB is not enough — the lamp and the carriage
+are held by the scanner's own controller.
 
-What provokes it, all learned the hard way:
-
-- **Abandoning a read mid-scan.** Infrared holds the device busy for its own
-  ~212 s floor however few lines were asked for, so a low-resolution IR pass can
-  outlast a short timeout. `read_lines` allows 300 s for this reason.
-- **Holding the session open through heavy local work** — gzipping a 140 MB
-  library entry with the device open and idle preceded one wedge.
-- **`STOP SCAN`, and IEEE1284 RESET.** Earlier versions of this driver sent both
-  on every exit path believing it prevented the fault; it causes it. The vendor
-  sends neither, and neither does this driver now.
-- Probing `READ(10)` (`0x28`).
-- **`SET_SCAN_HEAD` (`0xD2`)** — accepted silently at any step count with no
-  error and no state change, but 1000 steps turned the gears audibly and needed a
-  power cycle. Never send it; see CLAUDE.md.
+Avoid the four things that have caused it: abandoning a read mid-scan, holding the session
+open through heavy local work, `IEEE1284 RESET` or `STOP SCAN` (the vendor sends neither,
+and both leave the device unresponsive), and `SET_SCAN_HEAD`.
 
 ## Licence
 
-GPL-3.0-or-later — see [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE). Copyright © 2026 Stefan Kurzella.
 
-The shading correction in `rps7200/shading.py` follows the algorithm in SANE's
-`pieusb` backend (`pieusb_calculate_shading`, `sanei_pieusb_correct_shading`).
-That backend is GPL-2.0-**or-later**, and the "or later" is what makes GPL-3 an
-option: this project takes it, for the patent grant and the clearer terms.
+Two pieces of this stand on other people's work:
 
-The rest was derived from the scanner's own behaviour and from USB captures of
-the vendor software, for interoperability. The captures themselves are not
-distributed: they record traffic from every device on the bus, keyboard HID
-reports included.
+- The shading correction in `rps7200/shading.py` follows the algorithm in SANE's `pieusb`
+  backend (`pieusb_calculate_shading`, `sanei_pieusb_correct_shading`), and the INQUIRY
+  field offsets follow `sanei_pieusb_cmd_inquiry`. No pieusb code is copied or
+  distributed — its published source was read as a protocol reference and reimplemented in
+  Python. That backend is GPL-2.0-**or-later**, and the "or later" is what makes GPL-3 an
+  option; this project takes it, for the patent grant and the clearer terms.
+- `rps7200/bracket.py` adapts the inverse-variance merge from
+  [pyopticfilm](https://github.com/jboneng/pyopticfilm)'s `exposure_merge.py`, on its
+  `feat/me-n-brackets` branch. The structure is theirs; the noise constants and thresholds
+  are ours, measured on this sensor. pyopticfilm is GPL-3.0-or-later, the same licence as
+  this project.
+
+The rest was derived from the scanner's own behaviour and from USB captures of the vendor
+software, for interoperability.
+
+## Legal
+
+Not affiliated with, endorsed by or connected to **Reflecta**, **Pacific Image
+Electronics**, or the makers of **CyberView**, **VueScan** or **SilverFast** in any way.
+Those names, and any film stock named in the examples, are trademarks of their respective
+owners and are used here only to say what this software talks to and what it was tested
+against.
+
+This is hobby reverse engineering. Nothing here is a supported product. I am not
+responsible for damage to your scanner, your film, your computer or anything else, and on
+Windows this asks you to replace a working driver with one of your own choosing, which
+will stop the vendor software seeing the device until you put it back. Use it at your own
+risk.
