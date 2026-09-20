@@ -1,0 +1,20 @@
+# Reflecta RPS 7200 -- let the logged-in user talk to the scanner.
+#
+# Install with:
+#     sudo cp packaging/99-rps7200.rules /etc/udev/rules.d/
+#     sudo udevadm control --reload-rules && sudo udevadm trigger
+# then unplug the scanner and plug it back in.
+#
+# Without this, libusb_open_device_with_vid_pid returns NULL for anyone but
+# root, and the scanner looks absent rather than forbidden. The driver says so
+# now -- see Transport._why_not_found -- but saying so is not the same as
+# working.
+#
+# The device is 05e3:0144, a Genesys Logic bridge, and reports bDeviceClass
+# 0xff (vendor-specific), so the kernel binds no driver to it and nothing has
+# to be detached. Permissions are the whole problem on Linux.
+#
+# TAG+="uaccess" rather than MODE="0666": it grants access to whoever is
+# actually logged in at the seat, which is what systemd-logind is for, instead
+# of to every account on the machine.
+SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", ATTR{idProduct}=="0144", TAG+="uaccess"
