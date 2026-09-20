@@ -431,11 +431,23 @@ bit is not evidence, not a new problem.
   USHORTs the published `usbscan.h` declares. Which is the wider lesson -- that
   header is not the one this driver was built from.
 
-  **Next, for someone with administrator rights:** capture the bus with USBPcap
-  while CyberView drives *this* scanner. The premise everything rested on was
-  that `MF5000_x64.dll`'s 59 `WRITE_REGISTERS` calls are for this device, and
-  that DLL is 5.3 MB serving a whole family of Pacific Image scanners. It was
-  never checked.
+  **What the captures settled, and what they did not.** Stefan's six CyberView
+  captures are now readable here (`rps7200/usbpcap.py`), and they show
+  CyberView sending this scanner exactly the three control transfers this
+  driver sends -- 107,000 of them, same ports, same wIndex, as
+  `URB_FUNCTION_VENDOR_DEVICE`. So the wire format is not in question, and
+  transfers identical to ours demonstrably do reach this device on this
+  machine.
+
+  They do not settle which IOCTL produced them, because USBPcap sits below the
+  class driver. And `ERROR_SEM_TIMEOUT` means our URB *was* submitted and went
+  unanswered -- so what is needed is a capture of **our own** attempts, to see
+  what usbscan.sys actually put on the wire for them. That needs USBPcap
+  installed, which is a kernel driver and needs administrator rights.
+
+  Still unchecked: `MF5000_x64.dll` is 5.3 MB serving a whole family of Pacific
+  Image scanners, so its 59 `WRITE_REGISTERS` calls may belong to a different
+  model. The captures cannot distinguish that either.
 
 - **The device path has never run on anything but macOS (2026-09-20).** The
   driver now builds, tests and runs the window on Windows -- 1034 passed, 5
