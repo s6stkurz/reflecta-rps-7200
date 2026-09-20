@@ -474,9 +474,12 @@ class FrameWriter:
                 self.notes.append(f"{Path(path).name}: {note}")
         entry = None
         if job["library"]:
+            # The raw pixels where the job carries them, the delivered
+            # ones otherwise -- CLAUDE.md's rule that the library holds raw.
+            # Bound once: `.get()` is Optional however many times it is called.
+            raw_image = job.get("raw_image")
             entry = library.save(
-                job.get("raw_image") if job.get("raw_image") is not None
-                else job["image"],
+                job["image"] if raw_image is None else raw_image,
                 job["meta"],
                 root=job["library"],
                 film=job["film"],
