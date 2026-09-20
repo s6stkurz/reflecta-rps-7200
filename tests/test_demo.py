@@ -371,6 +371,12 @@ def test_the_demo_converges_on_an_approved_position():
 
     scanner = DemoScanner("library", speed=1e9)
     scanner.open()
+    if not scanner._entries:
+        # The test card the demo falls back to has nothing to correlate,
+        # so registration can only ever say "unverified". Same reason
+        # test_tiff skips without scans/: the data is not in a checkout.
+        scanner.close()
+        pytest.skip("no library entries in this checkout to register against")
     references = {rf.index: rf.prescan for rf in scanner.scan_roll(
         frames=2, resolution=300, infrared=False, dry_run=True)}
     scanner.close()
@@ -401,6 +407,12 @@ def test_one_frame_is_made_to_miss_on_purpose():
 
     scanner = DemoScanner("library", speed=1e9)
     scanner.open()
+    if not scanner._entries:
+        # The test card the demo falls back to has nothing to correlate,
+        # so registration can only ever say "unverified". Same reason
+        # test_tiff skips without scans/: the data is not in a checkout.
+        scanner.close()
+        pytest.skip("no library entries in this checkout to register against")
     slipping = scanner._slipping_index
     references = {rf.index: rf.prescan for rf in scanner.scan_roll(
         frames=slipping + 1, resolution=300, infrared=False, dry_run=True)}

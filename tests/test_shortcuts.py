@@ -250,6 +250,12 @@ def test_the_minus_key_is_not_mistaken_for_a_separator():
 
 def test_the_editor_still_shows_the_readable_form():
     """Two forms on purpose: the editor draws its own label and should read
-    the way the keyboard does."""
-    assert "⌘" in shortcuts.describe("<Command-Key-r>")
-    assert "⌘" not in shortcuts.accelerator_text("<Command-Key-r>")
+    the way the keyboard does.
+
+    A Mac reads that as a glyph; nothing else has one, so off Aqua the
+    readable form is the word. What holds everywhere is that the two differ
+    -- the menu's form is for Tk, the editor's is for a person.
+    """
+    readable = "⌘" if sys.platform == "darwin" else "Cmd"
+    assert readable in shortcuts.describe("<Command-Key-r>")
+    assert readable not in shortcuts.accelerator_text("<Command-Key-r>")

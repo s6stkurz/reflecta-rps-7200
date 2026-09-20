@@ -12,6 +12,7 @@ is asked for, and the resolution guard.
 """
 import inspect
 import json
+import sys
 import time
 
 import numpy as np
@@ -20,6 +21,11 @@ import pytest
 from conftest import load_tool
 from rps7200 import shortcuts
 from rps7200.mono import MONO_AVERAGE
+
+# `gui` imports tkinter, and this runs at collection: without it every test in
+# this file was a collection error rather than a skip, which is what a Linux
+# box with no python3-tk looks like.
+pytest.importorskip("tkinter")
 
 gui = load_tool("gui")
 
@@ -288,6 +294,42 @@ def test_touchpad_deltas_are_pixels_not_notches():
     """A wheel notch is one line; a trackpad reports how far it actually
     travelled, and scrolling by a line per event would crawl."""
     assert gui._touchpad_deltas(_Touchpad(0, 40))[1] == 40
+
+
+class _Tk86:
+    """A widget from a Tk that predates <TouchpadScroll>, which is Tk 8.7.
+
+    No real Tk here on purpose. What is being tested is the refusal, and a
+    fake can refuse on a machine whose Tk knows the event perfectly well --
+    which is every Mac this was written on, and is why the gap went unseen.
+    """
+
+    def __init__(self):
+        self.bound: list[str] = []
+
+    def bind(self, sequence, handler, add=None):
+        if sequence == "<TouchpadScroll>":
+            raise gui.tk.TclError('bad event type or keysym "TouchpadScroll"')
+        self.bound.append(sequence)
+
+    def bind_all(self, sequence, handler, add=None):
+        return self.bind(sequence, handler, add)
+
+
+def test_an_event_this_tk_does_not_know_is_declined_not_fatal():
+    """Windows and most Linux ship Tk 8.6, where binding it raises.
+
+    It raised from inside `_build`, so the window never reached the screen at
+    all -- the whole driver was macOS-only over this one line.
+    """
+    widget = _Tk86()
+    assert gui._bind_optional(widget, "<MouseWheel>", lambda e: None) is True
+    assert gui._bind_optional(widget, "<TouchpadScroll>", lambda e: None) is False
+    assert gui._bind_optional(widget, "<TouchpadScroll>", lambda e: None,
+                              everywhere=True) is False
+    # The wheel still got bound: the machines without the event are exactly the
+    # ones a wheel covers.
+    assert widget.bound == ["<MouseWheel>"]
 
 
 def test_zoom_is_not_so_eager_that_a_flick_overshoots():
@@ -670,7 +712,7 @@ def test_the_rewind_is_never_negative():
 
 
 @pytest.fixture
-def window():
+def window(tmp_path):
     tk = pytest.importorskip("tkinter")
 
     from rps7200.demo import DemoScanner
@@ -683,7 +725,8 @@ def window():
     root.withdraw()
 
     gui_mod = load_tool("gui")
-    session = ScanSession(root="/tmp/none", rolls="/tmp/none", verbose=False)
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"), verbose=False)
     session._open_scanner = lambda: DemoScanner("library", speed=1e9)
     app = gui_mod.ScannerGui(root, session, demo=True)
     root.update()
@@ -1806,11 +1849,15 @@ def test_a_menu_gets_the_form_tk_parses_not_the_one_a_person_reads():
     import types
     stub = types.SimpleNamespace(keys={"r": f"<{shortcuts.ACCEL}-Key-r>"})
     shown = gui.ScannerGui.accelerator(stub, "r")
-    assert shortcuts.ACCEL in shown, shown
+    # Only Aqua's Tk parses this string. Everywhere else it is printed as it
+    # is given, so there the finished "Ctrl" is what belongs in a menu.
+    assert ("Command" if sys.platform == "darwin" else "Ctrl") in shown, shown
     assert "R" in shown, shown
     assert "\u2318" not in shown, "a glyph here is the bug this fixes"
-    # And the editor, which draws its own label, keeps the readable form.
-    assert "\u2318" in shortcuts.describe("<Command-Key-r>")
+    # And the editor, which draws its own label, keeps the readable form --
+    # the glyph on a Mac, the word everywhere else.
+    readable = "\u2318" if sys.platform == "darwin" else "Cmd"
+    assert readable in shortcuts.describe("<Command-Key-r>")
 
 
 def test_the_menu_shows_the_key_as_it_is_now_not_as_it_shipped():
