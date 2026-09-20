@@ -63,8 +63,14 @@ def main() -> int:
             scan, film = r.get("scan") or {}, r.get("film") or {}
             raw = "raw" if (r.get("raw") or {}).get("file") else "NO RAW"
             desc = " / ".join(x for x in (film.get("stock"), film.get("notes")) if x)
-            print(f"{r.get('id',''):52} {scan.get('resolution_dpi',''):>5} "
-                  f"{scan.get('channels',''):>3}  {desc}  [{raw}]")
+            # `or ''` rather than a `get` default: these keys are *present* and
+            # hold None on entries filed before they were recorded -- 69 of the
+            # 311 here -- so a default never fires and the format spec raises on
+            # NoneType. `list` died 56 rows in, which is the one command that is
+            # meant to survey a library that has grown over time.
+            print(f"{r.get('id') or '':52} "
+                  f"{scan.get('resolution_dpi') or '':>5} "
+                  f"{scan.get('channels') or '':>3}  {desc}  [{raw}]")
         print(f"\n{len(rows)} entries")
 
     elif args.action == "verify":
