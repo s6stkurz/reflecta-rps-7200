@@ -91,26 +91,40 @@ winget install ezwinports.make      # GNU Make 4.4.1, native, no MSYS needed
 uv sync --all-groups
 ```
 
-libusb itself needs no install: `libusb-package` is a dependency here and bundles
-`libusb-1.0.dll`, because Windows has nowhere conventional to put one.
+**That is the whole install. Nothing else to change, and no driver to replace.**
 
-**The scanner also needs its driver replaced, and that part is not reversible by
-itself.** Windows binds its own Image/WIA driver to the RPS 7200, and libusb cannot go
-through it — the device enumerates, and every attempt to open it returns NULL. Use
-[Zadig](https://zadig.akeo.ie/): select **Multiple Frames Film Scanner (05e3:0144)** and
-install **WinUSB** (libusbK also works).
+Which is not how this usually goes. Windows binds its own `usbscan.sys` to the scanner —
+via an INF from Pacific Image, the one CyberView installs — and libusb cannot open a
+device another driver holds. Every comparable project answers that with
+[Zadig](https://zadig.akeo.ie/): replace the driver with WinUSB. It works, and it stops
+the vendor software seeing the scanner until you put it back.
 
-> **This stops CyberView and VueScan seeing the scanner.** They talk to it through the
-> WIA driver you are replacing. To get them back, open Device Manager, find the scanner,
-> *Update driver* → *Browse my computer* → *Let me pick*, and choose the original imaging
-> driver. Worth knowing before you start, not after.
-
-Until you do it, the driver says so rather than guessing:
+It is not needed here, because `usbscan.sys` already exposes the two things this driver
+wants. Reading CyberView's own scan engine, `C:\Windows\System32\MF5000_x64.dll`, for
+the usbscan IOCTL codes:
 
 ```
-the scanner (0x05e3:0x0144) is on the USB bus but could not be opened. Windows binds
-its own Image/WIA driver to it, which libusb cannot go through. Replace it with WinUSB
-or libusbK using Zadig -- see the README.
+IOCTL_WRITE_REGISTERS   0x80002010   ×59
+IOCTL_READ_REGISTERS    0x8000200C   ×27
+IOCTL_SEND_USB_REQUEST  0x80002024   ×0      <- never used
+libusb / WinUSB / UsbDk              absent
+```
+
+Those two build a vendor control transfer, with `bRequest` chosen by length: `0x04`
+above one byte, `0x0C` at one. This driver makes exactly three control transfers —
+one-byte `0x0C` in, one-byte `0x0C` out, eight-byte `0x04` out — so all three are
+covered with nothing left over. The byte-at-a-time protocol is not a quirk of the
+scanner; it is the Windows register model its firmware was built around.
+
+So on Windows the default transport is `rps7200.usbscan`, and **CyberView and VueScan
+keep working**.
+
+If you have already run Zadig, nothing breaks: the still-image interface is gone, so the
+driver falls through to libusb, which is then the right answer. To pin one deliberately —
+the one time you want this is when the question is which of the two is at fault:
+
+```powershell
+$env:RPS7200_USB_BACKEND = "libusb"     # or "usbscan"
 ```
 
 ## Use
