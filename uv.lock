@@ -599,6 +599,7 @@ usb = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "libusb-package" },
     { name = "pillow" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -621,6 +622,7 @@ provides-extras = ["tifffile", "jpeg", "usb"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "libusb-package", specifier = ">=1.0.26" },
     { name = "pillow", specifier = ">=9" },
     { name = "pytest", specifier = "==9.0.2" },
     { name = "pytest-cov", specifier = ">=7.0" },

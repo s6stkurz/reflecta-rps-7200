@@ -62,6 +62,22 @@ dev = [
     # runtime path, which is why `[project.optional-dependencies] jpeg` exists
     # above; it is here as well so `make test` can cover the JPEG path.
     "pillow>=9",
+    # A runtime dependency on Windows only, and here unconditionally so that the
+    # type checker resolves it on all three platforms. Without it `ty` reads
+    # `import libusb_package` as unresolved on macOS and Linux and the board goes
+    # red on two runners out of three, while Windows -- where the wheel is
+    # installed -- passes. An inline `ty: ignore` swaps which platform fails
+    # rather than fixing it: with the module present the suppression is itself
+    # unused, and that is an error too. Measured, not assumed; see below.
+    #
+    # Installing it everywhere is also the better answer on the merits. It means
+    # the checker reads the Windows branch of the loader on every platform, and
+    # this branch exists because nothing ran this suite anywhere but one Mac.
+    # It does not change what the loader picks: `_load_libusb` tries a system
+    # libusb first and only then the bundled copy, and
+    # `tests/test_optional_libraries.py` proves the nothing-found path by hiding
+    # the module explicitly rather than by relying on its absence.
+    "libusb-package>=1.0.26",
 ]
 
 [tool.pytest.ini_options]
