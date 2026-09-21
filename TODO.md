@@ -798,6 +798,69 @@ driver for Nikon Coolscans:
   The same reversal is also why frame 3 was never corrected: the hold read
   `unverified` at confidence 8.85 and sent no command. That half failed safe.
 
+- **Do not shrink `HOLD_TOLERANCE_MM`.** Looked at 2026-09-21 after a roll
+  appeared to leave held frames up to 0.24 mm off. It did not: that table was
+  measured with a broken yardstick (below). With the yardstick fixed the
+  post-hoc numbers agree with the loop's own residuals to **0.046 mm** on all
+  eleven held frames, the worst being 0.18 mm. The loop delivered what it said.
+
+  The tempting change -- deadband to half the smallest move, 0.136 -- is wrong
+  on four counts, all measured:
+
+  * **The constant has five roles, not one.** It is also the roll-wide
+    `wrong_way` abort (`direct.py`), `AGREE_MM` (the ensemble's agreement
+    ceiling), and the precision floor of both the causal prior and the strip
+    line. Halving it would make members agree less often, which produces *more*
+    of the unverified frames that were this roll's actual problem. If the
+    deadband moves it needs its own constant.
+  * **0.136 is the wrong half.** Break-even is half the *delivered* move, not
+    half the asked one: at the measured ratio of 1.013 that is 0.1377, and at
+    1.059 it is 0.144. A 0.136 deadband commands moves that are guaranteed to
+    make things worse.
+  * **It has less margin than the delivery scatter.** 0.136 tolerates a ratio
+    error of 8.2%; this roll's own scatter was about 13%.
+  * **`param_for_mm` stops rounding below 0.219** (`OVERHEAD_MM + STEP_MM/2`)
+    and starts clamping to param 1, which *over*-delivers -- and `nudge` reports
+    only under-delivery, so below 0.219 the loop runs into a branch that says
+    nothing. 0.219 is the floor for any future value, and in replay it changes
+    nothing, because nothing the loop measured exceeded 0.181.
+
+  Also worth knowing: **the limit-cycle comment credits the wrong mechanism.**
+  Chatter is impossible for *any* deadband above zero, because `direction`
+  latches on the first move and `hold_plan` refuses a reversal, with
+  `MAX_HOLD_MOVES` capping the run. What the present value actually buys is the
+  two things above -- that `nudge` stays a rounding, and that one move always
+  lands inside the deadband.
+
+- **`measure_shift_mm` is biased when the two passes are different widths.**
+  A 300 dpi prescan is 428 px and a 600 dpi scan decimated by two is 430;
+  `_resample_to` stretches the reference to fill the target about column 0, so
+  about a pixel of scale error accumulates by mid-frame -- **0.085 mm**, which
+  is exactly the one-signed discrepancy that made a good roll look badly
+  adjusted. Replacing the stretch with an exact 2x reference moves every
+  reading by +0.085 to +0.127 mm **and raises confidence** (median 116 -> 127),
+  which says the stretch was smearing the peak rather than resampling costing
+  what its docstring claims.
+
+  The driver is not affected: every reading the hold loop took on this roll
+  carries `resampled: false`, because the window pins a commissioned scan to
+  the survey's own prescan resolution. It is the offline comparisons that are
+  wrong, which is where it bit. Worth fixing before any cross-resolution number
+  is trusted, and the fix wants a measurement rather than a guess -- what the
+  two passes each actually cover, given a 300 dpi prescan comes back 428 px
+  where the aperture is 431.
+
+- **`strip_offsets` can never propose a positive offset.** `want` is
+  `TARGET_GAP_MM / mm_px` = 2.88 px and `picture_start` cannot report a start
+  below `GAP_MIN_MM` = 3 px, so every proposal is at most -0.010 mm. The
+  detector is structurally one-sided: it can say "the frame is too far along"
+  and never "not far enough". Harmless while every strip measured drifts the
+  same way, and a trap the first time one does not.
+
+- **`CORRECTION_DEADBAND_MM = 0.15` is defined and never read.**
+  `rps7200/direct.py`, one occurrence in the repo. Left over from the one-shot
+  corrector; it is not the deadband anything uses.
+
 ## Measured and left alone
 
 - **Column defects in the frame interior are corrected as far as they can be.**
