@@ -597,12 +597,19 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
         record = scanner.capture_record()
         raw, layout = record["raw"], record["raw_layout"]
         mask, shading_ref = record["ccd_mask"], record["reference"]
+        # The uncorrected pixels. `scan()` returns the *corrected* image and
+        # keeps these, so filing what it returned wrote shading into
+        # `scan.tif` while the record said nothing was baked in. Read before
+        # `close()`, and before another pass overwrites it.
+        raw_pixels = getattr(scanner, "last_pixels_raw", None)
     finally:
         scanner.close()
 
     meta["uniformity_session"] = session
     entry = library.save(
-        image, meta,
+        # Raw, per the library's bargain: `image` below is still the corrected
+        # one, which is what the orientation check and the crop want to see.
+        image if raw_pixels is None else raw_pixels, meta,
         root=args.library,
         film=library.FilmNotes(
             stock="IT8" if subject == IT8 else subject,

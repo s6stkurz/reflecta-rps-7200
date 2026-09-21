@@ -267,3 +267,103 @@ def test_no_fast_ir_reaches_the_brackets_infrared_pass(tmp_path, monkeypatch):
     # absent, and an absent flag reads as False to any default-tolerant check.
     # That is exactly the bug, so the test has to fail on absence.
     assert all(k["fast_infrared"] is False for k in s.kwargs), s.kwargs
+
+
+# --- what actually lands in the library -----------------------------------
+
+
+RAW_LEVEL, CORRECTED_LEVEL = 111, 222
+
+
+class FakeCorrectingScanner(FakeBracketScanner):
+    """Like the real one: returns the CORRECTED image, keeps the raw.
+
+    `DirectScanner.scan` takes `raw_pixels = image` before flat-fielding,
+    rebinds `image` to the corrected array, returns that, and leaves the
+    uncorrected one on `last_pixels_raw`. The two levels here are distinct so
+    a test can say which of them was filed.
+    """
+
+    def scan(self, **kw):
+        image, meta = super().scan(**kw)
+        self.last_pixels_raw = np.full(image.shape, RAW_LEVEL, np.uint16)
+        # Present whenever a correction happened, and recorded by
+        # `library.save` as `calibration.report`.
+        meta["shading"] = {"columns": 6, "width": 6, "clipped": 0}
+        return np.full(image.shape, CORRECTED_LEVEL, np.uint16), meta
+
+
+def run_correcting(tmp_path, monkeypatch, *argv):
+    created = []
+
+    class Patched(FakeCorrectingScanner):
+        def __init__(self, **kw):
+            super().__init__()
+            created.append(self)
+
+    monkeypatch.setattr(scan_tool, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out.tif"),
+         "--library", str(tmp_path / "lib"), *argv],
+    )
+    return created, scan_tool.main()
+
+
+def _filed(tmp_path):
+    from rps7200 import library
+    entries = sorted((tmp_path / "lib").glob("*/scan.json"))
+    return [(library.load(p.parent)) for p in entries]
+
+
+def test_the_filed_entry_holds_raw_pixels_not_corrected_ones(tmp_path,
+                                                             monkeypatch):
+    """The library's whole bargain: it keeps what the scanner sent, and every
+    correction is recomputed from it with today's code.
+
+    `scan()` returns the *corrected* image and keeps the uncorrected one on
+    `last_pixels_raw`, and this tool filed what it returned. That wrote
+    shading into `scan.tif` while `corrections_applied` still said nothing was
+    baked in -- so `library.corrected()` shaded it a second time, and
+    `reconstruct` reported it as a changed decode, which is the one check that
+    exists to catch a real regression. Measured on the hardware: 99.9% of
+    samples differed on a single 300 dpi frame.
+    """
+    _created, code = run_correcting(tmp_path, monkeypatch)
+    assert code == 0
+    filed = _filed(tmp_path)
+    assert len(filed) == 1
+    image, record = filed[0]
+    assert int(image.max()) == RAW_LEVEL, (
+        "the corrected image was filed; the library must hold raw pixels")
+    # And the record must agree with the pixels rather than merely be empty.
+    assert record["image"]["corrections_applied"] == []
+    assert record["calibration"]["report"], (
+        "the correction that was computed still has to be recorded beside "
+        "the pixels -- that is how a consumer tells 'not corrected' from "
+        "'no correction was available'")
+
+
+def test_every_pass_of_a_bracket_is_filed_raw_too(tmp_path, monkeypatch):
+    """The bracket files through the same callback, one pass at a time, and
+    `last_pixels_raw` describes the pass that just ran -- so reading it late
+    would give every entry the last pass's pixels."""
+    _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 0
+    filed = _filed(tmp_path)
+    assert len(filed) == 3
+    for image, _record in filed:
+        assert int(image.max()) == RAW_LEVEL
+
+
+def test_both_capture_tools_file_the_raw_pixels(tmp_path):
+    """`tools/uniformity.py capture` files the same way and had the same bug.
+    It cannot be driven from here -- it wants a scanner and a target -- so it
+    is held to naming the attribute at all."""
+    import inspect
+
+    from conftest import load_tool as _load
+    uniformity = _load("uniformity")
+    source = inspect.getsource(uniformity.one_pass)
+    assert "last_pixels_raw" in source
+    assert "image if raw_pixels is None else raw_pixels" in source

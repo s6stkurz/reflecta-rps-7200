@@ -174,10 +174,24 @@ def main() -> int:
         pending: list[dict] = []
 
         def hold(image, meta, capture) -> None:
-            if args.library is not None:
-                pending.append(
-                    dict(capture, inquiry=info, image=image, meta=meta)
-                )
+            if args.library is None:
+                return
+            # The RAW pixels, not the ones the scan returned. `scan()` hands
+            # back the *corrected* image -- that is what a caller wants to
+            # look at -- and keeps the uncorrected one in `last_pixels_raw`.
+            # Filing the returned array put shading into `scan.tif` while
+            # `corrections_applied` still said nothing was baked in, so
+            # `library.corrected()` shaded it a second time and `reconstruct`
+            # called every such entry a changed decode.
+            #
+            # Read here rather than after the loop because the attribute
+            # describes the pass that *just* ran: `on_pass` is called as each
+            # pass lands, and the pass after it overwrites this.
+            raw = getattr(s, "last_pixels_raw", None)
+            pending.append(
+                dict(capture, inquiry=info, meta=meta,
+                     image=image if raw is None else raw)
+            )
 
         bracket = None
         if args.bracket:
