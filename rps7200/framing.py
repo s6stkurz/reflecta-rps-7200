@@ -636,6 +636,27 @@ def picture_start(
             f"the only base in view begins at column {runs[0][0]}, past the "
             f"{margin}-column margin -- that is picture, not a gap"))
     start, length = near[0]
+    if start:
+        # Unexposed base creeps in from an edge; it cannot float in the middle
+        # of a frame. A band that sits back from the edge is only a gap if
+        # what stands between it and the edge is **picture** -- the tail of the
+        # neighbouring frame, which is what this margin exists to allow.
+        #
+        # Measured on walk A, where three real slivers read 8 to 22 counts
+        # against a base of 36.6: far outside anything base can be. And on
+        # frame 9 of walk K, where the columns in front read 35.6 -- base
+        # level, failing the flatness test by a hair and nothing more. There
+        # the whole left of the frame was smooth picture sitting at the base
+        # level and the run was split at an arbitrary column, which put the
+        # frame 2.44 mm away from what every one of its neighbours said and
+        # cost the frame after it as well.
+        ahead = float(_grey(image)[:, :start].mean())
+        if abs(ahead - base.level) <= base.level * BASE_TOLERANCE:
+            return None, dict(detail, reason=(
+                f"the band at column {start} is not reachable from the edge: "
+                f"the {start} column(s) in front of it read {ahead:.1f}, which "
+                f"is base rather than picture, so this is one smooth region "
+                f"split in two rather than a gap"))
     if length > widest:
         return None, dict(detail, reason=(
             f"a {length}-column band is {length*mm_px:.2f} mm, wider than the "

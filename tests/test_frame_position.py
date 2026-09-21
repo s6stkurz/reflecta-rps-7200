@@ -317,3 +317,39 @@ def test_a_frame_with_no_base_at_either_edge_still_abstains():
     _start, detail = picture_span(frame(gap_px=0), calibrated())
     assert _start is None
     assert "left:" in detail["reason"] and "right:" in detail["reason"]
+
+
+def test_a_band_that_cannot_be_reached_from_the_edge_is_not_a_gap():
+    """Unexposed base creeps in from an edge; it cannot float mid-frame.
+
+    Frame 9 of one walk had its whole left side at the base level -- smooth
+    picture, a blown highlight -- and the flatness test split it at an
+    arbitrary column, columns 0 to 8 varying 3.2 to 4.9 and 9 onward varying
+    1.2 to 2.8 against a threshold of 3.0. The fragment that survived was read
+    as a gap and put the frame 2.44 mm away from what every neighbour said.
+    The frame after it then inherited the bad move and hit the travel budget,
+    ending 1.70 mm out -- the worst frame of any roll measured.
+
+    Stefan called it from the picture before any of this was traced: the base
+    "only creeps in from right or left, not in such a way in the frame".
+    """
+    image = frame(gap_px=15, before=9, seed=2)
+    # At the base LEVEL but varying a little too much to join the run -- which
+    # is the real case exactly: 35.4 counts against a base of 36.9, failing a
+    # flatness threshold of 3.0 by about a count and a half.
+    rng = np.random.default_rng(21)
+    image[:, :9] = BASE_LEVEL + rng.normal(0, 8.0, (HEIGHT, 9, 3))
+    start, detail = picture_start(image, calibrated())
+    assert start is None
+    assert "not reachable from the edge" in detail["reason"]
+
+
+def test_a_real_sliver_of_the_neighbouring_frame_still_counts():
+    """The margin exists for something real: the tail of the previous frame
+    ahead of the gap, seen on three frames of walk A reading 8 to 22 counts
+    against a base of 36.6. Rejecting those would lose the case the margin was
+    written for."""
+    image = frame(gap_px=15, before=6, seed=3)
+    image[:, :6] = 18.0                       # clearly picture, far from base
+    start, detail = picture_start(image, calibrated())
+    assert start == pytest.approx(21, abs=1), detail
