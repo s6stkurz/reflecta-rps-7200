@@ -15,6 +15,10 @@ import pytest
 
 from rps7200.framing import (
     APERTURE_MM,
+    FRAME_WIDTH_MM,
+    frame_offset_mm,
+    picture_end,
+    picture_span,
     BASE_SPREAD_LIMIT,
     MAX_GAP_MM,
     FilmBase,
@@ -239,3 +243,77 @@ def test_the_old_detector_no_longer_asserts_a_frame_it_cannot_see():
     mm, why = registration_error_mm(frame(gap_px=0, seed=5))
     assert mm is None
     assert "cannot see where the frame is" in why
+
+
+# -- reading whichever edge shows base ---------------------------------------
+#
+# A frame that has gone too far the other way shows no base at the left at
+# all. A detector that only looks there can say "too far along" and never "not
+# far enough" -- which is exactly what happened on film 2026-09-21: the film
+# was moved about 2 mm the other way, a 1.36 mm band sat plainly at the right,
+# and every member abstained on a frame that needed +1.12 mm.
+
+
+def right_of(gap_px=16, seed=0, base_level=BASE_LEVEL):
+    """A frame whose base band is at the RIGHT and whose picture is cut left."""
+    rng = np.random.default_rng(seed)
+    out = rng.random((HEIGHT, WIDTH, 3)) * 90 + 15
+    out[:, WIDTH - gap_px:] = (base_level
+                               + rng.random((HEIGHT, gap_px, 3)) * 0.6)
+    return out
+
+
+def test_the_right_edge_is_read_by_the_same_rule_as_the_left():
+    """One rule applied twice, not two rules. Two would drift apart the first
+    time either was tuned."""
+    mirrored = frame(gap_px=18)[:, ::-1]
+    end, detail = picture_end(mirrored, calibrated())
+    assert end == pytest.approx(WIDTH - 18, abs=1), detail
+    assert detail["mirrored"] is True
+
+
+def test_a_frame_with_base_only_at_the_right_is_still_placed():
+    start, detail = picture_span(right_of(gap_px=16), calibrated())
+    assert start is not None, detail["reason"]
+    assert detail["edge"] == "right"
+
+
+def test_the_left_edge_is_preferred_when_both_are_there():
+    """The left reading is direct; the right one is converted through the
+    frame width, which is an assumption the left does not need."""
+    both = frame(gap_px=18)
+    both[:, -6:] = BASE_LEVEL
+    _start, detail = picture_span(both, calibrated())
+    assert detail["edge"] == "left"
+
+
+def test_a_right_edge_reading_says_it_came_from_the_right():
+    """Because it is worth less: `FRAME_WIDTH_MM` is assumed, and this file's
+    own note on `TARGET_GAP_MM` puts the strip at 35.90 and reasons about
+    36.2. A caller that cannot tell the two apart cannot weigh them."""
+    reading = frame_offset_mm(right_of(gap_px=16), calibrated())
+    assert reading.source == "right-gap"
+    assert "from the right edge" in reading.reason
+
+
+def test_the_two_edges_agree_about_a_centred_frame():
+    """A frame with the same gap either side must read the same however it is
+    measured, or the frame width is wrong."""
+    width_px = int(round(FRAME_WIDTH_MM / (APERTURE_MM / WIDTH)))
+    edge = (WIDTH - width_px) // 2
+    rng = np.random.default_rng(5)
+    image = rng.random((HEIGHT, WIDTH, 3)) * 90 + 15
+    image[:, :edge] = BASE_LEVEL + rng.random((HEIGHT, edge, 3)) * 0.6
+    image[:, edge + width_px:] = BASE_LEVEL
+
+    left, _d = picture_start(image, calibrated())
+    end, _e = picture_end(image, calibrated())
+    assert left is not None and end is not None
+    implied = end - width_px
+    assert implied == pytest.approx(left, abs=2)
+
+
+def test_a_frame_with_no_base_at_either_edge_still_abstains():
+    _start, detail = picture_span(frame(gap_px=0), calibrated())
+    assert _start is None
+    assert "left:" in detail["reason"] and "right:" in detail["reason"]

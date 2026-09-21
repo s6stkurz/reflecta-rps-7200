@@ -575,6 +575,16 @@ def film_base(images) -> tuple[FilmBase | None, dict]:
     return film_base_from({i: edge_bands(im) for i, im in enumerate(images)})
 
 
+#: How wide the exposed image on 135 film is, across the film. Implicit in
+#: `TARGET_GAP_MM` until the right-hand reading needed it by name: converting
+#: "the picture ends here" into "the picture begins there" goes through it,
+#: which is why a reading off the right edge carries an assumption the left one
+#: does not.
+#:
+#: Assumed rather than measured, and worth knowing that: this file's own note
+#: on `TARGET_GAP_MM` puts the strip at 35.90 and reasons about 36.2.
+FRAME_WIDTH_MM = 36.0
+
 #: The widest an inter-frame gap can be. On 135 the pitch is ~38 mm against a
 #: ~36 mm image, so about 2 mm of it exists and the aperture can show at most
 #: that. A longer run of base is not a gap -- it is the end of the strip, or a
@@ -635,6 +645,63 @@ def picture_start(
                                 gap_mm=round(length * mm_px, 3))
 
 
+def picture_end(
+    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+) -> tuple[int | None, dict]:
+    """The column after this frame's picture ends, or None.
+
+    The mirror of :func:`picture_start`, and implemented as one: the columns
+    are reversed and the same rule applied. Two separate rules would drift
+    apart the first time either was tuned.
+    """
+    start, detail = picture_start(image[:, ::-1], base, aperture_mm=aperture_mm)
+    detail = dict(detail, mirrored=True)
+    if start is None:
+        return None, detail
+    width = image.shape[1]
+    gap = detail.get("gap")
+    if isinstance(gap, tuple):
+        # Back into this frame's own columns, so a caller drawing the band
+        # draws it where it is rather than where its mirror was.
+        gs, gl = gap
+        detail["gap"] = (width - gs - gl, gl)
+    return width - start, detail
+
+
+def picture_span(
+    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM,
+    frame_mm: float = FRAME_WIDTH_MM,
+) -> tuple[int | None, dict]:
+    """Where this frame's picture begins, from whichever edge shows base.
+
+    The left edge answers directly. The right edge answers too, and has to be
+    allowed to: **a frame that has gone too far the other way shows no base at
+    the left at all**, so a detector that only looks there can say "too far
+    along" and never "not far enough". Measured on film 2026-09-21 -- the film
+    moved about 2 mm the other way, a 1.36 mm band sat plainly at the right,
+    and every member abstained on a frame that needed +1.12 mm.
+
+    Preferred left, because that reading is direct. The right one is converted
+    through the frame width, which is an assumption the left reading does not
+    need, so `detail["edge"]` says which answered and a caller that cares can
+    weigh them differently.
+    """
+    start, detail = picture_start(image, base, aperture_mm=aperture_mm)
+    if start is not None:
+        return start, dict(detail, edge="left")
+
+    end, right = picture_end(image, base, aperture_mm=aperture_mm)
+    if end is None:
+        return None, dict(detail, edge=None,
+                          reason=f"left: {detail.get('reason', '')}; "
+                                 f"right: {right.get('reason', '')}")
+    mm_px = aperture_mm / image.shape[1]
+    return int(round(end - frame_mm / mm_px)), dict(
+        right, edge="right", picture_end=end,
+        reason=right.get("reason", "") +
+        f" (read from the right edge, through a {frame_mm} mm frame)")
+
+
 #: Where a frame's picture should begin: half the slack, so what the aperture
 #: cannot hold is lost evenly from both edges instead of all from one.
 #:
@@ -649,7 +716,7 @@ def picture_start(
 #: and at 36.2 mm it is 1.7, so this sits between them and is wrong by under a
 #: pixel either way -- well inside the 3.2 columns of the smallest move the
 #: transport can make.
-TARGET_GAP_MM = (APERTURE_MM - 36.0) / 2.0
+TARGET_GAP_MM = (APERTURE_MM - FRAME_WIDTH_MM) / 2.0
 
 
 def strip_offsets(
@@ -686,7 +753,7 @@ def strip_offsets(
     details: dict[int, dict] = {}
     mm_px = None
     for number, image in frames:
-        start, detail = picture_start(image, base, aperture_mm=aperture_mm)
+        start, detail = picture_span(image, base, aperture_mm=aperture_mm)
         details[int(number)] = detail
         mm_px = detail.get("mm_per_px", mm_px)
         if start is not None:
@@ -1232,7 +1299,9 @@ def frame_offset_mm(
     the film at gain 1.008 with a residual rms of 0.021 mm and placed the
     picture on all seven rungs, including the four where `gap_edges` read 0.
     """
-    start, detail = picture_start(image, base, aperture_mm=aperture_mm)
+    start, detail = picture_span(image, base, aperture_mm=aperture_mm)
+    edge = detail.get("edge")
+    source = "right-gap" if edge == "right" else "left-gap"
     if start is None:
         return Reading(None, 0.0, "left-gap", detail.get("reason", ""), detail)
 
@@ -1252,9 +1321,11 @@ def frame_offset_mm(
     return Reading(
         mm=TARGET_GAP_MM - start * mm_px,
         margin=_clip01(margin),
-        source="left-gap",
+        source=source,
         precision=mm_px,
-        reason=f"{length} columns of base, {length * mm_px:.2f} mm",
+        reason=(f"{length} columns of base, {length * mm_px:.2f} mm"
+                + (f", read from the right edge through a {FRAME_WIDTH_MM} mm "
+                   "frame" if edge == "right" else " at the left edge")),
         detail=dict(detail, band_level=round(level, 2),
                     band_flatness=round(flat, 2)),
     )
