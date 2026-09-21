@@ -530,6 +530,12 @@ class ScanSession:
         self.root = str(root) if root else None
         self.reference = str(reference)
         self.rolls = Path(rolls)
+        #: Where the last roll or walk wrote its manifest. The folder is
+        #: derived here, from the job's name and a date fallback, so a caller
+        #: that wants to file something beside that manifest -- the contact
+        #: sheet's decisions, which are made after the walk finishes -- can ask
+        #: rather than recompute the same name and drift out of step with it.
+        self.last_roll_dir: Path | None = None
         self.verbose = verbose
         # A second copy of each scan, written where the operator asked for it as
         # the scan lands rather than afterwards. The library entry is the record;
@@ -905,6 +911,7 @@ class ScanSession:
         name = job.name or time.strftime("%Y-%m-%d")
         out = Path(job.out) if job.out else self.rolls / name
         out.mkdir(parents=True, exist_ok=True)
+        self.last_roll_dir = out
         # Two products, two files. A walk and the scan of what it found go into
         # the same directory, and writing both into roll.json meant the record
         # of six frames walked was replaced by the record of the three that

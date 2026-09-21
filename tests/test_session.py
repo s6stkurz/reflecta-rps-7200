@@ -346,6 +346,18 @@ def test_a_dry_run_files_its_prescans(tmp_path):
     assert all("prescan" in e["tags"] for e in entries)
 
 
+def test_a_walk_records_the_folder_it_wrote_into(tmp_path):
+    """The contact sheet's decisions are made *after* the walk finishes, and
+    until the roll is commissioned its manifest holds no positions -- so this
+    folder is the only thing those decisions can be filed against. Asked for
+    rather than rebuilt from the roll's name by the caller, which would drift
+    the moment the naming here changed."""
+    session, _scanner, _events = run(
+        Roll(frames=2, dry_run=True, name="walk3"), tmp_path)
+    assert session.last_roll_dir == tmp_path / "rolls" / "walk3"
+    assert (session.last_roll_dir / "survey.json").exists()
+
+
 def test_a_real_roll_does_not_file_its_prescans_separately(tmp_path):
     """They ride along with the frame instead. Filing both would double a roll."""
     run(Roll(frames=3, dry_run=False, name="real"), tmp_path)

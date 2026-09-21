@@ -97,3 +97,17 @@ def test_the_default_is_beside_the_library(monkeypatch):
     monkeypatch.delenv(settings.PATH_ENV, raising=False)
     assert settings.path() == settings.DEFAULT_PATH
     assert not os.path.isabs(settings.DEFAULT_PATH)
+
+
+def test_the_contact_sheets_decisions_survive_a_round_trip(tmp_path):
+    """Keyed by roll folder, because frame numbers only mean something within
+    one strip. A section missing from `SECTIONS` is dropped on load without a
+    word, so this is really a test that `sheet` is declared there."""
+    path = tmp_path / "gui.json"
+    settings.save({"sheet": {"roll-07": {"offsets": {"3": 1.25},
+                                         "rotations": {"3": 0}}}}, path)
+    stored = settings.load(path)["sheet"]
+    assert stored["roll-07"]["offsets"] == {"3": 1.25}
+    # Still strings here: JSON has no integer keys, and turning them back is
+    # `ScannerGui._clean_sheet_state`'s job rather than this file's.
+    assert stored["roll-07"]["rotations"] == {"3": 0}

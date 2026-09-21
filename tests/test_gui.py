@@ -2510,3 +2510,144 @@ def test_the_settings_payload_carries_every_section():
     source = inspect.getsource(gui.ScannerGui._remember)
     for section in settings_module.SECTIONS:
         assert f'"{section}"' in source, section
+
+
+# -- what the contact sheet was left holding --------------------------------
+#
+# The sheet is a Toplevel and is destroyed when it closes, so everything
+# decided in it -- which frames to scan, where each sits, which way up -- died
+# with the window: closing it and pressing "Contact sheet ..." again rebuilt it
+# from the survey with every position gone and the whole strip re-ticked.
+# `_clean_sheet_state` is what a stored set has to survive, and it is a
+# staticmethod precisely so it can be tested without opening a window.
+
+clean = gui.ScannerGui._clean_sheet_state
+
+
+def test_frame_numbers_come_back_as_integers_after_a_restart():
+    """JSON has no integer keys. Everything the sheet stores is keyed by frame
+    number, so a round trip through `gui-settings.json` hands back `"3"` where
+    `3` went in -- and a lookup by number then misses every entry, which is
+    indistinguishable from not having saved at all."""
+    out = clean({"offsets": {"3": 1.5}, "rotations": {"3": 90},
+                 "flips": {"3": True}, "ticks": {"3": False}})
+    assert out["offsets"] == {3: 1.5}
+    assert out["rotations"] == {3: 90}
+    assert out["flips"] == {3: True}
+    assert out["ticks"] == {3: False}
+
+
+def test_a_deliberate_zero_rotation_survives():
+    """Zero is a decision for rotations, unlike offsets. "Rotate all" moves the
+    session default, so a frame straightened by hand that came back absent would
+    fall back to that default and be scanned sideways -- which happened on the
+    first strip this was driven on. Dropping a falsy value here would rebuild
+    exactly that bug on every restart."""
+    out = clean({"rotations": {"4": 0}, "flips": {"4": False}})
+    assert out["rotations"] == {4: 0}
+    assert out["flips"] == {4: False}
+
+
+def test_each_kind_keeps_its_own_type():
+    """An offset is millimetres and a rotation is degrees; a rotation that came
+    back as 89.7 would not match any of the four quarter turns."""
+    out = clean({"offsets": {"1": 2}, "rotations": {"1": "180"},
+                 "ticks": {"1": 1}})
+    assert isinstance(out["offsets"][1], float) and out["offsets"][1] == 2.0
+    assert out["rotations"][1] == 180 and isinstance(out["rotations"][1], int)
+    assert out["ticks"][1] is True
+
+
+@pytest.mark.parametrize("rubbish", [None, "not a dict", 17, [], {"offsets": 9}])
+def test_nonsense_reads_as_no_decisions_rather_than_raising(rubbish):
+    """Same bargain as the settings file itself: this is a convenience, and
+    nothing about reading it back may stop the sheet opening."""
+    out = clean(rubbish)
+    assert out == {"ticks": {}, "offsets": {}, "rotations": {}, "flips": {},
+                   "options": {}}
+
+
+def test_one_bad_entry_costs_only_itself():
+    """A file edited by hand should lose the line it got wrong, not the roll's
+    other twelve positions."""
+    out = clean({"offsets": {"2": 1.0, "bent": 3.0, "5": "sideways", "7": 2.5}})
+    assert out["offsets"] == {2: 1.0, 7: 2.5}
+
+
+def test_every_way_out_of_the_sheet_keeps_what_was_decided():
+    """The Close button, the title bar's X and commissioning the scan all
+    destroy the window. Each has to go through `_dismiss` first, or the
+    decisions are kept for one way out and silently dropped for another --
+    which is the shape of the original bug."""
+    import inspect
+
+    built = inspect.getsource(gui._ContactSheet.__init__)
+    assert 'text="Close", command=self._dismiss' in built
+    assert 'protocol("WM_DELETE_WINDOW", self._dismiss)' in built
+    scan = inspect.getsource(gui._ContactSheet._scan)
+    assert "self._dismiss()" in scan and "self.top.destroy()" not in scan
+
+
+def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions():
+    """Frame numbers on a new strip name different pictures. The window already
+    clears `orientations` for this reason -- "a different film, shown and
+    written sideways" -- and the sheet's own copy has to go at the same moment
+    or the positions are applied to whatever lands on those numbers."""
+    import inspect
+
+    source = inspect.getsource(gui.ScannerGui.on_roll)
+    assert "self.orientations = {}" in source, "the existing guard moved"
+    assert "self.sheet_state = {}" in source
+
+
+# -- the sheet's own scan options -------------------------------------------
+
+
+def test_the_sheet_offers_only_options_a_roll_can_carry():
+    """Exposure and shading are session-wide rather than per-roll, so a copy
+    of them on the sheet would either do nothing to the roll or quietly change
+    the window's next single scan. Both are worse than not offering them."""
+    import dataclasses
+
+    from rps7200.session import Roll
+
+    carried = {f.name for f in dataclasses.fields(Roll)}
+    maps = {"dpi": "resolution", "predpi": "prescan_resolution",
+            "ir": "infrared", "fast_ir": "fast_infrared", "film": "film",
+            "meter": "meter", "correct": "correct"}
+    assert set(gui._ContactSheet.OPTIONS) == set(maps)
+    for field in maps.values():
+        assert field in carried, field
+
+
+def test_the_sheets_options_reach_the_roll_rather_than_the_windows():
+    """"Sheet wins for the roll". The job has to be built from the resolved
+    values; reading any of them back off the main window would mean setting
+    3600 on the sheet and scanning at whatever the window still showed."""
+    import inspect
+
+    source = inspect.getsource(gui.ScannerGui.on_scan_chosen)
+    for built in ("resolution=dpi", "prescan_resolution=predpi",
+                  "infrared=infrared", "fast_infrared=fast_ir", "film=film",
+                  "meter=meter", "correct=correct", "mono=mono"):
+        assert built in source, built
+    for leaked in ("infrared=self.v_ir.get()", "film=self.v_film.get()",
+                   "meter=self.v_meter.get()", "correct=self.v_correct.get()"):
+        assert leaked not in source, leaked
+
+
+def test_an_absent_options_set_still_falls_back_to_the_window():
+    """`on_scan_chosen` is reachable without a sheet, and that path has to
+    behave exactly as it did before the panel existed."""
+    import inspect
+
+    source = inspect.getsource(gui.ScannerGui.on_scan_chosen)
+    assert "options=None" in source
+    assert "self._dpi(), self._prescan_dpi()" in source
+
+
+def test_stored_options_come_back_and_unknown_ones_are_dropped():
+    """A key left over from an older version would be handed to a widget that
+    is not there."""
+    out = clean({"options": {"dpi": "3600", "ir": False, "bogus": 1}})
+    assert out["options"] == {"dpi": "3600", "ir": False}

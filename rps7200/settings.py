@@ -34,8 +34,17 @@ PATH_ENV = "RPS7200_SETTINGS"
 #: was last opened, keyed by folder name. It lives here because opening a roll
 #: to look at it should not modify it, and a roll on a read-only backup should
 #: still open.
+#:
+#: `sheet` is the contact sheet's decisions -- which frames are ticked, where
+#: each sits, which way up -- keyed by roll folder name, for the same reason
+#: and with the same caveat. It is a *fallback*, not the record: a commissioned
+#: roll writes its decisions into its own manifest, and `open_roll` restores
+#: from there because the manifest still describes that roll a year later while
+#: this file has moved on to other film. What this section covers is the gap
+#: before a walk has been commissioned, where the manifest does not exist yet
+#: and closing the sheet would otherwise throw the decisions away.
 SECTIONS = ("controls", "film", "output", "window", "presets", "shortcuts",
-            "rolls")
+            "rolls", "sheet")
 
 
 def path(where: str | Path | None = None) -> Path:
