@@ -749,6 +749,45 @@ driver for Nikon Coolscans:
   cost of calling shorter runs gaps. Either way it wants measuring rather than
   choosing, against the stored walks, which costs no scanner time.
 
+- **A reversed *prescan* makes the window turn a correct scan upside down.**
+  Found on film 2026-09-21, scanning `rolls/scan600` at 600 dpi RGBI with each
+  frame held to a contact-sheet position. Frame 3's **prescan** came back with
+  every row reversed -- 8.85 confidence against that frame's own walk
+  reference as it came, **92.84** with the rows flipped -- which is the
+  MODE SELECT byte 14 bit 0 hazard CLAUDE.md already names. The **scan** was
+  fine: `frame03.tif` reads 91.03 against the same reference as saved and 7.96
+  reversed.
+
+  `reversal_against(prescan, scan)` cannot tell those two cases apart. Both
+  produce the same relative mismatch, and it blamed the scan: *"reads 180
+  mirrored"*, margin **0.40** against a `REVERSAL_MARGIN` of 0.25 -- confidently
+  wrong, which is what every detector written for this scanner has been at
+  least once. `ScanSession.match_prescan` is `True` by default
+  (`rps7200/session.py:570`) and `_note_reversal` writes `reversal=[180, True]`
+  into the meta, and by its own docstring *"every file that leaves is turned by
+  it"*. So a correct frame would be delivered 180 degrees rotated and mirrored,
+  in both the TIFF and the JPEG.
+
+  `tools/scan_roll.py` is unaffected -- it drives `FrameWriter` directly and
+  never calls `_note_reversal` -- so the frames scanned by the tool are right.
+  The window is the path at risk, and it is the path an operator uses.
+
+  Two ways out, neither chosen yet:
+
+  * **Break the tie with a third opinion.** In the held path there already is
+    one: the contact sheet's own prescan of that frame. If the fresh prescan
+    disagrees with it *and* the scan agrees with it, the prescan is the pass
+    that reversed. That is exactly how this was diagnosed, and it is free
+    wherever positions are being held.
+  * **Stop it happening.** Byte 14 bit 0 reverses a pass that immediately
+    follows another bit-0-set pass; a prescan taken straight after a frame's
+    RGBI scan is exactly that. Never sending two bit-0-set passes in a row is
+    deterministic and needs no detector -- and it would bump
+    `PROTOCOL_REVISION`, which is why it wants deciding rather than doing.
+
+  The same reversal is also why frame 3 was never corrected: the hold read
+  `unverified` at confidence 8.85 and sent no command. That half failed safe.
+
 ## Measured and left alone
 
 - **Column defects in the frame interior are corrected as far as they can be.**
