@@ -235,6 +235,44 @@ transport's contents matter to the result — an empty transport for a ladder
 check, film loaded for a real scan — ask rather than assume, because only he
 can see it.
 
+## Drive the scanner through this software, not around it
+
+**The point of this project is that the software talks correctly to the
+scanner.** Not that the scanner can be talked to. A script that reaches past
+`ScanSession`, the GUI and `tools/` to send commands itself is testing the
+script, and the script is not what anyone is going to use.
+
+So: use the function the software already has. Want the film moved back? The
+GUI has a prev-slide button. Want a roll walked? `tools/scan_roll.py --dry-run`
+walks one. Want a frame held at a position? `_hold_to_approved` does that.
+If the established path is wrong, **fix the established path** — that is the
+work — and if it needs a probe to diagnose it, the probe exists to explain a
+failure in the real path, never to replace it.
+
+Why this rule exists. An investigation into the transport concluded that
+`SLIDE_PREV` was dead: a hand-written probe sent it from the end of a strip,
+watched `READ_STATE` for 45 s, saw nothing, and the finding went into a commit
+message as "SLIDE_PREV is not usable from here". Stefan then opened the GUI,
+pressed prev slide, and the film moved. The command was fine. What had been
+measured was the probe.
+
+That is the cheap version of the failure. The expensive version is the same
+mistake landing the other way — a probe that works where the real path does
+not, and a bug that ships because nothing ever exercised the code an operator
+runs.
+
+Two things follow:
+
+- **A finding from a bypass path is provisional** until the same thing is seen
+  through `tools/` or the window. Say which one produced it.
+- **Prefer extending a tool to writing a new one.** `tools/scan.py`,
+  `tools/scan_roll.py` and the GUI are where scanner behaviour belongs; a new
+  `tools/*_probe.py` needs a reason that is not "it was quicker".
+
+Offline analysis is exempt and always welcome: anything that reads stored
+library entries and re-derives a number touches no device and is the preferred
+way to answer a question at all.
+
 ## The scanner wedges
 
 It needs a power cycle afterwards, so avoid these:
