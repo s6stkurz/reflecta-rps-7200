@@ -67,6 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--start-at", type=int, default=1, metavar="N",
                     help="resume at picture N, advancing to it without scanning "
                          "(1 = the picture the film is on now)")
+    ap.add_argument("--rewind", type=int, default=0,
+                    help="wind the film back this many frames before doing "
+                         "anything else, one frame at a time, checking each "
+                         "one landed. With --frames 0 it rewinds and stops.")
     ap.add_argument("--prescan-dpi", type=int, default=300,
                     help="resolution of the survey prescan (default 300). A "
                          "commissioned scan must use the same one its "
@@ -133,6 +137,39 @@ def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
               flush=True)
     print(scanner.ensure_shading(ref_path, reuse=args.reuse,
                                  skip=args.no_shading)["summary"])
+
+
+def rewind(scanner: DirectScanner, frames: int) -> int | None:
+    """Wind the film back, one frame at a time, checking each one landed.
+
+    One at a time deliberately. `retreat(steps=N)` exists, but the wait
+    underneath only watches for the position to *change*, so a multi-step call
+    returns as soon as it has moved at all -- it cannot tell sixteen frames
+    from one.
+
+    Checking each one is the other half, and it is the part the window does not
+    do: `on_scan_chosen` queues `Move(frames=-back)` and the roll back to back,
+    and `_move` reports a failure by returning a *string* that the worker logs
+    before taking the next job. A rewind that got three of fourteen is followed
+    immediately by a roll that scans frames it has mis-numbered -- and a break
+    after three successes reads identically to a break after none.
+
+    Returns where the film ended up, or None if it stopped short. A caller that
+    gets None must not go on: everything after this assumes the film is where
+    it was asked to be.
+    """
+    start = scanner.position()
+    print(f"rewinding {frames} frame(s) from position {start}")
+    for step in range(frames):
+        before = scanner.position()
+        landed = scanner.retreat()
+        now = scanner.position()
+        if landed is None or now == before:
+            print(f"  stopped after {step} of {frames}: position still "
+                  f"{before}", file=sys.stderr)
+            return None
+        print(f"  {step + 1}/{frames}: {before} -> {now}", flush=True)
+    return scanner.position()
 
 
 def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
@@ -270,6 +307,19 @@ def main() -> int:
             # It also made `--reuse` inert on a dry run: the flag is read
             # here and nowhere else, so the lazy path ignored it and
             # recalibrated regardless.
+            if args.rewind:
+                landed = rewind(s, args.rewind)
+                if landed is None:
+                    print("refusing to go on: the film is not where it was "
+                          "asked to be, so every frame after this would be "
+                          "mis-numbered", file=sys.stderr)
+                    return 1
+                print(f"rewound to position {landed}")
+                print()
+            if args.frames == 0:
+                print("nothing else asked for")
+                return 0
+
             calibrate(s, args)
 
             for frame in s.scan_roll(

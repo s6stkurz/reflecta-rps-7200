@@ -265,3 +265,49 @@ def test_a_frame_that_failed_makes_the_run_fail(tmp_path, monkeypatch):
     code = scan_roll.main()
     assert len(list((tmp_path / "roll").glob("frame*.tif"))) == 2
     assert code != 0, "two scanned and one lost is not a clean run"
+
+
+# --- winding the film back, and refusing to go on if it did not -------------
+
+
+class _Transport:
+    """A film that can be wound back, and can stop part-way."""
+
+    def __init__(self, at, sticks_at=None):
+        self.at, self.sticks_at, self.calls = at, sticks_at, 0
+
+    def position(self):
+        return self.at
+
+    def retreat(self, **kw):
+        self.calls += 1
+        if self.sticks_at is not None and self.at <= self.sticks_at:
+            return None
+        self.at -= 1
+        return self.at
+
+
+def test_a_rewind_that_lands_reports_where_it_got_to():
+    t = _Transport(16)
+    assert scan_roll.rewind(t, 16) == 0
+    assert t.calls == 16
+
+
+def test_a_rewind_that_stops_short_returns_none():
+    """The caller must not go on. `_move` in the window reports this by
+    returning a *string* the worker logs before taking the next job, so a
+    rewind that got three of fourteen is followed straight away by a roll that
+    scans frames it has mis-numbered -- and a break after three successes reads
+    identically to a break after none."""
+    t = _Transport(16, sticks_at=10)
+    assert scan_roll.rewind(t, 16) is None
+    assert t.at == 10, "it must stop where it stuck, not keep asking"
+
+
+def test_a_rewind_goes_one_frame_at_a_time():
+    """`retreat(steps=N)` exists, but the wait underneath only watches for the
+    position to CHANGE -- so a multi-step call returns as soon as it has moved
+    at all and cannot tell sixteen frames from one."""
+    t = _Transport(5)
+    scan_roll.rewind(t, 5)
+    assert t.calls == 5
