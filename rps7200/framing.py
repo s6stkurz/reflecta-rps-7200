@@ -576,22 +576,47 @@ def picture_start(
                                 gap_mm=round(length * mm_px, 3))
 
 
+#: Where a frame's picture should begin: half the slack, so what the aperture
+#: cannot hold is lost evenly from both edges instead of all from one.
+#:
+#: Measured rather than assumed, in the end. Three frames with gaps of 7, 19
+#: and 26 columns all run picture to the last column with no base at the right
+#: -- spread 3.7 to 11.6 counts where base shows 1 -- so the picture is wider
+#: than what is left of the window and is being cut. The tightest of those puts
+#: the frame past 421 columns, 35.90 mm, which corroborates the 36 mm
+#: `MAX_REGISTRATION_MM` was derived from and leaves 0.49 mm of slack.
+#:
+#: Robust across the range that survives: at 35.9 mm the ideal is 3.5 columns
+#: and at 36.2 mm it is 1.7, so this sits between them and is wrong by under a
+#: pixel either way -- well inside the 3.2 columns of the smallest move the
+#: transport can make.
+TARGET_GAP_MM = (APERTURE_MM - 36.0) / 2.0
+
+
 def strip_offsets(
-    frames, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+    frames, base: FilmBase, *, aperture_mm: float = APERTURE_MM,
+    target: str = "centre",
 ) -> tuple[dict[int, float], dict[int, dict]]:
     """What each frame should be moved by, keyed by frame number.
 
     ``frames`` is ``(number, image)`` pairs for one strip.
 
-    The target is the strip's **own median** picture start, not a centre
-    computed from a nominal frame width. Two reasons, and the first is that
-    the width is not known: `NOMINAL_FRAME_WIDTH` implies 35.56 mm and
-    `MAX_REGISTRATION_MM` implies 36.00, they disagree by a factor of 1.9 in
-    derived slack, and a two-sided measurement over two walks and two ladders
-    did not settle it. The second is that it is the right target anyway --
-    most frames of a sound strip are already where they should be, so the
-    median is a position known to work, and this moves the outliers to meet
-    them rather than moving every frame to a number nobody has verified.
+    ``target`` is ``"centre"``, which aims every frame at `TARGET_GAP_MM` so
+    the picture sits as squarely in the aperture as it can, or ``"median"``,
+    which aims them at the strip's own middle.
+
+    Centre is the default, and the difference is not cosmetic. A whole strip
+    can be shifted the same way -- walk A's sixteen frames all carried 1.4 to
+    2.2 mm of gap at the left, and all of them were losing that much picture
+    off the right edge. Against the median every one of them reads as
+    "nothing to do", because they agree with each other; against the centre
+    they read as needing 1.2 to 2.0 mm, which is what they need. A target
+    taken from the frames themselves cannot see an error they all share.
+
+    Median remains for the case centre cannot serve: a strip whose frame width
+    is not the 36 mm `TARGET_GAP_MM` assumes. It moves outliers to meet the
+    frames that are already fine and never asks where the aperture's middle
+    is.
 
     Sign follows `nudge` and `Approved.offset_mm`: positive means the film
     moves toward +x. A picture starting further right than the median needs a
@@ -611,14 +636,17 @@ def strip_offsets(
     if not measured or mm_px is None:
         return {}, details
 
-    target = float(np.median(list(measured.values())))
-    offsets = {n: (target - start) * mm_px for n, start in measured.items()}
+    if target == "median":
+        want = float(np.median(list(measured.values())))
+    else:
+        want = TARGET_GAP_MM / mm_px
+    offsets = {n: (want - start) * mm_px for n, start in measured.items()}
     for number, start in measured.items():
         # The target goes on each frame rather than beside them: the mapping
         # is keyed by frame number, and one string key among the integers is
         # the kind of thing that reads fine and breaks a caller that iterates.
         details[number].update(source="measured", start_px=start,
-                               target_px=target)
+                               target_px=want, target=target)
     return offsets, details
 
 

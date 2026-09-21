@@ -141,14 +141,30 @@ def test_the_detector_is_resolution_independent():
 # -- the strip, and the sign ------------------------------------------------
 
 
-def test_the_offset_is_measured_against_the_strips_own_median():
-    """Not against a nominal frame width: NOMINAL_FRAME_WIDTH implies 35.56 mm
-    and MAX_REGISTRATION_MM implies 36.00, they disagree by a factor of 1.9 in
-    derived slack, and two walks plus two ladders did not settle it. The
-    median is a position already known to work on this strip."""
+def test_a_whole_strip_shifted_the_same_way_is_still_corrected():
+    """The reason the target is the aperture and not the strip's own middle.
+
+    Walk A's sixteen frames all carried 1.4 to 2.2 mm of gap at the left and
+    all of them were losing that much picture off the right edge -- confirmed
+    by the right-hand columns being picture, spread 3.7 to 11.6 counts where
+    base shows 1. Against the median every one read as "nothing to do",
+    because they agree with each other. A target taken from the frames
+    themselves cannot see an error they all share.
+    """
+    frames = [(n, frame(gap_px=18, seed=n)) for n in range(1, 7)]
+    offsets, _detail = strip_offsets(frames, calibrated())
+    assert all(v < -1.0 for v in offsets.values()), offsets
+
+    against_median = strip_offsets(frames, calibrated(), target="median")[0]
+    assert all(abs(v) < 0.05 for v in against_median.values()), against_median
+
+
+def test_the_median_target_moves_outliers_to_meet_the_rest():
+    """Still there for a strip whose frame is not the 36 mm the centre target
+    assumes."""
     frames = [(n, frame(gap_px=18, seed=n)) for n in range(1, 6)]
     frames.append((6, frame(gap_px=28, seed=6)))
-    offsets, _detail = strip_offsets(frames, calibrated())
+    offsets, _detail = strip_offsets(frames, calibrated(), target="median")
     assert offsets[1] == pytest.approx(0.0, abs=0.03)
     assert offsets[6] < -0.5, offsets
 
