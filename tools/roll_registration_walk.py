@@ -194,6 +194,10 @@ def main() -> int:
                     help="where to write (default rolls/registration-<label>)")
     ap.add_argument("--ladder", default="",
                     help="frames to run the displacement ladder on, e.g. 1,15")
+    ap.add_argument("--rewind", type=int, default=0,
+                    help="go back this many frames first, one at a time. For "
+                         "re-walking a strip the previous walk left further "
+                         "down, without unloading it")
     ap.add_argument("--json", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
@@ -201,7 +205,7 @@ def main() -> int:
 
     ladder_on = [int(n) for n in args.ladder.split(",") if n.strip()]
     out = args.out or Path("rolls") / f"registration-{args.label}"
-    seconds = estimate(args.frames, len(ladder_on))
+    seconds = estimate(args.frames, len(ladder_on)) + args.rewind * 7.0
 
     print(f"walk {args.label}: {args.frames} frames at {args.resolution} dpi, "
           f"two prescans each")
@@ -211,7 +215,11 @@ def main() -> int:
               f"{RUNGS*RUNG_MM:.3f} mm each side, film put back after each")
     print(f"  writes to {out}")
     print(f"  roughly {seconds/60:.1f} minutes")
+    if args.rewind:
+        print(f"  FIRST: {args.rewind} frames back, one command each, to "
+              f"re-walk a strip the last walk left further down")
     print(f"  moves: {args.frames - 1} whole-frame advances"
+          + (f", {args.rewind} retreats" if args.rewind else "")
           + (f", and {len(ladder_on)*2*RUNGS} sub-frame nudges"
              if ladder_on else ""))
     print(f"  never further than {MAX_EXCURSION_MM} mm from a frame's start; "
@@ -257,12 +265,52 @@ def main() -> int:
         walk = Walk(scanner, out, args.resolution, args.label)
         walk.log["state_before"] = {"position": int(state.position)}
 
+        if args.rewind:
+            # One frame per command. `retreat(steps=N)` would put N in the
+            # payload's value byte, which is not a thing the vendor sends, and
+            # the wait underneath only watches for the position to CHANGE --
+            # so a multi-step call returns as soon as it has moved at all.
+            # Single steps are the operation that has actually been driven.
+            print(f"\nrewinding {args.rewind} frames, one at a time")
+            went = []
+            for step in range(args.rewind):
+                where = scanner.retreat()
+                went.append(where)
+                if where is None:
+                    print(f"  stopped after {step}: it would not go back "
+                          f"further -- already at the start of the strip")
+                    break
+                print(f"  back to position {where}")
+            walk.log["rewind"] = {"asked": args.rewind, "positions": went}
+            print(f"  now at position {scanner.position()}")
+
         for number in range(1, args.frames + 1):
             walk.frame(number)
             if number in ladder_on:
                 walk.ladder(number)
             if number < args.frames:
-                scanner.advance()
+                where = scanner.advance()
+                if where is None:
+                    # The end of the strip. `scan_roll` stops here and so must
+                    # this: without it the walk re-scans one position for the
+                    # rest of its frames, which costs ~40 s each and produces
+                    # a corpus that looks like a strip and is not one. That is
+                    # not hypothetical -- walk B did exactly that for fourteen
+                    # frames before this check existed.
+                    #
+                    # Contrast cannot substitute. Clear base past the last
+                    # frame measured 0.292 here, well above BLANK_CONTRAST
+                    # (0.02), so the blank test sees a picture. The transport
+                    # refusing to move is the signal.
+                    print(f"  the film stopped advancing at position "
+                          f"{scanner.position()} -- that is the end of the "
+                          f"strip, stopping after {number} frames")
+                    walk.log["stopped_early"] = {
+                        "after_frame": number,
+                        "position": scanner.position(),
+                        "asked_for": args.frames,
+                    }
+                    break
         walk.log["ok"] = True
     except KeyboardInterrupt:
         print("\ninterrupted -- the film is wherever the last move left it",

@@ -206,6 +206,47 @@ def test_a_dry_run_opens_no_device(tmp_path, monkeypatch, capsys):
     assert "8 minute rule" in out
 
 
+def test_it_stops_when_the_film_stops_advancing(tmp_path, monkeypatch, capsys):
+    """Walk B re-scanned one position fourteen times because this check was
+    missing -- twelve minutes of scanner time for a corpus that looks like a
+    strip and is not one.
+
+    Contrast cannot substitute for the transport's own refusal: clear base
+    past the last frame measured 0.292, well above BLANK_CONTRAST (0.02), so
+    the blank test sees a picture there.
+    """
+    class EndsAtThree(FakeScanner):
+        def open(self):
+            return self
+
+        def read_state(self):
+            return SimpleNamespace(scanning=0x0d, position=0, warming_up=False)
+
+        def advance(self, steps=1, timeout=30.0, poll=0.5):
+            if self._position >= 3:
+                return None                      # the end of the strip
+            return super().advance(steps, timeout, poll)
+
+        def session_start(self):
+            pass
+
+        def wait_warm(self):
+            pass
+
+        def close(self):
+            pass
+
+    scanner = EndsAtThree()
+    monkeypatch.setattr(walk_tool, "DirectScanner", lambda **kw: scanner)
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    monkeypatch.setattr(sys, "argv",
+                        ["w.py", "--frames", "16", "--out", str(tmp_path)])
+    assert walk_tool.main() == 0
+    assert "end of the strip" in capsys.readouterr().out
+    # Four frames scanned, not sixteen: 0,1,2,3 then the refusal.
+    assert scanner.prescans == 2 * 4, scanner.prescans
+
+
 def test_the_estimate_crosses_the_eight_minute_rule(tmp_path):
     """Not a cosmetic check. 16 frames at two prescans each is past the point
     where a foreground command is killed, and a killed read is an abandoned
