@@ -1473,14 +1473,22 @@ def test_a_reversed_pass_is_still_measured():
     assert "rows reversed" in detail["reason"]
 
 
-def test_a_good_match_is_never_second_guessed():
-    """The flip is tried only where the pass has already been refused."""
+def test_both_orientations_are_always_read_and_always_reported():
+    """This began as a fallback tried only after the upright reading had been
+    refused, and that was the wrong shape twice over. It privileged "as it
+    came" with nothing behind the privilege -- five of one roll's fifteen
+    prescans came back reversed -- and it left `confidence` meaning the upright
+    score on one frame and the flipped one on the next, in a column
+    `library.save` keeps so `CONFIDENCE_FLOOR` can be re-fitted from it. A
+    column that mixes two populations cannot be re-fitted.
+    """
     from rps7200.framing import measure_shift_mm
 
     rng = np.random.default_rng(4)
     reference = rng.random((60, 428, 3)) * 200
     _mm, detail = measure_shift_mm(reference, np.roll(reference, -5, axis=1))
-    assert "row_reversed" not in detail
+    assert detail["row_reversed"] is False
+    assert detail["confidence"] > detail["confidence_other"]
 
 
 def test_a_different_picture_is_still_refused_either_way_up():
@@ -1492,4 +1500,36 @@ def test_a_different_picture_is_still_refused_either_way_up():
     mm, detail = measure_shift_mm(rng.random((60, 428, 3)) * 200,
                                   rng.random((60, 428, 3)) * 200)
     assert mm is None
-    assert "reversed" in detail["reason"]
+    assert "the other way up" in detail["reason"]
+
+
+def test_the_off_axis_gate_means_the_same_at_every_resolution():
+    """The most dangerous latent thing in this loop, and it was invisible.
+
+    Every reversed pass matches about two lines off the film axis -- measured
+    on five of one roll's fifteen prescans, all five at exactly dy = -2 with
+    **zero** margin against a gate of 2 px. That offset is a distance on the
+    film, the forward-versus-reverse start `docs/byte14-plan.md` predicts, so
+    at a 600 dpi prescan it is four pixels. Expressed in pixels the gate would
+    have refused every rescue, and raising `prescan_resolution` for any other
+    reason would have turned the whole thing off without anybody editing it.
+    """
+    from rps7200.framing import APERTURE_HEIGHT_MM, MAX_DY_MM
+
+    at_300 = MAX_DY_MM / (APERTURE_HEIGHT_MM / 287)
+    at_600 = MAX_DY_MM / (APERTURE_HEIGHT_MM / 574)
+    assert at_300 == pytest.approx(2.0, abs=0.05)
+    assert at_600 == pytest.approx(4.0, abs=0.05), (
+        "the gate has to grow with the ruler, or a finer prescan tightens it")
+
+
+def test_a_reversed_pass_is_read_at_a_finer_prescan_too():
+    """The same frame at twice the resolution, reversed, must still be read."""
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(11)
+    reference = rng.random((120, 856, 3)) * 200
+    shifted = np.roll(reference, -14, axis=1)
+    mm, detail = measure_shift_mm(reference, shifted[::-1])
+    assert mm is not None, detail["reason"]
+    assert detail["row_reversed"] is True

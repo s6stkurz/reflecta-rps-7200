@@ -1468,3 +1468,57 @@ def test_the_window_can_ask_what_aiming_would_do_without_doing_it():
 
     assert Roll().correct_dry_run is False
     assert Roll(correct_dry_run=True).correct_dry_run is True
+
+
+# --- a reversed prescan must not turn a correct scan upside down ------------
+
+
+def test_a_reversed_prescan_is_not_evidence_about_the_scan():
+    """Measured on film: five of one roll's fifteen prescans came back with
+    their rows reversed while every scan was fine. `reversal_against` compares
+    a scan against its own prescan and cannot tell which of the two reversed,
+    so it blamed the scan on all five, at margins of 0.32 to 1.21 against a
+    threshold of 0.25 -- and `_note_reversal` acts on that, by its own
+    docstring turning every file that leaves. Five correct frames would have
+    shipped upside down.
+    """
+    import numpy as np
+
+    from rps7200.session import ScanSession
+
+    session = ScanSession.__new__(ScanSession)
+    session.match_prescan = True
+    session._emit = lambda *a, **k: None
+
+    # A picture with a top and a bottom, because `reversal_against` compares
+    # banded profiles and pure noise gives it nothing to tell apart.
+    rng = np.random.default_rng(7)
+    ramp = np.linspace(0, 220, 60)[:, None, None] * np.ones((1, 428, 3))
+    scan = ramp + rng.random((60, 428, 3)) * 30
+    prescan = scan[::-1]                      # the prescan is the odd one out
+
+    blamed = session._note_reversal({}, scan, prescan)
+    assert blamed.get("reversal"), "without the third opinion it blames the scan"
+
+    spared = session._note_reversal({}, scan, prescan, prescan_reversed=True)
+    assert "reversal" not in spared, "told which pass reversed, it must not turn"
+
+
+def test_the_scan_is_still_turned_when_the_scan_is_the_reversed_one():
+    """The detector is not being switched off -- only told which way round the
+    evidence points. A genuinely reversed scan must still be caught."""
+    import numpy as np
+
+    from rps7200.session import ScanSession
+
+    session = ScanSession.__new__(ScanSession)
+    session.match_prescan = True
+    session._emit = lambda *a, **k: None
+
+    rng = np.random.default_rng(8)
+    ramp = np.linspace(0, 220, 60)[:, None, None] * np.ones((1, 428, 3))
+    prescan = ramp + rng.random((60, 428, 3)) * 30
+    turned = prescan[::-1]
+
+    meta = session._note_reversal({}, turned, prescan)
+    assert meta.get("reversal"), "a reversed scan must still be turned back"

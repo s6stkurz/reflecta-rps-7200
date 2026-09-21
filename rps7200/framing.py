@@ -363,6 +363,12 @@ def registration_error_mm(
     return mm, f"{px:+d} px of gap"
 
 
+#: How tall the transport window is, in millimetres. 6888 units at 7200 dpi.
+#: Needed because the off-axis gate is in mm rather than pixels, so that it
+#: means the same thing at every prescan resolution.
+APERTURE_HEIGHT_MM = ((FULL_FRAME[3] - FULL_FRAME[1] + 1)
+                      * MM_PER_INCH / COORD_PER_INCH)
+
 #: The whole transport window, in millimetres. 10344 units at 7200 dpi.
 APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 
@@ -793,6 +799,20 @@ CONFIDENCE_FLOOR = 55.0
 #: something else. True matches gave 0 to 1; the nulls ranged +-61.
 MAX_DY_PX = 2
 
+#: The same gate in millimetres, which is what :func:`measure_shift_mm` uses.
+#:
+#: Pixels were the wrong unit and the reason is specific rather than tidiness.
+#: A pass that came back with its rows reversed matches at dy = -2 -- measured
+#: on five of one roll's fifteen prescans, all five at exactly -2, with **zero**
+#: margin against a 2 px gate. That offset is a distance on the film, the
+#: forward-versus-reverse start `docs/byte14-plan.md` predicts, so at a 600 dpi
+#: prescan it is 4 px and a pixel gate refuses every one of them. Raising
+#: `prescan_resolution` would have silently turned the reversal rescue off
+#: without anybody editing this line.
+#:
+#: 2 px of a 300 dpi prescan, which is where the 0 to 1 above was measured.
+MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)
+
 
 #: How much better the reversed reading has to correlate before a pass is
 #: turned to match its prescan. A half turn is a huge signal -- on real film
@@ -954,39 +974,62 @@ def measure_shift_mm(
     mm_per_px = aperture_mm / width
     reach = int(SEARCH_MM / max(mm_per_px, 1e-9))
 
-    dy, dx, confidence = register(reference, now, max_shift=reach)
+    # Both orientations, always, and the stronger one wins.
+    #
+    # A pass can come back with every row reversed and nothing says so: MODE
+    # SELECT byte 14 bit 0 reverses the pass that immediately follows a
+    # bit-0-set one, and this driver sets it on every RGBI scan -- so a frame's
+    # prescan, taken straight after the previous frame's scan, is exactly the
+    # pass at risk. Measured on one 600 dpi roll: **five of fifteen**.
+    #
+    # Safe to compare because the reversal is a flip in **y** while the
+    # displacement wanted is in **x**. `reversal_against` reports it as
+    # `(180, True)`, and fliplr then rot180 is flipud exactly, so no column is
+    # ever permuted.
+    #
+    # Symmetric rather than a fallback after refusal, which is what this was
+    # first written as. Trying the flip only once the upright reading has been
+    # refused privileges "as it came" with nothing behind the privilege, and it
+    # leaves `confidence` meaning the upright z-score on one frame and the
+    # flipped one on the next -- a column that mixes two populations, in a
+    # record `library.save` keeps so `CONFIDENCE_FLOOR` can be re-fitted from
+    # it. The cost of doing both is one more `register`: 46 ms measured at the
+    # size this runs at, against 45 s for the frame scan it precedes.
+    #
+    # It does not weaken the floor. The distribution that matters here is a
+    # genuine pair read the wrong way up, which nobody had measured: over 15
+    # real pairs it spans 4.9 to 8.9 against a floor of 55, separating the
+    # right orientation from the wrong one by 10.5x to 28.2x.
+    upright = register(reference, now, max_shift=reach)
+    flipped = register(reference, now[::-1], max_shift=reach)
+    reversed_wins = flipped[2] > upright[2]
+    dy, dx, confidence = flipped if reversed_wins else upright
+    other = (upright if reversed_wins else flipped)[2]
     detail.update(confidence=round(float(confidence), 2), dy=int(dy),
-                  dx=int(dx), px=int(-dx))
+                  dx=int(dx), px=int(-dx), row_reversed=bool(reversed_wins),
+                  confidence_other=round(float(other), 2))
 
     if confidence < CONFIDENCE_FLOOR:
-        # A pass can come back with every row reversed and nothing says so --
-        # MODE SELECT byte 14 bit 0, which this driver sets on every RGBI scan,
-        # reverses the pass that immediately follows one. A frame's prescan
-        # follows the previous frame's scan, so it is exactly the pass at risk:
-        # measured 2026-09-21 on two of seven frames of one 600 dpi roll, which
-        # each then went uncorrected because the reading was refused.
-        #
-        # Flipping the rows is safe to try because it is a flip in **y**, and
-        # the displacement this measures is in x -- so a reversed pass is not
-        # unreadable, only unreadable as it came. Tried only where the pass has
-        # already been refused, so a good match is never second-guessed.
-        flipped = now[::-1]
-        fy, fx, fc = register(reference, flipped, max_shift=reach)
-        if fc >= CONFIDENCE_FLOOR and abs(fy) <= MAX_DY_PX:
-            detail.update(confidence=round(float(fc), 2), dy=int(fy),
-                          dx=int(fx), px=int(-fx), row_reversed=True,
-                          confidence_as_read=round(float(confidence), 2),
-                          reason="matched with its rows reversed")
-            return float(-fx) * mm_per_px, detail
         detail["reason"] = (f"correlation too weak ({confidence:.1f} below "
-                            f"{CONFIDENCE_FLOOR:.0f}; {fc:.1f} reversed)")
-        return None, detail
-    if abs(dy) > MAX_DY_PX:
-        detail["reason"] = (f"matched {dy:+d} px off the film axis, which the "
-                            "transport cannot do")
+                            f"{CONFIDENCE_FLOOR:.0f}"
+                            + (f"; {other:.1f} the other way up)"
+                               if other else ")"))
         return None, detail
 
-    detail["reason"] = "matched"
+    # In millimetres, not pixels. Every reversed pass measured matched at
+    # dy = -2 with **zero** margin against a gate of 2 px -- that offset is the
+    # forward-versus-reverse start the byte 14 plan predicts, about 0.17 mm, so
+    # at a 600 dpi prescan it is 4 px and a pixel gate would refuse every
+    # rescue silently. Anyone raising `prescan_resolution` would have turned
+    # this off without touching it.
+    dy_mm = abs(dy) * (APERTURE_HEIGHT_MM / max(now.shape[0], 1))
+    if dy_mm > MAX_DY_MM:
+        detail["reason"] = (f"matched {dy_mm:.2f} mm off the film axis, which "
+                            "the transport cannot do")
+        return None, detail
+
+    detail["reason"] = ("matched with its rows reversed" if reversed_wins
+                        else "matched")
     return float(-dx) * mm_per_px, detail
 
 

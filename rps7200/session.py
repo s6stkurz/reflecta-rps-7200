@@ -839,7 +839,7 @@ class ScanSession:
         image, where = self._last_prescan
         return image if where == self._position() else None
 
-    def _note_reversal(self, meta, image, reference):
+    def _note_reversal(self, meta, image, reference, prescan_reversed=False):
         """Record any half turn this pass needs to read like its prescan.
 
         Written into the meta rather than applied to the pixels here, which is
@@ -853,6 +853,23 @@ class ScanSession:
         up a photograph is.
         """
         if not self.match_prescan or reference is None:
+            return meta
+        if prescan_reversed:
+            # The reference is the pass that came back reversed, not this one.
+            # `reversal_against` cannot tell those apart -- both give the same
+            # relative mismatch -- so on a roll where five of fifteen prescans
+            # reversed it blamed the scan every time, at margins of 0.32 to
+            # 1.21 against a threshold of 0.25. Confidently wrong, and acted
+            # on: every file that leaves is turned by what this writes, so
+            # five correct frames would have shipped upside down.
+            #
+            # Something else has already settled it. The hold loop compared
+            # that prescan against a third picture, the approved reference,
+            # and said which way up it read.
+            self._emit("log", text=(
+                "this frame's prescan came back with its rows reversed, so it "
+                "is not evidence about which way up the scan is; the scan is "
+                "left exactly as it came"))
             return meta
         extra, detail = reversal_against(reference, image)
         if extra == (0, False):
@@ -1123,7 +1140,10 @@ class ScanSession:
                     # frame a minute earlier, which is the only evidence there
                     # is that the carriage reversed: see `_note_reversal`.
                     frame_meta = self._note_reversal(
-                        rf.meta, rf.image, rf.prescan)
+                        rf.meta, rf.image, rf.prescan,
+                        prescan_reversed=bool(
+                            ((rf.registration or {}).get("approved") or {})
+                            .get("row_reversed")))
                     scanned = frame_meta
                     seq = self._deliver(
                         "frame", label, rf.image, frame_meta,

@@ -2854,6 +2854,13 @@ class DirectScanner:
                               else round(target - final, 4))
         out["confidence"] = out["history"][-1].get("confidence")
         out["dy"] = out["history"][-1].get("dy")
+        # Which way up the prescans read. It matters downstream and nothing
+        # else can tell: `reversal_against` compares a scan against its own
+        # prescan and cannot say which of the two reversed, so it blames the
+        # scan. Here there is a third picture -- the approved reference -- and
+        # it settles the question for free.
+        out["row_reversed"] = any(h.get("row_reversed")
+                                  for h in out["history"])
         self._log(
             f"frame {index}: {source} {target:+.3f} mm -> {out['outcome']}"
             + (f", now {final:+.3f} mm after {out['moves']} move(s)"

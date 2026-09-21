@@ -749,7 +749,17 @@ driver for Nikon Coolscans:
   cost of calling shorter runs gaps. Either way it wants measuring rather than
   choosing, against the stored walks, which costs no scanner time.
 
-- **A reversed *prescan* makes the window turn a correct scan upside down.**
+- ~~**A reversed *prescan* makes the window turn a correct scan upside down.**~~
+  **Fixed 2026-09-21.** Kept below because the measurement is the useful part.
+  The hold loop compares that prescan against a *third* picture -- the approved
+  reference -- so it already knows which pass reversed; `_hold_to_approved` now
+  reports `row_reversed` and `_note_reversal` declines to turn the scan when
+  the prescan is the odd one out. The detector is not switched off: a genuinely
+  reversed scan is still caught, which `tests/test_session.py` pins both ways.
+
+  It was **five** frames of fifteen, not four: 3, 7, 9, 11 and 13.
+
+- **The original finding, for the record.**
   Found on film 2026-09-21, scanning `rolls/scan600` at 600 dpi RGBI with each
   frame held to a contact-sheet position. Frame 3's **prescan** came back with
   every row reversed -- 8.85 confidence against that frame's own walk
