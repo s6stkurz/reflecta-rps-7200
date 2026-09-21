@@ -72,6 +72,12 @@ from rps7200.console import use_utf8_stdout  # noqa: E402
 from rps7200.framing import (                # noqa: E402
     APERTURE_MM,
     BLANK_CONTRAST,
+    HOLD_TOLERANCE_MM,
+    StripWalk,
+    combine,
+    frame_offset_mm,
+    predict_offset,
+    right_gap_closure,
     CLEAR_RATIO,
     CONFIDENCE_FLOOR,
     GAP_FLATNESS,
@@ -604,6 +610,79 @@ def report_position(rows, images, base: float, scale: float) -> dict:
             "mean_px": float(arr.mean()), "sd_px": float(arr.std())}
 
 
+def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
+    """Replay a stored walk through the ensemble, causally, in walk order.
+
+    What each frame would have been told to do knowing only what the walk knew
+    when it reached it: the base armed from the frames already passed, the prior
+    from the advances already seen.
+
+    **Observe-only, and it has to be.** The film in a stored walk never moved,
+    so frame 8's image shows where the film actually was -- not where it would
+    have been had frame 7 been corrected. An earlier version of this simulated
+    the corrections landing and so manufactured advance errors of -0.78 mm
+    against a real wander of +/-0.17, then reported the ensemble refusing frames
+    it would not refuse. What this measures is whether the members agree about
+    where the film *is*, which is the question the gate actually asks.
+
+    Costs no scanner time: `rolls/` keeps the prescans.
+    """
+    walk = StripWalk()
+    seen: list[np.ndarray] = []
+    rows, moved, in_place, refused = [], 0, 0, 0
+
+    print("\n-- the ensemble, replayed in walk order --\n")
+    print(f"  {'frame':<14} {'base':>6} {'left':>7} {'prior':>7} {'right':>7}"
+          f"  outcome")
+    for order, (name, image) in enumerate(images, 1):
+        seen.append(image)
+        walk.observe(order, image)
+        if walk.base is None:
+            print(f"  {name[:14]:<14} {'-':>6} {'-':>7} {'-':>7} {'-':>7}  "
+                  f"no base yet: {walk.base_detail.get('reason', '')[:34]}")
+            rows.append({"frame": name, "outcome": "no_base"})
+            continue
+
+        left = frame_offset_mm(image, walk.base)
+        right = right_gap_closure(image, walk.base)
+        prior = predict_offset(walk.history(order), order)
+        decision, detail = combine([left, right, prior])
+        if left.mm is not None:
+            walk.placed[order] = left.mm
+
+        if decision is None:
+            outcome = "refused: " + detail.get("reason", "")[:44]
+            refused += 1
+        elif abs(decision) < HOLD_TOLERANCE_MM:
+            outcome = f"in place ({detail['chose']})"
+            in_place += 1
+        else:
+            outcome = f"move {decision:+.2f} mm ({detail['chose']})"
+            moved += 1
+
+        def show(r):
+            return f"{r.mm:+7.2f}" if r.mm is not None else "      -"
+
+        print(f"  {name[:14]:<14} {walk.base.level:6.1f} {show(left)} "
+              f"{show(prior)} {show(right)}  {outcome}")
+        rows.append({
+            "frame": name, "decision_mm": decision,
+            "outcome": outcome.split(":")[0].split(" (")[0],
+            "members": detail.get("members"), "chose": detail.get("chose"),
+        })
+
+    print(f"\n  {moved} would move, {in_place} in place, {refused} refused")
+    if walk.base is not None:
+        print(f"  base {walk.base.level:.2f} counts, spread "
+              f"{walk.base.spread * 100:.2f}%, {walk.base.bands} bands from "
+              f"{walk.base_detail.get('frames')} frames")
+    print("\n  A refusal is the safe failure and the common one early: the "
+          "prior\n  needs two placed frames behind it before it can speak at "
+          "all.")
+    return {"rows": rows, "moved": moved, "in_place": in_place,
+            "refused": refused,
+            "base": None if walk.base is None else walk.base.level}
+
 def main(argv: list[str] | None = None) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(
@@ -619,6 +698,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="the resolution to select when reading a library")
     ap.add_argument("--json", type=Path, default=None,
                     help="also write the whole result here")
+    ap.add_argument("--glob", default=None,
+                    help="the filename pattern to read, for a cohort not "
+                         "named prescanNN.tif -- walk A's passes came from an "
+                         "earlier probe and are A01_p1.tif and so on")
+    ap.add_argument("--ensemble", action="store_true",
+                    help="replay the walk through the ensemble that decides "
+                         "corrections, frame by frame in walk order, using "
+                         "only what each frame could have known at the time")
     args = ap.parse_args(argv)
 
     pairs: list[dict] = []
@@ -634,7 +721,11 @@ def main(argv: list[str] | None = None) -> int:
         if not args.root.is_dir():
             print(f"no folder at {args.root}")
             return 1
-        images = cohort(args.root, args.dpi)
+        if args.glob:
+            images = [(q.name, tiff.read(str(q)).astype(np.float64))
+                      for q in sorted(args.root.glob(args.glob))]
+        else:
+            images = cohort(args.root, args.dpi)
         if not images:
             print(f"no comparable prescans in {args.root}")
             return 1
@@ -651,6 +742,9 @@ def main(argv: list[str] | None = None) -> int:
     base = result.get("base", {}).get("mean")
     if base:
         result["position"] = report_position(rows, images, base, scale)
+
+    if args.ensemble:
+        result["ensemble"] = report_ensemble(images)
 
     if pairs:
         noise = noise_floor(pairs, args.dpi, scale)
