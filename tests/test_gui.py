@@ -2651,3 +2651,37 @@ def test_stored_options_come_back_and_unknown_ones_are_dropped():
     is not there."""
     out = clean({"options": {"dpi": "3600", "ir": False, "bogus": 1}})
     assert out["options"] == {"dpi": "3600", "ir": False}
+
+
+# --- what the sheet says a frame's aiming did -------------------------------
+
+
+def test_the_caption_tells_a_corrected_frame_from_a_refused_one():
+    """`gap_edges` made these the same silence: it answered "registered" both
+    for a frame it had checked and for one it could not see."""
+    from tools.gui import _aim_note
+
+    assert "aimed -0.61 mm" in _aim_note(
+        {"correction": {"outcome": "held", "decision_mm": -0.61}})
+    assert "in place" in _aim_note({"correction": {"outcome": "in_place"}})
+    assert "would aim" in _aim_note(
+        {"correction": {"outcome": "dry_run", "decision_mm": -0.61}})
+
+
+def test_the_caption_says_why_a_frame_was_not_aimed():
+    from tools.gui import _aim_note
+
+    note = _aim_note({"correction": {
+        "outcome": "abstained",
+        "reason": "only 1 member(s) could measure this frame; two that agree"}})
+    assert "not aimed" in note and "1 member" in note
+    assert "not aimed (not converged)" in _aim_note(
+        {"correction": {"outcome": "not_converged"}})
+
+
+def test_a_frame_nobody_aimed_says_nothing():
+    """An ordinary roll's caption must be exactly what it was."""
+    from tools.gui import _aim_note
+
+    assert _aim_note({}) == ""
+    assert _aim_note({"offset_mm": 0.2}) == ""

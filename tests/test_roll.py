@@ -639,6 +639,42 @@ def test_a_correction_that_does_not_land_is_reported():
     assert fix["moves"] == MAX_HOLD_MOVES
 
 
+def test_a_corrected_frame_keeps_the_picture_it_arrived_as():
+    """A corrected prescan replaces the original outright, so without this the
+    only account of whether a correction helped is the detector's own."""
+    s = FakeRoll(aimable(3))
+    # Scripted so the verification pass is a different picture from the one
+    # the frame arrived as; the strip fixture hands back one array object
+    # every time, which cannot show a replacement happening at all.
+    arrived = framed(gap_left=OUT_BY_A_GAP, seed=2)
+    after = framed(gap_left=3, seed=9)
+    s.prescans = [framed(gap_left=OUT_BY_A_GAP, seed=0),
+                  framed(gap_left=OUT_BY_A_GAP, seed=1),
+                  arrived, after, after, after]
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
+    moved = frames[2]
+    assert moved.registration["correction"]["moved"] is True
+    assert moved.prescan_before is arrived
+    assert moved.prescan is not arrived
+
+
+def test_a_frame_that_needed_no_move_keeps_no_before_picture():
+    """No clutter for the frames that were already right -- and a file that
+    exists only where something happened is itself a signal."""
+    s = FakeRoll(aimable(3, gap=3))                 # inside the deadband
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
+    assert all(f.prescan_before is None for f in frames)
+
+
+def test_an_ordinary_roll_carries_no_walk_at_all():
+    """Nothing asked for aiming, so nothing is calibrated, remembered or
+    recorded. A roll that does not want this must be untouched by it."""
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE))
+    assert all("correction" not in (f.registration or {}) for f in frames)
+    assert all("base" not in (f.registration or {}) for f in frames)
+
+
 def test_an_unverified_move_leaves_no_trace_in_the_prior():
     """The film has moved and nothing knows how far, so what this frame
     contributed is now a stale number -- and one bad delta is the poison a

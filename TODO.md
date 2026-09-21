@@ -200,15 +200,22 @@ bit is not evidence, not a new problem.
   problem that turned out not to exist. See `docs/whole-roll-plan.md`'s
   "Settled" and "Overturned" sections.
 
-- ~~**`registration()` cannot see picture position mid-strip.**~~ **Closed.**
-  `film_bounds` keys on film-versus-empty-aperture and is blind mid-strip, as
-  this entry said -- but `gap_edges` (`rps7200/framing.py`) does not have that
-  blind spot: the inter-frame gap is unexposed base, both brighter than the
-  picture *and* flatter down the column, and keying on both together is what
-  the four failed detectors above each missed by keying on one. It backs
-  `registration_error_mm`, which `_correct_registration` calls -- this is the
-  same mechanism the 17-slide roll ran on, not a standalone measurement
-  nobody wired up.
+- **`registration()` cannot see picture position mid-strip.** *Reopened, then
+  closed a second way (2026-09-21).* This entry was marked closed on the
+  strength of `gap_edges`, and that was wrong. `gap_edges` keys on brightness
+  and flatness **relative to the frame's own content**, so the worse a frame is
+  placed, the more gap is in view, the higher the frame's own median climbs and
+  the less the detector sees. Measured on a ladder with known offsets it read
+  5, 8, then 0, 0, 0, 0, 0 while the gap widened from 7 to 26 px; and because
+  it requires the run to start at column 0 exactly, a gap with a sliver of the
+  neighbour beside it reads as no gap at all. On a real sixteen-frame walk four
+  of nine calls asserted "registered" about a frame it could not see.
+
+  What closes it is `picture_start`, which keys on the gap's **absolute** level
+  -- unexposed base is one object under one lamp at one exposure, and its level
+  held to 0.66-0.71% across two strips -- plus the rule that no single detector
+  may move film. `combine` requires two members that agree in millimetres. See
+  `tests/test_ensemble.py`.
 - **The gain register is a digital multiplier** (measured 2026-09-10, closed).
   It was the only lever left for blue in plain RGB, where the exposure timer
   runs out with blue still ~30% below red and green. It is honoured, and not
@@ -654,6 +661,20 @@ driver for Nikon Coolscans:
     against.** Every bright band in it is clear C-41 *film base*, strongly
     orange at R:B 3-7 -- not the neutral empty aperture at R:B ~0.93 that the
     docstring is written for. They are different physical objects.
+
+    Confirmed 2026-09-21 against walk D's fifteen prescans, and the figure is
+    much tighter than the range suggests: base holds **R:B 4.21-4.29**, a
+    spread of 1.9%. `docs/whole-roll-plan.md`'s "film reads R/B ~1.2-1.3" is
+    describing a different pair of objects and should not be quoted.
+
+    **But the mask does not work as a position detector, and this is the second
+    time it has been tried.** The picture's own R:B reaches down to 4.28, so it
+    is not a threshold; taken instead as a tight cluster -- columns within 3% of
+    the strip's own base ratio -- it locates the edge a median **4 px** from
+    where the level detector puts it, spread **-11..0 px**. Red is the soft
+    channel, so the ratio's transition at a picture edge is gradual where the
+    level's is not. It is nowhere near the 1-3 px a member needs. Do not try a
+    third time without a different mechanism.
 
   So: do not implement Otsu on the strength of the old entry. Land the harness
   first, run it against the 217-entry library, and let the numbers say what the

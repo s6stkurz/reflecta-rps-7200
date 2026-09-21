@@ -1079,6 +1079,27 @@ class ScanSession:
                             path=surveyed,
                             roll=name,
                         )
+                        if rf.prescan_before is not None:
+                            # The picture as the frame arrived, kept beside the
+                            # one that replaced it. Without it a correction
+                            # that moved a frame somewhere worse is
+                            # indistinguishable from one that worked, and the
+                            # only account of either would be the detector's
+                            # own -- which is the thing under test.
+                            self._file(
+                                seq, number, rf.prescan_before,
+                                dict(rf.prescan_meta or {
+                                    "resolution_dpi": job.prescan_resolution,
+                                    "channel_order": ["R", "G", "B"]}),
+                                replace(job.notes, frame=job.notes.frame
+                                        or f"{name}-{number:02d}"),
+                                tuple(job.tags) + ("gui", "roll", "prescan",
+                                                   name),
+                                kind="prescan",
+                                path=out / f"prescan{number:02d}-before.tif",
+                                roll=name,
+                                file_entry=False,
+                            )
                 # The scan's own meta, for the manifest below. Bound out here
                 # because `record` is written for a dry run too, where there is
                 # no scan and no exposure to record.
@@ -1235,7 +1256,21 @@ class ScanSession:
         roll: str = "",
         mono: bool = False,
         mono_channel: str = MONO_CHANNEL,
+        file_entry: bool = True,
     ) -> None:
+        """Write this picture, and unless told otherwise file it in the library.
+
+        ``file_entry=False`` writes the file and no entry. It exists for the
+        prescan a correction replaced, and the reason is specific: the capture
+        record below describes the scanner's **last** pass, which by then is the
+        verification prescan -- and the shape guard cannot catch the swap,
+        because both passes are identically shaped prescans of the same frame at
+        the same resolution. That is exactly the failure the guard was written
+        for, in the one form it is blind to. Under `RPS7200_DEBUG=1` that
+        picture already has a correct entry anyway, filed at the instant it was
+        taken, which is the only moment its bytes and its pixels are certainly
+        the same pass.
+        """
         if self._writer is None:
             return
         # A roll frame has its own place in the roll directory *and* wants a
@@ -1306,7 +1341,7 @@ class ScanSession:
             quality=self.jpeg_quality,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
-            library=self.root,
+            library=self.root if file_entry else None,
             film=notes,
             tags=list(tags),
             prescan=prescan,

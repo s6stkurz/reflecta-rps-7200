@@ -3193,6 +3193,7 @@ class ScannerGui:
         if marks.get("offset_mm") is not None:
             extra += (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
                       f"short by {marks.get('shortfall_mm', 0):.2f} mm")
+        extra += _aim_note(marks)
         shading = (result.meta or {}).get("shading")
         if shading and shading.get("clipped"):
             extra += f"   ·   {shading['clipped']} clipped -- lower the exposure"
@@ -4916,6 +4917,31 @@ def picture_of(result) -> tuple | None:
     if position is not None:
         return ("at", position)
     return None
+
+
+def _aim_note(marks: dict) -> str:
+    """What the walk did about this frame's position, in the operator's words.
+
+    Corrected frames say so, refused ones say why. The distinction is the
+    point: a detector that cannot see a frame and one that has checked it are
+    the same silence otherwise, and telling them apart is what `gap_edges`
+    made impossible by answering "registered" for both.
+    """
+    fix = (marks or {}).get("correction")
+    if not fix:
+        return ""
+    outcome = fix.get("outcome")
+    aimed = fix.get("decision_mm")
+    if outcome == "held" and aimed is not None:
+        return f"   ·   aimed {aimed:+.2f} mm"
+    if outcome == "in_place":
+        return "   ·   in place"
+    if outcome == "dry_run" and aimed is not None:
+        return f"   ·   would aim {aimed:+.2f} mm"
+    if outcome in ("not_converged", "abandoned", "budget", "stopped"):
+        return f"   ·   not aimed ({outcome.replace('_', ' ')})"
+    reason = (fix.get("reason") or "").split(";")[0].split(" -- ")[0]
+    return f"   ·   not aimed{f': {reason}' if reason else ''}"
 
 
 def _arrangement(result) -> str:

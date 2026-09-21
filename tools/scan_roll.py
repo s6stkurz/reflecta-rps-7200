@@ -231,6 +231,15 @@ def main() -> int:
                         pre = out / f"prescan{number:02d}.tif"
                         tiff.write(str(pre), frame.prescan)
                         record["prescan"] = pre.name
+                    if frame.prescan_before is not None:
+                        # The frame as it arrived, before aiming moved it. A
+                        # corrected prescan replaces the original outright, so
+                        # without this the only account of whether a correction
+                        # helped is the detector's own -- which is the thing
+                        # being checked.
+                        was = out / f"prescan{number:02d}-before.tif"
+                        tiff.write(str(was), frame.prescan_before)
+                        record["prescan_before"] = was.name
                     # Every number here is optional. `registration` abstains on
                     # a loaded strip -- and once it says so honestly rather than
                     # returning a fallback zero, these keys go missing. Formatting
@@ -242,6 +251,15 @@ def main() -> int:
                           f"x{r.get('x0')}..{r.get('x1')}, {said}"
                           + (f", SHORT BY {short:.2f} mm -- the film has drifted"
                              if short and short > 0.85 else ""))
+                    fix = r.get("correction")
+                    if fix:
+                        aimed = fix.get("decision_mm")
+                        print(f"    aim: {fix.get('outcome')}"
+                              + ("" if aimed is None else f" {aimed:+.2f} mm")
+                              + (f" ({fix['ensemble'].get('chose')})"
+                                 if fix.get("ensemble", {}).get("chose") else "")
+                              + (f" -- {fix['reason']}" if fix.get("reason")
+                                 else ""))
                 else:
                     scanned += 1
                     path = out / f"frame{number:02d}.tif"

@@ -41,7 +41,13 @@ import numpy as np
 
 from . import library, tiff
 from .direct import DirectScanner, RollFrame, supports_infrared
-from .framing import APERTURE_MM, FULL_FRAME, frame_contrast, registration
+from .framing import (
+    APERTURE_MM,
+    FULL_FRAME,
+    StripWalk,
+    frame_contrast,
+    registration,
+)
 from .protocol import ScanParameters
 from .session import estimate_seconds
 from .shading import ShadingReference, apply_shading
@@ -349,6 +355,8 @@ class DemoScanner:
         film: str = "negative",
         approved: dict | None = None,
         reverse_hold: bool = False,
+        correct: bool = False,
+        correct_dry_run: bool = False,
         **kw: Any,
     ):
         # Up front, as the real one does: a roll spends minutes calibrating
@@ -363,6 +371,7 @@ class DemoScanner:
             )
         limit = frames if frames is not None else 6
         holding = True
+        walk = StripWalk() if (correct or correct_dry_run) else None
         misses = 0
         for i in range(limit):
             self._position = skip + i
@@ -418,6 +427,17 @@ class DemoScanner:
                         "target_mm": round(held.offset_mm, 4), "outcome": "off",
                         "reason": "holding was switched off earlier in this roll",
                     }
+                elif walk is not None:
+                    marks["base"] = walk.observe(skip + i, prescan)
+                    fix = self._aim_frame(
+                        skip + i, prescan, 300, walk,
+                        dry_run=correct_dry_run, keep_raw=False,
+                    )
+                    if fix.get("prescan") is not None:
+                        prescan = fix["prescan"]
+                        marks = self._marks(prescan)
+                    marks["correction"] = {k: v for k, v in fix.items()
+                                           if k != "prescan"}
                 image = meta = None
                 if not dry_run:
                     image, meta = self.scan(
@@ -446,6 +466,11 @@ class DemoScanner:
     #: check as the scanner would, instead of a hand-written imitation that
     #: cannot disagree with it.
     _hold_to_approved = DirectScanner._hold_to_approved
+    #: Same argument as the line above, for the same reason: the demo runs the
+    #: real ensemble and the real aiming loop, so a change that breaks either
+    #: shows up with no scanner on the bus.
+    _aim_frame = DirectScanner._aim_frame
+    _rejudge_for = DirectScanner._rejudge_for
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
