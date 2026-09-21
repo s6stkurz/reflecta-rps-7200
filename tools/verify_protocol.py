@@ -567,9 +567,184 @@ def stage9(s: DirectScanner) -> dict:
     return out
 
 
+def _settle(s: DirectScanner, seconds: float = 1.4) -> None:
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < seconds:
+        if s.test_unit_ready():
+            return
+        time.sleep(0.2)
+
+
+def stage10(s: DirectScanner) -> dict:
+    """What is one unit of `param` worth, and what does a *command* cost?
+
+    The law in section 11 is ``param + c`` units travelled per command, where
+    one unit is what a single increment of `param` adds and ``c`` is a fixed
+    cost per command rather than per unit. Every measurement behind it used a
+    single command, so nothing has ever checked whether commands compose the
+    way it says -- and if ``c`` is real then ten commands of `param 1` travel
+    more than twice as far as one command of `param 10`, for the same total.
+
+    Three legs of equal param total over different command counts settle it
+    with nothing assumed:
+
+        A  10 x param 1      10 units of param, 10 commands
+        B   5 x param 2      10 units of param,  5 commands
+        C   1 x param 10     10 units of param,  1 command
+
+        cost per command = (A - C) / 9        one unit = (C - cost) / 10
+
+    and B checks both. If the three land together, the cost is zero and param
+    is a clean linear scale.
+
+    Everything is reported in prescan pixels, which is what is actually
+    observed; the unit is then derived from the measurement rather than assumed
+    into it. Everything runs forward, so backlash is spent once at the start.
+    """
+    print("\n=== stage 10: does a command cost something, over and above param?")
+    print("  three legs, each totalling param 10, over 10, 5 and 1 commands\n")
+
+    print("  spending backlash -- five forward commands, not measured")
+    for _ in range(5):
+        s.slide(0x00, param=0x08, value=0x04)
+        _settle(s)
+
+    legs = (("A", 1, 10), ("B", 2, 5), ("C", 10, 1))
+    out: dict = {"legs": {}, "pixels_per_column": 1.0}
+    prev, _ = shot(s, "stage10_start")
+
+    for name, param, count in legs:
+        total = 0.0
+        steps = []
+        for i in range(count):
+            s.slide(0x00, param=param, value=0x04)
+            _settle(s)
+            img, _ = shot(s, f"stage10_{name}_{i:02d}")
+            dx, dy = _shift(prev, img)
+            steps.append(round(dx, 3))
+            total += dx
+            prev = img
+        per = total / count
+        print(f"  leg {name}: {count:2d} x param {param:2d} -> {total:8.2f} px "
+              f"total, {per:6.2f} px per command")
+        if count > 1:
+            print(f"           each: {steps}")
+        out["legs"][name] = {"param": param, "commands": count,
+                             "total_px": round(total, 3),
+                             "per_command_px": round(per, 3),
+                             "steps_px": steps}
+
+    a = out["legs"]["A"]["total_px"]
+    b = out["legs"]["B"]["total_px"]
+    c = out["legs"]["C"]["total_px"]
+    cost = (a - c) / 9.0
+    unit = (c - cost) / 10.0
+    predicted_b = 10.0 * unit + 5.0 * cost
+
+    print(f"\n  cost of issuing a command : {cost:7.3f} px")
+    print(f"  one unit of param         : {unit:7.3f} px")
+    print(f"  leg B predicted           : {predicted_b:7.2f} px "
+          f"against {b:7.2f} measured, off by {b - predicted_b:+.2f}")
+    if abs(unit) > 1e-6:
+        print(f"  so a command costs {cost / unit:.2f} units before it moves at all")
+    print("  a command travels  param + "
+          f"{(cost / unit) if abs(unit) > 1e-6 else float('nan'):.2f}  units")
+
+    if abs(cost) < 0.5:
+        print("\n  the cost is under half a pixel: param is a linear scale and")
+        print("  many small commands are interchangeable with one large one")
+    else:
+        print(f"\n  the cost is real: {count_note(a, c)}")
+
+    out["cost_px"] = round(cost, 4)
+    out["unit_px"] = round(unit, 4)
+    out["leg_b_predicted_px"] = round(predicted_b, 3)
+    out["leg_b_error_px"] = round(b - predicted_b, 3)
+    return out
+
+
+def count_note(a: float, c: float) -> str:
+    ratio = (a / c) if abs(c) > 1e-9 else float("nan")
+    return (f"ten small commands travelled {ratio:.2f}x as far as one large "
+            "one for the same param total")
+
+
+def stage11(s: DirectScanner) -> dict:
+    """Carry a frame past the aperture and measure both, in units of param.
+
+    Nothing is extrapolated. The film is driven forward one command at a time
+    with a prescan after each, far enough that a whole frame pitch passes the
+    window, and every band of unexposed base that enters or leaves is recorded
+    where it was seen. The distance between one gap arriving and the next is
+    the **pitch**; the width of a gap is the **inter-frame space**; the frame
+    the camera exposed is the difference.
+
+    `param 12` because section 11 calls the law good to there and bending above
+    about twenty. Twenty-eight commands covers a pitch with room to spare.
+    """
+    print("\n=== stage 11: a whole frame past the window")
+    print("  forward at param 12, one prescan per command\n")
+
+    print("  spending backlash -- five forward commands, not measured")
+    for _ in range(5):
+        s.slide(0x00, param=0x0C, value=0x04)
+        _settle(s)
+
+    prev, _ = shot(s, "stage11_00")
+    rows = [{"command": 0, "travel_px": 0.0, "bands": _bands_of(prev)}]
+    travel = 0.0
+    print(f"  {'cmd':>4} {'step':>7} {'travel':>9}  bands of base (start,width) px")
+    print(f"  {0:>4} {'-':>7} {0.0:9.2f}  {rows[0]['bands']}")
+
+    for i in range(1, 29):
+        s.slide(0x00, param=0x0C, value=0x04)
+        _settle(s)
+        img, _ = shot(s, f"stage11_{i:02d}")
+        dx, _dy = _shift(prev, img)
+        travel += dx
+        bands = _bands_of(img)
+        rows.append({"command": i, "step_px": round(dx, 3),
+                     "travel_px": round(travel, 3), "bands": bands})
+        print(f"  {i:>4} {dx:7.2f} {travel:9.2f}  {bands}")
+        prev = img
+
+    print(f"\n  {len(rows) - 1} commands, {travel:.2f} px of travel")
+    print("  the pitch and the frame come out of the band positions above;")
+    print("  they are recorded rather than reduced here, so the reduction can")
+    print("  be re-run against the stored passes without the scanner.")
+    return {"rows": rows, "total_px": round(travel, 3), "param": 12}
+
+
+def _bands_of(image: np.ndarray) -> list:
+    """Runs of film base in one pass, as (start, width) in columns.
+
+    Deliberately not `framing.base_runs`: that wants a strip-calibrated level,
+    and the point here is to measure the film rather than to agree with the
+    detector under test. A column is base when it is flat down its length and
+    brighter than the frame's own median -- the two properties base has that
+    nothing else in the window does.
+    """
+    grey = image.astype(np.float64).mean(axis=2)
+    level, spread = grey.mean(axis=0), grey.std(axis=0)
+    flat = spread < max(2.0, float(np.median(spread)) * 0.35)
+    bright = level > float(np.median(level))
+    is_base = flat & bright
+    runs, start = [], None
+    for i, on in enumerate(is_base):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            if i - start >= 3:
+                runs.append((start, i - start))
+            start = None
+    if start is not None and len(is_base) - start >= 3:
+        runs.append((start, len(is_base) - start))
+    return runs
+
 STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6,
-          7: stage7, 8: stage8, 9: stage9}
-NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9}
+          7: stage7, 8: stage8, 9: stage9,
+          10: stage10, 11: stage11}
+NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11}
 
 
 def main() -> int:
@@ -581,7 +756,7 @@ def main() -> int:
 
     global OUT
     OUT = Path(args.out)
-    OUT.mkdir(exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
 
     wants_film = sorted(set(args.stages) & NEEDS_FILM)
     if wants_film:

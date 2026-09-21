@@ -123,3 +123,95 @@ is the floor on how well any frame can be placed, drops with it.
 
 Either way the frame width comes out measured, and that number feeds
 `TARGET_GAP` directly, which every proposal on every strip is derived from.
+
+
+---
+
+# What it measured
+
+Run 2026-09-21 on frame 2, `tools/verify_protocol.py` stages 10 and 11, raw
+passes in `probe/step-calibration/`.
+
+## The cost of a command is real, and larger than the law said
+
+Three legs, each totalling `param 10`:
+
+| leg | commands | travelled |
+|---|---|---|
+| A | 10 x `param 1` | **36.41 px** |
+| B | 5 x `param 2` | 24.82 px |
+| C | 1 x `param 10` | **15.19 px** |
+
+**Ten small commands travelled 2.40x as far as one large one for the same param
+total.** Solving A and C:
+
+    a command travels   param + 1.84  units
+    one unit            1.283 prescan pixels
+
+Leg B took no part in that solution and predicts **24.62** against **24.82**
+measured -- 0.2 px on an independent check.
+
+Section 11's fit says `param + 1.57` with a unit of 1.240 px. So the unit is
+**3.5% larger** and the per-command cost **21% larger** than the fitted law.
+The fit was over single commands, which is why the per-command term came out
+low: nothing in it ever issued two.
+
+## The smallest command is the least repeatable
+
+    param  1 :  3.93 4.25 4.04 3.92 3.68 3.14 2.90 3.31 3.61 3.62   +-18%
+    param  2 :  4.98 4.95 4.91 4.95 5.03                            +-1.2%
+    param 12 :  median 16.71, 14.15 to 18.78                        +-14%
+
+`param 1` is the command every fine correction uses and the one `HOLD_TOLERANCE`
+is defined by, and it is by far the noisiest. **One command of twenty-eight did
+not move the film at all** (0.42 px where 16.7 was expected).
+
+## The chain is sound
+
+An inter-frame gap is fixed on the film, so it must move exactly as far as the
+film does. Over the ten commands where only one gap was in view:
+
+    the gap moved 169 px in the window
+    the accumulated travel said 169.09 px
+
+**0.09 px over ten commands.** The correlation-derived travel is trustworthy,
+and so is everything built on it.
+
+## The film, measured rather than assumed
+
+Tracking a second gap of the same width entering later gives the pitch directly,
+with no extrapolation:
+
+| | px | units |
+|---|---|---|
+| pitch, gap to gap | 432.7 | **337** |
+| the scanner aperture | 428 | **334** |
+| the inter-frame gap | 15 | **12** |
+| **the camera frame** | **418** | **326** |
+| slack, aperture less frame | 10 | **8** |
+
+## Why frames come out with black at the right
+
+The slack is **8 units**, not the 4.6 the code derives from its assumed frame.
+`TARGET_GAP` aims one edge at **2.3 units**, so the other edge is left with
+**5.7** -- and that asymmetry is on every frame by construction.
+
+That is Stefan's "a bit on the right is black", predicted from the geometry
+before his verdicts were consulted, and it agrees with the independent estimate
+from frames showing base at both edges.
+
+Aiming at **4 units**, half the measured slack, splits it evenly.
+
+## What follows
+
+* `STEP` and `OVERHEAD` are both low. Correcting them changes what
+  `param_for_mm` returns, so `PROTOCOL_REVISION` moves.
+* **Splitting a move is not free.** Each command costs 1.84 units before it
+  moves at all, so `plan_nudges` should prefer one large command to several
+  small ones wherever the lattice allows.
+* `HOLD_TOLERANCE` is the `param 1` distance, which is 14% larger than the code
+  believes and scatters by a fifth of itself. The deadband cannot be tightened
+  below that scatter however the arithmetic comes out.
+* A command that silently does nothing, at roughly one in thirty, is not in any
+  model here. The hold loop re-measures after every move, so it survives one --
+  but nothing counts them.
