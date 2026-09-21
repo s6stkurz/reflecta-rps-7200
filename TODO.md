@@ -861,6 +861,28 @@ driver for Nikon Coolscans:
   `rps7200/direct.py`, one occurrence in the repo. Left over from the one-shot
   corrector; it is not the deadband anything uses.
 
+- **A set scanning bit can be stale, and a power cycle does not always clear
+  it.** Measured 2026-09-21. After a 600 dpi roll the state byte sat at `0x9d`
+  -- the vendor's own value for "scanning", per the 155 READ_STATE responses of
+  the power-on capture -- with nothing running, for over an hour. It read
+  **byte for byte identical after a power cycle**, position counter included,
+  which is the part nobody has explained.
+
+  Stefan said to disregard it and try. A 14-frame rewind and a full 15-frame
+  walk then ran normally, and the flag went to `0x1d` the moment the session
+  started. So the bit means what the capture says; what was wrong was treating
+  a set bit as a reason to stop.
+
+  `tools/check_scanner.py` now tells the two apart the only way available: a
+  real pass changes something within a few seconds -- it finishes, or the
+  position moves -- and a stale one does not. It reports a running scan as a
+  failure and a settled one as a note.
+
+  Still unexplained, and worth someone's attention: **the position counter
+  survived a power cycle.** Either the unit does not lose that state, or the
+  power cycle did not reach it. Both matter, because a rewind is computed from
+  that counter.
+
 ## Measured and left alone
 
 - **Column defects in the frame interior are corrected as far as they can be.**
