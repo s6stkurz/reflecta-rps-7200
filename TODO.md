@@ -883,6 +883,44 @@ driver for Nikon Coolscans:
   power cycle did not reach it. Both matter, because a rewind is computed from
   that counter.
 
+- **The frame is about 35.3 mm across, not the 36.0 `FRAME_WIDTH_MM` assumes.**
+  Measured 2026-09-21 from film already on disk, at no scanner cost. Fifteen
+  frames across six separate walks show unexposed base at **both** edges, which
+  gives the picture width directly: **34.62 to 35.47 mm, median 35.30**.
+
+  Stefan found it by eye before the measurement did. Shown a frame the software
+  wanted to move +1.12 mm, he said it looked good and nothing needed doing --
+  and he was right: the picture actually visible there was 35.13 mm against a
+  real frame of 35.30, so **0.17 mm was being lost, two pixels**, not 1.12. The
+  software was measuring an assumption.
+
+  What it costs: `TARGET_GAP_MM = (APERTURE_MM - FRAME_WIDTH_MM) / 2` is 0.246
+  mm and should be about 0.596, so **every proposal on every strip is biased by
+  0.35 mm** -- four pixels at 300 dpi, and in the direction of correcting
+  frames that do not need it. It also feeds the right-edge reading added the
+  same evening, which converts "the picture ends here" into "it begins there"
+  through this number.
+
+  **Not changed yet, deliberately.** The spread is 0.85 mm where the boundary
+  uncertainty is about 0.17, and the values fall in two clusters near 34.66 and
+  35.35 rather than scattering about one number. That wants explaining before a
+  constant this load-bearing moves -- most likely the transition column at each
+  boundary being counted as picture on some frames and base on others, which
+  would mean the true width is at the top of the range. `base_runs` returns
+  every band, so this is re-derivable offline from the stored walks.
+
+- **`EDGE_FRACTION` is about eight times looser than the film allows.** It lets
+  a band of base begin **51 columns -- 4.3 mm** -- from the edge and still count
+  as the gap that entered there. Unexposed base creeps in from one side; to see
+  it starting 4.3 mm in you would have to be seeing 4.3 mm of the *previous*
+  frame as well as the gap, and the whole inter-frame gap on 135 is about 2 mm.
+
+  The allowance exists for a real thing -- a sliver of the neighbouring frame
+  ahead of the gap, confirmed on four frames of walk A where 2 to 6 columns of
+  darker, varying content sit in front of clean flat base. But the largest
+  sliver measured is **6 columns, 0.51 mm**. Something near 1 mm would cover
+  every case observed and still refuse what physics does not permit.
+
 ## Measured and left alone
 
 - **Column defects in the frame interior are corrected as far as they can be.**
