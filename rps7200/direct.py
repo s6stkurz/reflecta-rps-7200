@@ -2770,8 +2770,8 @@ class DirectScanner:
         frame is exactly what makes `hold_plan`'s no-limit-cycle argument hold:
         a loop that re-aims on its own noise can chase itself.
 
-        Unlike :meth:`_correct_registration` this iterates, because a backward
-        offset spends its first command on backlash: the transport advances
+        It iterates, because a backward offset spends its first command on
+        backlash: the transport advances
         forward between frames, so it enters each one loaded forward, and a
         move the other way loses two to three commands before anything happens.
         One shot would report that as a failure. Two converge.
@@ -2868,8 +2868,8 @@ class DirectScanner:
     ) -> dict[str, Any]:
         """Judge where this frame sits, put it there, and check the work.
 
-        Replaces :meth:`_correct_registration`, which was one shot on one
-        detector: `registration_error_mm` -> `gap_edges`, which anchors its
+        Replaces `_correct_registration`, now deleted, which was one shot on
+        one detector: `registration_error_mm` -> `gap_edges`, which anchors its
         runs at column 0 and so answers "0.0 mm, registered" for any frame
         whose gap has a sliver of the neighbour beside it. Four of nine such
         calls on a real sixteen-frame walk were provably false, and a positive
@@ -2982,80 +2982,6 @@ class DirectScanner:
                     "where any of this predicted, so it is left alone")
             return True, ""
         return look
-
-    def _correct_registration(
-        self, index: int, image: np.ndarray, prescan_resolution: int,
-        dry_run: bool, keep_raw: bool = False,
-    ) -> dict[str, Any]:
-        """Measure the frame's registration and nudge it back, once.
-
-        Returns what it did. A re-prescan follows any real move, because that is
-        the only way to tell a correction that landed from one that backlash
-        swallowed -- the failure that would otherwise look identical to success.
-        It is also what the vendor does: in setup CyberView moves, scans, moves,
-        scans, each scan checking the last move.
-        """
-        # The caller has already looked at this frame; measuring its prescan
-        # again would cost 12 s to learn nothing.
-        before, why = registration_error_mm(image)
-        out: dict[str, Any] = {"before_mm": before, "reason": why,
-                               "moved": False, "prescan": None}
-
-        if before is None:
-            self._log(f"frame {index}: not correcting -- {why}")
-            return out
-        if abs(before) < self.CORRECTION_DEADBAND_MM:
-            self._log(
-                f"frame {index}: registration {before:+.3f} mm, inside the "
-                f"{self.CORRECTION_DEADBAND_MM} mm deadband -- leaving it"
-            )
-            return out
-
-        # A gap on the left means the frame sits too far towards +x, so it has
-        # to come back: the opposite sign to the error.
-        want = -before
-        if dry_run:
-            param = self.param_for_mm(want)
-            out["would_send"] = {
-                "action": 0x00 if want >= 0 else 0x01, "param": param,
-                "asked_mm": round(
-                    (self.STEP_MM * param + self.OVERHEAD_MM)
-                    * (1 if want >= 0 else -1), 3),
-            }
-            self._log(
-                f"frame {index}: registration {before:+.3f} mm; would send "
-                f"{out['would_send']['action']:#04x} {param:#04x} 00 04 "
-                f"({out['would_send']['asked_mm']:+.3f} mm) -- dry run"
-            )
-            return out
-
-        out.update(self.nudge(want))
-        out["moved"] = True
-        time.sleep(0.4)
-
-        # keep_raw matters here: `last_raw` is only written when it is set
-        # and is never cleared, so a verification prescan taken without it
-        # leaves capture_record() holding the *previous* pass's bytes -- which
-        # then get filed against these pixels. Both passes are 300 dpi
-        # prescans of the same shape, so _file's disagreement guard does not
-        # catch it.
-        image, _ = self.prescan(resolution=prescan_resolution, keep_raw=keep_raw)
-        after, why_after = registration_error_mm(image)
-        out["after_mm"] = after
-        out["after_reason"] = why_after
-        out["prescan"] = image
-        if after is None:
-            self._log(f"frame {index}: after nudging, {why_after}")
-        else:
-            improved = abs(after) < abs(before)
-            out["improved"] = bool(improved)
-            self._log(
-                f"frame {index}: registration {before:+.3f} -> {after:+.3f} mm "
-                f"({'better' if improved else 'NO BETTER -- backlash?'})"
-            )
-        return out
-
-    # -- sub-frame positioning ---------------------------------------------
 
     #: The calibrated law for SLIDE actions 0x00 / 0x01, fitted over both
     #: directions: distance = STEP_MM x param + OVERHEAD_MM. Worst residual

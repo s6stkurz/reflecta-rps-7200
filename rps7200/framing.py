@@ -344,7 +344,13 @@ def registration_error_mm(
     if left and right:
         return None, f"gap at both edges ({left}, {right} px) -- not drift"
     if not left and not right:
-        return 0.0, "no gap in view -- registered"
+        # Not "registered". This detector anchors its runs at column 0, so a
+        # gap with a sliver of the neighbour beside it reads as no gap at all,
+        # and a frame drifted far enough that the gap sits in the middle reads
+        # the same. Four of nine such calls on a real sixteen-frame walk were
+        # provably false, and each returned a positive assertion of correctness
+        # that nothing downstream could tell from a measurement.
+        return None, "no gap at either edge -- this cannot see where the frame is"
 
     width = image.shape[1] or 1
     px = left or -right

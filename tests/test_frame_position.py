@@ -221,3 +221,21 @@ def test_base_runs_finds_a_band_that_is_not_at_an_edge():
     runs = base_runs(image, BASE_LEVEL, min_run=3)
     assert runs, "the gap itself must be found"
     assert any(start >= 3 for start, _n in runs), runs
+
+
+# -- the old detector, made to abstain ---------------------------------------
+
+
+def test_the_old_detector_no_longer_asserts_a_frame_it_cannot_see():
+    """It used to answer `(0.0, "no gap in view -- registered")`, which is a
+    positive claim of correctness about a frame it had not located -- and
+    nothing downstream could tell that from a measurement.
+
+    Strictly safety-improving: it can only turn wrong assertions into
+    abstentions. Nothing pinned the old return, which is why it survived.
+    """
+    from rps7200.framing import registration_error_mm
+
+    mm, why = registration_error_mm(frame(gap_px=0, seed=5))
+    assert mm is None
+    assert "cannot see where the frame is" in why
