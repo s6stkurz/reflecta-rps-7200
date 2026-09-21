@@ -721,6 +721,34 @@ driver for Nikon Coolscans:
   tool is not. CLAUDE.md's "file every scan in the library, with its raw bytes"
   is what this breaks.
 
+- **A correctly placed frame is invisible to the detector that placed it.**
+  Measured 2026-09-21 on film, comparing `rolls/registration-G` (as it came)
+  with `rolls/registration-H` (held to the positions proposed from G):
+  `picture_start` placed **14 of 15** frames before the correction and **4 of
+  15** after it, seven of them reading "no unexposed base in view".
+
+  It is arithmetic, not bad luck. `TARGET_GAP_MM` is `(36.4913 - 36.0)/2 =
+  0.2457` mm and `GAP_MIN_MM` is `0.25` mm, so a frame placed exactly where it
+  is aimed shows **2.9 px** of gap at each edge and the detector needs 3. The
+  better the correction, the less there is to see.
+
+  This did not spoil the run -- delivery was measured independently at
+  1.013-1.059 mm per mm commanded, and the median distance from target fell
+  0.820 -> 0.053 mm on the four frames still measurable -- but it has
+  consequences worth knowing before anything is built on it:
+
+  * a correction cannot be verified with the same detector, which is why
+    `_rejudge_for` in the in-walk path abstains on a frame it has just fixed;
+  * re-walking a corrected strip proposes almost nothing;
+  * "no unexposed base in view" on a corrected frame is weak evidence that it
+    is centred, and is not a measurement.
+
+  Do not simply raise `TARGET_GAP_MM`: it is where the frame is centred, and
+  moving it decentres every frame to suit the detector. Lowering `GAP_MIN_MM`
+  to ~0.15 mm (1.8 px at 300 dpi) would let a centred frame be seen, at the
+  cost of calling shorter runs gaps. Either way it wants measuring rather than
+  choosing, against the stored walks, which costs no scanner time.
+
 ## Measured and left alone
 
 - **Column defects in the frame interior are corrected as far as they can be.**

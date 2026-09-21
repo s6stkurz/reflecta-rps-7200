@@ -761,8 +761,15 @@ def report_held(folder: Path) -> dict:
               f"'{still[0]['outcome']}' too -- which is why `moves` is the "
               f"column that matters")
 
-    ratios = [r["final_mm"] / r["spent_mm"] for r in moved
-              if r["final_mm"] is not None and r["spent_mm"]]
+    # `final_mm` is the total displacement from the reference, not the
+    # distance this frame travelled: a frame arrives already carrying whatever
+    # the last one was corrected by. What was delivered is the difference.
+    ratios = []
+    for r in moved:
+        if r["final_mm"] is None or not r["spent_mm"]:
+            continue
+        arrived_mm = (r["arrived_px"] or 0) * scale
+        ratios.append(abs(r["final_mm"] - arrived_mm) / abs(r["spent_mm"]))
     if ratios:
         print(f"  delivered per mm commanded: "
               f"{min(ratios):.3f}-{max(ratios):.3f}, median "
@@ -770,14 +777,20 @@ def report_held(folder: Path) -> dict:
 
     # Does a nudge survive an advance? The prediction, frame by frame.
     print(f"\n  does a nudge survive the advance? "
-          f"(predicted arrival = -final(N-1) / {scale:.5f} mm/px)")
+          f"(predicted arrival = final(N-1) / {scale:.5f} mm/px)")
     checked, agreed = 0, 0
     for before, after in zip(rows, rows[1:]):
         if before.get("final_mm") is None or after.get("arrived_px") is None:
             continue
         if (after.get("confidence") or 0) < CONFIDENCE_FLOOR:
             continue                  # no reading to compare the prediction to
-        predicted = -before["final_mm"] / scale
+        # Where the last frame was LEFT is where this one arrives: a
+        # sub-frame move does not touch the frame counter, so the film
+        # is still displaced by that much when the next frame reaches
+        # the gate. Same sign, which the first version of this had
+        # backwards -- and so reported 14 of 14 magnitudes agreeing
+        # within a pixel as "DOES NOT AGREE".
+        predicted = before["final_mm"] / scale
         seen = after["arrived_px"]
         checked += 1
         close = abs(predicted - seen) <= 2.0
