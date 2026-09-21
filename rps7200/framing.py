@@ -10,7 +10,7 @@ Everything here measures. Nothing here moves the film.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -467,36 +467,69 @@ def base_runs(
     return runs
 
 
-def film_base(images) -> tuple[FilmBase | None, dict]:
-    """Calibrate the strip's own base level, from its own frames.
+#: Fewest *distinct frames* that must contribute before a level is believed.
+#:
+#: Separate from `MIN_BASE_BANDS`, and the two are not the same guard. One
+#: image yields a band at each edge, so a single frame casts two votes and
+#: seven prescans of one frame cast fourteen -- all of them the same evidence
+#: about the same columns. That is how one run calibrated a "base" of 176.9
+#: counts which was the picture: not a weak median, a median of one thing
+#: counted many times.
+MIN_BASE_SOURCES = 2
 
-    Found by flatness alone, deliberately: this is measuring what the level
-    *is*, so it must not assume one to find it. The flattest columns at each
-    edge of each frame are taken, their level medianed over the strip, and the
-    spread reported so a caller can see whether it is describing one object.
 
-    Returns ``None`` where too few frames show a band, or where the level
-    varies more than one lamp at one exposure can explain.
+def edge_bands(image: np.ndarray, *, aperture_mm: float = APERTURE_MM
+               ) -> list[tuple[float, float]]:
+    """The flattest run at each edge of one frame, as ``(level, flatness)``.
+
+    Found by flatness alone, deliberately: this is what measures the level, so
+    it must not assume one to find it.
+
+    A run wider than `MAX_GAP_MM` is dropped here rather than survived later.
+    `picture_start` has always refused such a band -- about two millimetres of
+    gap exists on 135 film and a longer run is the end of the strip or picture
+    at the base level -- but the calibration did not, which is why a 104-column
+    band of sky could reach the median at all and why the spread had to be made
+    robust to it after the fact.
     """
-    levels, flats = [], []
-    for image in images:
-        grey = _grey(image)
-        if grey.size == 0:
-            continue
-        column, spread = grey.mean(axis=0), grey.std(axis=0)
-        for scan in (slice(None), slice(None, None, -1)):
-            run, values = 0, column[scan]
-            for value in spread[scan]:
-                if value >= BASE_FLATNESS:
-                    break
-                run += 1
-            if run:
-                levels.append(float(np.median(values[:run])))
-                flats.append(float(np.median(spread[scan][:run])))
+    grey = _grey(image)
+    if grey.size == 0:
+        return []
+    widest = MAX_GAP_MM / (aperture_mm / grey.shape[1])
+    column, spread = grey.mean(axis=0), grey.std(axis=0)
+    found = []
+    for scan in (slice(None), slice(None, None, -1)):
+        run, values = 0, column[scan]
+        for value in spread[scan]:
+            if value >= BASE_FLATNESS:
+                break
+            run += 1
+        if run and run <= widest:
+            found.append((float(np.median(values[:run])),
+                          float(np.median(spread[scan][:run]))))
+    return found
 
+
+def film_base_from(bands_by_frame: dict) -> tuple[FilmBase | None, dict]:
+    """Calibrate the strip's base level from bands already gathered.
+
+    Keyed by frame number rather than accumulated in a list, which is what
+    makes the contamination failure structurally impossible: a second pass over
+    frame 5 replaces frame 5's bands, it does not cast two more votes for the
+    same columns.
+    """
+    levels = [lv for bands in bands_by_frame.values() for lv, _f in bands]
+    flats = [fl for bands in bands_by_frame.values() for _l, fl in bands]
+    sources = sum(1 for bands in bands_by_frame.values() if bands)
+
+    if sources < MIN_BASE_SOURCES:
+        return None, {"reason": f"bands from only {sources} frame(s), "
+                                f"need {MIN_BASE_SOURCES}",
+                      "bands": len(levels), "frames": sources}
     if len(levels) < MIN_BASE_BANDS:
         return None, {"reason": f"only {len(levels)} band(s) found, "
-                                f"need {MIN_BASE_BANDS}", "bands": len(levels)}
+                                f"need {MIN_BASE_BANDS}", "bands": len(levels),
+                      "frames": sources}
     level = float(np.median(levels))
     # Robust, not max-minus-min. Finding a band by flatness alone also finds
     # smooth *picture* on some frames -- one strip had a 104-column flat run
@@ -507,7 +540,7 @@ def film_base(images) -> tuple[FilmBase | None, dict]:
     spread = float(1.4826 * np.median(deviation) / level) if level else 1.0
     agreeing = int(np.sum(deviation <= level * BASE_TOLERANCE))
     detail = {"level": round(level, 2), "spread": round(spread, 4),
-              "bands": len(levels), "agreeing": agreeing}
+              "bands": len(levels), "agreeing": agreeing, "frames": sources}
     if agreeing < MIN_BASE_BANDS:
         return None, dict(detail, reason=(
             f"only {agreeing} band(s) agree on a level, need "
@@ -518,6 +551,16 @@ def film_base(images) -> tuple[FilmBase | None, dict]:
             f"{BASE_SPREAD_LIMIT*100:.0f}% one lamp at one exposure explains"))
     return FilmBase(level=level, flatness=float(np.median(flats)),
                     bands=len(levels), spread=spread), detail
+
+
+def film_base(images) -> tuple[FilmBase | None, dict]:
+    """Calibrate the strip's own base level, from its own frames.
+
+    The whole-strip form, kept for the offline paths that have every frame in
+    hand at once. A walk uses `edge_bands` and `film_base_from` directly, so
+    that a frame it re-prescans replaces its own bands rather than adding more.
+    """
+    return film_base_from({i: edge_bands(im) for i, im in enumerate(images)})
 
 
 #: The widest an inter-frame gap can be. On 135 the pitch is ~38 mm against a
@@ -1382,3 +1425,161 @@ def combine(
     detail.update(agreed=sorted(usable[i].source for i in agreed),
                   chose=best.source, margin=round(best.margin, 3))
     return best.mm, detail
+
+
+#: Frames whose picture is held while the base calibrates. The base needs bands
+#: from two frames, so the first frame or two arrive before there is anything
+#: to place them against -- and they are worth placing, because they are the
+#: prior's first advances. A 300 dpi prescan is about 3 MB, and this is a cap
+#: on a transient rather than a budget: it empties the moment the base arms.
+MAX_PENDING_FRAMES = 4
+
+
+@dataclass
+class StripWalk:
+    """What a walk has learned about this strip so far. Causal, and pure.
+
+    Nothing here touches the device -- this module measures and does not move
+    film -- but it is the only thing in a walk that remembers anything.
+    `scan_roll` accumulates holding, misses, scales, failures and the index,
+    and no prescan history at all, which is why a forward walk had no way to
+    know what its own advance was doing.
+
+    Everything is keyed by frame number rather than appended to a list. That is
+    what makes the calibration failure structurally impossible rather than
+    merely unlikely: a second pass over frame 5 replaces frame 5's bands, so
+    seven prescans of one frame cannot cast fourteen votes about the same
+    columns. That is what they did once, and the "base" of 176.9 counts they
+    agreed on was the picture.
+    """
+
+    bands: dict[int, list] = field(default_factory=dict)
+    placed: dict[int, float] = field(default_factory=dict)   # as it arrived
+    settled: dict[int, float] = field(default_factory=dict)  # as it was left
+    pending: dict[int, Any] = field(default_factory=dict)
+    base: FilmBase | None = None
+    base_detail: dict = field(default_factory=dict)
+    armed_level: float | None = None
+    travel_mm: float = 0.0
+    aiming: bool = True
+    off_reason: str = ""
+    misses: int = 0
+
+    def landed(self) -> None:
+        self.misses = 0
+
+    def missed(self, why: str, *, give_up: int = 3) -> None:
+        """A frame that did not reach its number. Three running is a setup fault.
+
+        The same shape as `HOLD_GIVE_UP_FRAMES` and `max_failures`, and it
+        matters more here than on the approved path: a sub-frame nudge does not
+        touch the transport's frame counter, so a correction that goes wrong is
+        inherited by every frame after it with nothing downstream to notice.
+        """
+        self.misses += 1
+        if self.misses >= give_up:
+            self.stop(f"{self.misses} frames in a row did not reach the "
+                      f"position measured for them ({why}); aiming is off for "
+                      "the rest of this roll. Frames are still scanned")
+
+    def stop(self, why: str) -> None:
+        """Stop aiming for the rest of this roll. Frames are still scanned."""
+        if self.aiming:
+            self.aiming, self.off_reason = False, why
+
+    def observe(self, number: int, image) -> dict:
+        """Take this frame's bands, and re-arm the base from everything seen.
+
+        Called on every frame including the first two, and again on a frame's
+        replacement prescan. It gets more trustworthy as the walk goes on, and
+        it needs to: the level is physically a constant -- one lamp, one
+        exposure, one shading reference, and a prescan meters nothing -- so
+        anything that moves it is the detector finding picture rather than base.
+        """
+        self.bands[int(number)] = edge_bands(image)
+        was = self.base
+        self.base, self.base_detail = film_base_from(self.bands)
+
+        if self.base is None:
+            if len(self.pending) < MAX_PENDING_FRAMES:
+                self.pending[int(number)] = image
+            return dict(self.base_detail)
+
+        if self.armed_level is None:
+            self.armed_level = self.base.level
+        elif abs(self.base.level - self.armed_level) > (
+                self.armed_level * BASE_TOLERANCE):
+            self.stop(
+                f"the base level moved from {self.armed_level:.1f} to "
+                f"{self.base.level:.1f} counts. One lamp at one exposure "
+                "cannot do that, so what is being measured is not base")
+
+        if was is None and self.pending:
+            # The base could not arm before the second frame, but the frames it
+            # took to arm it are still in hand. Placing them now costs nothing
+            # and gives the prior its first advances -- on walk D it is the
+            # difference between aiming from frame 7 and aiming from frame 6.
+            for earlier in sorted(self.pending):
+                if earlier != int(number):
+                    reading = frame_offset_mm(self.pending[earlier], self.base)
+                    if reading.mm is not None:
+                        self.placed[earlier] = reading.mm
+            self.pending.clear()
+        return dict(self.base_detail)
+
+    def history(self, before: int | None = None) -> list:
+        """``(number, arrived, left at)`` for the frames already walked.
+
+        Strictly before ``before``, because a frame cannot be evidence about
+        where it is itself going to be.
+        """
+        return [
+            (n, self.placed[n], self.settled.get(n, self.placed[n]))
+            for n in sorted(self.placed)
+            if before is None or n < int(before)
+        ]
+
+    def judge(self, number: int, image) -> tuple[float | None, dict]:
+        """What to do about this frame, from every member that can see it."""
+        if not self.aiming:
+            return None, {"reason": self.off_reason, "members": []}
+        if self.base is None:
+            return None, {"members": [], "reason": (
+                "the strip's base level is not calibrated yet: "
+                + str(self.base_detail.get("reason", "")))}
+
+        left = frame_offset_mm(image, self.base)
+        closure = right_gap_closure(image, self.base)
+        # The prior is asked before this frame is recorded, never after.
+        prior = predict_offset(self.history(number), number)
+        decision, detail = combine([left, closure, prior])
+        if left.mm is not None:
+            self.placed[int(number)] = left.mm
+        detail["base_level"] = round(self.base.level, 2)
+        return decision, detail
+
+    def record(self, number: int, settled_mm: float | None,
+               travelled_mm: float = 0.0, verified: bool = True) -> None:
+        """Where this frame was left, and what it cost to leave it there.
+
+        An **unverified** move drops the frame from the history entirely. The
+        film has moved and nothing knows how far, so the arrival this frame
+        contributed is a stale number -- and a prior built on one bad delta is
+        the poison a median cannot fix once a few of them agree.
+        """
+        if not verified:
+            self.placed.pop(int(number), None)
+            self.settled.pop(int(number), None)
+        elif settled_mm is not None:
+            self.settled[int(number)] = float(settled_mm)
+        self.travel_mm += abs(float(travelled_mm))
+        if self.travel_mm > ROLL_TRAVEL_LIMIT_MM:
+            self.stop(
+                f"this roll has nudged {self.travel_mm:.1f} mm in total, past "
+                f"the {ROLL_TRAVEL_LIMIT_MM} mm a strip should ever need. A "
+                "sub-frame move does not touch the frame counter, so nothing "
+                "downstream would notice the film creeping")
+
+    def affordable(self, offset_mm: float) -> bool:
+        """Whether this roll can still afford that move."""
+        return self.travel_mm + abs(offset_mm) <= ROLL_TRAVEL_LIMIT_MM

@@ -21,6 +21,7 @@ import inspect
 import numpy as np
 import pytest
 
+from rps7200.framing import MAX_HOLD_MOVES
 from rps7200.direct import (
     SLIDE_PREV,
     FULL_FRAME,
@@ -551,51 +552,104 @@ def test_correction_is_off_unless_asked():
     assert s.slid == [] or all(a == SLIDE_INIT for a, _, _ in s.slid), s.slid
 
 
+#: A gap this wide is a real error: 10 columns is 0.85 mm, so the frame wants
+#: about -0.61 mm, comfortably past the 0.27 mm the transport can deliver.
+OUT_BY_A_GAP = 10
+
+
+def aimable(count, gap=OUT_BY_A_GAP):
+    """A strip long enough for the ensemble to arm on.
+
+    One frame cannot be aimed and neither can two, by construction rather than
+    by accident: the base needs bands from two frames, and the prior needs an
+    advance between two placed ones before it can say anything. Frame 3 is the
+    first that two members can both see, which is the bootstrap the operator
+    asked for and also the earliest the evidence allows.
+    """
+    return [framed(gap_left=gap, seed=n) for n in range(count)]
+
+
+def test_a_frame_on_its_own_is_never_aimed():
+    """The gate, at the roll level. `gap_edges` would have moved film here on
+    one detector's word, which is what it did wrongly on four of nine frames."""
+    s = FakeRoll(aimable(1))
+    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+    fix = frames[0].registration["correction"]
+    assert fix["outcome"] == "abstained"
+    assert "base level is not calibrated" in fix["reason"]
+
+
 def test_a_dry_run_measures_but_never_moves():
-    s = FakeRoll([framed(gap_left=4) for _ in range(2)])
-    frames = list(s.scan_roll(frames=2, meter=METER_NONE, correct_dry_run=True))
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct_dry_run=True))
     sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
     assert sub == [], sub
-    fix = frames[0].registration["correction"]
+    fix = frames[2].registration["correction"]
     assert fix["moved"] is False
+    assert fix["outcome"] == "dry_run"
     assert fix["would_send"]["action"] == 0x01      # gap left -> move back
     assert fix["would_send"]["param"] >= 1
 
 
 def test_an_error_inside_the_deadband_is_left_alone():
-    """Smallest possible move is 0.27 mm, so correcting 0.1 mm cannot help."""
-    s = FakeRoll([framed(gap_left=1) for _ in range(1)])
-    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    """Smallest possible move is 0.27 mm, so correcting 0.1 mm cannot help.
+
+    Three frames, not one: on a shorter strip this passed because nothing was
+    calibrated yet, which is a different reason for the same silence and would
+    have gone on passing if the deadband were deleted.
+    """
+    s = FakeRoll(aimable(3, gap=3))                 # 0.26 mm -> wants -0.01 mm
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
     assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
-    assert frames[0].registration["correction"]["moved"] is False
+    assert frames[2].registration["correction"]["outcome"] == "in_place"
 
 
 def test_a_real_error_is_corrected_the_other_way():
-    """A gap on the left means the frame sits too far +x, so it must come back."""
-    s = FakeRoll([framed(gap_left=4)])
-    # before, then the after-prescan the loop takes to check its own work
-    s.prescans = [framed(gap_left=4),      # the roll's own look
-                  framed(gap_left=1)]      # the check after nudging
-    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    """A gap on the left means the frame sits too far +x, so it must come back.
+
+    Getting this backwards drives every frame of a roll the wrong way, and the
+    transport gives no signal that it happened.
+    """
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
     sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
-    assert len(sub) == 1, sub
+    assert sub, "frame 3 is measurable by two members and should have moved"
     action, param, value = sub[0]
     assert action == 0x01                      # backward
     assert 1 <= param <= 8
     assert value == 0x04
-    fix = frames[0].registration["correction"]
-    assert fix["moved"] and fix["improved"]
+    fix = frames[2].registration["correction"]
+    assert fix["moved"] is True
+    assert fix["decision_mm"] < 0
 
 
 def test_a_correction_that_does_not_land_is_reported():
-    """Backlash swallows a move. Saying so is the whole point of re-measuring."""
-    s = FakeRoll([framed(gap_left=4)])
-    s.prescans = [framed(gap_left=4),      # the roll's own look
-                  framed(gap_left=4)]      # unchanged: the move did not land
-    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
-    fix = frames[0].registration["correction"]
+    """Backlash swallows a move. Saying so is the whole point of re-measuring.
+
+    Here the prescan never changes, so the film never appears to move and the
+    loop spends its budget. It must say `not_converged` rather than report the
+    distance it asked for as though it had been delivered.
+    """
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
+    fix = frames[2].registration["correction"]
     assert fix["moved"] is True
-    assert fix["improved"] is False
+    assert fix["outcome"] == "not_converged"
+    assert fix["moves"] == MAX_HOLD_MOVES
+
+
+def test_an_unverified_move_leaves_no_trace_in_the_prior():
+    """The film has moved and nothing knows how far, so what this frame
+    contributed is now a stale number -- and one bad delta is the poison a
+    median cannot fix once a few of them agree."""
+    from rps7200.framing import StripWalk
+
+    walk = StripWalk()
+    walk.placed[4] = -0.6
+    walk.record(4, None, 1.0, verified=False)
+    assert 4 not in walk.placed
+    assert walk.history() == []
 
 
 # --- automatic filing -------------------------------------------------------
