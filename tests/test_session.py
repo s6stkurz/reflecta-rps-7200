@@ -1458,3 +1458,13 @@ def test_a_reversed_roll_frame_is_turned_in_the_rolls_own_file(tmp_path):
     written = tiff.read(str(tmp_path / "r" / "strip" / "frame01.tif"))
     assert np.array_equal(written, scanner._truth)
     assert not np.array_equal(written, preview.mirror(scanner._truth))
+
+
+def test_the_window_can_ask_what_aiming_would_do_without_doing_it():
+    """`tools/scan_roll.py` has had this since the correction did; the window
+    could only do the real thing, so there was no way to see what aiming would
+    command before letting it command it."""
+    from rps7200.session import Roll
+
+    assert Roll().correct_dry_run is False
+    assert Roll(correct_dry_run=True).correct_dry_run is True

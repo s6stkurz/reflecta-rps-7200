@@ -1383,8 +1383,11 @@ class ScannerGui:
         ttk.Checkbutton(box, text="dry run -- prescan and advance only",
                         variable=self.v_dryrun).pack(anchor="w", pady=2)
         self.v_correct = tk.BooleanVar(value=False)
-        ttk.Checkbutton(box, text="nudge registration between frames",
+        ttk.Checkbutton(box, text="aim each frame while prescanning",
                         variable=self.v_correct).pack(anchor="w")
+        self.v_correct_dry = tk.BooleanVar(value=False)
+        ttk.Checkbutton(box, text="    ... but only say what it would do",
+                        variable=self.v_correct_dry).pack(anchor="w")
         self.b_roll = ttk.Button(box, text="Scan roll", command=self.on_roll)
         self.b_roll.pack(fill="x", pady=(6, 0))
         # Opens by itself when a dry run ends; this is for getting back to it
@@ -1972,7 +1975,9 @@ class ScannerGui:
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             fast_infrared=self.v_fast_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
-            correct=self.v_correct.get(), mono=self.v_mono.get(),
+            correct=self.v_correct.get(),
+            correct_dry_run=self.v_correct_dry.get(),
+            mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),

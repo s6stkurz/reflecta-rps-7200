@@ -318,6 +318,12 @@ class Roll:
     #: that earn them. None scans every frame.
     only: tuple[int, ...] | None = None
     correct: bool = False
+    #: Judge every frame and log what would be commanded, without sending it.
+    #: The walk costs what it costs today, no film moves, and the sheet says
+    #: what aiming would have done -- which is the only way to see that before
+    #: letting it happen. `tools/scan_roll.py` has had this since the
+    #: correction did; the window could only do the real thing.
+    correct_dry_run: bool = False
     #: Positions the operator set by hand in the contact sheet, one per frame
     #: he picked. These are authoritative: a frame carrying one is held to it
     #: and `correct` does not apply to that frame. Frames without one are
@@ -983,6 +989,7 @@ class ScanSession:
                 "mono_channel": job.mono_channel,
                 "prescan_resolution": job.prescan_resolution,
                 "correct": job.correct,
+                "correct_dry_run": job.correct_dry_run,
                 "reverse_hold": job.reverse_hold,
                 "max_failures": job.max_failures,
                 "frames": job.frames,
@@ -1033,6 +1040,7 @@ class ScanSession:
             max_failures=job.max_failures,
             dry_run=job.dry_run,
             correct=job.correct,
+            correct_dry_run=job.correct_dry_run,
             # Keyed the driver's way, from 1-based as the window counts.
             approved={a.number - 1: a for a in job.approved},
             reverse_hold=job.reverse_hold,
