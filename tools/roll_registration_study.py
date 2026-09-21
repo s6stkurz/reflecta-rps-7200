@@ -67,6 +67,7 @@ from registration_margin import (            # noqa: E402
     cohort,
     reach_px,
 )
+from rps7200 import tiff                     # noqa: E402
 from rps7200.console import use_utf8_stdout  # noqa: E402
 from rps7200.framing import (                # noqa: E402
     APERTURE_MM,
@@ -298,14 +299,41 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
         print(f"   {r['name']:<16} {r['gap_left']:>3} {r['gap_right']:>3} "
               f"{value:>9}  {r['reason'][:34]:<34} {stray}")
     asserted = [r for r in rows if r["error_mm"] == 0.0]
-    stray_rows = [r for r in rows if r["stray"]]
+    # A run that starts within a gap's width of the edge is that gap, sitting
+    # a few columns in because a sliver of the ADJACENT frame is also in view.
+    # The anchored rule requires the run to start at column 0 exactly, so it
+    # discards these and reports nothing -- and `registration_error_mm` then
+    # asserts the frame is registered. That is a false assertion about a frame
+    # whose gap it could see.
+    near = max(GAP_MIN_RUN * 4, 12)
+    false_calls = []
+    for r in rows:
+        if r["error_mm"] != 0.0:
+            continue
+        displaced = [(s, n) for s, n in r["stray"]
+                     if s <= near or s + n >= width - near]
+        if displaced:
+            false_calls.append((r, displaced))
+
     print(f"\n   asserted 'registered' on {len(asserted)}/{len(rows)} frames.")
-    print(f"   {len(stray_rows)}/{len(rows)} frames carry a bright-flat run the")
-    print("   anchored rule could not use.")
-    if stray_rows:
-        print("   Each of those is a place the test fired on the PHOTOGRAPH.")
-        print("   The anchored rule discards them silently and then asserts")
-        print("   'registered' -- which is the documented fail-silent hole.")
+    if false_calls:
+        print(f"\n   *** {len(false_calls)} of those {len(asserted)} are FALSE. "
+              f"Each has a gap run within")
+        print(f"   {near} px of an edge that the anchored rule discarded, "
+              f"because it")
+        print("   requires the run to begin at column 0 exactly:")
+        for r, displaced in false_calls:
+            where = ", ".join(f"starts at {s}, {n} px wide" for s, n in displaced)
+            print(f"     {r['name']:<16} {where}")
+        print("\n   A gap is not flush with the window when a sliver of the")
+        print("   neighbouring frame is in view beside it -- which is exactly")
+        print("   the situation a registration detector exists to find. The")
+        print("   rule is blind in the one case that matters.")
+    stray_rows = [r for r in rows if r["stray"]]
+    if len(stray_rows) > len(false_calls):
+        print(f"\n   {len(stray_rows) - len(false_calls)} further run(s) sit "
+              f"away from any edge. Those are the test")
+        print("   firing on the photograph, which is the other failure mode.")
     print(f"\n   Its deadband is {GAP_MIN_RUN} px = {GAP_MIN_RUN*scale:.4f} mm "
           f"against a no-loss threshold of {no_loss:.4f} mm.")
     print(f"   Those agree to {abs(GAP_MIN_RUN*scale - no_loss)/no_loss*100:.1f}% "
@@ -400,6 +428,182 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
     }
 
 
+def load_walk(log: Path) -> tuple[list[tuple[str, np.ndarray]], list[dict]]:
+    """A walk's frames, from its log rather than from a glob.
+
+    The log names each frame's two passes, and the pairing is the point: two
+    passes with nothing moved between them are the only measurement of the
+    pass-to-pass noise, and a glob cannot tell which two belong together.
+
+    The first pass of each frame stands for the frame everywhere else, so the
+    detector table is comparable with one built from a single-pass walk.
+    """
+    record = json.loads(log.read_text(encoding="utf-8"))
+    folder = log.parent
+    images, pairs = [], []
+    for frame in record.get("frames") or []:
+        names = frame.get("passes") or []
+        loaded = []
+        for name in names:
+            try:
+                loaded.append(tiff.read(str(folder / name)).astype(np.float64))
+            except (OSError, ValueError):
+                loaded.append(None)
+        if not loaded or loaded[0] is None:
+            continue
+        images.append((names[0], loaded[0]))
+        if len(loaded) > 1 and loaded[1] is not None:
+            pairs.append({"number": frame.get("number"),
+                          "names": names[:2],
+                          "images": (loaded[0], loaded[1])})
+    return images, pairs
+
+
+def noise_floor(pairs: list[dict], dpi: int, scale: float) -> dict:
+    """How far apart two passes of one frame read, with nothing moved.
+
+    This is sigma_0, and nothing else in the study can be interpreted without
+    it. The actionable band is under three pixels wide, and the repo's only
+    prior figures are ~1.3 px equivalent at 3600 dpi and `[0, 2]` at 600 -- it
+    has never been measured at the resolution every roll actually prescans at.
+
+    A non-zero reading here is not necessarily the film moving. Two passes are
+    two traverses of the same carriage, and the carriage's re-home is recorded
+    as not landing in the same place twice.
+    """
+    reach = reach_px(dpi)
+    rows = []
+    for pair in pairs:
+        a, b = pair["images"]
+        dy, dx, conf = register(luminance(a), luminance(b), max_shift=reach)
+        rows.append({"number": pair["number"], "dx": int(dx), "dy": int(dy),
+                     "confidence": round(float(conf), 1),
+                     "mm": round(float(dx) * scale, 4)})
+    shifts = [r["dx"] for r in rows]
+    confs = [r["confidence"] for r in rows]
+    return {
+        "rows": rows,
+        "n": len(rows),
+        "max_abs_px": max((abs(s) for s in shifts), default=0),
+        "sd_px": float(np.std(shifts)) if shifts else 0.0,
+        "mean_px": float(np.mean(shifts)) if shifts else 0.0,
+        "min_confidence": min(confs) if confs else 0.0,
+        "below_floor": [r for r in rows if r["confidence"] < CONFIDENCE_FLOOR],
+        "off_axis": [r for r in rows if abs(r["dy"]) > MAX_DY_PX],
+    }
+
+
+def report_noise(noise: dict, scale: float) -> None:
+    print("\n-- the noise floor: two passes, nothing moved " + "-" * 26)
+    if not noise["n"]:
+        print("   no repeat pairs in this cohort -- run a walk that takes two")
+        print("   prescans per frame, which is what --walk reads.")
+        return
+    print(f"   {'frame':>6} {'dx px':>6} {'dy':>4} {'mm':>9} {'confidence':>11}")
+    for r in noise["rows"]:
+        flag = "  <- below floor" if r["confidence"] < CONFIDENCE_FLOOR else ""
+        print(f"   {r['number']:>6} {r['dx']:>6} {r['dy']:>4} {r['mm']:>9.4f} "
+              f"{r['confidence']:>11.1f}{flag}")
+    print(f"\n   {noise['n']} pairs. |dx| max {noise['max_abs_px']} px "
+          f"= {noise['max_abs_px']*scale:.4f} mm, "
+          f"sd {noise['sd_px']:.2f} px = {noise['sd_px']*scale:.4f} mm")
+    print(f"   confidence: min {noise['min_confidence']:.1f} "
+          f"against a floor of {CONFIDENCE_FLOOR}")
+    if noise["below_floor"]:
+        print(f"   *** {len(noise['below_floor'])} pair(s) below the floor. "
+              f"Two passes of the SAME frame should be the easiest match")
+        print("   there is; if these are refused, the floor is too high for "
+              "300 dpi.")
+    if noise["off_axis"]:
+        print(f"   *** {len(noise['off_axis'])} pair(s) with |dy| > "
+              f"{MAX_DY_PX} -- the transport moves only in x")
+    band = (APERTURE_MM - FRAME_MM) / 2.0 / scale
+    print(f"\n   The decision band is {band:.2f} px wide. This floor is "
+          f"{noise['max_abs_px']} px at worst,")
+    print(f"   which is {noise['max_abs_px']/band*100:.0f}% of it.")
+
+
+#: The base level a gap sits at, and how far a column may stray from it. Found
+#: empirically at 36.5-37 across two separate walks; kept as a tolerance rather
+#: than a constant because it is a property of this lamp at this exposure.
+BASE_TOLERANCE = 0.12
+
+
+def picture_start(image: np.ndarray, base: float) -> tuple[int, int]:
+    """Where the frame's own picture begins, as ``(gap_start, gap_end)``.
+
+    The registration-relevant quantity is the *end* of the gap, not its width:
+    that is the first column of this photograph, and holding it constant from
+    frame to frame is what "registered" means.
+
+    Found by absolute level and absolute flatness -- the two properties
+    unexposed base has and a photograph does not reliably have. It still
+    over-runs wherever a smooth region of the picture sits at the same level,
+    so a width far past the ~2 mm a 135 gap can be is a contaminated reading
+    and is reported rather than silently used.
+    """
+    grey = image.astype(np.float64)
+    if grey.ndim == 3:
+        grey = grey.mean(axis=2)
+    level, spread = grey.mean(axis=0), grey.std(axis=0)
+    isbase = (np.abs(level - base) <= base * BASE_TOLERANCE) & (spread < 3.0)
+    best, run, start = (0, 0), 0, 0
+    for i in range(len(isbase) // 3):
+        if isbase[i]:
+            if run == 0:
+                start = i
+            run += 1
+            if run > best[1]:
+                best = (start, run)
+        else:
+            run = 0
+    return best[0], best[0] + best[1]
+
+
+def report_position(rows, images, base: float, scale: float) -> dict:
+    """Is the picture in the same place on every frame?"""
+    print("\n-- where each frame's picture begins " + "-" * 34)
+    print("   the END of the gap: the first column of this photograph\n")
+    # A 135 gap is about 2 mm. Anything much past that is the run walking into
+    # a smooth part of the picture, and is excluded rather than averaged in.
+    ceiling = int(round(2.6 / scale))
+    print(f"   {'frame':<16} {'gap':>9} {'end px':>7} {'end mm':>8}   ")
+    ends, used = [], []
+    for r, (_n, im) in zip(rows, images, strict=True):
+        s, e = picture_start(im, base)
+        wide = (e - s) > ceiling
+        note = f"  <- {e-s} px wide, over {ceiling}: contaminated" if wide else ""
+        print(f"   {r['name']:<16} {f'{s}..{e}':>9} {e:>7} {e*scale:>8.3f}{note}")
+        ends.append(e)
+        if not wide:
+            used.append(e)
+    if len(used) < 3:
+        print("\n   too few clean readings to say anything about position.")
+        return {"ends": ends, "used": used}
+
+    arr = np.array(used, float)
+    print(f"\n   {len(used)} clean of {len(ends)}. "
+          f"mean {arr.mean():.1f} px = {arr.mean()*scale:.3f} mm, "
+          f"sd {arr.std():.2f} px = {arr.std()*scale:.4f} mm, "
+          f"range {arr.max()-arr.min():.0f} px")
+    no_loss = (APERTURE_MM - FRAME_MM) / 2.0
+    print(f"\n   Those starts are {arr.mean()*scale:.2f} mm into a "
+          f"{APERTURE_MM:.2f} mm aperture. If the image really were "
+          f"{FRAME_MM} mm")
+    print(f"   the most it could be is {no_loss:.3f} mm, so either every frame "
+          f"is losing")
+    print("   picture at the far edge -- which the operator would see -- or")
+    print(f"   the image on this film is about "
+          f"{APERTURE_MM - 2*arr.mean()*scale:.1f} mm wide, not {FRAME_MM}.")
+    print("   That second reading makes the slack larger than "
+          f"MAX_REGISTRATION_MM ({MAX_REGISTRATION_MM} mm),")
+    print("   which is why genuine gap readings are being refused as "
+          "detector error.")
+    print("   The displacement ladder settles which it is.")
+    return {"ends": ends, "used": used,
+            "mean_px": float(arr.mean()), "sd_px": float(arr.std())}
+
+
 def main(argv: list[str] | None = None) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(
@@ -407,19 +611,33 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=Path("rolls/2026-09-21"),
                     help="a roll folder holding prescanNN.tif, or a library")
+    ap.add_argument("--walk", type=Path, default=None,
+                    help="a walk-X.json from tools/roll_registration_walk.py; "
+                         "reads its two-passes-per-frame pairing, which is the "
+                         "only thing that measures the noise floor")
     ap.add_argument("--dpi", type=int, default=300,
                     help="the resolution to select when reading a library")
     ap.add_argument("--json", type=Path, default=None,
                     help="also write the whole result here")
     args = ap.parse_args(argv)
 
-    if not args.root.is_dir():
-        print(f"no folder at {args.root}")
-        return 1
-    images = cohort(args.root, args.dpi)
-    if not images:
-        print(f"no comparable prescans in {args.root}")
-        return 1
+    pairs: list[dict] = []
+    if args.walk:
+        if not args.walk.is_file():
+            print(f"no walk log at {args.walk}")
+            return 1
+        images, pairs = load_walk(args.walk)
+        if not images:
+            print(f"no readable passes named in {args.walk}")
+            return 1
+    else:
+        if not args.root.is_dir():
+            print(f"no folder at {args.root}")
+            return 1
+        images = cohort(args.root, args.dpi)
+        if not images:
+            print(f"no comparable prescans in {args.root}")
+            return 1
 
     blank = [n for n, im in images if frame_contrast(im) < BLANK_CONTRAST]
     if blank:
@@ -428,6 +646,16 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = [per_frame(name, image) for name, image in images]
     result = report(rows, images, args.dpi)
+
+    scale = mm_per_px(images[0][1].shape[1])
+    base = result.get("base", {}).get("mean")
+    if base:
+        result["position"] = report_position(rows, images, base, scale)
+
+    if pairs:
+        noise = noise_floor(pairs, args.dpi, scale)
+        report_noise(noise, scale)
+        result["noise"] = noise
 
     if args.json:
         args.json.write_text(json.dumps(result, indent=2, default=str),
