@@ -145,6 +145,13 @@ def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
                                  skip=args.no_shading)["summary"])
 
 
+#: How many backward commands a direction change may swallow before the film
+#: actually moves. Two to three, measured -- `tools/transport_truth.py` and
+#: `_hold_to_approved`'s own docstring both say so -- so three is the
+#: conservative end, and the film has not moved while they are being spent.
+BACKLASH_COMMANDS = 3
+
+
 def rewind(scanner: DirectScanner, frames: int) -> int | None:
     """Wind the film back, one frame at a time, checking each one landed.
 
@@ -160,21 +167,37 @@ def rewind(scanner: DirectScanner, frames: int) -> int | None:
     immediately by a roll that scans frames it has mis-numbered -- and a break
     after three successes reads identically to a break after none.
 
-    Returns where the film ended up, or None if it stopped short. A caller that
-    gets None must not go on: everything after this assumes the film is where
-    it was asked to be.
+    The first command or two may do nothing, and that is expected rather than a
+    failure: a roll leaves the transport loaded forward, so the first backward
+    command is a direction change and **backlash swallows two to three of
+    them** -- `tools/transport_truth.py` says so in as many words, and adds
+    that one failure proves nothing. Measured here 2026-09-21: a 14-frame
+    rewind from position 14 ran first time after one roll and had its first
+    command swallowed after the next, with the device healthy either way.
+
+    So a no-op is tolerated while the film has not started moving, and is the
+    end of the strip once it has. Returns where the film ended up, or None if
+    it stopped short: a caller that gets None must not go on, because
+    everything after this assumes the film is where it was asked to be.
     """
     start = scanner.position()
     print(f"rewinding {frames} frame(s) from position {start}")
-    for step in range(frames):
+    done, swallowed = 0, 0
+    while done < frames:
         before = scanner.position()
         landed = scanner.retreat()
         now = scanner.position()
         if landed is None or now == before:
-            print(f"  stopped after {step} of {frames}: position still "
+            if done == 0 and swallowed < BACKLASH_COMMANDS:
+                swallowed += 1
+                print(f"  (no movement yet -- backlash, command "
+                      f"{swallowed}/{BACKLASH_COMMANDS})", flush=True)
+                continue
+            print(f"  stopped after {done} of {frames}: position still "
                   f"{before}", file=sys.stderr)
             return None
-        print(f"  {step + 1}/{frames}: {before} -> {now}", flush=True)
+        done += 1
+        print(f"  {done}/{frames}: {before} -> {now}", flush=True)
     return scanner.position()
 
 

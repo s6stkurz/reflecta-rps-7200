@@ -271,16 +271,24 @@ def test_a_frame_that_failed_makes_the_run_fail(tmp_path, monkeypatch):
 
 
 class _Transport:
-    """A film that can be wound back, and can stop part-way."""
+    """A film that can be wound back, and can stop part-way.
 
-    def __init__(self, at, sticks_at=None):
+    `swallows` is backlash: that many opening commands do nothing, which is
+    what a transport left loaded forward really does.
+    """
+
+    def __init__(self, at, sticks_at=None, swallows=0):
         self.at, self.sticks_at, self.calls = at, sticks_at, 0
+        self.swallows = swallows
 
     def position(self):
         return self.at
 
     def retreat(self, **kw):
         self.calls += 1
+        if self.swallows:
+            self.swallows -= 1
+            return None
         if self.sticks_at is not None and self.at <= self.sticks_at:
             return None
         self.at -= 1
@@ -311,3 +319,27 @@ def test_a_rewind_goes_one_frame_at_a_time():
     t = _Transport(5)
     scan_roll.rewind(t, 5)
     assert t.calls == 5
+
+
+def test_backlash_at_the_start_is_not_a_failed_rewind():
+    """A roll leaves the transport loaded forward, so the first backward
+    command is a direction change and two to three of them are swallowed.
+    Measured on film 2026-09-21: a 14-frame rewind ran first time after one
+    roll and had its first command swallowed after the next."""
+    t = _Transport(14, swallows=2)
+    assert scan_roll.rewind(t, 14) == 0
+    assert t.calls == 16, "two swallowed, then fourteen that moved"
+
+
+def test_backlash_is_only_tolerated_before_the_film_moves():
+    """Once it is moving, a command that does nothing is the end of the strip
+    -- not something to keep pushing against."""
+    t = _Transport(14, sticks_at=10)
+    assert scan_roll.rewind(t, 14) is None
+    assert t.at == 10
+
+
+def test_backlash_tolerance_is_bounded():
+    t = _Transport(14, swallows=99)
+    assert scan_roll.rewind(t, 14) is None
+    assert t.calls == scan_roll.BACKLASH_COMMANDS + 1
