@@ -403,9 +403,13 @@ BASE_FLATNESS = 3.0
 #: sixteen frames; past this the level is not describing one object.
 BASE_SPREAD_LIMIT = 0.10
 
-#: Fewest frames that can calibrate a strip. Two would give a level with no
+#: Fewest *bands* that can calibrate a strip. Two would give a level with no
 #: way to see that one of them was wrong.
-MIN_BASE_FRAMES = 3
+#:
+#: Bands, not frames, and the distinction matters to anyone arming this from a
+#: short walk: `film_base` harvests one band at each edge of each image, so two
+#: frames can satisfy this on their own.
+MIN_BASE_BANDS = 3
 
 
 @dataclass(frozen=True)
@@ -420,7 +424,7 @@ class FilmBase:
 
     level: float                     # counts
     flatness: float                  # counts of column spread it showed
-    frames: int                      # how many contributed
+    bands: int                       # how many contributed -- bands, not frames
     spread: float                    # fractional spread of the level
 
 
@@ -490,9 +494,9 @@ def film_base(images) -> tuple[FilmBase | None, dict]:
                 levels.append(float(np.median(values[:run])))
                 flats.append(float(np.median(spread[scan][:run])))
 
-    if len(levels) < MIN_BASE_FRAMES:
+    if len(levels) < MIN_BASE_BANDS:
         return None, {"reason": f"only {len(levels)} band(s) found, "
-                                f"need {MIN_BASE_FRAMES}", "frames": len(levels)}
+                                f"need {MIN_BASE_BANDS}", "bands": len(levels)}
     level = float(np.median(levels))
     # Robust, not max-minus-min. Finding a band by flatness alone also finds
     # smooth *picture* on some frames -- one strip had a 104-column flat run
@@ -504,16 +508,16 @@ def film_base(images) -> tuple[FilmBase | None, dict]:
     agreeing = int(np.sum(deviation <= level * BASE_TOLERANCE))
     detail = {"level": round(level, 2), "spread": round(spread, 4),
               "bands": len(levels), "agreeing": agreeing}
-    if agreeing < MIN_BASE_FRAMES:
+    if agreeing < MIN_BASE_BANDS:
         return None, dict(detail, reason=(
             f"only {agreeing} band(s) agree on a level, need "
-            f"{MIN_BASE_FRAMES}"))
+            f"{MIN_BASE_BANDS}"))
     if spread > BASE_SPREAD_LIMIT:
         return None, dict(detail, reason=(
             f"base level varies by {spread*100:.1f}%, past the "
             f"{BASE_SPREAD_LIMIT*100:.0f}% one lamp at one exposure explains"))
     return FilmBase(level=level, flatness=float(np.median(flats)),
-                    frames=len(levels), spread=spread), detail
+                    bands=len(levels), spread=spread), detail
 
 
 #: The widest an inter-frame gap can be. On 135 the pitch is ~38 mm against a
@@ -943,6 +947,17 @@ MAX_HOLD_MOVES = 3
 #: the loop decides the film is not where anybody thinks it is.
 HOLD_HEADROOM_MM = 2.0
 
+#: How far a whole roll may nudge before aiming stops. Nothing bounded this
+#: before: `hold_plan`'s budget resets every frame, and a sub-frame nudge does
+#: not touch the transport's frame counter, so nothing downstream notices the
+#: film creeping. Fifteen frames each corrected -1.5 mm walks the strip 22 mm
+#: -- most of a frame -- with every individual move inside its own budget.
+#:
+#: Set well above what a real roll needs. Walk A wanted about 1.5 mm on its
+#: first frame and the per-advance drift after that, so a roll that reaches
+#: this has found something other than the gap.
+ROLL_TRAVEL_LIMIT_MM = 12.0
+
 
 def hold_plan(
     target_mm: float,
@@ -986,3 +1001,384 @@ def hold_plan(
     if spent_mm + abs(residual) > budget:
         return None, "budget"
     return residual, "move"
+
+
+# --- deciding from more than one reading ------------------------------------
+#
+# Every detector in this file fails along one of four axes, and two detectors
+# on the same axis are one detector:
+#
+#   A  content-relative thresholds -- a high-contrast photograph raises the
+#      frame's own median above the gap. `gap_edges`, and the graveyard.
+#   B  needs an empty aperture in view -- `film_bounds` abstains on 97% of real
+#      prescans, because a loaded strip never shows one mid-roll.
+#   C  smooth picture sitting at the base level -- sky, fog, an evenly-lit wall
+#      defeat `picture_start` and `base_runs`.
+#   D  nothing to correlate -- a dark or blank frame defeats `register`.
+#
+# A and B are why the four detectors in `docs/whole-roll-plan.md` were retired.
+# C and D are the two that survive, and they are anti-correlated: the
+# grass-and-sky frame that is C's nightmare is D's best case, scoring 185-189
+# where the floor is 55, and the featureless frame that collapses D is the
+# easiest read C ever gets. That pairing is what makes an ensemble worth having
+# rather than two chances to make the same mistake.
+#
+# Two rules, both learned here rather than chosen:
+#
+#   * **Agreement is judged in millimetres, never in confidence.** The scores
+#     are not on one scale and cannot be put on one: `register` returns a
+#     z-score observed from 4 to 203, `film_base` a fraction and a count. A
+#     millimetre means the same thing to all of them. Confidence only breaks
+#     ties.
+#   * **Where members disagree, follow the most confident one -- never blend.**
+#     `bracket.py` already settled this for exposures, at `np.argmax(weights)`:
+#     averaging two readings that disagree produces a number neither of them
+#     supports.
+
+#: The **ceiling** on how far apart two members may be and still be called
+#: agreed. The gate itself is their own two precisions added together; this
+#: stops that sum from growing past the point where it would mean nothing.
+#:
+#: Set to the smallest move the transport can make. Two readings further apart
+#: than one step would command different moves, so calling them agreed is
+#: meaningless however imprecise either one admits to being -- and a member
+#: whose own precision is already a whole step contributes agreement, never
+#: distance, because `margin` decides which of a pair sets the number.
+#:
+#: Fixed in millimetres rather than computed per pass, deliberately: "within a
+#: pixel" is half as much at 600 dpi and would tighten with nobody saying so,
+#: which is the mistake `GAP_MIN_RUN` made.
+AGREE_MM = HOLD_TOLERANCE_MM
+
+#: How far the picture between two gaps may sit from a whole frame before one
+#: of the bands is not a gap. The frame measures 35.90 to 36.2 mm across
+#: (`TARGET_GAP_MM`), so this is that spread with a little room.
+#:
+#: Measured, not chosen. At `MAX_GAP_MM` -- the first value tried -- the right
+#: hand reading fired on three frames of walk D and put the picture at 35.39 mm
+#: every time, which is below the 35.90 the strip was measured at: the band it
+#: found was picture, not base, and a tolerance that wide accepted all three.
+FRAME_WIDTH_SPREAD_MM = 0.30
+
+#: The furthest a correction can be asked for. Not a new limit -- it is what
+#: `picture_start` can report before `MAX_GAP_MM` refuses the band, restated as
+#: an offset. A reading past it is dropped from the vote rather than clamped
+#: into range, because a clamped reading is a fabricated one.
+#:
+#: `MAX_REGISTRATION_MM` is emphatically *not* this bound. That is how well a
+#: 36 mm frame can be placed in a 36.49 mm aperture; this is how badly the
+#: transport can leave one, and walk A sat 1.4 to 2.2 mm out.
+MAX_CORRECTION_MM = MAX_GAP_MM - TARGET_GAP_MM
+
+
+@dataclass(frozen=True)
+class Reading:
+    """One member's answer, and how far it stands from its own refusal.
+
+    ``margin`` is that distance as a fraction of the member's own threshold, 0
+    meaning "only just qualified" and 1 "nowhere near refusing". It is not
+    comparable between members in any deeper sense and is never treated as one:
+    it breaks ties and does nothing else.
+
+    ``precision`` is how finely this member can answer, in millimetres, and
+    unlike ``margin`` it means exactly the same thing to all of them -- which is
+    why the agreement test is built on it. A member that reads to the pixel and
+    one that predicts to the transport's own repeatability do not have to be
+    held to one tolerance, and holding them to one is what made the first
+    version of this refuse eleven frames of thirteen.
+    """
+
+    mm: float | None
+    margin: float
+    source: str
+    reason: str = ""
+    detail: dict | None = None
+    precision: float = 0.0
+
+
+def _clip01(value: float) -> float:
+    return float(min(1.0, max(0.0, value)))
+
+
+def _band(image: np.ndarray, start: int, length: int) -> tuple[float, float]:
+    """A band's own level and its own flatness, in counts."""
+    grey = _grey(image)[:, start:start + length]
+    if grey.size == 0:
+        return 0.0, 0.0
+    return float(grey.mean()), float(grey.std(axis=0).mean())
+
+
+def frame_offset_mm(
+    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+) -> Reading:
+    """Where this frame sits, from the gap that entered at the left.
+
+    The one-frame form of `strip_offsets(target="centre")`, and it needs no
+    strip: that target is `TARGET_GAP_MM`, a constant of the aperture rather
+    than of the frames, so a forward walk can use it from its third frame.
+
+    This is the validated member. Against the displacement ladder it tracked
+    the film at gain 1.008 with a residual rms of 0.021 mm and placed the
+    picture on all seven rungs, including the four where `gap_edges` read 0.
+    """
+    start, detail = picture_start(image, base, aperture_mm=aperture_mm)
+    if start is None:
+        return Reading(None, 0.0, "left-gap", detail.get("reason", ""), detail)
+
+    # From the width, not from `detail["mm_per_px"]`, which is rounded to five
+    # places for the manifest. The offset is a distance the transport is asked
+    # to move; it should not carry a rounding meant for a log line.
+    mm_px = aperture_mm / image.shape[1]
+    gap_start, length = detail["gap"]
+    level, flat = _band(image, gap_start, length)
+    # How far this band stands from each of the three tests that could have
+    # refused it. The smallest is the one that nearly did.
+    margin = min(
+        1.0 - abs(level - base.level) / max(base.level * BASE_TOLERANCE, 1e-9),
+        1.0 - flat / max(base.flatness * 2.0, BASE_FLATNESS),
+        1.0 - length * mm_px / MAX_GAP_MM,
+    )
+    return Reading(
+        mm=TARGET_GAP_MM - start * mm_px,
+        margin=_clip01(margin),
+        source="left-gap",
+        precision=mm_px,
+        reason=f"{length} columns of base, {length * mm_px:.2f} mm",
+        detail=dict(detail, band_level=round(level, 2),
+                    band_flatness=round(flat, 2)),
+    )
+
+
+def right_gap_closure(
+    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM,
+    frame_mm: float = 36.0,
+) -> Reading:
+    """Where this frame sits, from the gap at the *right* -- and a check.
+
+    A second reading of the same quantity off the opposite edge, which
+    `base_runs` already finds and `picture_start` throws away. What makes it
+    worth having is not the second number but the constraint that comes with
+    it: with both gaps in view the picture between them must be a frame wide,
+    and how far it departs from that is an error bar this costs nothing to
+    compute. The same trick as `uniformity.parity_residual` -- the redundancy
+    is already in the measurement.
+
+    Abstains whenever the right edge holds no gap, which is most of the time
+    and is geometry rather than bad luck: 36.49 mm of aperture less ~36 mm of
+    frame leaves 0.49 mm of slack, and `GAP_MIN_MM` is 0.25, so both edges can
+    show a readable gap only in a window narrower than the detector's own
+    resolution. These are not two opinions about one frame. They are the
+    readings for the two opposite directions, and the left one structurally
+    cannot see a frame that has gone too far the other way.
+
+    Which is why the closure test has to be tight. On walk D a loose one
+    accepted this reading on three frames and placed the picture at 35.39 mm
+    each time -- under the 35.90 the strip measures -- so what it had found was
+    picture at the base level, not a gap.
+    """
+    grey = _grey(image)
+    if grey.size == 0:
+        return Reading(None, 0.0, "closure", "nothing to measure")
+    width = grey.shape[1]
+    mm_px = aperture_mm / width
+    smallest = max(1, int(round(GAP_MIN_MM / mm_px)))
+    widest = int(round(MAX_GAP_MM / mm_px))
+    margin_px = int(round(width * EDGE_FRACTION))
+
+    runs = base_runs(image, base.level,
+                     flatness=max(base.flatness * 2.0, BASE_FLATNESS),
+                     min_run=smallest)
+    detail: dict[str, Any] = {"runs": runs, "mm_per_px": round(mm_px, 5)}
+    left = [(s, n) for s, n in runs if s <= margin_px]
+    right = [(s, n) for s, n in runs if s + n >= width - margin_px]
+    if not left:
+        return Reading(None, 0.0, "closure", "no gap at the left edge", detail)
+    if not right:
+        return Reading(None, 0.0, "closure",
+                       "no base at the right edge -- the picture runs to the "
+                       "last column and is being cut", detail)
+    if right[-1][1] > widest:
+        return Reading(None, 0.0, "closure",
+                       f"the right band is {right[-1][1] * mm_px:.2f} mm, wider "
+                       f"than the {MAX_GAP_MM} mm a gap can be", detail)
+
+    start = left[0][0] + left[0][1]
+    end = right[-1][0]
+    if end <= start:
+        return Reading(None, 0.0, "closure",
+                       "the two bands meet -- no picture between them", detail)
+
+    # The free error bar: with both gaps in view the picture is a frame wide.
+    picture_mm = (end - start) * mm_px
+    residual = picture_mm - frame_mm
+    detail.update(picture_mm=round(picture_mm, 3),
+                  closure_mm=round(residual, 3))
+    if abs(residual) > FRAME_WIDTH_SPREAD_MM:
+        return Reading(None, 0.0, "closure",
+                       f"the picture between the bands is {picture_mm:.2f} mm, "
+                       f"not the {frame_mm} mm a frame is -- one of them is not "
+                       f"a gap", detail)
+    return Reading(
+        mm=(aperture_mm - TARGET_GAP_MM) - end * mm_px,
+        margin=_clip01(1.0 - abs(residual) / FRAME_WIDTH_SPREAD_MM),
+        source="closure",
+        precision=mm_px,
+        reason=f"picture {picture_mm:.2f} mm, closes to {residual:+.2f} mm",
+        detail=detail,
+    )
+
+
+def predict_offset(history, target=None, *, least: int = 1) -> Reading:
+    """Where the next frame will arrive, from the frames already walked.
+
+    ``history`` is ``(number, arrived_mm, final_mm)`` per frame **in walk
+    order**: the frame's number, the offset it showed when its first prescan
+    came back, and the offset it was left at. The last two are both needed
+    because correcting a frame breaks the series the obvious model would fit --
+    once frame 3 is pulled to centre, frame 4 does not continue the line frames
+    1 and 2 were on.
+
+    What is actually constant is the *advance*, so what this fits is the error
+    one advance delivers: ``arrived(n+1) - final(n)``. A median of those, added
+    to where the last frame was left.
+
+    Only **consecutive** frames contribute. A frame nobody could measure leaves
+    no entry, and pairing across the hole would silently call two advances one
+    -- which reads as a doubled error and predicts the next frame into the
+    middle of nowhere. ``number`` is carried for no other reason.
+
+    ``target`` is the frame this is predicting. It must follow the last frame
+    in the history, since one advance is what the step describes.
+
+    Uses no pixels from the frame it is predicting, which is the whole reason it
+    belongs in the ensemble -- it fails on none of the four axes the pixel
+    detectors fail on. It is strictly causal: a forward walk has no later
+    frames, which is why `fill_from_neighbours` cannot serve here.
+    """
+    errors = [
+        float(history[i + 1][1] - history[i][2])
+        for i in range(len(history) - 1)
+        if int(history[i + 1][0]) - int(history[i][0]) == 1
+    ]
+    if not history:
+        return Reading(None, 0.0, "prior", "nothing walked yet")
+    if target is not None and int(target) - int(history[-1][0]) != 1:
+        return Reading(None, 0.0, "prior", (
+            f"frame {int(history[-1][0])} is the last one measured, so frame "
+            f"{int(target)} is more than one advance away"))
+    if len(errors) < least:
+        return Reading(None, 0.0, "prior",
+                       f"{len(errors)} consecutive advance(s) seen, "
+                       f"need {least}")
+    step = float(np.median(errors))
+    if len(errors) == 1:
+        # One sample is a number with nothing to check it against. It may vote
+        # -- agreeing with a pixel reading is still evidence -- but a margin of
+        # zero means it can never win the tie-break and set the distance, and
+        # its precision is taken as the whole hardware step, which is the most
+        # conservative thing that is still a number.
+        spread, margin, precision = 0.0, 0.0, HOLD_TOLERANCE_MM
+    else:
+        spread = float(1.4826 * np.median(np.abs(np.array(errors) - step)))
+        margin = _clip01(1.0 - spread / HOLD_TOLERANCE_MM)
+        # How repeatable this transport's advance actually is, measured on this
+        # roll -- but never claimed more finely than the sample supports. Two
+        # identical readings say the sample is small, not that the advance is
+        # perfect, and a floor that ignores this is what made the prior refuse
+        # its partner by 0.02 mm on frames 8 and 9 of walk D. The floor is a
+        # whole step at one advance and decays as evidence arrives.
+        precision = max(spread, HOLD_TOLERANCE_MM / np.sqrt(len(errors)))
+    return Reading(
+        mm=float(history[-1][2]) + step,
+        margin=margin,
+        source="prior",
+        precision=precision,
+        reason=f"{len(errors)} advance(s), {step:+.2f} mm each, "
+               f"scatter {spread:.2f} mm",
+        detail={"advances": len(errors), "step_mm": round(step, 4),
+                "scatter_mm": round(spread, 4)},
+    )
+
+
+def combine(
+    readings, *, agree_mm: float = AGREE_MM,
+    bound_mm: float = MAX_CORRECTION_MM,
+) -> tuple[float | None, dict]:
+    """What the members together say, or ``None`` and why not.
+
+    Two members agreeing is the gate, and what counts as agreement is **the two
+    members' own precisions added together**, not one tolerance for everybody.
+    Two pixel readings must land within a pixel of each other; a pixel reading
+    and a prediction good to the transport's repeatability must land within
+    their sum.
+
+    That is not a loosening, it is the only test that means anything across
+    members this unalike. Measured on walk D: the left gap reads to a quarter
+    of a pixel against the displacement ladder, while the advance itself wanders
+    +/-2 px frame to frame -- so a flat one-pixel gate asked the prior to be
+    eight times more repeatable than the mechanism it describes, and refused
+    eleven frames of thirteen for it.
+
+    ``agree_mm`` is the ceiling on that sum, not the gate. Two readings further
+    apart than the smallest move the hardware can make would command different
+    moves, so calling them agreed would be meaningless however imprecise either
+    one admits to being.
+
+    Where several pairs qualify, the distance comes from whichever member stands
+    furthest from its own refusal -- never from an average, which would be a
+    number neither of them measured.
+
+    One member alone is not an ensemble, and that is the case this exists to
+    refuse: a single detector returning a confident number is exactly what
+    `gap_edges` did on four of nine frames of a real walk, wrongly.
+    """
+    detail: dict[str, Any] = {
+        "members": [
+            {"source": r.source,
+             "mm": None if r.mm is None else round(r.mm, 4),
+             "margin": round(r.margin, 3), "reason": r.reason}
+            for r in readings
+        ]
+    }
+    usable, dropped = [], []
+    for reading in readings:
+        if reading.mm is None:
+            continue
+        if abs(reading.mm) > bound_mm:
+            dropped.append(f"{reading.source} {reading.mm:+.2f} mm")
+        else:
+            usable.append(reading)
+    if dropped:
+        # Recorded rather than clipped into range. A reading this far out is a
+        # detector that has found the wrong thing, and the distance it names is
+        # not evidence about where the film is.
+        detail["dropped"] = dropped
+    if len(usable) < 2:
+        return None, dict(detail, reason=(
+            f"only {len(usable)} member(s) could measure this frame; two that "
+            "agree are needed before the film is moved"))
+
+    def gate(a: Reading, b: Reading) -> float:
+        return min(a.precision + b.precision, agree_mm)
+
+    agreed = {
+        i for i, a in enumerate(usable)
+        for j, b in enumerate(usable)
+        if i != j and abs(a.mm - b.mm) <= gate(a, b)
+    }
+    if not agreed:
+        worst = max(
+            (abs(a.mm - b.mm) - gate(a, b), a, b)
+            for i, a in enumerate(usable)
+            for j, b in enumerate(usable) if i < j
+        )
+        return None, dict(detail, reason=(
+            f"{len(usable)} members measured and none agree: closest are "
+            f"{worst[1].source} {worst[1].mm:+.2f} and {worst[2].source} "
+            f"{worst[2].mm:+.2f}, {abs(worst[1].mm - worst[2].mm):.2f} mm "
+            f"apart against {gate(worst[1], worst[2]):.2f} mm allowed"))
+
+    best = max((usable[i] for i in agreed), key=lambda r: r.margin)
+    detail.update(agreed=sorted(usable[i].source for i in agreed),
+                  chose=best.source, margin=round(best.margin, 3))
+    return best.mm, detail

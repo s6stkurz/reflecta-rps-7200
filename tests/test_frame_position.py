@@ -46,7 +46,7 @@ def frame(gap_px: int = 18, *, before: int = 0, seed: int = 0,
 
 
 def calibrated(level: float = BASE_LEVEL) -> FilmBase:
-    return FilmBase(level=level, flatness=1.0, frames=16, spread=0.007)
+    return FilmBase(level=level, flatness=1.0, bands=16, spread=0.007)
 
 
 # -- calibrating the strip --------------------------------------------------
