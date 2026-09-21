@@ -44,7 +44,7 @@ from rps7200.direct import (
 from rps7200.library import FilmNotes
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
-from rps7200.session import Approved, FrameWriter
+from rps7200.session import Approved, FrameWriter, plan_nudges
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -349,12 +349,29 @@ def main() -> int:
                 # Deliberately, and said out loud: everything downstream
                 # measures against where the film is now, so a displacement
                 # nobody knows about would read as the film's own error.
-                asked = s.nudge(args.nudge)
-                print(f"offset the film by {asked['asked_mm']:+.3f} mm "
-                      f"(asked {args.nudge:+.3f})"
-                      + (f" -- clamped, {asked['short_mm']:.3f} mm short"
-                         if asked.get("clamped") else ""))
-                time.sleep(0.5)
+                #
+                # Through `plan_nudges` because one command reaches only
+                # 1.0118 mm and `param_for_mm` clamps there silently -- a
+                # request for 2 mm would otherwise deliver half of it and say
+                # nothing. The planner raises instead, and it is the same
+                # planner the window's adjuster and the hold loop size
+                # themselves from.
+                try:
+                    steps = plan_nudges(args.nudge)
+                except ValueError as exc:
+                    print(f"cannot offset the film: {exc}", file=sys.stderr)
+                    return 1
+                sent = 0.0
+                for step in steps:
+                    asked = s.nudge(step)
+                    sent += asked["asked_mm"]
+                    time.sleep(0.5)
+                print(f"offset the film by {sent:+.3f} mm in {len(steps)} "
+                      f"command(s) (asked {args.nudge:+.3f})")
+                if args.nudge < 0:
+                    print("  backward, so the first two or three commands may "
+                        "have gone into backlash -- the prescan below is what "
+                        "says where the film really is")
                 print()
             if args.frames == 0:
                 print("nothing else asked for")
