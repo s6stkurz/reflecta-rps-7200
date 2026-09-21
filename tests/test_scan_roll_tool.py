@@ -1,0 +1,172 @@
+"""The roll tool, driven with no scanner underneath.
+
+`tools/scan_roll.py` had no tests at all, and that is how it came to write no
+frame TIFFs for twelve days. Commit 5ebbcb7 renamed `FrameWriter`'s `path` to
+`paths` when the writer grew a second destination, updated five files including
+`tests/test_roll_writer.py`, and missed this tool. `job.get("paths")` was then
+always None, the write loop never ran, nothing raised, and the tool went on
+printing a success line naming a file that did not exist.
+
+The test that existed built the job dict by hand, in the writer's new shape, so
+it stayed green against a tool that no longer produced that shape. What these
+hold it to is the thing that only driving `main()` can show: that a roll leaves
+files behind.
+"""
+import sys
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from conftest import load_tool
+from rps7200.direct import DirectScanner, RollFrame
+
+scan_roll = load_tool("scan_roll")
+
+RAW_LEVEL, CORRECTED_LEVEL = 111, 222
+
+
+class FakeRollScanner(DirectScanner):
+    """Yields frames the way the driver does, including the raw pixels.
+
+    `RollFrame` carries `raw_image` beside `image` precisely because the
+    library stores what the scanner sent and recomputes the correction on the
+    way out. The two levels here are distinct so a test can say which was
+    filed.
+    """
+
+    def __init__(self, frames: int = 3, **kw):
+        self.verbose = False
+        self._shading = None
+        self._ccd_mask = b"\x00" * 16
+        self.last_raw = b"raw-bytes"
+        self.last_raw_layout = {"format": "index"}
+        self._frames = frames
+        self.asked = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def inquiry(self, refresh=False):
+        return SimpleNamespace(vendor="Reflecta", product="RPS 7200",
+                               model=0x31, firmware="1.0")
+
+    def ensure_shading(self, path, reuse=False, skip=False):
+        return {"action": "skipped", "reference": None, "path": None,
+                "summary": "shading correction disabled"}
+
+    def scan_roll(self, **kw):
+        self.asked = dict(kw)
+        # Honour what the tool asked for, so a test that passes --frames gets
+        # that many. A fake that ignores its arguments cannot catch an
+        # argument that stops being passed, which is this tool's known
+        # failure mode: --no-fast-ir was parsed, stored and dropped.
+        count = kw.get("frames") or self._frames
+        for index in range(count):
+            shape = (6, 6, 3)
+            yield RollFrame(
+                index=index,
+                position=index,
+                image=np.full(shape, CORRECTED_LEVEL, np.uint16),
+                meta={"resolution_dpi": kw.get("resolution", 1800),
+                      "channel_order": list("RGB"), "duration_s": 1.0},
+                prescan=np.full((3, 3, 3), 40, np.uint8),
+                registration={"contrast": 0.3},
+                raw_image=np.full(shape, RAW_LEVEL, np.uint16),
+                raw_prescan=np.full((3, 3, 3), 30, np.uint8),
+            )
+
+
+def run(tmp_path, monkeypatch, *argv, frames=3):
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=frames)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "teststrip", *argv],
+    )
+    code = scan_roll.main()
+    return (created[0] if created else None), code
+
+
+# -- the bug that shipped ---------------------------------------------------
+
+
+def test_a_roll_writes_a_tiff_for_every_frame(tmp_path, monkeypatch):
+    """The whole point of the tool. It reported success for twelve days while
+    writing nothing, because the writer's key was renamed under it."""
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3")
+    assert code == 0
+    written = sorted((tmp_path / "roll").glob("frame*.tif"))
+    assert [p.name for p in written] == ["frame01.tif", "frame02.tif",
+                                         "frame03.tif"], written
+
+
+def test_the_file_it_names_is_the_file_it_wrote(tmp_path, monkeypatch):
+    """The manifest records `file` per frame, and the printed line names a
+    path. Both were true of a file that did not exist."""
+    import json
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    for record in manifest["frames"]:
+        named = record.get("file")
+        assert named, record
+        assert (tmp_path / "roll" / named).exists(), named
+
+
+def test_the_library_entry_holds_raw_pixels(tmp_path, monkeypatch):
+    """`RollFrame` carries `raw_image` because the library stores what the
+    scanner sent. This tool passed only `image`, so its entries held the
+    corrected pixels while the record said raw -- and `library.corrected()`
+    would then shade them a second time."""
+    from rps7200 import library
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    entries = sorted((tmp_path / "lib").glob("*/scan.json"))
+    assert len(entries) == 2
+    for record in entries:
+        image, stored = library.load(record.parent)
+        assert int(image.max()) == RAW_LEVEL, "the corrected image was filed"
+        assert stored["image"]["corrections_applied"] == []
+
+
+# -- the dry run, which writes prescans instead -----------------------------
+
+
+def test_a_dry_run_writes_prescans_and_no_frames(tmp_path, monkeypatch):
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "2")
+    assert code == 0
+    assert sorted(p.name for p in (tmp_path / "roll").glob("prescan*.tif")) \
+        == ["prescan01.tif", "prescan02.tif"]
+    assert not list((tmp_path / "roll").glob("frame*.tif"))
+    assert (tmp_path / "roll" / "survey.json").exists()
+
+
+# -- the flags reach the driver ---------------------------------------------
+
+
+@pytest.mark.parametrize("flag, key, value", [
+    ("--correct", "correct", True),
+    ("--correct-dry-run", "correct_dry_run", True),
+    ("--dry-run", "dry_run", True),
+])
+def test_a_flag_reaches_scan_roll(tmp_path, monkeypatch, flag, key, value):
+    """Parsed, stored and dropped is a failure mode this tool has had before:
+    --no-fast-ir was accepted and never passed on."""
+    scanner, code = run(tmp_path, monkeypatch, flag, "--frames", "1")
+    assert code == 0
+    assert scanner.asked[key] is value, scanner.asked

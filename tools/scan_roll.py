@@ -213,11 +213,17 @@ def main() -> int:
                     pre = out / f"prescan{number:02d}.tif"
                     tiff.write(str(pre), frame.prescan)
                     record["prescan"] = pre.name
+                # Every number here is optional. `registration` abstains on
+                # a loaded strip -- and once it says so honestly rather than
+                # returning a fallback zero, these keys go missing. Formatting
+                # a None with `:+.2f` raises, and it would raise in the middle
+                # of a walk, after the scanner time had been spent.
+                offset = r.get("offset_mm")
+                said = "offset --" if offset is None else f"offset {offset:+.2f} mm"
                 print(f"picture {number}: contrast {r.get('contrast')}, "
-                      f"x{r.get('x0')}..{r.get('x1')}, "
-                      f"offset {r.get('offset_mm'):+.2f} mm"
+                      f"x{r.get('x0')}..{r.get('x1')}, {said}"
                       + (f", SHORT BY {short:.2f} mm -- the film has drifted"
-                         if short > 0.85 else ""))
+                         if short and short > 0.85 else ""))
             else:
                 scanned += 1
                 path = out / f"frame{number:02d}.tif"
@@ -231,9 +237,23 @@ def main() -> int:
                 # writer and happens while the scanner is busy again.
                 writer.submit(
                     number=number,
-                    path=path,
+                    # `paths`, plural. It was `path` until 2026-09-09, when
+                    # FrameWriter grew a second destination and this call site
+                    # was not updated with it -- so `job.get("paths")` was None,
+                    # the write loop never ran, nothing raised, and the line
+                    # below went on naming a file that was not there. No roll
+                    # scanned from the command line produced a TIFF for twelve
+                    # days. The test was updated instead of the tool, which is
+                    # how it stayed green.
+                    paths=[path],
                     dpi=args.dpi,
                     image=frame.image,
+                    # The uncorrected pixels, which is what the library stores.
+                    # Without this the entry holds the corrected image while
+                    # its record says raw, and `library.corrected()` shades it
+                    # a second time. `session.py:1110` has always passed this;
+                    # this tool never did.
+                    raw_image=frame.raw_image,
                     meta=frame.meta,
                     prescan=frame.prescan,
                     library=args.library,
