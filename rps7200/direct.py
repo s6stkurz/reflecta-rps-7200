@@ -3270,7 +3270,7 @@ class DirectScanner:
             # decodes to an unexpected shape should cost that frame, not the
             # thirty after it.
             except (UsbError, ScanReadError, CalibrationRequired,
-                    TimeoutError, ValueError) as exc:
+                    ShadingUnavailable, TimeoutError, ValueError) as exc:
                 failures += 1
                 self._log(f"frame {index} failed ({failures}/{max_failures}): {exc}")
                 yield RollFrame(

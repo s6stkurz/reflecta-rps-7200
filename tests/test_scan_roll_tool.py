@@ -170,3 +170,98 @@ def test_a_flag_reaches_scan_roll(tmp_path, monkeypatch, flag, key, value):
     scanner, code = run(tmp_path, monkeypatch, flag, "--frames", "1")
     assert code == 0
     assert scanner.asked[key] is value, scanner.asked
+
+
+# -- losing the scanner part way --------------------------------------------
+
+
+def test_a_shading_failure_files_the_frames_already_scanned(tmp_path,
+                                                            monkeypatch):
+    """`ShadingUnavailable` is raised in four places in `direct.py` and was not
+    in the roll's except tuple, so it ended the roll rather than the frame --
+    unwinding past `writer.finish()` and taking the queued frames with it.
+
+    Two independent fixes and this holds both: the tuple now catches it, and
+    the writer is finished whatever comes out of the scanning block.
+    """
+    from rps7200.protocol import ShadingUnavailable
+
+    class FailsPartWay(FakeRollScanner):
+        def scan_roll(self, **kw):
+            self.asked = dict(kw)
+            for frame in super().scan_roll(**kw):
+                if frame.index == 2:
+                    raise ShadingUnavailable("no reference for this pass")
+                yield frame
+
+    created = []
+
+    class Patched(FailsPartWay):
+        def __init__(self, **kw):
+            super().__init__(frames=4)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "cut-short", "--frames", "4"],
+    )
+    code = scan_roll.main()
+
+    # The two frames that got through are on disk, in both places.
+    assert sorted(p.name for p in (tmp_path / "roll").glob("frame*.tif")) \
+        == ["frame01.tif", "frame02.tif"]
+    assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 2
+    assert code != 0, "losing the roll part way is not a success"
+
+
+def test_the_manifest_says_what_stopped_it(tmp_path, monkeypatch):
+    from rps7200.protocol import ShadingUnavailable
+
+    class Explodes(FakeRollScanner):
+        def scan_roll(self, **kw):
+            self.asked = dict(kw)
+            raise ShadingUnavailable("no reference at all")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: Explodes(frames=1))
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", "", "--no-shading", "--roll", "dead"],
+    )
+    assert scan_roll.main() != 0
+    import json
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert "ShadingUnavailable" in manifest.get("stopped", "")
+
+
+def test_a_frame_that_failed_makes_the_run_fail(tmp_path, monkeypatch):
+    """It used to be `failed and not scanned`, so a roll that scanned twenty
+    and lost three reported success to whatever was checking."""
+    class OneBad(FakeRollScanner):
+        def scan_roll(self, **kw):
+            self.asked = dict(kw)
+            for frame in super().scan_roll(**kw):
+                if frame.index == 1:
+                    yield type(frame)(
+                        index=frame.index, position=frame.position,
+                        image=None, meta={}, prescan=frame.prescan,
+                        registration={}, error="the read timed out")
+                else:
+                    yield frame
+
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: OneBad(frames=3))
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", "", "--no-shading", "--roll", "mixed", "--frames", "3"],
+    )
+    code = scan_roll.main()
+    assert len(list((tmp_path / "roll").glob("frame*.tif"))) == 2
+    assert code != 0, "two scanned and one lost is not a clean run"

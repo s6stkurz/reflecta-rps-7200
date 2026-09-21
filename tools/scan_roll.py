@@ -167,119 +167,140 @@ def main() -> int:
     # debug=False deliberately: this tool files its own library entries,
     # and letting the driver file as well writes every frame twice --
     # 43 GB of duplicate on a 38-frame roll at 7200 dpi.
-    with DirectScanner(verbose=args.verbose, debug=False) as s:
-        info = s.inquiry()
-        print(f"{info.vendor} {info.product}, firmware {info.firmware}")
-        print(f"roll {roll_name} -> {out}\n")
+    # Wrapped so `writer.finish()` below runs whatever comes out of this.
+    # An exception the roll loop does not catch used to unwind straight
+    # past it, and the frames already queued died unfiled -- scanner time
+    # turned into nothing, with no message.
+    trouble: Exception | None = None
+    try:
+        with DirectScanner(verbose=args.verbose, debug=False) as s:
+            info = s.inquiry()
+            print(f"{info.vendor} {info.product}, firmware {info.firmware}")
+            print(f"roll {roll_name} -> {out}\n")
 
-        if not args.dry_run:
-            calibrate(s, args)
+            if not args.dry_run:
+                calibrate(s, args)
 
-        for frame in s.scan_roll(
-            frames=args.frames,
-            resolution=args.dpi,
-            infrared=args.ir,
-            fast_infrared=args.fast_ir and args.ir,
-            film=args.film,
-            meter=args.meter,
-            skip=max(0, args.start_at - 1),
-            keep_raw=bool(args.library),
-            max_failures=args.max_failures,
-            dry_run=args.dry_run,
-            correct=args.correct,
-            correct_dry_run=args.correct_dry_run,
-        ):
-            number = frame.index + 1
-            record = {
-                "number": number,
-                "index": frame.index,
-                "transport_position": frame.position,
-                "registration": frame.registration,
-                "error": frame.error,
-                "entry": None,
-                "file": None,
-            }
+            for frame in s.scan_roll(
+                frames=args.frames,
+                resolution=args.dpi,
+                infrared=args.ir,
+                fast_infrared=args.fast_ir and args.ir,
+                film=args.film,
+                meter=args.meter,
+                skip=max(0, args.start_at - 1),
+                keep_raw=bool(args.library),
+                max_failures=args.max_failures,
+                dry_run=args.dry_run,
+                correct=args.correct,
+                correct_dry_run=args.correct_dry_run,
+            ):
+                number = frame.index + 1
+                record = {
+                    "number": number,
+                    "index": frame.index,
+                    "transport_position": frame.position,
+                    "registration": frame.registration,
+                    "error": frame.error,
+                    "entry": None,
+                    "file": None,
+                }
 
-            if frame.error:
-                failed += 1
-                print(f"picture {number}: FAILED -- {frame.error}", file=sys.stderr)
-            elif args.dry_run:
-                r = frame.registration
-                short = r.get("shortfall_mm", 0.0)
-                # Keep the prescan. The registration numbers are derived from
-                # it, and a number that looks wrong can only be settled by
-                # looking at what it was measured on.
-                if frame.prescan is not None:
-                    pre = out / f"prescan{number:02d}.tif"
-                    tiff.write(str(pre), frame.prescan)
-                    record["prescan"] = pre.name
-                # Every number here is optional. `registration` abstains on
-                # a loaded strip -- and once it says so honestly rather than
-                # returning a fallback zero, these keys go missing. Formatting
-                # a None with `:+.2f` raises, and it would raise in the middle
-                # of a walk, after the scanner time had been spent.
-                offset = r.get("offset_mm")
-                said = "offset --" if offset is None else f"offset {offset:+.2f} mm"
-                print(f"picture {number}: contrast {r.get('contrast')}, "
-                      f"x{r.get('x0')}..{r.get('x1')}, {said}"
-                      + (f", SHORT BY {short:.2f} mm -- the film has drifted"
-                         if short and short > 0.85 else ""))
-            else:
-                scanned += 1
-                path = out / f"frame{number:02d}.tif"
-                record["file"] = path.name
-                record["shape"] = list(frame.image.shape)
-                record["duration_s"] = frame.meta.get("duration_s")
-                record["exposure"] = frame.meta.get("exposure")
+                if frame.error:
+                    failed += 1
+                    print(f"picture {number}: FAILED -- {frame.error}", file=sys.stderr)
+                elif args.dry_run:
+                    r = frame.registration
+                    short = r.get("shortfall_mm", 0.0)
+                    # Keep the prescan. The registration numbers are derived from
+                    # it, and a number that looks wrong can only be settled by
+                    # looking at what it was measured on.
+                    if frame.prescan is not None:
+                        pre = out / f"prescan{number:02d}.tif"
+                        tiff.write(str(pre), frame.prescan)
+                        record["prescan"] = pre.name
+                    # Every number here is optional. `registration` abstains on
+                    # a loaded strip -- and once it says so honestly rather than
+                    # returning a fallback zero, these keys go missing. Formatting
+                    # a None with `:+.2f` raises, and it would raise in the middle
+                    # of a walk, after the scanner time had been spent.
+                    offset = r.get("offset_mm")
+                    said = "offset --" if offset is None else f"offset {offset:+.2f} mm"
+                    print(f"picture {number}: contrast {r.get('contrast')}, "
+                          f"x{r.get('x0')}..{r.get('x1')}, {said}"
+                          + (f", SHORT BY {short:.2f} mm -- the film has drifted"
+                             if short and short > 0.85 else ""))
+                else:
+                    scanned += 1
+                    path = out / f"frame{number:02d}.tif"
+                    record["file"] = path.name
+                    record["shape"] = list(frame.image.shape)
+                    record["duration_s"] = frame.meta.get("duration_s")
+                    record["exposure"] = frame.meta.get("exposure")
 
-                # capture_record() is read here, on this thread, before the next
-                # scan overwrites last_raw. Everything after it belongs to the
-                # writer and happens while the scanner is busy again.
-                writer.submit(
-                    number=number,
-                    # `paths`, plural. It was `path` until 2026-09-09, when
-                    # FrameWriter grew a second destination and this call site
-                    # was not updated with it -- so `job.get("paths")` was None,
-                    # the write loop never ran, nothing raised, and the line
-                    # below went on naming a file that was not there. No roll
-                    # scanned from the command line produced a TIFF for twelve
-                    # days. The test was updated instead of the tool, which is
-                    # how it stayed green.
-                    paths=[path],
-                    dpi=args.dpi,
-                    image=frame.image,
-                    # The uncorrected pixels, which is what the library stores.
-                    # Without this the entry holds the corrected image while
-                    # its record says raw, and `library.corrected()` shades it
-                    # a second time. `session.py:1110` has always passed this;
-                    # this tool never did.
-                    raw_image=frame.raw_image,
-                    meta=frame.meta,
-                    prescan=frame.prescan,
-                    library=args.library,
-                    inquiry=info,
-                    capture=s.capture_record(),
-                    tags=sorted({*args.tags, "roll", roll_name}),
-                    film=FilmNotes(
-                        stock=args.stock,
-                        process=args.process,
-                        # Distinct per frame, and it has to be:
-                        # library.signature() includes film.frame, so without it
-                        # every picture of a roll would register as a duplicate
-                        # of every other.
-                        frame=f"{roll_name}/{number:02d}",
-                        notes=args.notes,
-                    ),
-                )
-                print(f"picture {number}: {path} {frame.image.shape} "
-                      f"in {frame.meta.get('duration_s')}s")
+                    # capture_record() is read here, on this thread, before the next
+                    # scan overwrites last_raw. Everything after it belongs to the
+                    # writer and happens while the scanner is busy again.
+                    writer.submit(
+                        number=number,
+                        # `paths`, plural. It was `path` until 2026-09-09, when
+                        # FrameWriter grew a second destination and this call site
+                        # was not updated with it -- so `job.get("paths")` was None,
+                        # the write loop never ran, nothing raised, and the line
+                        # below went on naming a file that was not there. No roll
+                        # scanned from the command line produced a TIFF for twelve
+                        # days. The test was updated instead of the tool, which is
+                        # how it stayed green.
+                        paths=[path],
+                        dpi=args.dpi,
+                        image=frame.image,
+                        # The uncorrected pixels, which is what the library stores.
+                        # Without this the entry holds the corrected image while
+                        # its record says raw, and `library.corrected()` shades it
+                        # a second time. `session.py:1110` has always passed this;
+                        # this tool never did.
+                        raw_image=frame.raw_image,
+                        meta=frame.meta,
+                        prescan=frame.prescan,
+                        library=args.library,
+                        inquiry=info,
+                        capture=s.capture_record(),
+                        tags=sorted({*args.tags, "roll", roll_name}),
+                        film=FilmNotes(
+                            stock=args.stock,
+                            process=args.process,
+                            # Distinct per frame, and it has to be:
+                            # library.signature() includes film.frame, so without it
+                            # every picture of a roll would register as a duplicate
+                            # of every other.
+                            frame=f"{roll_name}/{number:02d}",
+                            notes=args.notes,
+                        ),
+                    )
+                    print(f"picture {number}: {path} {frame.image.shape} "
+                          f"in {frame.meta.get('duration_s')}s")
 
-            manifest["frames"].append(record)
-            checkpoint()
+                manifest["frames"].append(record)
+                checkpoint()
 
+    except Exception as exc:                              # noqa: BLE001
+        # Recorded rather than raised: the frames already scanned are
+        # worth filing and the manifest is worth finishing. The exit
+        # status says it went wrong.
+        trouble = exc
+        print(f"the roll stopped: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
     # Only now, with the device closed: the last frame or two may still be
     # gzipping, and that is exactly the work that must not happen with an open
     # session.
+    #
+    # Reached through a `finally` around the whole scanning block, so it runs
+    # whatever came out of it. Without that, an exception the roll loop does
+    # not catch unwinds straight past here and the frames already queued die
+    # unfiled -- scanner time turned into nothing, with no message. That is
+    # structural; widening the roll's except tuple only moves the next one.
+    # `ScanSession._run` has had this shape all along, which is why the window
+    # never lost a frame this way.
     writer.finish()
     filed = dict(writer.done)
     for record in manifest["frames"]:
@@ -292,6 +313,8 @@ def main() -> int:
 
     manifest["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     manifest["duration_s"] = round(time.monotonic() - started, 1)
+    if trouble is not None:
+        manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
     checkpoint()
 
     print(f"\n{scanned} scanned, {failed} failed, "
@@ -299,7 +322,10 @@ def main() -> int:
     print(f"manifest: {manifest_path}")
     if failed:
         print("resume a failed picture with --start-at N", file=sys.stderr)
-    return 1 if failed and not scanned else 0
+    # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
+    # a roll that scanned twenty frames and lost three reported success -- and
+    # a caller checking the status is exactly who needs to know it lost three.
+    return 1 if trouble is not None or failed else 0
 
 
 if __name__ == "__main__":

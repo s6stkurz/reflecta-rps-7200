@@ -3186,9 +3186,13 @@ class ScannerGui:
         marks = result.registration
         extra = ("   \u00b7   " + _arrangement(result)
                  if result.rotation or result.flipped else "")
+        # Appended, not assigned. It used to overwrite, and because a roll
+        # frame always carries an offset the arrangement note above was
+        # discarded on every one of them -- which is exactly the note that
+        # says a frame was filed sideways.
         if marks.get("offset_mm") is not None:
-            extra = (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
-                     f"short by {marks.get('shortfall_mm', 0):.2f} mm")
+            extra += (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
+                      f"short by {marks.get('shortfall_mm', 0):.2f} mm")
         shading = (result.meta or {}).get("shading")
         if shading and shading.get("clipped"):
             extra += f"   ·   {shading['clipped']} clipped -- lower the exposure"
