@@ -10,6 +10,7 @@ Everything here measures. Nothing here moves the film.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -356,6 +357,303 @@ def registration_error_mm(
     return mm, f"{px:+d} px of gap"
 
 
+#: The whole transport window, in millimetres. 10344 units at 7200 dpi.
+APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
+
+
+# --- where the frame actually sits, from the gap's own brightness -----------
+#
+# The detectors above key on something relative to the frame's own content --
+# `film_bounds` on an empty aperture being twice the median, `gap_edges` on a
+# run being brighter than median + 2*MAD. Both fail on real film, and they
+# fail in the same direction: the worse a frame is placed, the more gap is in
+# view, the higher the frame's own median climbs, and the less the detector
+# sees. Measured on a ladder with known offsets, `gap_edges` read 5, 8, then
+# 0, 0, 0, 0, 0 while the gap widened from 7 to 26 px.
+#
+# These key on an ABSOLUTE level instead. Unexposed film base is one physical
+# object under one lamp at one exposure: measured across sixteen frames of one
+# strip its level held to 3.4%, and it does not care which photograph sits
+# beside it. That is the property the four detectors in the graveyard lacked.
+#
+# Two further differences, both learned the same way:
+#
+#   * the run is searched anywhere in the window, not only flush with column 0.
+#     A gap is not flush whenever a sliver of the neighbouring frame is in view
+#     beside it, which is exactly the situation worth detecting -- and the
+#     anchored rule answers "no gap, registered" for it.
+#   * everything is in millimetres. `GAP_MIN_RUN` above is in pixels, so its
+#     deadband is 0.25 mm at 300 dpi and 0.13 mm at 600 without anyone saying
+#     so. `SEARCH_MM` and `HOLD_TOLERANCE_MM` are in mm for this reason.
+
+#: How wide a band must be before it is a gap rather than noise, in mm.
+GAP_MIN_MM = 0.25
+
+#: How far a column's level may sit from the strip's base level and still be
+#: base, as a fraction. The measured spread across one strip was 3.4%; this is
+#: loose enough for a second strip and tight enough to exclude picture.
+BASE_TOLERANCE = 0.15
+
+#: A base column varies little down the frame. Measured in counts rather than
+#: relative to the frame's own spread -- the whole point is not to ask the
+#: photograph anything.
+BASE_FLATNESS = 3.0
+
+#: Refuse a strip whose base level is not consistent. Measured 3.4% over
+#: sixteen frames; past this the level is not describing one object.
+BASE_SPREAD_LIMIT = 0.10
+
+#: Fewest frames that can calibrate a strip. Two would give a level with no
+#: way to see that one of them was wrong.
+MIN_BASE_FRAMES = 3
+
+
+@dataclass(frozen=True)
+class FilmBase:
+    """What unexposed base looks like on this strip, at this exposure.
+
+    Measured from the strip rather than declared, which is what makes the
+    detector resolution-independent and exposure-independent at once: a
+    constant that was right on one roll is wrong on the next, and the level
+    a 600 dpi prescan reads is not the level a 300 dpi one reads.
+    """
+
+    level: float                     # counts
+    flatness: float                  # counts of column spread it showed
+    frames: int                      # how many contributed
+    spread: float                    # fractional spread of the level
+
+
+def _grey(image: np.ndarray) -> np.ndarray:
+    grey = image.astype(np.float64)
+    return grey.mean(axis=2) if grey.ndim == 3 else grey
+
+
+def base_runs(
+    image: np.ndarray,
+    level: float,
+    *,
+    tolerance: float = BASE_TOLERANCE,
+    flatness: float = BASE_FLATNESS,
+    min_run: int = 1,
+) -> list[tuple[int, int]]:
+    """Every run of unexposed base, as ``(start, length)`` in columns.
+
+    Anywhere in the window, not only at an edge. A run in the middle is not a
+    gap -- the film cannot show base between two halves of one photograph --
+    but it is worth returning so a caller can refuse rather than quietly use
+    the wrong one.
+    """
+    grey = _grey(image)
+    if grey.size == 0:
+        return []
+    column, spread = grey.mean(axis=0), grey.std(axis=0)
+    is_base = (np.abs(column - level) <= level * tolerance) & (spread < flatness)
+
+    runs, start = [], None
+    for i, on in enumerate(is_base):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            if i - start >= min_run:
+                runs.append((start, i - start))
+            start = None
+    if start is not None and len(is_base) - start >= min_run:
+        runs.append((start, len(is_base) - start))
+    return runs
+
+
+def film_base(images) -> tuple[FilmBase | None, dict]:
+    """Calibrate the strip's own base level, from its own frames.
+
+    Found by flatness alone, deliberately: this is measuring what the level
+    *is*, so it must not assume one to find it. The flattest columns at each
+    edge of each frame are taken, their level medianed over the strip, and the
+    spread reported so a caller can see whether it is describing one object.
+
+    Returns ``None`` where too few frames show a band, or where the level
+    varies more than one lamp at one exposure can explain.
+    """
+    levels, flats = [], []
+    for image in images:
+        grey = _grey(image)
+        if grey.size == 0:
+            continue
+        column, spread = grey.mean(axis=0), grey.std(axis=0)
+        for scan in (slice(None), slice(None, None, -1)):
+            run, values = 0, column[scan]
+            for value in spread[scan]:
+                if value >= BASE_FLATNESS:
+                    break
+                run += 1
+            if run:
+                levels.append(float(np.median(values[:run])))
+                flats.append(float(np.median(spread[scan][:run])))
+
+    if len(levels) < MIN_BASE_FRAMES:
+        return None, {"reason": f"only {len(levels)} band(s) found, "
+                                f"need {MIN_BASE_FRAMES}", "frames": len(levels)}
+    level = float(np.median(levels))
+    # Robust, not max-minus-min. Finding a band by flatness alone also finds
+    # smooth *picture* on some frames -- one strip had a 104-column flat run
+    # that was sky -- and a single such candidate makes the range meaningless
+    # while leaving the median untouched. What matters is whether most of them
+    # agree, which is what a MAD measures and a range does not.
+    deviation = np.abs(np.array(levels) - level)
+    spread = float(1.4826 * np.median(deviation) / level) if level else 1.0
+    agreeing = int(np.sum(deviation <= level * BASE_TOLERANCE))
+    detail = {"level": round(level, 2), "spread": round(spread, 4),
+              "bands": len(levels), "agreeing": agreeing}
+    if agreeing < MIN_BASE_FRAMES:
+        return None, dict(detail, reason=(
+            f"only {agreeing} band(s) agree on a level, need "
+            f"{MIN_BASE_FRAMES}"))
+    if spread > BASE_SPREAD_LIMIT:
+        return None, dict(detail, reason=(
+            f"base level varies by {spread*100:.1f}%, past the "
+            f"{BASE_SPREAD_LIMIT*100:.0f}% one lamp at one exposure explains"))
+    return FilmBase(level=level, flatness=float(np.median(flats)),
+                    frames=len(levels), spread=spread), detail
+
+
+#: The widest an inter-frame gap can be. On 135 the pitch is ~38 mm against a
+#: ~36 mm image, so about 2 mm of it exists and the aperture can show at most
+#: that. A longer run of base is not a gap -- it is the end of the strip, or a
+#: smooth part of a photograph that happens to sit at the base level.
+MAX_GAP_MM = 2.6
+
+#: How far from an edge a run may begin and still be the gap that entered
+#: there, as a fraction of the window. A gap is not flush whenever a sliver of
+#: the neighbouring frame is in view beside it.
+EDGE_FRACTION = 0.12
+
+
+def picture_start(
+    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+) -> tuple[int | None, dict]:
+    """The column where this frame's own picture begins, or None.
+
+    The registration-relevant quantity is where the gap *ends*, not how wide
+    it is: that is the first column of this photograph, and holding it in the
+    same place from frame to frame is what registered means.
+
+    Refuses rather than guesses. A run wider than a gap can be, a run that is
+    not near an edge, and no run at all are three different reasons and each
+    is returned as one.
+    """
+    grey = _grey(image)
+    if grey.size == 0:
+        return None, {"reason": "nothing to measure"}
+    width = grey.shape[1]
+    mm_px = aperture_mm / width
+    smallest = max(1, int(round(GAP_MIN_MM / mm_px)))
+    widest = int(round(MAX_GAP_MM / mm_px))
+    margin = int(round(width * EDGE_FRACTION))
+
+    runs = base_runs(image, base.level, flatness=max(base.flatness * 2.0,
+                                                     BASE_FLATNESS),
+                     min_run=smallest)
+    detail: dict[str, Any] = {"runs": runs, "mm_per_px": round(mm_px, 5)}
+    if not runs:
+        return None, dict(detail, reason="no unexposed base in view")
+
+    # The gap that entered from the left: the first run beginning within a
+    # margin of that edge. Not `start == 0` -- that is the rule `gap_edges`
+    # uses, and it is why a gap with a sliver of the neighbouring frame beside
+    # it reads as no gap at all.
+    near = [(start, length) for start, length in runs if start <= margin]
+    if not near:
+        return None, dict(detail, reason=(
+            f"the only base in view begins at column {runs[0][0]}, past the "
+            f"{margin}-column margin -- that is picture, not a gap"))
+    start, length = near[0]
+    if length > widest:
+        return None, dict(detail, reason=(
+            f"a {length}-column band is {length*mm_px:.2f} mm, wider than the "
+            f"{MAX_GAP_MM} mm a gap can be -- the end of the strip, or "
+            f"picture at the base level"))
+    return start + length, dict(detail, gap=(start, length),
+                                gap_mm=round(length * mm_px, 3))
+
+
+def strip_offsets(
+    frames, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+) -> tuple[dict[int, float], dict[int, dict]]:
+    """What each frame should be moved by, keyed by frame number.
+
+    ``frames`` is ``(number, image)`` pairs for one strip.
+
+    The target is the strip's **own median** picture start, not a centre
+    computed from a nominal frame width. Two reasons, and the first is that
+    the width is not known: `NOMINAL_FRAME_WIDTH` implies 35.56 mm and
+    `MAX_REGISTRATION_MM` implies 36.00, they disagree by a factor of 1.9 in
+    derived slack, and a two-sided measurement over two walks and two ladders
+    did not settle it. The second is that it is the right target anyway --
+    most frames of a sound strip are already where they should be, so the
+    median is a position known to work, and this moves the outliers to meet
+    them rather than moving every frame to a number nobody has verified.
+
+    Sign follows `nudge` and `Approved.offset_mm`: positive means the film
+    moves toward +x. A picture starting further right than the median needs a
+    negative offset to come back, which is what the ladder showed -- commanded
+    +0.27 mm moved the picture start +3.2 px.
+    """
+    measured: dict[int, int] = {}
+    details: dict[int, dict] = {}
+    mm_px = None
+    for number, image in frames:
+        start, detail = picture_start(image, base, aperture_mm=aperture_mm)
+        details[int(number)] = detail
+        mm_px = detail.get("mm_per_px", mm_px)
+        if start is not None:
+            measured[int(number)] = start
+
+    if not measured or mm_px is None:
+        return {}, details
+
+    target = float(np.median(list(measured.values())))
+    offsets = {n: (target - start) * mm_px for n, start in measured.items()}
+    for number, start in measured.items():
+        # The target goes on each frame rather than beside them: the mapping
+        # is keyed by frame number, and one string key among the integers is
+        # the kind of thing that reads fine and breaks a caller that iterates.
+        details[number].update(source="measured", start_px=start,
+                               target_px=target)
+    return offsets, details
+
+
+def fill_from_neighbours(
+    offsets: dict[int, float], numbers, *, least: int = 3
+) -> dict[int, float]:
+    """Predict the frames the detector could not place, from the ones it did.
+
+    A strip shares one pitch and one advance, so position is affine in frame
+    number: a per-frame advance that is consistently long accumulates
+    linearly. Fitted with Theil-Sen -- the median of pairwise slopes -- rather
+    than least squares, because one bad placement is exactly what this exists
+    to survive and least squares would let it tilt the whole line.
+
+    Returns only the filled entries. Fewer than `least` measured frames fills
+    nothing: two points give a line with no redundancy, and a line through two
+    points that disagree is a confident answer built on nothing.
+    """
+    if len(offsets) < least:
+        return {}
+    xs = np.array(sorted(offsets), dtype=float)
+    ys = np.array([offsets[int(x)] for x in xs], dtype=float)
+    slopes = [
+        (ys[j] - ys[i]) / (xs[j] - xs[i])
+        for i in range(len(xs)) for j in range(i + 1, len(xs))
+        if xs[j] != xs[i]
+    ]
+    if not slopes:
+        return {}
+    slope = float(np.median(slopes))
+    intercept = float(np.median(ys - slope * xs))
+    return {int(n): slope * float(n) + intercept
+            for n in numbers if int(n) not in offsets}
+
+
 # --- holding a frame to the position an operator approved -------------------
 #
 # A different footing from everything above. `film_bounds` and `gap_edges`
@@ -364,9 +662,6 @@ def registration_error_mm(
 # automatic detector built for this scanner has been confidently wrong on some
 # frames -- and on real film `film_bounds` abstains on 97% of prescans, so
 # there is nothing to be confidently wrong *with*.
-
-#: The whole transport window, in millimetres. 10344 units at 7200 dpi.
-APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 
 #: How far the match is searched, in millimetres of film travel. Fixed, and
 #: **not** derived from what a particular frame needs.
