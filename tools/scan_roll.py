@@ -71,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="wind the film back this many frames before doing "
                          "anything else, one frame at a time, checking each "
                          "one landed. With --frames 0 it rewinds and stops.")
+    ap.add_argument("--nudge", type=float, default=0.0,
+                    help="move the film this many mm before starting, after "
+                         "any --rewind. The window's fine-adjust buttons do "
+                         "the same thing; here it is for setting a strip "
+                         "deliberately badly, to see the correction work "
+                         "against something worth correcting.")
     ap.add_argument("--prescan-dpi", type=int, default=300,
                     help="resolution of the survey prescan (default 300). A "
                          "commissioned scan must use the same one its "
@@ -315,6 +321,17 @@ def main() -> int:
                           "mis-numbered", file=sys.stderr)
                     return 1
                 print(f"rewound to position {landed}")
+                print()
+            if args.nudge:
+                # Deliberately, and said out loud: everything downstream
+                # measures against where the film is now, so a displacement
+                # nobody knows about would read as the film's own error.
+                asked = s.nudge(args.nudge)
+                print(f"offset the film by {asked['asked_mm']:+.3f} mm "
+                      f"(asked {args.nudge:+.3f})"
+                      + (f" -- clamped, {asked['short_mm']:.3f} mm short"
+                         if asked.get("clamped") else ""))
+                time.sleep(0.5)
                 print()
             if args.frames == 0:
                 print("nothing else asked for")
