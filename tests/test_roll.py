@@ -1390,3 +1390,56 @@ def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
     # Comfortably past what the transport can travel, so any displacement it
     # can produce is inside the window.
     assert SEARCH_MM > 8.08
+
+
+# --- a dry run with approved positions still moves the film ------------------
+#
+# The property the whole CLI `--approved` path rests on, and it was unpinned:
+# `tests/test_roll.py`'s `_roll_once` never passes `dry_run`, and the demo's
+# own `scan_roll` is a reimplementation, so nothing exercised the real branch
+# ordering. It is worth a test in both directions -- that it moves, because a
+# delivery test would otherwise cost a multi-hour scan instead of minutes; and
+# that it scans nothing, because that is what makes it cheap.
+
+
+def _approved(number, offset_mm, reference):
+    from rps7200.session import Approved
+
+    return Approved(number=number, offset_mm=offset_mm, reference=reference)
+
+
+def test_a_dry_run_holding_an_approved_position_still_moves_the_film():
+    """`direct.py`'s approved branch runs ahead of the dry-run check, so a walk
+    can deliver and verify a position without scanning anything."""
+    picture = framed(gap_left=OUT_BY_A_GAP, seed=1)
+    s = FakeRoll([picture])
+    frames = list(s.scan_roll(
+        frames=1, meter=METER_NONE, dry_run=True,
+        approved={0: _approved(1, 0.60, picture)}))
+    sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
+    assert sub, "a dry run with an approved position must still nudge"
+    assert sub[0][0] == 0x00, "a positive offset moves the film forward"
+    assert frames[0].image is None, "and must still scan nothing"
+
+
+def test_a_dry_run_without_approvals_moves_nothing():
+    """The other half: the cheapness is only useful if the default is inert."""
+    s = FakeRoll(aimable(1))
+    list(s.scan_roll(frames=1, meter=METER_NONE, dry_run=True))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+
+
+def test_a_reference_of_another_frame_is_refused_rather_than_acted_on():
+    """Measured on film 2026-09-21, by accident: a roll was started with the
+    strip at the wrong position, so every frame was held against a reference
+    showing a different photograph. Correlation scored 5.2 to 5.5 against a
+    floor of 55, all three frames returned `unverified`, and **no sub-frame
+    command was sent at all**. The fail-safe direction, on real hardware.
+    """
+    s = FakeRoll([framed(gap_left=OUT_BY_A_GAP, seed=1)])
+    stranger = framed(gap_left=4, seed=77)            # a different picture
+    frames = list(s.scan_roll(
+        frames=1, meter=METER_NONE, dry_run=True,
+        approved={0: _approved(1, 0.60, stranger)}))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+    assert frames[0].registration["approved"]["outcome"] == "unverified"

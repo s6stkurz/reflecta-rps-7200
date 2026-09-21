@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import tiff
+from rps7200 import framing, tiff
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
@@ -44,7 +44,7 @@ from rps7200.direct import (
 from rps7200.library import FilmNotes
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
-from rps7200.session import FrameWriter
+from rps7200.session import Approved, FrameWriter
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,6 +67,20 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--start-at", type=int, default=1, metavar="N",
                     help="resume at picture N, advancing to it without scanning "
                          "(1 = the picture the film is on now)")
+    ap.add_argument("--prescan-dpi", type=int, default=300,
+                    help="resolution of the survey prescan (default 300). A "
+                         "commissioned scan must use the same one its "
+                         "positions were set on: `measure_shift_mm` resamples "
+                         "a mismatched reference at about half the "
+                         "confidence, under the floor, so every frame would "
+                         "read unverified and nothing would move.")
+    ap.add_argument("--approved", type=Path, default=None,
+                    help="a roll folder from an earlier --dry-run walk. Its "
+                         "prescans are re-read, positions proposed for the "
+                         "whole strip, and each frame held to its own -- the "
+                         "same path the window's contact sheet drives, "
+                         "runnable without it. With --dry-run this moves the "
+                         "film and costs prescans rather than scans.")
     ap.add_argument("--correct", action="store_true",
                     help="nudge the film back into registration between frames, "
                          "using the calibrated sub-frame move. Off by default: "
@@ -121,6 +135,49 @@ def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
                                  skip=args.no_shading)["summary"])
 
 
+def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
+    """The positions an earlier walk's strip proposes, ready to be held to.
+
+    ``folder`` is a roll directory from a previous ``--dry-run`` walk: its
+    ``prescanNN.tif`` are the pictures the positions were measured on, and they
+    become the references the roll correlates each fresh prescan against.
+
+    This is the window's contact-sheet path with the window taken off. It calls
+    the same `framing.propose_offsets` the sheet seeds itself from and builds
+    the same `session.Approved` the sheet hands to a commissioned scan, so what
+    runs here is what runs there -- which is the point, because a probe that
+    agrees with itself proves nothing about the path an operator uses.
+
+    An offset is **relative to where the film sat when that frame was
+    surveyed**, never an absolute coordinate: a sub-frame move does not touch
+    the frame counter, so there is no such coordinate to name. That is also
+    what makes this survive an imprecise rewind -- the reference anchors it, so
+    the film is driven to "where the walk saw this frame, plus the correction"
+    however exactly the transport came back.
+    """
+    frames = []
+    for path in sorted(folder.glob("prescan*.tif")):
+        if path.stem.endswith("-before"):
+            continue                      # the picture a correction replaced
+        number = int("".join(c for c in path.stem if c.isdigit()) or 0)
+        if number:
+            frames.append((number, tiff.read(str(path))))
+    if len(frames) < 2:
+        raise SystemExit(f"{folder} holds {len(frames)} prescan(s); a strip is "
+                         "needed to propose positions from")
+
+    offsets, notes = framing.propose_offsets(
+        [(n, im.astype(float)) for n, im in frames])
+    held = {
+        n: Approved(number=n, offset_mm=float(offsets[n]), reference=im)
+        for n, im in frames if n in offsets
+    }
+    return held, {"offsets": {n: round(v, 4) for n, v in offsets.items()},
+                  "sources": {n: (notes.get(n) or {}).get("source")
+                              for n in offsets},
+                  "walked": len(frames), "from": str(folder)}
+
+
 def main() -> int:
     use_utf8_stdout()
     ap = build_parser()
@@ -134,6 +191,19 @@ def main() -> int:
             "(Chromogenic C-41 black and white does clean properly: scan that "
             "as --film negative.)"
         )
+
+    held: dict[int, Approved] = {}
+    held_note: dict = {}
+    if args.approved:
+        # Before the device is opened: a folder that cannot be read should cost
+        # nothing, and the scanner should never be left open waiting on a file.
+        held, held_note = hold_from_walk(args.approved)
+        counts: dict[str, int] = {}
+        for source in held_note["sources"].values():
+            counts[source] = counts.get(source, 0) + 1
+        print(f"holding {len(held)} frame(s) to positions from "
+              f"{args.approved}: "
+              + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
 
     roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
     out = Path(args.out or f"rolls/{roll_name}")
@@ -150,7 +220,16 @@ def main() -> int:
             "dpi": args.dpi, "infrared": args.ir, "meter": args.meter,
             "film": args.film, "dry_run": args.dry_run,
             "start_at": args.start_at, "frames": args.frames,
+            # Written because the window pins a commissioned scan's prescan to
+            # whatever the survey walked at, and reads that pin from here
+            # (`tools/gui.py` `_survey_predpi`). Without the key the pin is
+            # inert and a mismatch silently resamples the reference, which
+            # halves `measure_shift_mm`'s confidence -- 93.5 to 47.4 measured,
+            # against a floor of 55. Every frame would then read `unverified`,
+            # nothing would move, and the run would be a loss with no error.
+            "prescan_resolution": args.prescan_dpi,
         },
+        "held": held_note,
         "frames": [],
     }
 
@@ -200,10 +279,15 @@ def main() -> int:
                 fast_infrared=args.fast_ir and args.ir,
                 film=args.film,
                 meter=args.meter,
+                prescan_resolution=args.prescan_dpi,
                 skip=max(0, args.start_at - 1),
                 keep_raw=bool(args.library),
                 max_failures=args.max_failures,
                 dry_run=args.dry_run,
+                # Keyed by the roll's own index, as `session.py` keys it: the
+                # offsets are relative to the survey's start, not to a
+                # transport coordinate.
+                approved={n - 1: a for n, a in held.items()},
                 correct=args.correct,
                 correct_dry_run=args.correct_dry_run,
             ):
