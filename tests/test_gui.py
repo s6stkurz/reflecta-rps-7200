@@ -2563,7 +2563,8 @@ def test_nonsense_reads_as_no_decisions_rather_than_raising(rubbish):
     """Same bargain as the settings file itself: this is a convenience, and
     nothing about reading it back may stop the sheet opening."""
     out = clean(rubbish)
-    assert out == {"ticks": {}, "offsets": {}, "rotations": {}, "flips": {}}
+    assert out == {"ticks": {}, "offsets": {}, "rotations": {}, "flips": {},
+                   "options": {}}
 
 
 def test_one_bad_entry_costs_only_itself():
@@ -2597,3 +2598,56 @@ def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions():
     source = inspect.getsource(gui.ScannerGui.on_roll)
     assert "self.orientations = {}" in source, "the existing guard moved"
     assert "self.sheet_state = {}" in source
+
+
+# -- the sheet's own scan options -------------------------------------------
+
+
+def test_the_sheet_offers_only_options_a_roll_can_carry():
+    """Exposure and shading are session-wide rather than per-roll, so a copy
+    of them on the sheet would either do nothing to the roll or quietly change
+    the window's next single scan. Both are worse than not offering them."""
+    import dataclasses
+
+    from rps7200.session import Roll
+
+    carried = {f.name for f in dataclasses.fields(Roll)}
+    maps = {"dpi": "resolution", "predpi": "prescan_resolution",
+            "ir": "infrared", "fast_ir": "fast_infrared", "film": "film",
+            "meter": "meter", "correct": "correct"}
+    assert set(gui._ContactSheet.OPTIONS) == set(maps)
+    for field in maps.values():
+        assert field in carried, field
+
+
+def test_the_sheets_options_reach_the_roll_rather_than_the_windows():
+    """"Sheet wins for the roll". The job has to be built from the resolved
+    values; reading any of them back off the main window would mean setting
+    3600 on the sheet and scanning at whatever the window still showed."""
+    import inspect
+
+    source = inspect.getsource(gui.ScannerGui.on_scan_chosen)
+    for built in ("resolution=dpi", "prescan_resolution=predpi",
+                  "infrared=infrared", "fast_infrared=fast_ir", "film=film",
+                  "meter=meter", "correct=correct", "mono=mono"):
+        assert built in source, built
+    for leaked in ("infrared=self.v_ir.get()", "film=self.v_film.get()",
+                   "meter=self.v_meter.get()", "correct=self.v_correct.get()"):
+        assert leaked not in source, leaked
+
+
+def test_an_absent_options_set_still_falls_back_to_the_window():
+    """`on_scan_chosen` is reachable without a sheet, and that path has to
+    behave exactly as it did before the panel existed."""
+    import inspect
+
+    source = inspect.getsource(gui.ScannerGui.on_scan_chosen)
+    assert "options=None" in source
+    assert "self._dpi(), self._prescan_dpi()" in source
+
+
+def test_stored_options_come_back_and_unknown_ones_are_dropped():
+    """A key left over from an older version would be handed to a widget that
+    is not there."""
+    out = clean({"options": {"dpi": "3600", "ir": False, "bogus": 1}})
+    assert out["options"] == {"dpi": "3600", "ir": False}
