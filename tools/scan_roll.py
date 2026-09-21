@@ -178,8 +178,20 @@ def main() -> int:
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
 
-            if not args.dry_run:
-                calibrate(s, args)
+            # On a dry run too. A dry run still prescans, and a prescan
+            # still wants a shading reference -- so skipping this did not
+            # avoid the calibration, it only moved it inside `prescan()`,
+            # where it runs lazily on the first frame. Measured twice on this
+            # machine, that lazy calibration stalls: `bulk read of 16384 bytes
+            # failed after 0 bytes: LIBUSB_ERROR_PIPE`, right after the
+            # shading descriptor, and the device stops answering. Called from
+            # here it is the same call `tools/scan.py` and the window's
+            # Calibrate job make, both of which work.
+            #
+            # It also made `--reuse` inert on a dry run: the flag is read
+            # here and nowhere else, so the lazy path ignored it and
+            # recalibrated regardless.
+            calibrate(s, args)
 
             for frame in s.scan_roll(
                 frames=args.frames,
