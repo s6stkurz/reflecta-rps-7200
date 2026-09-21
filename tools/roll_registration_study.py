@@ -683,6 +683,117 @@ def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
             "refused": refused,
             "base": None if walk.base is None else walk.base.level}
 
+def report_held(folder: Path) -> dict:
+    """What a roll's holding actually delivered, from the manifest it wrote.
+
+    Read back rather than recomputed, per CLAUDE.md: the interesting thing is
+    what the loop decided and measured while it ran, and a recomputation would
+    quietly agree with itself.
+
+    The question this answers is not "did it converge" -- `hold_plan` says that
+    and would say it of a frame that never moved -- but three separate ones:
+
+      * **did anything move at all**, which `moves: 0` and `spent_mm: 0.0`
+        settle, and which a manifest otherwise reports identically to success;
+      * **how much of what was commanded arrived**, the delivery ratio, which
+        is `final_mm / spent_mm` and which one earlier frame put at 1.011;
+      * **does a nudge survive an advance**. That is the one nobody has
+        measured. A sub-frame move does not touch the frame counter, so a
+        correction should still be in the film's position when the next frame
+        arrives -- and if it is, frame N's first reading is not about frame N's
+        own error at all. The prediction is
+
+            history[0].px  ~=  -final_mm(N-1) / mm_per_px
+
+        and a reading near zero on every frame refutes it.
+    """
+    manifest = json.loads(
+        (folder / ("roll.json" if (folder / "roll.json").exists()
+                   else "survey.json")).read_text(encoding="utf-8"))
+    rows = []
+    for record in manifest.get("frames", []):
+        held = ((record.get("registration") or {}).get("approved") or {})
+        if not held:
+            continue
+        history = held.get("history") or [{}]
+        rows.append({
+            "frame": record.get("number"),
+            "target_mm": held.get("target_mm"),
+            "outcome": held.get("outcome"),
+            "moves": held.get("moves", 0),
+            "spent_mm": held.get("spent_mm", 0.0),
+            "final_mm": held.get("final_mm"),
+            "residual_mm": held.get("residual_mm"),
+            "arrived_px": history[0].get("px"),
+            "confidence": history[0].get("confidence"),
+            "clamped": held.get("clamped"),
+        })
+    if not rows:
+        print(f"\nno held frames in {folder}")
+        return {"rows": []}
+
+    scale = APERTURE_MM / 428.0
+    print(f"\n-- what the holding delivered, from {folder.name}'s own "
+          f"manifest --\n")
+    print(f"  {'fr':>3} {'asked':>7} {'sent':>7} {'landed':>7} {'left':>6} "
+          f"{'mv':>3} {'arrived':>9} {'conf':>6}  outcome")
+    for r in rows:
+        def mm(key, width=7):
+            v = r.get(key)
+            return f"{v:+{width}.3f}" if isinstance(v, (int, float)) else f"{'-':>{width}}"
+        arrived = r["arrived_px"]
+        # A displacement the correlator refused is not a small reading, it is
+        # no reading: below the floor `register` is matching noise, and the
+        # number it returns is the position of the tallest bump in it.
+        trusted = (r["confidence"] or 0) >= CONFIDENCE_FLOOR
+        shown = ("-" if arrived is None
+                 else f"{arrived:+d} px" if trusted else "(refused)")
+        print(f"  {r['frame']:>3} {mm('target_mm')} {r['spent_mm']:>7.3f} "
+              f"{mm('final_mm')} {mm('residual_mm', 6)} {r['moves']:>3} "
+              f"{shown:>9} {(r['confidence'] or 0):>6.1f}  {r['outcome']}")
+
+    moved = [r for r in rows if r["moves"]]
+    still = [r for r in rows if not r["moves"]]
+    print(f"\n  {len(moved)} frame(s) moved, {len(still)} sent no command at "
+          f"all")
+    if still:
+        print(f"    a frame that never moved reports outcome "
+              f"'{still[0]['outcome']}' too -- which is why `moves` is the "
+              f"column that matters")
+
+    ratios = [r["final_mm"] / r["spent_mm"] for r in moved
+              if r["final_mm"] is not None and r["spent_mm"]]
+    if ratios:
+        print(f"  delivered per mm commanded: "
+              f"{min(ratios):.3f}-{max(ratios):.3f}, median "
+              f"{float(np.median(ratios)):.3f}   (one earlier frame: 1.011)")
+
+    # Does a nudge survive an advance? The prediction, frame by frame.
+    print(f"\n  does a nudge survive the advance? "
+          f"(predicted arrival = -final(N-1) / {scale:.5f} mm/px)")
+    checked, agreed = 0, 0
+    for before, after in zip(rows, rows[1:]):
+        if before.get("final_mm") is None or after.get("arrived_px") is None:
+            continue
+        if (after.get("confidence") or 0) < CONFIDENCE_FLOOR:
+            continue                  # no reading to compare the prediction to
+        predicted = -before["final_mm"] / scale
+        seen = after["arrived_px"]
+        checked += 1
+        close = abs(predicted - seen) <= 2.0
+        agreed += close
+        print(f"    frame {after['frame']:>2}: predicted {predicted:+6.1f} px, "
+              f"saw {seen:+4d} px   {'agrees' if close else 'DOES NOT AGREE'}")
+    if checked:
+        print(f"\n    {agreed} of {checked} within 2 px. "
+              + ("The correction carries across the advance, so a frame's "
+                 "first reading is mostly the LAST frame's correction."
+                 if agreed > checked / 2 else
+                 "The correction does NOT survive the advance -- each frame "
+                 "arrives where the transport put it, independent of the last."))
+    return {"rows": rows, "moved": len(moved), "still": len(still),
+            "carry_checked": checked, "carry_agreed": agreed}
+
 def main(argv: list[str] | None = None) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(
@@ -702,11 +813,20 @@ def main(argv: list[str] | None = None) -> int:
                     help="the filename pattern to read, for a cohort not "
                          "named prescanNN.tif -- walk A's passes came from an "
                          "earlier probe and are A01_p1.tif and so on")
+    ap.add_argument("--held", type=Path, default=None,
+                    help="a roll folder whose frames were held to approved "
+                         "positions; reports what the holding actually "
+                         "delivered, read back from that run's own manifest")
     ap.add_argument("--ensemble", action="store_true",
                     help="replay the walk through the ensemble that decides "
                          "corrections, frame by frame in walk order, using "
                          "only what each frame could have known at the time")
     args = ap.parse_args(argv)
+
+    if args.held and not args.walk and not args.ensemble:
+        # Reporting on a finished roll needs its manifest and nothing else.
+        report_held(args.held)
+        return 0
 
     pairs: list[dict] = []
     if args.walk:
@@ -742,6 +862,9 @@ def main(argv: list[str] | None = None) -> int:
     base = result.get("base", {}).get("mean")
     if base:
         result["position"] = report_position(rows, images, base, scale)
+
+    if args.held:
+        result["held"] = report_held(args.held)
 
     if args.ensemble:
         result["ensemble"] = report_ensemble(images)
