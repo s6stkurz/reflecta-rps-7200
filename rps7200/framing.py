@@ -1879,3 +1879,246 @@ def propose_offsets(
         notes[number] = dict(notes.get(number, {}), source="neighbours",
                              reason="predicted from the frames either side")
     return proposals, notes
+
+
+# --- the transport's own units ----------------------------------------------
+#
+# Millimetres are prohibited here; see CLAUDE.md. A distance is a number of
+# **param units**, where one unit is what a single increment of the `SLIDE`
+# param adds. Everything below is floating point, and the only rounding in the
+# whole path is the integer that goes into the command.
+#
+# Measured 2026-09-21/22 on the film, `tools/verify_protocol.py` stages 10-13,
+# passes in `probe/step-calibration/`:
+#
+#   one command travels   param + 1.84  units
+#   one unit is           1.2423        columns of a 300 dpi prescan
+#
+# The first term came from three legs of equal param total over ten, five and
+# one commands -- ten small commands travel 2.40x as far as one large one, and
+# the spread between the legs is the per-command cost with nothing assumed. The
+# second is the mean of twelve `param 87` commands, every one measured with a
+# confidence above the floor, sd 0.90 px.
+
+#: Columns of a 300 dpi prescan that one unit of param moves the film.
+COLUMNS_PER_UNIT = 1.2423
+
+#: What issuing a command costs, in units, before any param is applied. Real,
+#: and 21% larger than the fit in `docs/protocol.md` section 11 -- that fit used
+#: single commands only, so nothing in it could see a per-command term.
+COMMAND_COST = 1.84
+
+#: The width a 300 dpi prescan comes back as. Columns scale with it.
+PRESCAN_COLUMNS = 428.0
+
+#: The largest param the byte allows. `param 255` is accepted by the device;
+#: nothing above 87 had been sent before 2026-09-21. The step stays constant to
+#: within 3% out to at least 160.
+MAX_PARAM = 255
+
+#: The largest param whose move can still be *verified* by comparing two
+#: prescans. Above this they no longer share enough film for the correlation to
+#: lock: at 200 and 255 it returned confidences of 6-23 and impossible negative
+#: distances. A correction that cannot be checked is worse than a smaller one
+#: that can.
+MAX_VERIFIABLE_PARAM = 160
+
+
+def units_per_column(width: int) -> float:
+    """One column of a pass this wide, in param units.
+
+    Replaces `APERTURE_MM / width`, which is wrong by 0.7%: with the true pitch
+    the geometry of a whole roll closes to -0.35 units and with that expression
+    to +1.5. A wider pass has proportionally narrower columns, so the
+    resolution never has to be passed in.
+    """
+    return (PRESCAN_COLUMNS / float(width or 1)) / COLUMNS_PER_UNIT
+
+
+def columns_per_unit(width: int) -> float:
+    """The inverse, for turning a measured distance back into columns."""
+    return 1.0 / units_per_column(width)
+
+
+#: The smallest distance a single command can deliver: `param 1` plus the cost
+#: of issuing it. Nothing between zero and this exists, which is what makes a
+#: deadband unavoidable rather than a choice.
+SMALLEST_MOVE = 1.0 + COMMAND_COST
+
+#: The largest a single command can deliver.
+LARGEST_MOVE = MAX_PARAM + COMMAND_COST
+
+#: The largest a single command can deliver and still be checked afterwards.
+LARGEST_VERIFIABLE_MOVE = MAX_VERIFIABLE_PARAM + COMMAND_COST
+
+
+def command_for(units: float, *, verifiable: bool = True) -> tuple | None:
+    """The one `SLIDE` command that moves the film this far, or None.
+
+    **One command, never several.** The scatter of a command is about one
+    prescan column whatever its size -- `param 12` measured sd 1.2 and `param
+    87` sd 0.90 -- so it does not shrink when a move is split up. Two commands
+    are twice the noise and twice the time for the same distance, and each one
+    also costs `COMMAND_COST` before it moves at all. Splitting a correction is
+    strictly worse and the old `plan_nudges` shape should not come back.
+
+    Returns ``(action, param, delivers)`` with ``action`` 0x00 forward and 0x01
+    backward, ``param`` the integer byte -- **the only rounding in this whole
+    module** -- and ``delivers`` the distance that integer actually buys, so a
+    caller can carry the difference rather than pretend it asked for what it
+    got.
+
+    ``None`` means leave the film alone: either the distance is below the
+    smallest command that exists, or it is beyond what one command can do.
+    """
+    wanted = float(units)
+    ceiling = LARGEST_VERIFIABLE_MOVE if verifiable else LARGEST_MOVE
+    if not np.isfinite(wanted) or abs(wanted) < SMALLEST_MOVE / 2.0:
+        return None
+    param = int(round(abs(wanted) - COMMAND_COST))
+    if param < 1:
+        # Nearer to the smallest command than to standing still, so make it.
+        param = 1
+    if abs(wanted) > ceiling:
+        return None
+    param = min(param, MAX_PARAM)
+    delivers = (param + COMMAND_COST) * (1.0 if wanted > 0 else -1.0)
+    return (0x00 if wanted > 0 else 0x01, param, delivers)
+
+
+def describe_command(units: float, *, verifiable: bool = True) -> str:
+    """What `command_for` would do, in words, for a log line."""
+    got = command_for(units, verifiable=verifiable)
+    if got is None:
+        if abs(units) < SMALLEST_MOVE / 2.0:
+            return (f"{units:+.2f} units is below the smallest command there "
+                    f"is ({SMALLEST_MOVE:.2f}); left alone")
+        return (f"{units:+.2f} units is more than one command can deliver "
+                f"and be checked ({LARGEST_VERIFIABLE_MOVE:.0f})")
+    action, param, delivers = got
+    return (f"{units:+.2f} units -> {'forward' if action == 0 else 'back'} "
+            f"param {param}, delivering {delivers:+.2f}, "
+            f"leaving {units - delivers:+.2f}")
+
+
+# --- finding a gap by looking down it, not across it ------------------------
+#
+# Every detector before this one began by averaging the rows away, and that is
+# why they could all be fooled by the same thing. Unexposed film base is bright
+# and flat down a column; so, on a negative, is a tree silhouette at dusk --
+# clear film at the base level, dead flat by column mean. Measured over one
+# delivered roll, **level, flatness, two-dimensional uniformity and the
+# infrared plane all fail to separate them**, and the false bands they produced
+# put four frames wrong, one of which cost the frame after it as well.
+#
+# Stefan named the test from the picture before any of this was traced:
+# unexposed film gives "a sharp line and will be completely black from the top
+# to the bottom". A real gap is the same width in **every row**. A silhouette
+# is not.
+#
+#     real gaps              per-row width, interquartile range    2-4 columns
+#     a 35-column silhouette per-row width, interquartile range    233 columns
+
+#: How much of a column's height must be base before the column counts. Not
+#: all of it: a dust speck or a scratch crossing the gap should not disqualify
+#: the column it crosses.
+GAP_ROW_AGREEMENT = 0.90
+
+#: How far the median row may run past the tenth-percentile row, as a fraction
+#: of the band, before this is something other than a gap.
+#:
+#: Measured on walk K: a real gap reads 0.09 to 0.22 -- frame 10 at 10/11/12
+#: columns, frame 13 at 11/12/29, frame 5 at 9/11/20. The silhouette on frame 9
+#: reads 12/39/138, which is **2.25**. An order of magnitude between them, so
+#: the threshold is not delicate.
+GAP_WIDTH_SPREAD = 0.5
+
+
+@dataclass(frozen=True)
+class Band:
+    """A run of unexposed base, and how much it looks like one.
+
+    ``start`` and ``width`` are floating point and in columns; ``consistency``
+    runs 0 to 1, one meaning every row agreed on the same width.
+    """
+
+    start: float
+    width: float
+    consistency: float
+    rows: float
+
+    @property
+    def end(self) -> float:
+        return self.start + self.width
+
+
+def _row_runs(mask: np.ndarray, side: str) -> np.ndarray:
+    """For each row, how many columns of base it has at one edge.
+
+    Counted from the edge inward, because that is the only place a gap can be:
+    base creeps in from the left or the right and cannot float in the middle of
+    a frame.
+    """
+    look = mask if side == "left" else mask[:, ::-1]
+    # the first False in each row is where that row's run ends
+    ends = np.argmin(look, axis=1)
+    # a row that is base all the way across has no False at all
+    ends = np.where(look.all(axis=1), look.shape[1], ends)
+    return ends.astype(np.float64)
+
+
+def edge_band(image: np.ndarray, level: float, side: str, *,
+              tolerance: float = BASE_TOLERANCE) -> tuple:
+    """The band of base at one edge, judged by looking down it.
+
+    Returns ``(Band | None, detail)``. The band is refused when too few rows
+    agree that there is one, or when the rows disagree about how wide it is --
+    which is the silhouette case and the one that has cost real frames.
+    """
+    pixels = _grey(image)
+    if pixels.size == 0:
+        return None, {"reason": "nothing to measure"}
+    # Smoothed along the row before thresholding. A single pixel of noise
+    # should not end a row's run: prescan noise is a few counts against a
+    # tolerance of a few counts, so raw per-pixel thresholding ends every row
+    # early at a random speck and the widths then disagree for a reason that
+    # has nothing to do with the film. Three columns is the narrowest smooth
+    # that removes it and it costs a column and a half of edge resolution,
+    # which is well inside one unit.
+    smooth = np.copy(pixels)
+    if pixels.shape[1] >= 3:
+        smooth[:, 1:-1] = (pixels[:, :-2] + pixels[:, 1:-1] + pixels[:, 2:]) / 3.0
+    is_base = np.abs(smooth - level) <= level * tolerance
+    runs = _row_runs(is_base, side)
+
+    saying = float(np.mean(runs > 0))
+    detail: dict[str, Any] = {"side": side, "rows_agreeing": round(saying, 3)}
+    if saying < GAP_ROW_AGREEMENT:
+        return None, dict(detail, reason=(
+            f"only {saying*100:.0f}% of rows show base at the {side} edge, "
+            f"under the {GAP_ROW_AGREEMENT*100:.0f}% a band running the whole "
+            "height would give"))
+
+    speaking = runs[runs > 0]
+    # The width nearly every row agrees on, not the middle one. Rows that run
+    # longer are rows where the picture beside the gap happens to sit near the
+    # base level, and there are always a few: frame 13 of walk K reads 11, 11,
+    # 12 at the tenth, twenty-fifth and fiftieth percentile and then 24 and 29
+    # at the upper ones. A median lets those drag the answer; the low
+    # percentile is the edge the film actually has.
+    width = float(np.percentile(speaking, 10))
+    middle = float(np.percentile(speaking, 50))
+    spread = middle - width
+    consistency = 1.0 - min(1.0, spread / max(width, 1e-9))
+    detail.update(width=round(width, 2), spread=round(spread, 2),
+                  consistency=round(consistency, 3))
+    if spread > width * GAP_WIDTH_SPREAD:
+        return None, dict(detail, reason=(
+            f"the rows disagree about how wide it is -- {spread:.0f} columns "
+            f"of spread on a {width:.0f}-column band. Unexposed film gives the "
+            "same width in every row; this does not, so it is picture that "
+            "happens to sit at the base level"))
+
+    start = 0.0 if side == "left" else float(pixels.shape[1]) - width
+    return Band(start=start, width=width, consistency=consistency,
+                rows=saying), detail
