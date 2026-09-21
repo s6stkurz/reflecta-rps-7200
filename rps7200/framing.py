@@ -959,8 +959,27 @@ def measure_shift_mm(
                   dx=int(dx), px=int(-dx))
 
     if confidence < CONFIDENCE_FLOOR:
+        # A pass can come back with every row reversed and nothing says so --
+        # MODE SELECT byte 14 bit 0, which this driver sets on every RGBI scan,
+        # reverses the pass that immediately follows one. A frame's prescan
+        # follows the previous frame's scan, so it is exactly the pass at risk:
+        # measured 2026-09-21 on two of seven frames of one 600 dpi roll, which
+        # each then went uncorrected because the reading was refused.
+        #
+        # Flipping the rows is safe to try because it is a flip in **y**, and
+        # the displacement this measures is in x -- so a reversed pass is not
+        # unreadable, only unreadable as it came. Tried only where the pass has
+        # already been refused, so a good match is never second-guessed.
+        flipped = now[::-1]
+        fy, fx, fc = register(reference, flipped, max_shift=reach)
+        if fc >= CONFIDENCE_FLOOR and abs(fy) <= MAX_DY_PX:
+            detail.update(confidence=round(float(fc), 2), dy=int(fy),
+                          dx=int(fx), px=int(-fx), row_reversed=True,
+                          confidence_as_read=round(float(confidence), 2),
+                          reason="matched with its rows reversed")
+            return float(-fx) * mm_per_px, detail
         detail["reason"] = (f"correlation too weak ({confidence:.1f} below "
-                            f"{CONFIDENCE_FLOOR:.0f})")
+                            f"{CONFIDENCE_FLOOR:.0f}; {fc:.1f} reversed)")
         return None, detail
     if abs(dy) > MAX_DY_PX:
         detail["reason"] = (f"matched {dy:+d} px off the film axis, which the "

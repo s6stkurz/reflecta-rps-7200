@@ -1443,3 +1443,53 @@ def test_a_reference_of_another_frame_is_refused_rather_than_acted_on():
         approved={0: _approved(1, 0.60, stranger)}))
     assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
     assert frames[0].registration["approved"]["outcome"] == "unverified"
+
+
+# --- a pass that came back with its rows reversed ---------------------------
+
+
+def test_a_reversed_pass_is_still_measured():
+    """MODE SELECT byte 14 bit 0 reverses the pass that immediately follows a
+    bit-0-set one, and this driver sets it on every RGBI scan -- so a frame's
+    prescan, taken straight after the last frame's scan, is exactly the pass at
+    risk. Measured on film 2026-09-21: two of seven frames of a 600 dpi roll
+    came back reversed, each scoring under 9 as it came and over 92 flipped,
+    and each went uncorrected because the reading was refused.
+
+    Safe to try because it is a flip in y and the displacement measured is in
+    x: a reversed pass is not unreadable, only unreadable as it came.
+    """
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(3)
+    reference = rng.random((60, 428, 3)) * 200
+    shifted = np.roll(reference, -7, axis=1)
+
+    upright, _d = measure_shift_mm(reference, shifted)
+    reversed_mm, detail = measure_shift_mm(reference, shifted[::-1])
+    assert upright is not None
+    assert reversed_mm == pytest.approx(upright, abs=0.02)
+    assert detail["row_reversed"] is True
+    assert "rows reversed" in detail["reason"]
+
+
+def test_a_good_match_is_never_second_guessed():
+    """The flip is tried only where the pass has already been refused."""
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(4)
+    reference = rng.random((60, 428, 3)) * 200
+    _mm, detail = measure_shift_mm(reference, np.roll(reference, -5, axis=1))
+    assert "row_reversed" not in detail
+
+
+def test_a_different_picture_is_still_refused_either_way_up():
+    """The floor has to hold for both attempts, or the fallback would become a
+    second chance for a match that should not happen at all."""
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(5)
+    mm, detail = measure_shift_mm(rng.random((60, 428, 3)) * 200,
+                                  rng.random((60, 428, 3)) * 200)
+    assert mm is None
+    assert "reversed" in detail["reason"]
