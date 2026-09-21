@@ -203,6 +203,29 @@ opposed column deviation -- are in the **`measure-scan-quality` skill**, with th
 measurement that discredited each alternative. Invoke it before measuring
 anything. It has twice caught a reading that a single pass got backwards.
 
+## Do not use millimetres for transport distances
+
+**Millimetres are prohibited.** Stefan's instruction, 2026-09-21, and it is a
+rule rather than a preference: express every sub-frame distance in **units of
+the adjustment parameter**, the `param` byte of `SLIDE <action> <param> 00 04`.
+
+One unit is the distance one increment of `param` adds. `docs/protocol.md` §11
+fits the law as `param + 1.57` units travelled per command, the second term
+being a fixed cost per command rather than per unit -- and whether that term is
+real is what `docs/step-calibration-plan.md` exists to measure.
+
+The reason is not tidiness. The transport has never moved a millimetre in its
+life; it executes commands with a parameter, and every millimetre in this code
+is a conversion away from what the hardware did. Those conversions have hidden
+two mistakes in one day: a delivery ratio computed against a magnitude rather
+than a signed distance, and a resampling scale error that made a good roll look
+badly adjusted. A number held in the hardware's own unit cannot acquire either.
+
+For reference, what the code holds today, converted: the aperture is **345.2**
+units, the smallest possible move (`param 1`) is **2.57**, and one prescan pixel
+at 300 dpi is **0.81** -- so the picture resolves finer than the transport can
+move.
+
 ## Calibrate with the film loaded
 
 **CyberView does everything with the film in the transport**, calibration included.
