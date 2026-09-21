@@ -2685,3 +2685,58 @@ def test_a_frame_nobody_aimed_says_nothing():
 
     assert _aim_note({}) == ""
     assert _aim_note({"offset_mm": 0.2}) == ""
+
+
+# --- proposing the whole strip's positions when the sheet opens -------------
+
+
+class _Walked:
+    def __init__(self, number, image):
+        self.number, self.image = number, image
+
+
+def _strip(count=8, gap=18):
+    import numpy as np
+    out = []
+    for n in range(1, count + 1):
+        rng = np.random.default_rng(n)
+        a = rng.random((40, 428, 3)) * 90 + 15
+        a[:, :gap] = 37.0 + rng.random((40, gap, 3)) * 0.6
+        out.append(_Walked(n, a))
+    return out
+
+
+def test_the_sheet_opens_holding_a_proposal_for_every_frame():
+    from tools.gui import _propose_positions
+
+    offsets, notes = _propose_positions(_strip(), {})
+    assert len(offsets) == 8
+    assert all(notes[n]["source"] in
+               ("measured", "unconfirmed", "neighbours") for n in offsets)
+
+
+def test_a_position_the_operator_set_is_never_re_proposed():
+    """The sheet is where he corrects this, so overwriting what he typed would
+    undo the correction it exists to collect."""
+    from tools.gui import _propose_positions
+
+    offsets, notes = _propose_positions(_strip(), {3: 1.234})
+    assert offsets[3] == 1.234
+    assert notes[3]["source"] == "operator"
+
+
+def test_a_walk_too_short_to_fit_proposes_nothing_and_still_opens():
+    from tools.gui import _propose_positions
+
+    offsets, notes = _propose_positions(_strip(1), {})
+    assert offsets == {} and notes == {}
+
+
+def test_a_detector_that_raises_does_not_stop_the_sheet_opening():
+    """The walk has already been paid for and the frames are still choosable;
+    a sheet that will not open is worse than one with no proposals."""
+    from tools.gui import _propose_positions
+
+    broken = [_Walked(1, "not an image"), _Walked(2, "nor this")]
+    offsets, notes = _propose_positions(broken, {2: 0.5})
+    assert offsets == {2: 0.5}

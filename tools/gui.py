@@ -39,7 +39,9 @@ from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library, preview, settings, shortcuts, tiff  # noqa: E402
+from rps7200 import (                                     # noqa: E402
+    export, framing, library, preview, settings, shortcuts, tiff,
+)
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
@@ -2007,11 +2009,25 @@ class ScannerGui:
                                 ("rotations", "turned"),
                                 ("flips", "flipped"))
             if kept[name])
+        proposed, notes = _propose_positions(self.survey, kept["offsets"])
+        if notes:
+            counted = ", ".join(
+                f"{n} {label}" for label, n in (
+                    ("measured", sum(1 for v in notes.values()
+                                     if v.get("source") == "measured")),
+                    ("unconfirmed", sum(1 for v in notes.values()
+                                        if v.get("source") == "unconfirmed")),
+                    ("from neighbours", sum(1 for v in notes.values()
+                                            if v.get("source") == "neighbours")))
+                if n)
+            self._say(f"positions proposed for {len(proposed)} frame(s)"
+                      + (f": {counted}" if counted else ""))
         self._say(f"contact sheet: {len(self.survey)} walked "
                   f"{[getattr(r, 'number', '?') for r in self.survey]}"
                   + (f" -- kept {restored}" if restored else ""))
         self.sheet = _ContactSheet(self, self.survey,
-                                   offsets=kept["offsets"],
+                                   offsets=proposed,
+                                   proposals=notes,
                                    rotations=kept["rotations"],
                                    flips=kept["flips"],
                                    ticks=kept["ticks"],
@@ -4924,6 +4940,39 @@ def picture_of(result) -> tuple | None:
     return None
 
 
+def _propose_positions(results, kept: dict) -> tuple[dict, dict]:
+    """Where the walked strip says each frame should go, his numbers winning.
+
+    Run once when the sheet opens, over the whole survey at once. That is the
+    reason the walk takes one complete pass before anything is decided: a
+    forward walk can only fit the frames behind it, where a finished one fits
+    across all of them and can speak for a frame from both sides.
+
+    A frame the operator has already positioned is left exactly as he left it
+    and is not re-proposed. His number is the authority here and stays it --
+    the sheet is where he corrects this, so overwriting what he typed would
+    undo the correction it exists to collect.
+    """
+    frames = [(int(getattr(r, "number", 0)), r.image)
+              for r in results
+              if getattr(r, "image", None) is not None
+              and getattr(r, "number", None)]
+    if len(frames) < 2:
+        return dict(kept), {}
+    try:
+        offsets, notes = framing.propose_offsets(frames)
+    except Exception as exc:                                  # noqa: BLE001
+        # A sheet that will not open is worse than one with no proposals: the
+        # walk has already been paid for and the frames are still choosable.
+        return dict(kept), {0: {"source": "none", "reason": str(exc)}}
+    out = dict(offsets)
+    out.update(kept)                        # his, over anything measured here
+    for number in kept:
+        notes[int(number)] = {"source": "operator",
+                              "reason": "you set this one"}
+    return out, notes
+
+
 def _aim_note(marks: dict) -> str:
     """What the walk did about this frame's position, in the operator's words.
 
@@ -6146,7 +6195,8 @@ class _ContactSheet:
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
     DONE = "#5b7a5b"                         # already scanned: neither of those
 
-    def __init__(self, gui, frames, offsets=None, rotations=None, flips=None,
+    def __init__(self, gui, frames, offsets=None, proposals=None,
+                 rotations=None, flips=None,
                  done=None, ticks=None, options=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
@@ -6181,6 +6231,12 @@ class _ContactSheet:
         #: where it was surveyed. Absent means "as surveyed" -- an explicit
         #: zero never lands here, because snap_offset returns it as absent.
         self.offsets: dict[int, float] = dict(offsets or {})
+        #: Where each proposed offset came from, so a caption can say whether
+        #: a number was measured, read by one detector and uncorroborated, or
+        #: predicted from the frames either side. A proposal the operator
+        #: cannot tell from a guess is one he has to check by hand anyway,
+        #: which is the work this exists to save.
+        self.proposals: dict[int, dict] = dict(proposals or {})
         #: Which way up each frame has been *decided* to be, in degrees
         #: clockwise. Per frame because a strip is not one orientation: a
         #: portrait among landscapes is ordinary, and the session's single
@@ -6707,16 +6763,29 @@ class _ContactSheet:
 
         When the operator has set a position, that is what the cell shows, in
         the sheet's amber -- it is his number and it is the one that will be
-        acted on. The measured registration offset it replaces reads +-0.00 mm
-        on every real prescan, because film_bounds abstains on all of them.
+        acted on.
+
+        A proposed position shows the same number and says where it came from,
+        because the two are not worth the same and he is the one who decides
+        which to trust:
+
+          (measured)      two independent detectors agreed on it
+          (unconfirmed)   one could read the frame and nothing corroborated it
+          (neighbours)    nothing could read it; the strip's line spoke for it
+
+        The offset this replaced read +-0.00 mm on every real prescan, because
+        `film_bounds` abstains on all of them.
         """
         caption = self._captions.get(number)
         if caption is None:
             return
         offset = self.offsets.get(number)
         if offset:
-            caption.configure(text=f"moved {offset:+.2f} mm",
-                              foreground=self.CHOSEN)
+            source = (self.proposals.get(number) or {}).get("source")
+            said = f"moved {offset:+.2f} mm"
+            if source in ("measured", "unconfirmed", "neighbours"):
+                said = f"{offset:+.2f} mm ({source})"
+            caption.configure(text=said, foreground=self.CHOSEN)
             return
         if number in self.done:
             caption.configure(text="scanned", foreground=self.DONE)

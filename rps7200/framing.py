@@ -1589,3 +1589,139 @@ class StripWalk:
     def affordable(self, offset_mm: float) -> bool:
         """Whether this roll can still afford that move."""
         return self.travel_mm + abs(offset_mm) <= ROLL_TRAVEL_LIMIT_MM
+
+
+# --- proposing a whole strip's positions at once ----------------------------
+#
+# The walk takes one complete pass over the strip, and only then is anything
+# decided. That is worth more than deciding as it goes, and the reason is not
+# effort but evidence: a forward walk can only ever fit the frames behind it,
+# while a finished walk fits across all of them and can predict a frame it
+# could not place from *both* sides.
+#
+# It also puts the decision where it can be argued with. The proposals arrive
+# in the contact sheet, the operator changes the ones he disagrees with, and
+# the scan is held to whatever is there -- his number where he set one, this
+# one where he left it alone.
+
+
+def _theil_sen(xs, ys) -> tuple[float, float]:
+    """Median of pairwise slopes, and the intercept that centres it.
+
+    Not least squares: one bad placement is precisely what this has to survive,
+    and least squares lets a single one tilt the whole line.
+    """
+    slopes = [
+        (ys[j] - ys[i]) / (xs[j] - xs[i])
+        for i in range(len(xs)) for j in range(i + 1, len(xs))
+        if xs[j] != xs[i]
+    ]
+    if not slopes:
+        return 0.0, float(np.median(ys)) if len(ys) else 0.0
+    slope = float(np.median(slopes))
+    return slope, float(np.median(np.asarray(ys) - slope * np.asarray(xs)))
+
+
+def predict_from_strip(placed: dict, number: int, *, least: int = 3) -> Reading:
+    """Where the strip says this frame should sit, judged without it.
+
+    Leave-one-out: the line is fitted through every *other* placed frame, so
+    the prediction owes nothing to the reading it is about to be compared with.
+    Including the frame would make the two members agree by construction, which
+    is the failure an ensemble exists to avoid -- two detectors that cannot
+    disagree are one detector.
+
+    This is the member a whole-strip pass has and a forward walk does not: it
+    can see a frame's neighbours on both sides.
+    """
+    others = {int(n): float(v) for n, v in placed.items() if int(n) != int(number)}
+    if len(others) < least:
+        return Reading(None, 0.0, "strip",
+                       f"{len(others)} other frame(s) placed, need {least}")
+    xs = np.array(sorted(others), dtype=float)
+    ys = np.array([others[int(x)] for x in xs], dtype=float)
+    slope, intercept = _theil_sen(xs, ys)
+    residual = np.abs(ys - (slope * xs + intercept))
+    scatter = float(1.4826 * np.median(residual))
+    return Reading(
+        mm=slope * float(number) + intercept,
+        margin=_clip01(1.0 - scatter / HOLD_TOLERANCE_MM),
+        source="strip",
+        # Never finer than the scatter of the frames it was fitted through,
+        # and never finer than the smallest move that scatter could hide.
+        precision=max(scatter, HOLD_TOLERANCE_MM / np.sqrt(len(others))),
+        reason=f"{len(others)} frames, {slope:+.3f} mm per frame, "
+               f"scatter {scatter:.2f} mm",
+        detail={"frames": len(others), "slope_mm": round(slope, 4),
+                "scatter_mm": round(scatter, 4)},
+    )
+
+
+def propose_offsets(
+    frames, *, aperture_mm: float = APERTURE_MM, target: str = "centre",
+) -> tuple[dict[int, float], dict[int, dict]]:
+    """What every frame of a walked strip should be moved by, and why.
+
+    ``frames`` is ``(number, image)`` for the whole strip, in any order.
+
+    Returns the proposals and a note per frame saying where each came from:
+
+      ``measured``     two members agreed
+      ``unconfirmed``  one member could read the frame and nothing corroborated it
+      ``neighbours``   nothing could read it; the strip's own line spoke for it
+
+    **The two-members gate does not apply here, and that is deliberate.** It
+    exists to stop film being moved on one detector's word, and nothing is
+    moved by this -- these are proposals, and a person looks at every one before
+    any of them reaches the transport. So the rule that serves him is the
+    opposite: show the best reading there is and say how well supported it is.
+
+    Getting that backwards made this worse than useless on walk E. Frames 1 to
+    4 each carried a real left-gap reading near -1.1 mm, the members disagreed,
+    and the fallback replaced a measurement from the one detector graded on the
+    displacement ladder with a line extrapolated from the far end of the strip
+    -- and said nothing about having done so. A model may stand in for a
+    measurement that does not exist. It may not overrule one that does.
+    """
+    images = [im for _n, im in frames]
+    base, base_detail = film_base(images)
+    notes: dict[int, dict] = {}
+    if base is None:
+        why = ("the strip's base level could not be calibrated: "
+               + str(base_detail.get("reason", "")))
+        return {}, {int(n): {"reason": why, "source": "none"} for n, _ in frames}
+
+    # Every frame's own reading first: the leave-one-out fit needs them all
+    # before it can judge any one of them.
+    placed, _detail = strip_offsets(frames, base, aperture_mm=aperture_mm,
+                                    target=target)
+
+    proposals: dict[int, float] = {}
+    for number, image in frames:
+        number = int(number)
+        left = frame_offset_mm(image, base, aperture_mm=aperture_mm)
+        closure = right_gap_closure(image, base, aperture_mm=aperture_mm)
+        strip = predict_from_strip(placed, number)
+        decision, detail = combine([left, closure, strip])
+        notes[number] = dict(detail, base_level=round(base.level, 2))
+        if decision is not None:
+            proposals[number] = decision
+            notes[number]["source"] = "measured"
+        elif left.mm is not None and abs(left.mm) <= MAX_CORRECTION_MM:
+            # The reading stands, and the sheet says it was not corroborated.
+            # `left-gap` is the member validated against the ladder at gain
+            # 1.008 with a residual rms of 0.021 mm; the disagreement is worth
+            # showing, not worth discarding the measurement over.
+            proposals[number] = left.mm
+            notes[number]["source"] = "unconfirmed"
+        else:
+            notes[number]["source"] = "none"
+
+    # Only now, and only from what survived: a frame nothing could place gets
+    # the strip's own line, which is the one thing that can speak for it.
+    filled = fill_from_neighbours(proposals, [int(n) for n, _ in frames])
+    for number, value in filled.items():
+        proposals[number] = value
+        notes[number] = dict(notes.get(number, {}), source="neighbours",
+                             reason="predicted from the frames either side")
+    return proposals, notes

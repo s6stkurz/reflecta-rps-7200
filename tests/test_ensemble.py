@@ -16,6 +16,8 @@ import pytest
 
 from rps7200.framing import (
     AGREE_MM,
+    predict_from_strip,
+    propose_offsets,
     APERTURE_MM,
     FRAME_WIDTH_SPREAD_MM,
     HOLD_TOLERANCE_MM,
@@ -241,3 +243,68 @@ def test_the_prior_claims_no_more_precision_than_its_sample_supports():
     many = predict_offset([(n, -1.0, -1.0) for n in range(1, 11)], 11)
     assert two.precision > many.precision
     assert many.precision < HOLD_TOLERANCE_MM
+
+
+# -- proposing a whole strip at once -----------------------------------------
+#
+# The walk takes one complete pass and only then decides anything. That is
+# worth more than deciding as it goes, and the reason is evidence rather than
+# effort: a forward walk can only fit the frames behind it, where a finished
+# one fits across all of them and can speak for a frame from both sides.
+
+
+def strip(count=8, gap=18, seed0=0):
+    return [(n, frame(gap_px=gap, seed=seed0 + n)) for n in range(1, count + 1)]
+
+
+def test_the_strip_speaks_for_every_frame_it_can_read():
+    offsets, notes = propose_offsets(strip())
+    assert len(offsets) == 8
+    assert all(notes[n]["source"] in ("measured", "unconfirmed", "neighbours")
+               for n in offsets)
+
+
+def test_a_measurement_is_never_overruled_by_the_model():
+    """Walk E, and the reason this function was rewritten. Frames 1 to 4 each
+    carried a real left-gap reading near -1.1 mm, the members disagreed, and
+    the fallback replaced the reading from the detector graded on the
+    displacement ladder with a line extrapolated from the far end of the strip
+    -- silently. A model may stand in for a measurement that does not exist; it
+    may not overrule one that does.
+    """
+    # one frame well away from the others, so no member will corroborate it
+    frames = strip(6)
+    frames[0] = (1, frame(gap_px=30, seed=99))
+    offsets, notes = propose_offsets(frames)
+    assert notes[1]["source"] == "unconfirmed", notes[1]
+    alone = frame_offset_mm(frames[0][1], calibrated())
+    assert offsets[1] == pytest.approx(alone.mm, abs=0.02)
+
+
+def test_a_frame_nothing_could_read_is_filled_and_says_so():
+    frames = strip(6)
+    frames[3] = (4, frame(gap_px=0, seed=4))          # no base in view at all
+    offsets, notes = propose_offsets(frames)
+    assert notes[4]["source"] == "neighbours"
+    assert 4 in offsets
+
+
+def test_the_strip_fit_never_includes_the_frame_it_judges():
+    """Including it would make the two members agree by construction, and two
+    detectors that cannot disagree are one detector."""
+    placed = {1: 0.0, 2: -0.1, 3: -0.2, 4: 9.9, 5: -0.4, 6: -0.5}
+    said = predict_from_strip(placed, 4)
+    assert said.mm == pytest.approx(-0.3, abs=0.1), "the 9.9 must not be used"
+
+
+def test_the_strip_fit_needs_frames_either_side_of_a_guess():
+    assert predict_from_strip({1: 0.0, 2: -0.1}, 3).mm is None
+
+
+def test_a_strip_with_no_calibratable_base_proposes_nothing():
+    """It abstains for the whole strip rather than per frame: without a level
+    there is no detector at all, and saying so once is the honest form."""
+    offsets, notes = propose_offsets([(n, frame(gap_px=0, seed=n))
+                                      for n in range(1, 5)])
+    assert offsets == {}
+    assert all(n["source"] == "none" and n["reason"] for n in notes.values())
