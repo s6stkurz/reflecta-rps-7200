@@ -259,7 +259,11 @@ def main() -> int:
             "start_at": args.start_at, "frames": args.frames,
             # Written because the window pins a commissioned scan's prescan to
             # whatever the survey walked at, and reads that pin from here
-            # (`tools/gui.py` `_survey_predpi`). Without the key the pin is
+            # (`tools/gui.py` `_survey_predpi`). That was not true when it was
+            # written: the window read the top level and this is inside
+            # `settings`, so every walk made here opened there with the pin
+            # inert. `manifest_settings` merges the two now, which is what
+            # makes the sentence above correct. Without the key the pin is
             # inert and a mismatch silently resamples the reference, which
             # halves `measure_shift_mm`'s confidence -- 93.5 to 47.4 measured,
             # against a floor of 55. Every frame would then read `unverified`,

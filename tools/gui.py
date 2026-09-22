@@ -4362,6 +4362,46 @@ def aim_millimetres(fraction: float) -> float:
     return -(fraction - target) * APERTURE_MM
 
 
+#: What a manifest's `settings` block calls a key, where the top level calls it
+#: something else. Only `dpi` differs: `scan_roll` writes the scan resolution
+#: under the name the driver uses, the window under the name it shows.
+SETTING_ALIASES = {"resolution": "dpi"}
+
+
+def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
+    """One view of a roll's settings, whichever tool wrote it.
+
+    The window writes the settings it restores at the **top level** of
+    `survey.json` and again inside `settings`; `tools/scan_roll.py` writes them
+    only inside `settings`, and calls the scan resolution `dpi`. So a walk made
+    on the command line opened in the window with `prescan_resolution` reading
+    `None` -- and that is not cosmetic. It becomes `_survey_predpi`, which is
+    what pins a commissioned scan's prescan to the resolution its positions
+    were decided at. Unpinned, the reference is resampled and
+    `measure_shift_mm` reads it at about half the confidence: 93.5 falls to
+    47.4 against a floor of 55, so **every frame reads `unverified` and nothing
+    moves**. A roll that costs hours, delivers no correction, and says nothing.
+
+    Read side rather than write side deliberately. Fixing `scan_roll` would
+    help folders that do not exist yet; the eleven already on disk --
+    `registration-D` through `registration-M` -- are the evidence this whole
+    feature was built on, and only the reader recovers them.
+    """
+    out: dict = {}
+    # Least specific first. A `settings` block is what the run was configured
+    # with; the top level is what the window itself wrote and meant; a resumed
+    # roll's progress file is more recent than the survey beside it.
+    for layer in (manifest.get("settings"), manifest,
+                  (progress or {}).get("settings"), progress or {}):
+        for key, value in (layer or {}).items():
+            if key != "settings" and value is not None:
+                out[key] = value
+    for name, alias in SETTING_ALIASES.items():
+        if out.get(name) is None and out.get(alias) is not None:
+            out[name] = out[alias]
+    return out
+
+
 def read_survey(folder) -> dict:
     """A walked strip, read back off disk so it need not be walked again.
 
@@ -4401,6 +4441,11 @@ def read_survey(folder) -> dict:
          else roll_path).read_text(encoding="utf-8"))
     progress = (json.loads(roll_path.read_text(encoding="utf-8"))
                 if roll_path.exists() else {})
+    # Merged, because `tools/scan_roll.py` writes these only inside `settings`
+    # and this reader wanted them at the top level. See `manifest_settings`:
+    # the one that matters is `prescan_resolution`, and reading it as None
+    # silently costs every correction in a commissioned roll.
+    settings = manifest_settings(manifest, progress)
     turn = int(manifest.get("rotation") or 0)
     mirrored = bool(manifest.get("flipped"))
 
@@ -4418,7 +4463,7 @@ def read_survey(folder) -> dict:
             kind="prescan",
             label=f"frame {number} (reopened)",
             image=preview.unorient(image, turn, mirrored),
-            meta={"resolution_dpi": manifest.get("prescan_resolution")},
+            meta={"resolution_dpi": settings.get("prescan_resolution")},
             entry=Path(entries[number]) if number in entries else None,
             registration=record.get("registration") or {},
             position=record.get("transport_position"),
@@ -4434,8 +4479,8 @@ def read_survey(folder) -> dict:
 
     return {
         "results": results,
-        "start_at": int(manifest.get("start_at") or 1),
-        "prescan_resolution": manifest.get("prescan_resolution"),
+        "start_at": int(settings.get("start_at") or 1),
+        "prescan_resolution": settings.get("prescan_resolution"),
         "offsets": offsets,
         "rotations": rotations,
         "flips": flips,
@@ -4531,10 +4576,16 @@ def restorable(settings: dict) -> dict:
     """
     out: dict = {}
     for key, (control, kind) in RESTORABLE.items():
-        if settings.get(key) is None:
+        value = settings.get(key)
+        if value is None:
+            # An alias, not a default: `tools/scan_roll.py` calls the scan
+            # resolution `dpi`. Absent under both names still means "this roll
+            # has nothing to say about it", which the guard above preserves.
+            value = settings.get(SETTING_ALIASES.get(key))
+        if value is None:
             continue
         try:
-            out[control] = kind(settings[key])
+            out[control] = kind(value)
         except (TypeError, ValueError):
             continue
     return out
@@ -4742,8 +4793,7 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         # walk can still be resumed, just not looked at first.
         "has_sheet": any(folder.glob("prescan*.tif")),
         "settings": settings,
-        "resolution": settings.get("resolution") or progress.get("dpi")
-        or manifest.get("dpi"),
+        "resolution": manifest_settings(manifest, progress).get("resolution"),
         "film": settings.get("film") or progress.get("film")
         or manifest.get("film"),
         "infrared": settings.get("infrared", progress.get("infrared",

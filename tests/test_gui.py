@@ -2631,6 +2631,55 @@ def test_each_kind_keeps_its_own_type():
     assert out["ticks"][1] is True
 
 
+# -- reading a walk the command line wrote ---------------------------------
+
+
+def test_a_command_line_manifest_yields_the_keys_the_window_reads():
+    """`scan_roll` writes these inside `settings`; this reader wanted them at
+    the top level, so they came back None.
+
+    `prescan_resolution` is the one that costs something. It becomes
+    `_survey_predpi`, which pins a commissioned scan's prescan to the
+    resolution its positions were decided at. Unpinned, the reference is
+    resampled and confidence falls 93.5 -> 47.4 against a floor of 55, so every
+    frame reads `unverified` and nothing moves -- hours of transport, no
+    correction, and nothing said.
+    """
+    cli = {"roll": "registration-M",
+           "settings": {"dpi": 1800, "prescan_resolution": 300,
+                        "start_at": 4, "film": "negative"}}
+    merged = gui.manifest_settings(cli)
+    assert merged["prescan_resolution"] == 300
+    assert merged["start_at"] == 4
+    assert merged["resolution"] == 1800          # the CLI calls it dpi
+
+
+def test_the_windows_own_manifest_is_unchanged_by_the_merge():
+    """It writes them at the top level and inside settings, and the top level
+    is what it meant."""
+    own = {"roll": "r", "prescan_resolution": 300, "start_at": 2,
+           "settings": {"resolution": 1200, "prescan_resolution": 300,
+                        "start_at": 2}}
+    merged = gui.manifest_settings(own)
+    assert merged["prescan_resolution"] == 300
+    assert merged["start_at"] == 2
+    assert merged["resolution"] == 1200
+
+
+def test_a_resumed_rolls_progress_wins_over_the_survey():
+    merged = gui.manifest_settings(
+        {"settings": {"dpi": 600}}, {"resolution": 1800})
+    assert merged["resolution"] == 1800
+
+
+def test_restorable_reads_the_alias_but_still_leaves_absent_keys_alone():
+    """Absent means "this roll has nothing to say about it", not "off" -- the
+    walks from before `prescan_resolution` existed depend on that."""
+    assert gui.restorable({"dpi": 1800})["dpi"] == "1800"
+    assert "predpi" not in gui.restorable({"dpi": 1800})
+    assert gui.restorable({}) == {}
+
+
 # -- the last thing shown before the film moves ----------------------------
 
 
