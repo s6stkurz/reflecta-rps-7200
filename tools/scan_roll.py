@@ -45,6 +45,8 @@ from rps7200.library import FilmNotes
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
 from rps7200.session import Approved, FrameWriter, plan_nudges
+from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
+from rps7200.session import rewind as _rewind
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -145,60 +147,28 @@ def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
                                  skip=args.no_shading)["summary"])
 
 
-#: How many backward commands a direction change may swallow before the film
-#: actually moves. Two to three, measured -- `tools/transport_truth.py` and
-#: `_hold_to_approved`'s own docstring both say so -- so three is the
-#: conservative end, and the film has not moved while they are being spent.
-BACKLASH_COMMANDS = 3
+#: Re-exported so the name still resolves here. It lives in `rps7200.session`
+#: now, beside the rewind that spends it, because two copies of a measured
+#: number drift and this one is load-bearing.
+BACKLASH_COMMANDS = _BACKLASH_COMMANDS
 
 
 def rewind(scanner: DirectScanner, frames: int) -> int | None:
-    """Wind the film back, one frame at a time, checking each one landed.
+    """The session's checked rewind, with this tool's own reporting.
 
-    One at a time deliberately. `retreat(steps=N)` exists, but the wait
-    underneath only watches for the position to *change*, so a multi-step call
-    returns as soon as it has moved at all -- it cannot tell sixteen frames
-    from one.
-
-    Checking each one is the other half, and it is the part the window does not
-    do: `on_scan_chosen` queues `Move(frames=-back)` and the roll back to back,
-    and `_move` reports a failure by returning a *string* that the worker logs
-    before taking the next job. A rewind that got three of fourteen is followed
-    immediately by a roll that scans frames it has mis-numbered -- and a break
-    after three successes reads identically to a break after none.
-
-    The first command or two may do nothing, and that is expected rather than a
-    failure: a roll leaves the transport loaded forward, so the first backward
-    command is a direction change and **backlash swallows two to three of
-    them** -- `tools/transport_truth.py` says so in as many words, and adds
-    that one failure proves nothing. Measured here 2026-09-21: a 14-frame
-    rewind from position 14 ran first time after one roll and had its first
-    command swallowed after the next, with the device healthy either way.
-
-    So a no-op is tolerated while the film has not started moving, and is the
-    end of the strip once it has. Returns where the film ended up, or None if
-    it stopped short: a caller that gets None must not go on, because
-    everything after this assumes the film is where it was asked to be.
+    The algorithm moved to `rps7200.session` so the window shares it -- it was
+    the window's copy that drifted, queuing an unchecked `Move` and then
+    running the roll over frames it had mis-numbered. This keeps the CLI's
+    split: progress on stdout, the give-up line on stderr, where a caller
+    redirecting one still sees the other.
     """
-    start = scanner.position()
-    print(f"rewinding {frames} frame(s) from position {start}")
-    done, swallowed = 0, 0
-    while done < frames:
-        before = scanner.position()
-        landed = scanner.retreat()
-        now = scanner.position()
-        if landed is None or now == before:
-            if done == 0 and swallowed < BACKLASH_COMMANDS:
-                swallowed += 1
-                print(f"  (no movement yet -- backlash, command "
-                      f"{swallowed}/{BACKLASH_COMMANDS})", flush=True)
-                continue
-            print(f"  stopped after {done} of {frames}: position still "
-                  f"{before}", file=sys.stderr)
-            return None
-        done += 1
-        print(f"  {done}/{frames}: {before} -> {now}", flush=True)
-    return scanner.position()
+    def say(message: str) -> None:
+        if message.lstrip().startswith("stopped after"):
+            print(message, file=sys.stderr)
+        else:
+            print(message, flush=True)
+
+    return _rewind(scanner, frames, say=say)
 
 
 def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:

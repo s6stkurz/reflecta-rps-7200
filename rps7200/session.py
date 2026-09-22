@@ -92,6 +92,62 @@ FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
 FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
                + DirectScanner.OVERHEAD_MM)
 
+#: How many commands a rewind may spend on backlash before giving up. A roll
+#: leaves the transport loaded forward, so the first backward command is a
+#: direction change and two to three of them are swallowed -- measured
+#: 2026-09-21, where a 14-frame rewind ran first time after one roll and had
+#: its first command swallowed after the next, the device healthy either way.
+BACKLASH_COMMANDS = 3
+
+
+def rewind(scanner, frames: int, say=None) -> int | None:
+    """Wind the film back, one frame at a time, checking each one landed.
+
+    One at a time deliberately. `retreat(steps=N)` exists, but the wait
+    underneath only watches for the position to *change*, so a multi-step call
+    returns as soon as it has moved at all -- it cannot tell sixteen frames
+    from one.
+
+    Checking each one is the other half. A rewind that got three of fourteen
+    and one that got none are the same silence otherwise, and a roll queued
+    behind either scans frames it has mis-numbered.
+
+    The first command or two may do nothing, and that is expected rather than a
+    failure -- see `BACKLASH_COMMANDS`. So a no-op is tolerated while the film
+    has not started moving, and is the end of the strip once it has.
+
+    Returns where the film ended up, or None if it stopped short: a caller that
+    gets None **must not go on**, because everything after this assumes the
+    film is where it was asked to be.
+
+    Lives here rather than in `tools/scan_roll.py` so the window and the
+    command line share one, the same arrangement `plan_nudges` already has --
+    a second copy of this drifts, and the copy that drifted was the window's.
+    """
+    def tell(message):
+        if say is not None:
+            say(message)
+
+    start = scanner.position()
+    tell(f"rewinding {frames} frame(s) from position {start}")
+    done, swallowed = 0, 0
+    while done < frames:
+        before = scanner.position()
+        landed = scanner.retreat()
+        now = scanner.position()
+        if landed is None or now == before:
+            if done == 0 and swallowed < BACKLASH_COMMANDS:
+                swallowed += 1
+                tell(f"  (no movement yet -- backlash, command "
+                     f"{swallowed}/{BACKLASH_COMMANDS})")
+                continue
+            tell(f"  stopped after {done} of {frames}: position still {before}")
+            return None
+        done += 1
+        tell(f"  {done}/{frames}: {before} -> {now}")
+    return scanner.position()
+
+
 #: How many sub-frame commands one move may use. The law itself holds over
 #: twenty steps and goes sub-linear past them, but the guard sits lower: a
 #: sub-frame move asked to travel further than this is a whole-frame job, and
@@ -321,6 +377,16 @@ class Roll:
     mono: bool | None = None
     mono_channel: str = MONO_CHANNEL
     prescan_resolution: int = 300
+    #: Frames to wind back before anything else, checked one at a time.
+    #:
+    #: Part of the roll rather than a `Move` queued in front of it, because the
+    #: failure is *across* jobs: `_move` reports a short rewind by returning a
+    #: string, the worker logs it and takes the next job, and the roll then
+    #: scans frames it has mis-numbered. A job cannot cancel the one behind it
+    #: however it reports, and inventing a queue-abort would be new semantics
+    #: for every job type to fix one sequence. One job owning both halves is
+    #: smaller, and it is already how the window describes it to the operator.
+    rewind: int = 0
     dry_run: bool = False
     #: The frame numbers worth scanning, as the window numbers them -- 1 for the
     #: first picture. Anything else is advanced past unprescanned and unscanned,
@@ -942,6 +1008,19 @@ class ScanSession:
         return "nothing to move"
 
     def _roll(self, job: Roll) -> str | None:
+        # Before the directory, before the manifest: a rewind that stops short
+        # must leave nothing behind and scan nothing. The window used to queue
+        # this as a separate `Move`, which reports a short rewind by returning
+        # a string -- logged, and then the roll ran anyway over frames it had
+        # mis-numbered.
+        if job.rewind:
+            landed = rewind(self._scanner, job.rewind,
+                            say=lambda m: self._emit("log", text=m))
+            if landed is None:
+                return ("the rewind stopped short, so nothing was scanned -- "
+                        "the film is not where the roll would have assumed")
+            if self._stop.is_set():
+                return "stopped during the rewind"
         name = job.name or time.strftime("%Y-%m-%d")
         out = Path(job.out) if job.out else self.rolls / name
         out.mkdir(parents=True, exist_ok=True)

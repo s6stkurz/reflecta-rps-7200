@@ -1035,6 +1035,70 @@ def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
 # correction loop -- so it lives in one function and these tests pin it.
 
 
+class _Winding:
+    """A film that can be wound back and can stop part-way."""
+
+    def __init__(self, at, sticks_at=None, swallows=0):
+        self.at, self.sticks_at, self.swallows = at, sticks_at, swallows
+        self.scans = 0
+
+    def position(self):
+        return self.at
+
+    def retreat(self, **kw):
+        if self.swallows:
+            self.swallows -= 1
+            return None
+        if self.sticks_at is not None and self.at <= self.sticks_at:
+            return None
+        self.at -= 1
+        return self.at
+
+
+def test_the_shared_rewind_checks_each_frame_landed():
+    from rps7200.session import rewind
+
+    film = _Winding(14)
+    assert rewind(film, 14) == 0
+    assert film.at == 0
+
+
+def test_a_rewind_that_stops_short_says_so_rather_than_reporting_success():
+    """The caller must not go on: everything after assumes the film arrived."""
+    from rps7200.session import rewind
+
+    assert rewind(_Winding(14, sticks_at=11), 14) is None
+
+
+def test_backlash_at_the_start_is_not_a_failed_rewind():
+    """A roll leaves the transport loaded forward, so the first backward
+    command is a direction change and two or three are swallowed. Measured
+    2026-09-21: the same 14-frame rewind ran first time after one roll and had
+    its first command swallowed after the next, the device healthy either
+    way."""
+    from rps7200.session import BACKLASH_COMMANDS, rewind
+
+    film = _Winding(14, swallows=BACKLASH_COMMANDS)
+    assert rewind(film, 14) == 0
+
+
+def test_a_no_op_after_the_film_has_moved_is_the_end_of_the_strip():
+    """Tolerated at the start, fatal once it is running -- otherwise a strip
+    that ends early reads as backlash forever."""
+    from rps7200.session import rewind
+
+    assert rewind(_Winding(14, sticks_at=9, swallows=1), 14) is None
+
+
+def test_the_rewind_can_say_what_it_is_doing():
+    from rps7200.session import rewind
+
+    said = []
+    rewind(_Winding(3), 3, say=said.append)
+    assert any("rewinding 3" in line for line in said)
+    assert any("1/3" in line for line in said)
+
+
 def test_a_plan_says_what_the_hardware_will_actually_travel():
     """And since the cap went to param 87, it says it in one command.
 

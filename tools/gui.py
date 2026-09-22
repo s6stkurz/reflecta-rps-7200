@@ -2655,9 +2655,15 @@ class ScannerGui:
         for record in approved:
             self.orientations[("frame", record.number)] = (
                 record.rotation, bool(record.flipped))
-        if back:
-            self.session.submit(Move(frames=-back))
+        # Carried on the roll rather than queued in front of it. A separate
+        # `Move` reports a short rewind by returning a string, which the worker
+        # logs before taking the next job -- so a rewind that got three of
+        # fourteen was followed straight away by a roll scanning frames it had
+        # mis-numbered, and a break after three successes read exactly like a
+        # break after none. One job owns both halves now, and the checked
+        # rewind tolerates the two or three commands backlash swallows.
         self.session.submit(Roll(
+            rewind=back,
             frames=walked, start_at=self._survey_start, resolution=dpi,
             prescan_resolution=predpi, infrared=infrared,
             fast_infrared=fast_ir,
