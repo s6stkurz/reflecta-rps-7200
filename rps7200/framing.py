@@ -1137,7 +1137,14 @@ def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
 #: between two positions either side of the target. Duplicated rather than
 #: imported because `direct` imports this module; a test pins the two together,
 #: which is the same arrangement `tools/gui.py`'s FINE_STEP_MM already has.
-HOLD_TOLERANCE_MM = 0.2719
+#:
+#: 0.3002 since 2026-09-22, up from 0.2719, because the ramp a command pays was
+#: re-measured at 1.84 units rather than 1.572 and this constant is *defined*
+#: as what param 1 travels. It has to follow the law or it stops being the
+#: smallest move, and the no-limit-cycle argument above goes with it: the loop
+#: would start commanding moves it cannot deliver and chatter either side of
+#: the target, which is the one failure this number exists to prevent.
+HOLD_TOLERANCE_MM = 0.3002
 
 #: Moves per frame. Four prescans is already 70 s added to a frame.
 MAX_HOLD_MOVES = 3

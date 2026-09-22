@@ -964,8 +964,8 @@ def test_a_dry_run_says_walked_not_scanned(window):
 
 
 def test_an_offset_snaps_to_something_the_transport_can_reach():
-    assert gui.snap_offset(0.48) == pytest.approx(0.4833, abs=1e-4)
-    assert gui.snap_offset(-0.48) == pytest.approx(-0.4833, abs=1e-4)
+    assert gui.snap_offset(0.48) == pytest.approx(0.5116, abs=1e-4)
+    assert gui.snap_offset(-0.48) == pytest.approx(-0.5116, abs=1e-4)
 
 
 def test_an_offset_inside_the_unreachable_hole_becomes_zero():
@@ -1001,7 +1001,7 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
     out = gui.approved_from_sheet(frames, (1, 3), {1: 0.48})
 
     assert [a.number for a in out] == [1, 3]
-    assert out[0].offset_mm == pytest.approx(0.4833, abs=1e-4)
+    assert out[0].offset_mm == pytest.approx(0.5116, abs=1e-4)
     assert out[1].offset_mm == 0.0, "an untouched frame is still an approval"
     assert out[0].reference is frames[0].image, "carries the pixels he saw"
     assert out[0].reference_entry == "library/a"
@@ -1947,15 +1947,15 @@ def test_the_sheet_offers_the_same_turns_the_window_does():
 
 
 def test_the_finest_step_lands_on_every_place_the_film_can_go():
-    """0.27 mm is not the lattice's spacing -- it is what a single command
+    """0.30 mm is not the lattice's spacing -- it is what a single command
     delivers off zero. Above that the positions are 0.11 mm apart, because a
-    command's distance grows by STEP_MM per param. Adding a flat 0.27 and
+    command's distance grows by STEP_MM per param. Adding a flat first step and
     snapping stepped over two out of every three of them."""
     reached, offset = [], 0.0
     for _ in range(8):
         offset = gui.step_offset(offset, 1)
         reached.append(round(offset, 3))
-    assert reached == [0.272, 0.378, 0.483, 0.589, 0.695, 0.800, 0.906, 1.012]
+    assert reached == [0.300, 0.406, 0.512, 0.617, 0.723, 0.829, 0.934, 1.040]
 
 
 def test_the_old_step_skipped_most_of_them():
@@ -1994,8 +1994,8 @@ def test_stepping_back_walks_the_same_places_and_crosses_zero():
 
 
 @pytest.mark.parametrize("choice, first", [
-    ("finest", 0.272), ("small (4.6 units)", 0.483),
-    ("medium (9.6 units)", 1.012), ("large (21.6 units)", 2.280),
+    ("finest", 0.300), ("small (4.8 units)", 0.512),
+    ("medium (9.8 units)", 1.040), ("large (21.8 units)", 2.308),
 ])
 def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
     """Whatever is asked for, what comes back is somewhere the film can go --
@@ -2025,7 +2025,7 @@ def test_the_step_labels_name_a_param_and_are_not_parsed_as_numbers():
     every rung -- and 0.0 means "finest", so every step would quietly have
     become the smallest one, with nothing to see in the window.
     """
-    assert gui.step_millimetres("small (4.6 units)") > 0
+    assert gui.step_millimetres("small (4.8 units)") > 0
     assert gui.step_millimetres("nonsense") == 0.0
     assert gui.step_millimetres("") == 0.0
     for name, param in gui.ADJUST_PARAMS.items():
@@ -2034,7 +2034,7 @@ def test_the_step_labels_name_a_param_and_are_not_parsed_as_numbers():
 
 
 @pytest.mark.parametrize("typed, wanted", [
-    ("2.6", "param 1"),
+    ("2.8", "param 1"),
     ("8", "param 6"),
     ("1.0", "would not move"),
     ("200", "slide buttons"),
@@ -2055,7 +2055,7 @@ def test_the_typed_field_reports_the_shortfall_it_cannot_close():
     """param is an integer, so most asked-for distances are not reachable."""
     said = gui.fine_preview("8")
     assert "off" in said
-    assert gui.fine_preview("2.6").endswith("+2.6 units")   # exactly param 1
+    assert gui.fine_preview("2.8").endswith("+2.8 units")   # exactly param 1
 
 
 def test_the_offered_steps_read_as_distances_except_the_finest():

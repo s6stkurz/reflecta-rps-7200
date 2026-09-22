@@ -791,7 +791,7 @@ def test_a_nudge_says_the_frame_counter_cannot_confirm_it(tmp_path):
     # SLIDE command either way -- param_for_mm snaps both to param 1, and the
     # snap is idempotent -- but the number that changes hands is now the one
     # that is true.
-    assert scanner.moves == [("nudge", pytest.approx(0.2719, abs=1e-4))]
+    assert scanner.moves == [("nudge", pytest.approx(0.3002, abs=1e-4))]
     assert any("prescan to check it landed" in e.text
                for e in kinds(events, "finished"))
     # Position is still whatever it was; nothing pretends otherwise.
@@ -1046,10 +1046,10 @@ def test_a_plan_says_what_the_hardware_will_actually_travel():
     from rps7200.session import deliverable_mm, plan_nudges
 
     plan = plan_nudges(1.5)
-    assert plan == [pytest.approx(1.5403, abs=1e-4)]
-    # 0.04 mm past the 1.5 asked for, because param is an integer and 13 is
-    # the nearest. The honest answer, rather than a rounded promise.
-    assert deliverable_mm(1.5) == pytest.approx(1.5403, abs=1e-4)
+    assert plan == [pytest.approx(1.4629, abs=1e-4)]
+    # 0.04 mm short of the 1.5 asked for, because param is an integer and 12
+    # is the nearest. The honest answer, rather than a rounded promise.
+    assert deliverable_mm(1.5) == pytest.approx(1.4629, abs=1e-4)
 
 
 def test_nothing_exists_between_zero_and_the_smallest_move():

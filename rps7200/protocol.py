@@ -242,11 +242,24 @@ MM_PER_INCH = 25.4
 #: One increment of the SLIDE param, in millimetres.
 MM_PER_UNIT = 0.1057
 
-#: What issuing a command costs before any param applies -- the ramp.
-MM_PER_COMMAND = 0.1662
+#: What issuing a command costs before any param applies -- the ramp, in param
+#: units, which is the form it was measured in and the form a log reads.
+#:
+#: 1.84 and not the 1.572 this driver carried until 2026-09-22. That older
+#: number came from a fit over params 3-12 in one session; 1.84 came from three
+#: legs of equal param total over ten, five and one commands, where ten small
+#: commands travelled 2.40x as far as one large one -- a composition, which
+#: cannot be a fitting artefact the way an intercept can.
+#:
+#: Stage 15 measured it again the same day with one estimator and repeats per
+#: rung and got 1.948 over twelve confident steps, which corroborates 1.84 and
+#: rules out 1.572 outright. 1.84 is kept because it is the value `framing`
+#: already carried, so the two modules now describe one command with one
+#: number instead of two.
+COMMAND_UNITS = 1.84
 
-#: The same ramp expressed in param units, which is how it reads in a log.
-COMMAND_UNITS = MM_PER_COMMAND / MM_PER_UNIT
+#: The ramp in millimetres, for the mover, which works in them.
+MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
 
 
 def units(millimetres: float) -> float:

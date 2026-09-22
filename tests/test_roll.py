@@ -1015,10 +1015,10 @@ def test_the_four_step_rungs_are_what_the_menu_claims():
     2026-09-22, so `param 1` is the finest move there is, and the ramp a
     command pays first is why it travels 2.57 rather than 1.
     """
-    assert protocol.units_for_param(1) == pytest.approx(2.57, abs=0.01)
-    assert protocol.units_for_param(3) == pytest.approx(4.57, abs=0.01)
-    assert protocol.units_for_param(8) == pytest.approx(9.57, abs=0.01)
-    assert protocol.units_for_param(20) == pytest.approx(21.57, abs=0.01)
+    assert protocol.units_for_param(1) == pytest.approx(2.84, abs=0.01)
+    assert protocol.units_for_param(3) == pytest.approx(4.84, abs=0.01)
+    assert protocol.units_for_param(8) == pytest.approx(9.84, abs=0.01)
+    assert protocol.units_for_param(20) == pytest.approx(21.84, abs=0.01)
 
 
 def test_the_aperture_is_the_published_number_of_units():
@@ -1058,8 +1058,8 @@ def test_a_command_names_the_param_that_goes_on_the_wire():
     """A log line has to say what was sent, not only how far it went."""
     assert protocol.say_command(
         DirectScanner.STEP_MM * 8 + DirectScanner.OVERHEAD_MM) == (
-        "param 8, +9.6 units")
-    assert protocol.say_command(0.5, param=3) == "param 3, +4.6 units"
+        "param 8, +9.8 units")
+    assert protocol.say_command(0.5, param=3) == "param 3, +4.8 units"
 
 
 # -- metering looks inside the film ----------------------------------------
