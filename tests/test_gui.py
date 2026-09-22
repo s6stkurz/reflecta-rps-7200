@@ -1994,7 +1994,8 @@ def test_stepping_back_walks_the_same_places_and_crosses_zero():
 
 
 @pytest.mark.parametrize("choice, first", [
-    ("finest", 0.272), ("0.27 mm", 0.272), ("0.50 mm", 0.483), ("1.00 mm", 1.012),
+    ("finest", 0.272), ("small (4.6 units)", 0.483),
+    ("medium (9.6 units)", 1.012), ("large (21.6 units)", 2.280),
 ])
 def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
     """Whatever is asked for, what comes back is somewhere the film can go --
@@ -2002,6 +2003,59 @@ def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
     landed = gui.step_offset(0.0, 1, gui.step_millimetres(choice))
     assert round(landed, 3) == first
     assert landed == gui.snap_offset(landed)
+
+
+@pytest.mark.parametrize("choice", gui.ADJUST_STEPS[1:])
+def test_every_offered_step_is_exactly_one_command(choice):
+    """The labels promise a param, so each has to be a single command.
+
+    Before the cap went to 87 the largest rung would have been three of them,
+    and each command pays the ramp again and scatters again -- so a rung that
+    chains is a rung whose label is not the whole story.
+    """
+    from rps7200.session import plan_nudges
+
+    assert len(plan_nudges(gui.step_millimetres(choice))) == 1
+
+
+def test_the_step_labels_name_a_param_and_are_not_parsed_as_numbers():
+    """The old parser read the first token of the label as a distance.
+
+    These labels lead with a word, so that parser would have returned 0.0 for
+    every rung -- and 0.0 means "finest", so every step would quietly have
+    become the smallest one, with nothing to see in the window.
+    """
+    assert gui.step_millimetres("small (4.6 units)") > 0
+    assert gui.step_millimetres("nonsense") == 0.0
+    assert gui.step_millimetres("") == 0.0
+    for name, param in gui.ADJUST_PARAMS.items():
+        expected = gui.MM_PER_UNIT * param + gui.MM_PER_COMMAND
+        assert gui.step_millimetres(f"{name} (whatever)") == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("typed, wanted", [
+    ("2.6", "param 1"),
+    ("8", "param 6"),
+    ("1.0", "would not move"),
+    ("200", "slide buttons"),
+])
+def test_the_typed_field_says_what_it_will_actually_send(typed, wanted):
+    """He types a distance; the transport delivers the nearest command to it.
+
+    The gap between those two is exactly what the window never showed him, and
+    it is why a frame could be set to a position that was quietly delivered as
+    no move at all.
+    """
+    said = gui.fine_preview(typed)
+    assert wanted in said
+    assert "mm" not in said
+
+
+def test_the_typed_field_reports_the_shortfall_it_cannot_close():
+    """param is an integer, so most asked-for distances are not reachable."""
+    said = gui.fine_preview("8")
+    assert "off" in said
+    assert gui.fine_preview("2.6").endswith("+2.6 units")   # exactly param 1
 
 
 def test_the_offered_steps_read_as_distances_except_the_finest():

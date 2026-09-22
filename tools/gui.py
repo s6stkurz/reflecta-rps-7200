@@ -57,21 +57,31 @@ from rps7200.mono import (                                 # noqa: E402
     MONO_CHOICES,
     to_monochrome,
 )
-from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
-from rps7200.session import (
+from rps7200.protocol import (                             # noqa: E402
+    COORD_PER_INCH,
+    MM_PER_INCH,
+    MM_PER_COMMAND,
+    MM_PER_UNIT,
+    say_command,
+    say_units,
+    units,
+    units_for_param,
+)
+from rps7200.session import (                              # noqa: E402
     FINE_MAX_MM,
-    FINE_MIN_MM,                             # noqa: E402
+    FINE_MIN_MM,
+    INFRARED_TIE_CROSSOVER_DPI,
     Approved,
-    Result,
-    _safe,
-    _unclaimed,
     Calibrate,
     Move,
     Prescan,
+    Result,
     Roll,
     Scan,
     ScanSession,
-    INFRARED_TIE_CROSSOVER_DPI,
+    _safe,
+    _unclaimed,
+    deliverable_mm,
     estimate_seconds,
     plan_nudges,
 )
@@ -1361,11 +1371,17 @@ class ScannerGui:
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
-        ttk.Label(row, text="mm", width=4).pack(side="left")
-        self.v_fine = tk.StringVar(value=f"{FINE_STEP_MM:.2f}")
+        ttk.Label(row, text="units", width=5).pack(side="left")
+        self.v_fine = tk.StringVar(value=f"{units(FINE_STEP_MM):.1f}")
         ttk.Entry(row, textvariable=self.v_fine, width=7).pack(side="left")
-        ttk.Label(row, text=f"{FINE_STEP_MM:.2f}-{MAX_TRAVEL_MM:.0f}",
+        # A live preview rather than a static range. What he types and what the
+        # transport can deliver are not the same number, and the gap between
+        # them is the thing this window never told him.
+        self.v_fine_note = tk.StringVar(value=fine_preview(self.v_fine.get()))
+        ttk.Label(row, textvariable=self.v_fine_note,
                   foreground="#777").pack(side="left", padx=4)
+        self.v_fine.trace_add("write", lambda *_: self.v_fine_note.set(
+            fine_preview(self.v_fine.get())))
 
         self.v_aim = tk.BooleanVar(value=False)
         ttk.Checkbutton(box, variable=self.v_aim, command=self._schedule_redraw,
@@ -2725,20 +2741,38 @@ class ScannerGui:
             if not values:
                 messagebox.showerror("Fine adjustment", "That has to be a number.")
                 return
-            millimetres = abs(values[0])
-        if millimetres < FINE_STEP_MM:
+            # The field is in the transport's own unit. Everything below this
+            # line, and the whole session interface, stays in millimetres.
+            millimetres = abs(values[0]) * MM_PER_UNIT
+        # Asked of the planner rather than of a rounded copy of its thresholds.
+        # Two hand-maintained numbers used to decide here what the mover would
+        # accept, and a window that refuses what the transport would happily do
+        # reads to the operator as a broken button.
+        if deliverable_mm(millimetres) == 0:
             messagebox.showerror(
                 "Fine adjustment",
                 f"The smallest move the transport can make is "
-                f"{FINE_STEP_MM:.2f} mm.\n\n{millimetres:.2f} mm is less than "
-                "that, so it would not move the film at all.")
+                f"{say_units(FINE_STEP_MM, signed=False)}.\n\n"
+                f"{say_units(millimetres, signed=False)} is less than that, so "
+                f"it would not move the film at all.\n\nparam 0 was sent to "
+                "the scanner and measured: it is accepted and does nothing.")
+            return
+        try:
+            plan_nudges(millimetres)
+        except ValueError as exc:
+            messagebox.showerror(
+                "Fine adjustment",
+                f"{say_units(millimetres, signed=False)} is further than a fine "
+                f"adjustment goes.\n\n{exc}\n\n"
+                "Use the slide buttons for anything this far.")
             return
         if millimetres > MAX_TRAVEL_MM:
             messagebox.showerror(
                 "Fine adjustment",
-                f"{millimetres:.2f} mm would take more than {MAX_FINE_STEPS} "
-                "sub-frame moves, and past that the calibration goes sub-linear "
-                "-- the film would not travel what was asked for.\n\n"
+                f"{say_units(millimetres, signed=False)} is past what one "
+                f"command delivers "
+                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and chaining "
+                "them pays the ramp and the scatter again for each.\n\n"
                 "Use the slide buttons for anything this far.")
             return
         if self.v_reverse.get():
@@ -4884,20 +4918,69 @@ def snap_offset(millimetres: float) -> float:
     return 0.0
 
 
-#: What one press of an arrow in the frame position window moves, as the
-#: operator may choose. "finest" is not a distance: it walks to the next
-#: position the transport can actually reach, which is the smallest move there
-#: is and is not a constant -- the gap is 0.27 mm off zero and 0.11 mm
-#: everywhere above that.
-ADJUST_STEPS = ("finest", "0.27 mm", "0.50 mm", "1.00 mm")
+#: What one press of an arrow moves, as the operator may choose. Each rung is
+#: one integer `param`, so each is exactly one command -- no rung can surprise
+#: him with a chain, and the label is what that command travels.
+#:
+#: param 1 is the finest move that exists: `param 0` was sent on 2026-09-22,
+#: five times, and is accepted and does nothing, so there is no rung beneath
+#: this one. param 20 is where `docs/protocol.md` section 5 says the law begins
+#: to bend, and it became a single command when the cap went to 87.
+#:
+#: "finest" is not a distance at all: it walks to the next position the
+#: transport can reach, which is not a constant -- the lattice is 2.57 units
+#: off zero and 1.0 everywhere above it.
+ADJUST_PARAMS = {"small": 3, "medium": 8, "large": 20}
+ADJUST_STEPS = ("finest",) + tuple(
+    f"{name} ({units_for_param(param):.1f} units)"
+    for name, param in ADJUST_PARAMS.items())
 
 
 def step_millimetres(choice: str) -> float:
-    """The chosen step as a distance, or 0.0 meaning "the next one along"."""
-    try:
-        return float(str(choice).split()[0])
-    except (ValueError, IndexError):
+    """The chosen step as a distance, or 0.0 meaning "the next one along".
+
+    Looked up by name rather than parsed out of the label. The label now leads
+    with a word, and the parser this replaces read the first token as a number
+    -- which would have returned 0.0 for every rung, and 0.0 is "finest", so
+    every step would have quietly become the smallest one.
+    """
+    name = str(choice).split()[0] if str(choice).strip() else ""
+    param = ADJUST_PARAMS.get(name)
+    if param is None:
         return 0.0
+    return MM_PER_UNIT * param + MM_PER_COMMAND
+
+
+def fine_preview(text: str) -> str:
+    """What the typed fine adjustment would actually send, in words.
+
+    The operator types a distance and the transport delivers the nearest
+    command to it; the difference between those two is exactly what the window
+    never showed him. Built on the planner rather than on a copy of its
+    arithmetic, so the preview and the move cannot disagree.
+
+    Module level and free of Tk on purpose: it is the part that has to be
+    right, and that is where this file keeps such things.
+    """
+    values = _numbers(text)
+    if not values:
+        return (f"{units(FINE_STEP_MM):.1f}-{units(MAX_TRAVEL_MM):.0f}"
+                if str(text).strip() else "")
+    millimetres = abs(values[0]) * MM_PER_UNIT
+    if deliverable_mm(millimetres) == 0:
+        return f"under {units(FINE_STEP_MM):.1f} -- the film would not move"
+    try:
+        plan = plan_nudges(millimetres)
+    except ValueError:
+        return f"past {units(MAX_TRAVEL_MM):.0f} -- use the slide buttons"
+    if millimetres > MAX_TRAVEL_MM:
+        return f"past {units(MAX_TRAVEL_MM):.0f} -- use the slide buttons"
+    sent = sum(plan)
+    said = say_command(sent)
+    short = units(sent - millimetres)
+    if abs(short) >= 0.05:
+        said += f", {short:+.1f} off"
+    return said
 
 
 def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
