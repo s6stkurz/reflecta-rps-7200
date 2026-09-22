@@ -347,11 +347,13 @@ class ScannerGui:
         self.root = root
         self.session = session
         self.demo = demo
-        #: There is no film in the transport, so nothing here may commission a
-        #: scan. Separate from `demo`: a demo *does* scan, against stored
-        #: pixels, and that is how the hold loop gets exercised without a
-        #: device. This says the opposite -- look and decide, but the film is
-        #: not there to move.
+        #: There is no film in the transport. **Wording only.** The refusal
+        #: belongs to the backend -- `DemoScanner(no_film=True)` raises, the
+        #: session reports a failed job, and the window says so through the
+        #: path it already has. Gating the controls here instead meant the
+        #: sheet-to-roll spine never ran: `on_scan_chosen` writes
+        #: `approved.json` and submits the `Roll`, and a demo that cannot
+        #: reach them is not demonstrating them.
         self.look_only = look_only
         # First, because the controls and the presets below start from it.
         self._settings_path = settings_path
@@ -2600,9 +2602,11 @@ class ScannerGui:
                        options=None) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
 
-        Refuses outright in a look-only window. This is the sole writer of
+        Runs even where there is no film. This is the sole writer of
         `approved.json` and the sole submitter of a `Roll` from the sheet, so
-        it is the last place worth stopping.
+        stopping it here is stopping everything the sheet exists to reach --
+        the backend refuses instead, and the refusal arrives as a failed job
+        the way a real transport fault would.
 
         `approved` carries a position for every ticked frame -- his where he
         set one, the ensemble's where he did not, each saying which it is. They
@@ -2619,8 +2623,6 @@ class ScannerGui:
         the next single scan. Absent -- a caller that has no sheet -- every
         value falls back to the window, which is what used to happen always.
         """
-        if self.look_only:
-            return
         if not numbers:
             return
         if self.busy:
@@ -3015,10 +3017,7 @@ class ScannerGui:
             self._say(event.text)
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
-            # Not in a look-only window: "calibrate before scanning" is a
-            # lie when nothing can be scanned.
-            if (self.session.inquiry_text and not self._asked_to_calibrate
-                    and not self.look_only):
+            if self.session.inquiry_text and not self._asked_to_calibrate:
                 self._asked_to_calibrate = True
                 self._later(50, self.ask_to_calibrate)
             if event.busy:
@@ -6693,7 +6692,9 @@ class _ContactSheet:
             said = ("There is no film in the transport: this is a walk that "
                     "was stored earlier, and the positions under the frames "
                     "were measured from those pictures when this window "
-                    "opened. " + said + " Nothing here will be scanned.")
+                    "opened. " + said + " Scanning is offered as it always "
+                    "is, and will say there is no film when it reaches for "
+                    "it.")
         else:
             said = ("Tick what is worth scanning. " + said + " A frame is "
                     "scanned the way you leave it here. Positions you set are "
@@ -6746,13 +6747,6 @@ class _ContactSheet:
         self.b_scan = ttk.Button(foot, text="Scan chosen frames",
                                  command=self._scan)
         self.b_scan.pack(side="right", padx=6)
-        if gui.look_only:
-            # A greyed control with nothing beside it reads as broken. Say why
-            # it is off, next to it, where the eye already is.
-            # Short: it shares the foot with the count, the estimate and two
-            # buttons, and the first wording ran off the end of the window.
-            ttk.Label(foot, foreground="#777",
-                      text="stored walk -- nothing to scan").pack(side="right")
 
         # Bound after the cells exist: `_scrolls` walks the children it finds.
         gui._scrolls(self.canvas,
@@ -7368,10 +7362,7 @@ class _ContactSheet:
         self.v_count.set(
             f"{len(picked)} of {len(self.frames)} chosen"
             + (f"   ·   about {_duration(per * len(picked))}" if picked else ""))
-        # Gated here and not only where the button is built, because this
-        # runs on every tick and would otherwise switch it back on.
-        self.b_scan.configure(
-            state="normal" if picked and not self.gui.look_only else "disabled")
+        self.b_scan.configure(state="normal" if picked else "disabled")
         if self.v_options:
             differ = self._options_differ()
             self.l_options.configure(
@@ -7379,16 +7370,6 @@ class _ContactSheet:
                       + ", ".join(differ)) if differ else "")
 
     def _scan(self) -> None:
-        if self.gui.look_only:
-            # Belt and braces: the button is its only caller today, and this
-            # is what keeps that from being load-bearing.
-            messagebox.showinfo(
-                "Nothing to scan",
-                "There is no film in the transport -- this window is showing "
-                "a walk that was stored earlier.\n\nThe positions and the "
-                "ticks are real and yours to change; only the scanning is "
-                "off.")
-            return
         picked = self.chosen()
         approved = approved_from_sheet(self.frames, picked, self.offsets,
                                        self.proposals)
@@ -7527,8 +7508,8 @@ def main() -> int:
                          "directory. Its positions are proposed afresh from "
                          "the prescans, every launch.")
     ap.add_argument("--look-only", action="store_true",
-                    help="there is no film in the transport: the sheet can be "
-                         "read and adjusted but nothing can be scanned")
+                    help="there is no film in the transport. Every control "
+                         "still works; anything that reaches for film says so")
     args = ap.parse_args()
 
     home = DEMO_ROOT if args.demo else Path(".")
@@ -7561,7 +7542,11 @@ def main() -> int:
     if args.demo:
         from rps7200.demo import DemoScanner
         source, entry = args.demo_source, args.demo_entry
-        session._open_scanner = lambda: DemoScanner(source, entry=entry)
+        # `--look-only` is a fact about the film, so it goes to the thing that
+    # would know. The backend refuses and the window reports it the way it
+    # reports any other transport fault.
+    session._open_scanner = lambda: DemoScanner(
+        source, entry=entry, no_film=args.look_only)
 
     root = tk.Tk()
     ScannerGui(root, session, demo=args.demo, settings_path=settings_path,

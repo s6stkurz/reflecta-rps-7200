@@ -3164,30 +3164,49 @@ def test_the_launch_path_does_not_consult_the_sheet_cache():
     assert "_recall_sheet_state" not in body
 
 
-def test_nothing_in_a_look_only_window_can_commission_a_scan():
-    """Three gates, because the first two are not enough on their own.
+def test_no_film_does_not_become_a_branch_in_the_window():
+    """The demo is the real software with different inputs.
 
-    `_changed` runs on every tick and would switch the button back on;
-    `on_scan_chosen` is the sole writer of `approved.json` and the sole
-    submitter of a `Roll`, so it is the last place worth stopping.
+    An empty transport is a fact about the film, so the backend refuses and
+    the window reports it through the path it already has for a transport
+    fault. Gating the controls instead was the first attempt and it skipped
+    the work: `on_scan_chosen` is the sole writer of `approved.json` and the
+    sole submitter of a `Roll`, so nothing between the sheet and the hold loop
+    ran at all -- in the demo built to show exactly that.
     """
     import inspect
 
-    assert "look_only" in inspect.getsource(gui._ContactSheet._changed)
-    assert "look_only" in inspect.getsource(gui._ContactSheet._scan)
-    assert "look_only" in inspect.getsource(gui.ScannerGui.on_scan_chosen)
+    for where in (gui._ContactSheet._changed, gui._ContactSheet._scan,
+                  gui.ScannerGui.on_scan_chosen):
+        assert "look_only" not in inspect.getsource(where), where.__name__
 
 
-def test_the_lock_is_not_the_demo_flag():
-    """`make run-demo` must keep its scan button: `DemoScanner` binds the real
-    hold and aiming loops, so a demo scan is the only coverage those get
-    without a device. A look-only window is a different statement -- there is
-    no film -- and gating on `demo` would delete that coverage."""
+def test_no_film_is_told_to_the_backend():
+    """Which is the only place that could honestly know it."""
     import inspect
 
-    changed = inspect.getsource(gui._ContactSheet._changed)
-    assert "self.gui.look_only" in changed
-    assert "self.gui.demo" not in changed
+    main = inspect.getsource(gui.main)
+    assert "no_film=args.look_only" in main
+
+
+def test_an_empty_transport_refuses_where_the_transport_would():
+    """Not a disabled button: a raised error, from the thing that would raise
+    it, carrying a sentence a person can act on."""
+    from rps7200.demo import DemoScanner
+    from rps7200.usb_transport import UsbError
+
+    empty = DemoScanner("library", no_film=True)
+    for call in (lambda: empty.scan(resolution=300, infrared=False),
+                 lambda: list(empty.scan_roll(frames=1, dry_run=True)),
+                 empty.advance, empty.retreat, lambda: empty.nudge(0.5)):
+        with pytest.raises(UsbError, match="no film in the transport"):
+            call()
+
+    # and with film the same methods work, or the demo would refuse its own
+    # reason for existing
+    loaded = DemoScanner("library")
+    assert loaded.advance() is not None
+    assert loaded.nudge(0.5)["param"] > 0
 
 
 def test_every_proposal_is_somewhere_the_film_can_actually_go():

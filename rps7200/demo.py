@@ -80,10 +80,15 @@ class DemoScanner:
     """Serves stored library entries as though they had just been scanned."""
 
     def __init__(self, root: str | Path = "library", speed: float = SPEED,
-                 entry: str | Path | None = None):
+                 entry: str | Path | None = None, no_film: bool = False):
         self.root = Path(root)
         #: The entry chosen for each film, so a prescan and the scan after it
         #: show one picture rather than two.
+        #: An empty transport. The film is what a demo cannot have when it
+        #: is showing a walk from disk, and saying so here rather than in
+        #: the window keeps the whole path between the sheet and the hold
+        #: loop running.
+        self._no_film = bool(no_film)
         self._by_film: dict[str, Path | None] = {}
         #: While a roll is on this frame, the entry it shows -- overriding the
         #: per-film choice above. A roll is the one place showing a single
@@ -179,6 +184,7 @@ class DemoScanner:
         return self._position
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
+        self._need_film("advance")
         self._work(7.0)
         if self._position >= 16:                         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -188,6 +194,7 @@ class DemoScanner:
         return self._position
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
+        self._need_film("wind back")
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -211,6 +218,7 @@ class DemoScanner:
         `not_converged` in the demo -- which reads as a weak hold loop and was
         a stale copy.
         """
+        self._need_film("move")
         param = self.param_for_mm(millimetres)
         asked = self.STEP_MM * param + self.OVERHEAD_MM
         short = abs(millimetres) - asked
@@ -318,6 +326,7 @@ class DemoScanner:
         keep_raw: bool = False,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        self._need_film("scan")
         if infrared and not supports_infrared(film):
             # The demo refuses exactly what the device refuses. A stand-in that
             # accepts a combination the hardware will not is worse than no
@@ -382,6 +391,7 @@ class DemoScanner:
         correct_dry_run: bool = False,
         **kw: Any,
     ):
+        self._need_film("roll")
         # Up front, as the real one does: a roll spends minutes calibrating
         # before the first frame, so this cannot wait until one is taken.
         if infrared and not supports_infrared(film):
@@ -510,6 +520,26 @@ class DemoScanner:
     HOLD_SETTLE_S = 0.0
 
     # -- internals ---------------------------------------------------------
+
+    def _need_film(self, doing: str) -> None:
+        """Refuse what an empty transport would refuse, where it would.
+
+        A window showing a walk that was stored earlier has no film behind it,
+        and the honest place to say so is here -- the same place a real
+        transport fault is raised. `ScanSession` turns it into a `failed`
+        event and the window reports it through the path it already has.
+
+        Greying the button instead was the first attempt, and it skipped the
+        work: `on_scan_chosen` is the sole writer of `approved.json` and the
+        sole submitter of a `Roll`, so nothing between the sheet and the hold
+        loop ran at all. A demo that cannot reach the code it is demonstrating
+        is not demonstrating it.
+        """
+        if self._no_film:
+            raise UsbError(
+                f"there is no film in the transport, so there is nothing to "
+                f"{doing}. This window is showing a walk that was stored "
+                "earlier; the positions and the ticks are real.")
 
     def _log(self, message: str) -> None:
         if self.log_hook is not None:
