@@ -2505,12 +2505,12 @@ def test_approvals_are_read_without_loading_a_survey(tmp_path):
     rebuild, so Delete has to be able to ask about it without reading pixels."""
     folder = _shelf(tmp_path, approved=[
         {"number": 1, "offset_mm": 0.3, "rotation": 90, "flipped": True}])
-    offsets, rotations, flips, _ = gui.read_approved(folder)
+    offsets, rotations, flips, _, _ = gui.read_approved(folder)
     assert offsets == {1: 0.3} and rotations == {1: 90} and flips == {1: True}
     # A folder without one, and a corrupt one, both answer empty.
-    assert gui.read_approved(tmp_path) == ({}, {}, {}, {})
+    assert gui.read_approved(tmp_path) == ({}, {}, {}, {}, {})
     (folder / "approved.json").write_text("{nope", encoding="utf-8")
-    assert gui.read_approved(folder) == ({}, {}, {}, {})
+    assert gui.read_approved(folder) == ({}, {}, {}, {}, {})
 
 
 # --- defaults you can get back to ------------------------------------------
@@ -2629,6 +2629,49 @@ def test_each_kind_keeps_its_own_type():
     assert isinstance(out["offsets"][1], float) and out["offsets"][1] == 2.0
     assert out["rotations"][1] == 180 and isinstance(out["rotations"][1], int)
     assert out["ticks"][1] is True
+
+
+def test_a_walked_roll_reopened_comes_back_with_its_positions():
+    """Closing the window must not throw the walk's proposals away.
+
+    `open_roll` restored `approved.json` -- positions already *committed* --
+    and never re-proposed. A roll walked and then closed without commissioning
+    has no `approved.json`, so it reopened with nothing at all: every proposal
+    died with the window, and the roll then scanned uncorrected with no sign
+    anything was missing. That cost a real 23-minute roll on 2026-09-22.
+    """
+    walked = _strip()
+    proposed, _notes = gui._propose_positions(walked, {})
+    assert proposed, "the fixture has to propose something for this to mean anything"
+
+    # what open_roll does now: stored positions in as `kept`, re-proposed round
+    reopened, notes = gui._propose_positions(walked, {}, {})
+    assert reopened == proposed
+    assert all((notes[n] or {}).get("source") for n in reopened)
+
+
+def test_a_committed_position_still_wins_on_reopen():
+    """His number is the authority and re-proposing must not overwrite it."""
+    walked = _strip()
+    kept = {2: 0.5116}
+    reopened, notes = gui._propose_positions(walked, kept, {2: "operator"})
+    assert reopened[2] == 0.5116
+    assert notes[2]["source"] == "operator"
+
+
+def test_approved_json_carries_who_decided_each_position(tmp_path):
+    """Written since the sheet began proposing them; it has to read back too,
+    or a reopened roll relabels the ensemble's numbers as his."""
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text(json.dumps({
+        "roll": "r",
+        "frames": [{"number": 1, "offset_mm": 0.5116, "source": "measured"},
+                   {"number": 2, "offset_mm": 0.3002}],
+    }), encoding="utf-8")
+    offsets, _rot, _flip, _entries, sources = gui.read_approved(folder)
+    assert offsets[1] == pytest.approx(0.5116)
+    assert sources == {1: "measured"}       # absent means his, as it always did
 
 
 # -- reading a walk the command line wrote ---------------------------------

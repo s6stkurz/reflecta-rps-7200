@@ -2352,7 +2352,7 @@ class ScannerGui:
         names = ", ".join(s["roll"] for s in summaries)
         size = human_size(sum(s["size"] for s in summaries))
         decided = sum(1 for s in summaries
-                      if any(read_approved(s["folder"])[1:3]))
+                      if any(read_approved(s["folder"])[1:3]))  # turns/flips
         if not messagebox.askokcancel(
             "Delete",
             f"Delete {len(summaries)} roll folder"
@@ -2492,7 +2492,19 @@ class ScannerGui:
             # options across would override the ones just restored.
             "options": {},
         }
-        self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"],
+        # Re-proposed, not merely restored. `approved.json` holds positions
+        # that were *committed*; a roll walked and then closed without
+        # commissioning has none, so this used to reopen with nothing at all --
+        # every proposal the walk made died with the window that made it, and
+        # the roll scanned uncorrected with no sign anything was missing.
+        #
+        # Stored positions still win: they go in as `kept`, which
+        # `_propose_positions` leaves alone, and their recorded source with
+        # them so a proposal is not relabelled as his on the way back.
+        proposed, notes = _propose_positions(
+            self.survey, out["offsets"], out.get("sources"))
+        self.sheet = _ContactSheet(self, self.survey, offsets=proposed,
+                                   proposals=notes,
                                    rotations=out["rotations"],
                                    flips=out["flips"], done=done)
         # The film is almost certainly not where the walk left it, and only
@@ -4453,7 +4465,7 @@ def read_survey(folder) -> dict:
     turn = int(manifest.get("rotation") or 0)
     mirrored = bool(manifest.get("flipped"))
 
-    offsets, rotations, flips, entries = read_approved(folder)
+    offsets, rotations, flips, entries, sources = read_approved(folder)
 
     results = []
     for record in manifest.get("frames", []):
@@ -4488,6 +4500,7 @@ def read_survey(folder) -> dict:
         "offsets": offsets,
         "rotations": rotations,
         "flips": flips,
+        "sources": sources,
         "roll": manifest.get("roll") or folder.name,
         "rotation": turn,
         "flipped": mirrored,
@@ -4610,7 +4623,7 @@ def roll_exports(summary: dict) -> list:
     from types import SimpleNamespace
 
     folder = summary["folder"]
-    _, rotations, flips, _ = read_approved(folder)
+    _, rotations, flips, _, _ = read_approved(folder)
     settings = summary.get("settings") or {}
     turn = int(settings.get("rotation") or 0)
     mirrored = bool(settings.get("flipped"))
@@ -4649,7 +4662,7 @@ def duplicate_name(folder) -> Path:
 
 
 def read_approved(folder):
-    """The operator's own per-frame decisions: `(offsets, rotations, flips, entries)`.
+    """A roll's stored decisions: `(offsets, rotations, flips, entries, sources)`.
 
     `approved.json` is the one thing in a roll folder that is **not** derivable
     from the library -- the frames and the prescans can be rebuilt, these
@@ -4661,13 +4674,17 @@ def read_approved(folder):
     rotations: dict[int, int] = {}
     flips: dict[int, bool] = {}
     entries: dict[int, str] = {}
+    # Who decided each position. Written since the sheet began proposing them,
+    # and read back so a reopened roll does not relabel the ensemble's numbers
+    # as his -- the same reason the sheet's own state carries them.
+    sources: dict[int, str] = {}
     approved_path = folder / "approved.json"
     if not approved_path.exists():
-        return offsets, rotations, flips, entries
+        return offsets, rotations, flips, entries, sources
     try:
         records = json.loads(approved_path.read_text(encoding="utf-8")).get("frames", [])
     except (OSError, ValueError):
-        return offsets, rotations, flips, entries
+        return offsets, rotations, flips, entries, sources
     for record in records:
         try:
             number = int(record["number"])
@@ -4684,7 +4701,9 @@ def read_approved(folder):
             flips[number] = bool(record["flipped"])
         if record.get("reference_entry"):
             entries[number] = record["reference_entry"]
-    return offsets, rotations, flips, entries
+        if record.get("source"):
+            sources[number] = str(record["source"])
+    return offsets, rotations, flips, entries, sources
 
 
 def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
