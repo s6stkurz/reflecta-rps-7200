@@ -80,7 +80,8 @@ def test_two_members_that_disagree_move_nothing():
     assert decision is None
     assert "none agree" in detail["reason"]
     # and it must say how far apart they were, not merely that they were
-    assert "1.81 mm apart" in detail["reason"]
+    assert "17.1 units apart" in detail["reason"]
+    assert "mm" not in detail["reason"]
 
 
 def test_an_agreeing_pair_is_never_averaged():

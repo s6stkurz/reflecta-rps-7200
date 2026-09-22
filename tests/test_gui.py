@@ -2852,7 +2852,7 @@ def test_the_caption_tells_a_corrected_frame_from_a_refused_one():
     for a frame it had checked and for one it could not see."""
     from tools.gui import _aim_note
 
-    assert "aimed -0.61 mm" in _aim_note(
+    assert "aimed -5.8 units" in _aim_note(
         {"correction": {"outcome": "held", "decision_mm": -0.61}})
     assert "in place" in _aim_note({"correction": {"outcome": "in_place"}})
     assert "would aim" in _aim_note(

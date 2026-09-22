@@ -1827,9 +1827,9 @@ class ScannerGui:
             "and READ_STATE confirms the move, so these are the reliable ones.\n\n"
             "Back / forward move a fraction of a frame. The frame counter does "
             "not see these at all, so only a prescan shows whether one landed. "
-            f"The smallest step the hardware can make is {FINE_STEP_MM:.2f} mm; "
-            f"one command delivers at most {MAX_FINE_MM:.2f} mm, and anything "
-            f"further is several of them, up to {MAX_TRAVEL_MM:.0f} mm before "
+            f"The smallest step the hardware can make is "
+            f"{say_units(FINE_STEP_MM, signed=False)}; one command delivers "
+            f"at most {say_units(MAX_FINE_MM, signed=False)}, and anything "
             "the calibration stops being trustworthy.\n\n"
             "Changing direction swallows two or three steps to backlash, so a "
             "small move that reverses may not move the film at all.\n\n"
@@ -2765,7 +2765,7 @@ class ScannerGui:
             # a button that did nothing at all.
             self._say(f"could not write approved.json ({exc}); scanning anyway")
             return
-        told = ", ".join(f"{a.number}:{a.offset_mm:+.2f}mm"
+        told = ", ".join(f"{a.number}:{say_units(a.offset_mm)}"
                          for a in approved if a.offset_mm) or "none moved"
         self._say(f"approved positions written to "
                   f"{folder / 'approved.json'} ({told})")
@@ -3078,7 +3078,8 @@ class ScannerGui:
             counted.add(number)
             why = said.get(held.get("outcome"), held.get("outcome", "?"))
             residual = held.get("residual_mm")
-            short = f" ({abs(residual):.2f} mm out)" if residual else ""
+            short = (f" ({say_units(residual, signed=False)} out)"
+                 if residual else "")
             missed.append(f"frame {number} {why}{short}")
         if not missed:
             return
@@ -3296,9 +3297,15 @@ class ScannerGui:
         # frame always carries an offset the arrangement note above was
         # discarded on every one of them -- which is exactly the note that
         # says a frame was filed sideways.
-        if marks.get("offset_mm") is not None:
-            extra += (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
-                      f"short by {marks.get('shortfall_mm', 0):.2f} mm")
+        # The offset that used to print here came from `framing.registration`,
+        # the whole-picture detector whose own docstring records it reading
+        # +-0.00 on every real prescan. It sat immediately beside the
+        # ensemble's number from `_aim_note` -- two contradictory figures on
+        # one line, with nothing saying they came from different detectors.
+        # `shortfall` is a different measurement and still means something.
+        if marks.get("shortfall_mm") is not None:
+            extra += (f"   ·   short by "
+                      f"{say_units(marks['shortfall_mm'], signed=False)}")
         extra += _aim_note(marks)
         shading = (result.meta or {}).get("shading")
         if shading and shading.get("clipped"):
@@ -4294,15 +4301,15 @@ class ScannerGui:
         if abs(want) < FINE_STEP_MM:
             messagebox.showinfo(
                 "Aim",
-                f"That point is {abs(want):.2f} mm from the {side} edge of the "
+                f"That point is {say_units(want, signed=False)} from the {side} edge of the "
                 f"aperture, and the smallest move the transport can make is "
-                f"{FINE_STEP_MM:.2f} mm.\n\nIt is already as close as the "
+                f"{say_units(FINE_STEP_MM, signed=False)}.\n\nIt is already as close as the "
                 "hardware can put it.", parent=self.root)
             return
         if abs(want) > MAX_TRAVEL_MM:
             messagebox.showinfo(
                 "Aim",
-                f"That point is {abs(want):.2f} mm from the {side} edge, which "
+                f"That point is {say_units(want, signed=False)} from the {side} edge, which "
                 f"would take more than {MAX_FINE_STEPS} sub-frame moves. Past "
                 "that the calibration goes sub-linear and the film would not "
                 "travel what was asked for.\n\nClick nearer the edge you want "
@@ -4314,7 +4321,8 @@ class ScannerGui:
             way = "back" if want > 0 else "forward"
         if not messagebox.askokcancel(
             "Aim",
-            f"Move the film {abs(want):.2f} mm {way}, so that point sits at the "
+            f"Move the film {say_units(want, signed=False)} {way} "
+            f"({say_command(want)}), so that point sits at the "
             f"{side} edge of the aperture?\n\n"
             f"{steps} sub-frame move{'s' if steps != 1 else ''}, about "
             f"{steps * 1.1:.0f} s.\n\nThe frame counter will not see this, so "
@@ -4929,7 +4937,7 @@ def snap_offset(millimetres: float) -> float:
 
     A number finer than the hardware is a lie. The reachable set starts at one
     SLIDE command and steps by param, so there is nothing at all between zero
-    and `FINE_STEP_MM` -- showing an operator "+0.14 mm" invites him to aim at
+    and `FINE_STEP_MM` -- showing an operator "+1.3 units" invites him to aim at
     a place that does not exist. Clamped to what eight commands can chain,
     which is `MAX_TRAVEL_MM`, so the planner is never asked for a distance it
     would refuse.
@@ -5188,11 +5196,11 @@ def _aim_note(marks: dict) -> str:
     outcome = fix.get("outcome")
     aimed = fix.get("decision_mm")
     if outcome == "held" and aimed is not None:
-        return f"   ·   aimed {aimed:+.2f} mm"
+        return f"   ·   aimed {say_units(aimed)}"
     if outcome == "in_place":
         return "   ·   in place"
     if outcome == "dry_run" and aimed is not None:
-        return f"   ·   would aim {aimed:+.2f} mm"
+        return f"   ·   would aim {say_units(aimed)}"
     if outcome in ("not_converged", "abandoned", "budget", "stopped"):
         return f"   ·   not aimed ({outcome.replace('_', ' ')})"
     reason = (fix.get("reason") or "").split(";")[0].split(" -- ")[0]
@@ -6105,7 +6113,7 @@ class _FrameAdjuster:
             self.v_read.set("as surveyed")
         else:
             self.v_read.set(
-                f"{self.offset:+.2f} mm   \u00b7   {moves} "
+                f"{say_units(self.offset)}   \u00b7   {moves} "
                 f"move{'s' if moves != 1 else ''}   \u00b7   "
                 f"about {seconds:.0f} s")
         self._draw()
@@ -6780,7 +6788,8 @@ class _ContactSheet:
             # frame this far out has picture outside the aperture, and no
             # amount of scanning it brings that back.
             ttk.Label(cell, foreground="#e0605a",
-                      text=f"drifted -- {short:.2f} mm outside").pack(anchor="w")
+                      text=f"drifted -- {say_units(short, signed=False)} "
+                           "outside").pack(anchor="w")
 
     def _render(self, result) -> tk.PhotoImage:
         """This frame's thumbnail, the way up it is currently turned.

@@ -85,6 +85,7 @@ from .protocol import (
     MM_PER_COMMAND,
     MM_PER_INCH,
     MM_PER_UNIT,
+    say_units,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
@@ -2831,8 +2832,9 @@ class DirectScanner:
                 if abs(went) > HOLD_TOLERANCE_MM and (went > 0) != (want > 0):
                     out["outcome"] = "wrong_way"
                     out["roll_abort"] = (
-                        f"frame {index}: asked for {want:+.2f} mm and the film "
-                        f"went {went:+.2f} mm. The direction is inverted, so "
+                        f"frame {index}: asked for {say_units(want)} and the "
+                        f"film went {say_units(went)}. The direction is "
+                        "inverted, so "
                         "every frame would be driven the wrong way -- holding "
                         "is off for the rest of this roll."
                     )
@@ -2864,8 +2866,8 @@ class DirectScanner:
         out["row_reversed"] = any(h.get("row_reversed")
                                   for h in out["history"])
         self._log(
-            f"frame {index}: {source} {target:+.3f} mm -> {out['outcome']}"
-            + (f", now {final:+.3f} mm after {out['moves']} move(s)"
+            f"frame {index}: {source} {say_units(target)} -> {out['outcome']}"
+            + (f", now {say_units(final)} after {out['moves']} move(s)"
                if final is not None else ", not verified")
         )
         return out
@@ -2909,15 +2911,18 @@ class DirectScanner:
             # Inside the smallest move the hardware can make, so there is
             # nothing to ask for. Not "close enough" -- unaskable.
             out["outcome"] = "in_place"
-            self._log(f"frame {index}: {decision:+.3f} mm by {agreed}, inside "
-                      f"the {HOLD_TOLERANCE_MM:.3f} mm the transport can move")
+            self._log(f"frame {index}: {say_units(decision)} by {agreed}, "
+                      f"inside the "
+                      f"{say_units(HOLD_TOLERANCE_MM, signed=False)} the "
+                      "transport can move")
             return out
 
         if not walk.affordable(decision):
             walk.record(index, None, 0.0)
             walk.stop(
-                f"frame {index} wants {decision:+.2f} mm on top of the "
-                f"{walk.travel_mm:.1f} mm this roll has already nudged")
+                f"frame {index} wants {say_units(decision)} on top of the "
+                f"{say_units(walk.travel_mm, signed=False)} this roll has "
+                "already nudged")
             out["outcome"] = "budget"
             out["reason"] = walk.off_reason
             self._log(f"frame {index}: {walk.off_reason}")
@@ -2933,12 +2938,12 @@ class DirectScanner:
             }
             out["outcome"] = "dry_run"
             self._log(
-                f"frame {index}: {decision:+.3f} mm by {agreed}; would send "
+                f"frame {index}: {say_units(decision)} by {agreed}; would send "
                 f"{out['would_send']['action']:#04x} {param:#04x} 00 04 "
-                f"({out['would_send']['asked_mm']:+.3f} mm) -- dry run")
+                f"({say_units(out['would_send']['asked_mm'])}) -- dry run")
             return out
 
-        self._log(f"frame {index}: {decision:+.3f} mm by {agreed} "
+        self._log(f"frame {index}: {say_units(decision)} by {agreed} "
                   f"(from {detail.get('chose', '?')})")
         fix = self._hold_to_approved(
             index, image, prescan_resolution,
@@ -2986,8 +2991,9 @@ class DirectScanner:
             if abs(reading.mm) > abs(target_mm) + MAX_CORRECTION_MM:
                 return False, (
                     f"frame {index}: after moving, the gap reads "
-                    f"{reading.mm:+.2f} mm -- further out than the "
-                    f"{target_mm:+.2f} mm this started from. The frame is not "
+                    f"{say_units(reading.mm)} -- further out than the "
+                    f"{say_units(target_mm)} this started from. The frame is "
+                    "not "
                     "where any of this predicted, so it is left alone")
             return True, ""
         return look
@@ -3058,10 +3064,12 @@ class DirectScanner:
         short = abs(millimetres) - asked
         clamped = short > 1e-9
         self._log(
-            f"nudge {'+' if forward else '-'}{asked:.3f} mm "
-            f"(param {param}) for a {millimetres:+.3f} mm error"
-            + (f" -- the largest single command is {asked:.3f} mm, so "
-               f"{short:.3f} mm remains" if clamped else "")
+            f"nudge {'+' if forward else '-'}"
+            f"{say_units(asked, signed=False)} (param {param}) for a "
+            f"{say_units(millimetres)} error"
+            + (f" -- the largest single command is "
+               f"{say_units(asked, signed=False)}, so "
+               f"{say_units(short, signed=False)} remains" if clamped else "")
         )
         self.slide(0x00 if forward else 0x01, param=param, value=0x04)
         return {"param": param, "forward": forward,
@@ -3260,8 +3268,8 @@ class DirectScanner:
                 self._log(
                     f"frame {index}: contrast {contrast:.3f}, "
                     f"picture x{marks['x0']}..{marks['x1']}, "
-                    f"offset {marks['offset_mm']:+.2f} mm, "
-                    f"short by {marks['shortfall_mm']:.2f} mm"
+                    f"offset {say_units(marks['offset_mm'])}, "
+                    f"short by {say_units(marks['shortfall_mm'], signed=False)}"
                 )
 
                 if contrast < blank_contrast:
@@ -3358,7 +3366,8 @@ class DirectScanner:
                     # is picture hanging outside the aperture, which no amount
                     # of nudging brings back.
                     self._log(
-                        f"frame {index}: picture is {marks['shortfall_mm']:.2f} mm "
+                        f"frame {index}: picture is "
+                        f"{say_units(marks['shortfall_mm'], signed=False)} "
                         "narrower than a whole frame -- the film has drifted and "
                         "part of it is outside the aperture"
                     )

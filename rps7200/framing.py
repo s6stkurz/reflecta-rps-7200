@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from .protocol import COORD_PER_INCH, MM_PER_INCH
+from .protocol import COORD_PER_INCH, MM_PER_INCH, say_units
 
 MIN_INSET_X = 96
 MIN_INSET_Y = 71
@@ -1555,7 +1555,7 @@ def combine(
         if reading.mm is None:
             continue
         if abs(reading.mm) > bound_mm:
-            dropped.append(f"{reading.source} {reading.mm:+.2f} mm")
+            dropped.append(f"{reading.source} {say_units(reading.mm)}")
         else:
             usable.append(reading)
     if dropped:
@@ -1584,9 +1584,11 @@ def combine(
         )
         return None, dict(detail, reason=(
             f"{len(usable)} members measured and none agree: closest are "
-            f"{worst[1].source} {worst[1].mm:+.2f} and {worst[2].source} "
-            f"{worst[2].mm:+.2f}, {abs(worst[1].mm - worst[2].mm):.2f} mm "
-            f"apart against {gate(worst[1], worst[2]):.2f} mm allowed"))
+            f"{worst[1].source} {say_units(worst[1].mm)} and "
+            f"{worst[2].source} {say_units(worst[2].mm)}, "
+            f"{say_units(abs(worst[1].mm - worst[2].mm), signed=False)} apart "
+            f"against {say_units(gate(worst[1], worst[2]), signed=False)} "
+            "allowed"))
 
     best = max((usable[i] for i in agreed), key=lambda r: r.margin)
     detail.update(agreed=sorted(usable[i].source for i in agreed),
@@ -1742,8 +1744,10 @@ class StripWalk:
         self.travel_mm += abs(float(travelled_mm))
         if self.travel_mm > ROLL_TRAVEL_LIMIT_MM:
             self.stop(
-                f"this roll has nudged {self.travel_mm:.1f} mm in total, past "
-                f"the {ROLL_TRAVEL_LIMIT_MM} mm a strip should ever need. A "
+                f"this roll has nudged "
+                f"{say_units(self.travel_mm, signed=False)} in total, past "
+                f"the {say_units(ROLL_TRAVEL_LIMIT_MM, signed=False)} a strip "
+                "should ever need. A "
                 "sub-frame move does not touch the frame counter, so nothing "
                 "downstream would notice the film creeping")
 

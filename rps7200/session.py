@@ -48,6 +48,7 @@ from .direct import METER_EACH, DirectScanner
 from .framing import reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
+from .protocol import say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
@@ -126,7 +127,8 @@ def plan_nudges(millimetres: float) -> list[float]:
     steps = max(1, -(-int(want * 1000) // int(FINE_MAX_MM * 1000)))
     if steps > MAX_FINE_STEPS:
         raise ValueError(
-            f"{want:.2f} mm needs {steps} sub-frame moves; past "
+            f"{say_units(want, signed=False)} needs {steps} sub-frame "
+            "moves; past "
             f"{MAX_FINE_STEPS} the calibration goes sub-linear and the "
             "distance would not be what was asked for"
         )
@@ -935,7 +937,7 @@ class ScanSession:
             position = self._scanner.position()
             self._emit("transport", done=-1 if position is None else position)
             how = f" in {done} moves" if done > 1 else ""
-            return (f"moved {sign * moved:+.2f} mm{how} -- the frame counter "
+            return (f"moved {say_units(sign * moved)}{how} -- the frame counter "
                     "does not see this; prescan to check it landed")
         return "nothing to move"
 
@@ -1474,5 +1476,5 @@ def _describe(job: Job) -> str:
             way = "forward" if job.frames > 0 else "back"
             n = abs(job.frames)
             return f"moving {n} frame{'s' if n != 1 else ''} {way} (~7 s each)"
-        return f"nudging the film {job.millimetres:+.2f} mm"
+        return f"nudging the film {say_units(job.millimetres)}"
     return str(job)
