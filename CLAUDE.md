@@ -184,6 +184,39 @@ scan or correction path, in the repo root, and send them:
 Stefan judges by eye and his read is authoritative. Several times a metric has
 said "corrected" where he could see lines.
 
+## The demo is the real software with different inputs
+
+**`--demo` may change what the software is fed. It may not change what the
+software does.** `DemoScanner` stands where `DirectScanner` stands, injected at
+`session._open_scanner`, and everything above that seam -- the window,
+`ScanSession`, `FrameWriter`, `library.save` -- runs unmodified. There is no
+`if demo:` in the scan path and none is to be added.
+
+Two rules follow, and both are checkable:
+
+- **A number, cap, constant or decision the stand-in needs is taken from
+  `DirectScanner`, never retyped.** `param_for_mm` is a `@staticmethod` for
+  exactly this reason. A retyped constant is a second home, and the two drift.
+- **A refusal belongs in the stand-in's answers, not in a control the window
+  disables.** If the demo must say something different -- no film in the
+  transport, no scanner on the bus -- let the backend raise and let the
+  existing failed-job path show it. Greying a button bypasses the code the
+  demo exists to exercise.
+
+Why. The demo is how this driver is judged when the scanner is off, so one
+that diverges does not fail loudly -- it reports something plausible and wrong,
+and the fix then asked for damages the real path. It has happened twice in one
+day. `nudge` was retyped into `demo.py` and kept a cap of `param 8` and a
+1.57-unit ramp after the driver moved to 87 and 1.84: a frame set 38 units out
+held in one command on the hardware and came back `not_converged` in the demo,
+which reads as a weak hold loop and was a stale copy. And `--look-only` greyed
+the sheet's scan button, so the demo built to show the sheet-to-roll path never
+ran `on_scan_chosen` -- the sole writer of `approved.json` and the sole
+submitter of a `Roll`.
+
+`make run-demo` and `make run-sheet` are the exercises. Anything they cannot
+reach is untested with no device on the bus.
+
 ## Measuring
 
 **Measure the file you delivered, never a recomputation of it.** A whole round
@@ -213,10 +246,13 @@ anything. It has twice caught a reading that a single pass got backwards.
 rule rather than a preference: express every sub-frame distance in **units of
 the adjustment parameter**, the `param` byte of `SLIDE <action> <param> 00 04`.
 
-One unit is the distance one increment of `param` adds. `docs/protocol.md` §11
-fits the law as `param + 1.57` units travelled per command, the second term
-being a fixed cost per command rather than per unit -- and whether that term is
-real is what `docs/step-calibration-plan.md` exists to measure.
+One unit is the distance one increment of `param` adds. A command travels
+`param + 1.84` units, the second term being a ramp paid once per command rather
+than per unit -- which is why ten small commands travel 2.40x as far as one
+large one for the same param total. It is real and measured: three legs of
+equal param total over ten, five and one commands, corroborated by a ladder
+that got 1.948 with one estimator and repeats per rung. The 1.57 this file
+carried until 2026-09-22 is ruled out.
 
 The reason is not tidiness. The transport has never moved a millimetre in its
 life; it executes commands with a parameter, and every millimetre in this code
@@ -226,9 +262,12 @@ than a signed distance, and a resampling scale error that made a good roll look
 badly adjusted. A number held in the hardware's own unit cannot acquire either.
 
 For reference, what the code holds today, converted: the aperture is **345.2**
-units, the smallest possible move (`param 1`) is **2.57**, and one prescan pixel
-at 300 dpi is **0.81** -- so the picture resolves finer than the transport can
-move.
+units, the smallest possible move (`param 1`) is **2.84**, the largest single
+correction (`param 87`) is **88.8**, and one prescan pixel at 300 dpi is
+**0.80** -- so the picture resolves finer than the transport can move.
+
+`param 0` is accepted and does nothing, measured 2026-09-22, so there is
+nothing below `param 1`.
 
 ## Calibrate with the film loaded
 

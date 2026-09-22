@@ -7523,6 +7523,13 @@ def main() -> int:
 
     # Resolved before a window exists, so a typo is a line of text rather than
     # a dialog behind a half-built window.
+    #
+    # A path is taken as given, which under --demo means a real walk in
+    # `rolls/` and not `demo/rolls`. That is deliberate: the point of the demo
+    # sheet is a strip that was actually walked. It is safe because opening a
+    # roll only reads it -- `_write_approved` derives its folder from
+    # `session.rolls`, which --demo pins under `demo/`, so nothing the window
+    # does afterwards can write back into the walk it is showing.
     open_roll = None
     if args.open_roll:
         rolls_dir = Path(args.rolls) if args.rolls else home / "rolls"
