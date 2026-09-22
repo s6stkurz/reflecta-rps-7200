@@ -2938,6 +2938,21 @@ def test_every_way_out_of_the_sheet_keeps_what_was_decided():
     assert '"sheet_close": self._dismiss' in keys
 
 
+def test_reopening_a_roll_keeps_who_decided_each_position():
+    """`open_roll` replaces the sheet state wholesale, and it used to drop the
+    sources while keeping the offsets.
+
+    A kept offset with no recorded source is read as one he set by hand, so the
+    next sheet built from that state relabelled every machine proposal
+    `operator` -- and the confirm dialog then counted them as his, on the
+    screen where he approves them.
+    """
+    import inspect
+
+    body = inspect.getsource(gui.ScannerGui.open_roll)
+    assert '"sources": dict(out["sources"])' in body
+
+
 def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions():
     """Frame numbers on a new strip name different pictures. The window already
     clears `orientations` for this reason -- "a different film, shown and

@@ -2486,6 +2486,12 @@ class ScannerGui:
         self.sheet_state = {
             "ticks": {}, "offsets": dict(out["offsets"]),
             "rotations": dict(out["rotations"]), "flips": dict(out["flips"]),
+            # Carried, or the next sheet built from this state stamps every
+            # one of them `operator`: `_propose_positions` reads a kept offset
+            # with no recorded source as one he set by hand. That turns the
+            # ensemble's numbers into his, in the count the confirm dialog
+            # shows him before the film moves.
+            "sources": dict(out["sources"]),
             # Left empty on purpose: `_restore_roll_settings` above has just
             # put this roll's own settings back into the window's controls,
             # and the sheet pre-fills from those. Carrying another roll's
