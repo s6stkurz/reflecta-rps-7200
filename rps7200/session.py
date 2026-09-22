@@ -162,7 +162,7 @@ def plan_nudges(millimetres: float) -> list[float]:
     delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in 1..8,
     so the reachable set is a lattice starting at ``FINE_MIN_MM`` -- and
     **nothing in ``(0, FINE_MIN_MM)`` exists at all**. Asking for 0.1 mm does
-    not get you 0.1 mm; it gets you nothing or 0.27 mm.
+    not get you 0.1 mm; it gets you nothing or a whole first command.
 
     This exists so the three places that need that truth share it rather than
     each modelling it: :meth:`ScanSession._move` executes the plan, the

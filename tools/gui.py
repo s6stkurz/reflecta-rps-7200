@@ -2556,9 +2556,13 @@ class ScannerGui:
                        options=None) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
 
-        `approved` carries the positions set by hand in the sheet. Nothing in
-        this increment consumes them -- they are written down and logged so the
-        numbers can be read back before any of them is allowed to move film.
+        `approved` carries a position for every ticked frame -- his where he
+        set one, the ensemble's where he did not, each saying which it is. They
+        are written to `approved.json` first, so the numbers can be read back
+        afterwards whatever the roll then does, and then **the roll holds every
+        frame to its own**: `Roll(approved=...)` reaches `_hold_to_approved`,
+        which moves film. A sentence here used to say nothing consumed them,
+        left over from the increment before holding was wired up.
 
         `options` is what the sheet's own panel was set to, and it **wins**:
         the sheet is where a roll is decided, so the roll is scanned with what
@@ -5090,12 +5094,14 @@ def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
 
     `step_mm` of zero means the finest move there is: the adjacent position on
     the transport's own lattice. That is not a fixed distance and cannot be
-    written as one. Off zero the first reachable place is 0.27 mm away -- one
-    SLIDE command, and nothing exists below it -- while above that the
-    positions are 0.11 mm apart, because a command's distance grows by
-    `STEP_MM` per param. Adding a constant and snapping gets this wrong at
-    both ends: 0.27 steps over two thirds of the reachable positions, and
-    0.11 rounds to nothing at all and the frame never moves.
+    written as one. Off zero the first reachable place is one whole SLIDE
+    command away -- `FINE_STEP_MM`, and nothing exists below it, because
+    `param 0` was sent to the scanner on 2026-09-22 and is accepted and does
+    nothing -- while above that the positions are `STEP_MM` apart, since a
+    command's distance grows by one param at a time. Adding a constant and
+    snapping gets this wrong at both ends: the first step's distance steps over
+    two thirds of the reachable positions, and one param's rounds to nothing at
+    all and the frame never moves.
 
     So the finest step is found rather than computed -- probe outward until
     the snapped answer changes. It is a handful of arithmetic per keypress and
@@ -5107,8 +5113,8 @@ def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
         return snap_offset(here + direction * step_mm)
     probe = FINEST_PROBE_MM
     want = here
-    # Enough to cross the widest gap in the lattice, which is the 0.27 mm off
-    # zero, several times over.
+    # Enough to cross the widest gap in the lattice -- the first command off
+    # zero -- several times over.
     for _ in range(64):
         want += direction * probe
         if abs(want) > MAX_TRAVEL_MM:
@@ -6117,11 +6123,11 @@ class _FrameAdjuster:
         """One step. Drag is coarse; this is how a frame is landed.
 
         "finest" walks to the next position the transport can reach, which is
-        the smallest move there is. What this replaced added a flat 0.27 mm
-        and snapped, and 0.27 is not the lattice's spacing -- it is the
-        distance of a single command off zero. Above that the positions are
-        0.11 mm apart, so the arrows were stepping over two out of every three
-        places the film could actually be put.
+        the smallest move there is. What this replaced added a flat first-step
+        distance and snapped, and that distance is not the lattice's spacing --
+        it is where the lattice starts. Above it the positions are one param
+        apart, so the arrows were stepping over two out of every three places
+        the film could actually be put.
         """
         self._set(step_offset(self.offset, direction,
                               step_millimetres(self.gui.v_adjuststep.get())))

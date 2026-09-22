@@ -3005,7 +3005,7 @@ class DirectScanner:
     OVERHEAD_MM = MM_PER_COMMAND
 
     #: Below this the loop leaves the frame alone. Roughly half the smallest
-    #: move the hardware can make (param 1 = 0.27 mm), so it never asks for a
+    #: move the hardware can make (param 1, `FINE_MIN_MM`), so it never asks for a
     #: correction it cannot deliver, and never chatters at measurement noise.
     CORRECTION_DEADBAND_MM = 0.15
 
