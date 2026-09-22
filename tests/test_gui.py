@@ -167,13 +167,25 @@ def test_one_pixel_of_click_is_finer_than_the_transport_can_move():
     assert per_pixel < gui.FINE_STEP_MM
 
 
-def test_a_move_reaches_the_worst_real_misframing_and_not_much_further():
-    """One command is 1.01 mm. The aperture slack a drifted frame shows is
-    about 0.5 mm and the worst mis-framing on record is the 6 mm CyberView lost
-    on one frame of its own strip. Reaching much past that would mean doing
-    badly, in twenty nudges, what one slide button does properly."""
+def test_a_move_reaches_the_worst_real_misframing_in_exactly_one_command():
+    """The worst mis-framing on record is the 6 mm CyberView lost on one frame
+    of its own strip, and a drifted frame shows about 0.5 mm of aperture slack.
+
+    One command used to be 1.01 mm, so reaching 6 took a chain of them. With
+    the cap at param 87 it is 9.36, so the whole range arrives in one -- which
+    is the point, because each command pays the ramp again and scatters again
+    and the scatter does not shrink with the size of the move.
+
+    The upper bound still matters: a fine adjustment that could travel half the
+    aperture would be doing badly, and slowly, what one slide button does
+    properly.
+    """
+    from rps7200.session import plan_nudges
+
     assert gui.MAX_TRAVEL_MM > 6.0
-    assert gui.MAX_TRAVEL_MM < gui.APERTURE_MM / 4
+    assert gui.MAX_TRAVEL_MM < gui.APERTURE_MM / 3
+    assert len(plan_nudges(gui.MAX_TRAVEL_MM)) == 1
+    assert len(plan_nudges(6.0)) == 1
 
 
 def test_the_window_and_the_session_agree_on_how_far_is_too_far():
@@ -205,7 +217,11 @@ def test_numbers_refuses_what_is_not_a_number():
 
 
 def test_the_fine_step_bounds_are_the_calibrated_ones():
-    """param 1 and param 8 of distance = 0.1057 x param + 0.1662."""
+    """param 1 and param 87 of distance = 0.1057 x param + 0.1662.
+
+    Derived rather than copied: the window used to carry rounded literals and
+    they drifted the moment the cap moved.
+    """
     from rps7200.direct import DirectScanner as D
     assert gui.FINE_STEP_MM == pytest.approx(D.STEP_MM * 1 + D.OVERHEAD_MM, abs=0.01)
     assert gui.MAX_FINE_MM == pytest.approx(

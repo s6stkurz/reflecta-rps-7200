@@ -20,7 +20,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 4
+PROTOCOL_REVISION = 5
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

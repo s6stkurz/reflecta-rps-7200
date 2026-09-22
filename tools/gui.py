@@ -58,7 +58,9 @@ from rps7200.mono import (                                 # noqa: E402
     to_monochrome,
 )
 from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
-from rps7200.session import (                             # noqa: E402
+from rps7200.session import (
+    FINE_MAX_MM,
+    FINE_MIN_MM,                             # noqa: E402
     Approved,
     Result,
     _safe,
@@ -176,23 +178,33 @@ ARCHIVE_MAX_SIDE = 512
 #: The transport aperture across the film, from the full scan frame.
 APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 
-#: The smallest move the transport can make: param 1 of the calibrated
-#: sub-frame law. Asking for less does not get you less, it gets you this.
-FINE_STEP_MM = 0.27
+#: The smallest and largest a single SLIDE command delivers. Taken from the
+#: session rather than copied, because a window offering a move the session
+#: then refuses reads to the operator as the button being broken -- and a
+#: rounded copy is how the two drift. `FINE_MIN_MM` is param 1, the finest
+#: move that exists: `param 0` was measured on 2026-09-22 and does nothing.
+FINE_STEP_MM = FINE_MIN_MM
+MAX_FINE_MM = FINE_MAX_MM
 #: How finely `step_offset` looks for the next reachable position. A quarter
 #: of the lattice's own spacing, so it cannot step over one.
 FINEST_PROBE_MM = 0.026
-#: The largest one SLIDE command delivers, param 8.
-MAX_FINE_MM = 1.01
-#: How many of those one move may chain, and how far that reaches.
-#:
-#: Not the twenty the calibration is good for: a fine adjustment that travels
-#: half the aperture is misuse of the tool, and letting a click in the middle
-#: of the picture ask for 18 mm of nudging would be doing badly and slowly what
-#: the slide buttons do properly. Eight covers the worst real mis-framing seen
-#: -- CyberView lost 6 mm on one frame of its own strip -- with margin.
+#: The planner's own chain limit, matched so the two agree.
 MAX_FINE_STEPS = 8
-MAX_TRAVEL_MM = MAX_FINE_MM * MAX_FINE_STEPS
+
+#: How far one fine adjustment may travel: **exactly one command**.
+#:
+#: It used to be eight chained commands, because one reached only 1.01 mm and
+#: the worst real mis-framing seen needed more -- CyberView lost 6 mm on one
+#: frame of its own strip. Raising `MAX_CORRECTION_PARAM` to 87 put that whole
+#: range inside a single command, so the chain is no longer the way to reach
+#: it, and chaining is strictly worse: every command pays the ramp again and
+#: scatters again, and the scatter does not shrink with the size of the move.
+#:
+#: It also bounds the tool. One command reaches about a quarter of the
+#: aperture, which is the right size for a fine adjustment; letting a click in
+#: the middle of the picture ask for half the aperture would be doing badly and
+#: slowly what the slide buttons do properly.
+MAX_TRAVEL_MM = MAX_FINE_MM
 
 THUMB_H = 76
 POLL_MS = 120

@@ -3003,10 +3003,26 @@ class DirectScanner:
     #: correction it cannot deliver, and never chatters at measurement noise.
     CORRECTION_DEADBAND_MM = 0.15
 
-    #: A correction larger than this is refused. The aperture allows 0.49 mm of
+    #: The largest `param` a single correction may use, and therefore the
+    #: largest correction there is: past it, `plan_nudges` chains commands and
+    #: pays the ramp and the scatter again for each.
+    #:
+    #: It was 8, on the reasoning that "the aperture allows 0.49 mm of
     #: registration error, so anything beyond about a millimetre means the
-    #: measurement is wrong rather than the film being far out.
-    MAX_CORRECTION_PARAM = 8
+    #: measurement is wrong rather than the film being far out". That premise
+    #: is gone. `MAX_REGISTRATION_MM` is how precisely a frame can be *placed*
+    #: in the aperture, never how badly the transport can *leave* one: the walk
+    #: of 2026-09-22 proposed corrections out to 13.78 units and every one of
+    #: them placed its frame, and walk A sat 1.4 to 2.2 mm out. The old cap
+    #: turned those into three chained commands each.
+    #:
+    #: 87 rather than higher because it is the largest move two prescans can
+    #: still confirm. Measured the same day, `verify_protocol.py` stage 15:
+    #: param 87 moved 109 px at confidence 129, param 160 moved 196 px at
+    #: confidence **27** against a floor of 55 -- it goes somewhere and cannot
+    #: say where, and a correction that cannot be checked is worse than a
+    #: smaller one that can. 87 is also the largest the vendor itself sends.
+    MAX_CORRECTION_PARAM = 87
 
     @staticmethod
     def param_for_mm(millimetres: float) -> int:

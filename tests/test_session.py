@@ -1036,14 +1036,20 @@ def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
 
 
 def test_a_plan_says_what_the_hardware_will_actually_travel():
+    """And since the cap went to param 87, it says it in one command.
+
+    This used to be two -- param 8 then param 3 -- because a single command
+    could not reach 1.5 mm. That chaining was never free: each command pays the
+    ramp again and scatters again, and the scatter does not shrink with the
+    size of the move, so two commands were twice the error for one distance.
+    """
     from rps7200.session import deliverable_mm, plan_nudges
 
     plan = plan_nudges(1.5)
-    assert plan == [pytest.approx(1.0118, abs=1e-4),
-                    pytest.approx(0.4833, abs=1e-4)]
-    # 0.005 mm short of the 1.5 asked for, and that is the honest answer
-    # rather than a rounded promise.
-    assert deliverable_mm(1.5) == pytest.approx(1.4951, abs=1e-4)
+    assert plan == [pytest.approx(1.5403, abs=1e-4)]
+    # 0.04 mm past the 1.5 asked for, because param is an integer and 13 is
+    # the nearest. The honest answer, rather than a rounded promise.
+    assert deliverable_mm(1.5) == pytest.approx(1.5403, abs=1e-4)
 
 
 def test_nothing_exists_between_zero_and_the_smallest_move():
@@ -1065,13 +1071,19 @@ def test_the_plan_keeps_the_sign():
 
 
 def test_too_far_is_refused_rather_than_silently_clamped():
-    """`param_for_mm` clamps at param 8 with no error, so a caller that
-    bypassed the planner would issue commands against a ceiling it could not
-    see. The planner raises instead."""
+    """`param_for_mm` clamps at MAX_CORRECTION_PARAM with no error, so a
+    caller that bypassed the planner would issue commands against a ceiling it
+    could not see. The planner raises instead.
+
+    The refusal starts further out than it did: one command now reaches 9.36 mm
+    rather than 1.01, so 20 mm is three commands where it used to be past the
+    limit entirely. 80 mm still is -- a sub-frame move asked to travel that far
+    is a whole-frame job, and SLIDE_NEXT does those properly.
+    """
     from rps7200.session import MAX_FINE_STEPS, plan_nudges
 
     with pytest.raises(ValueError, match="sub-linear"):
-        plan_nudges(20.0)
+        plan_nudges(80.0)
     assert len(plan_nudges(MAX_FINE_STEPS * 1.0)) <= MAX_FINE_STEPS
 
 
