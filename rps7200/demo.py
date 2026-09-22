@@ -41,6 +41,7 @@ import numpy as np
 
 from . import library, tiff
 from .direct import DirectScanner, RollFrame, supports_infrared
+from .protocol import say_units
 from .framing import (
     APERTURE_MM,
     FULL_FRAME,
@@ -196,8 +197,24 @@ class DemoScanner:
         return self._position
 
     def nudge(self, millimetres: float) -> dict[str, Any]:
-        param = max(1, min(8, round((abs(millimetres) - 0.1662) / 0.1057)))
-        asked = 0.1057 * param + 0.1662
+        """Move the simulated film, by the driver's own arithmetic.
+
+        Only the film is pretend. Which `param` byte a distance becomes, what
+        that param delivers, and where the cap falls are all taken from
+        `DirectScanner` -- `param_for_mm` is a `@staticmethod` precisely so
+        there is one home for the snapping.
+
+        This used to be typed out here, and it went stale exactly as that
+        arrangement always does: it kept `param` capped at 8 and a ramp of
+        0.1662 mm after the driver moved to 87 and 0.1945. A frame set 38
+        units out then held in one command on the hardware and came back
+        `not_converged` in the demo -- which reads as a weak hold loop and was
+        a stale copy.
+        """
+        param = self.param_for_mm(millimetres)
+        asked = self.STEP_MM * param + self.OVERHEAD_MM
+        short = abs(millimetres) - asked
+        clamped = short > 1e-9
         asked = asked if millimetres >= 0 else -asked
         way = 1 if millimetres >= 0 else -1
 
@@ -220,11 +237,17 @@ class DemoScanner:
 
         self._film_mm += delivered
         self._last_way = way
-        self._log(f"slide sub-frame: {asked:+.3f} mm (param {param}), "
-                  f"film now {self._film_mm:+.3f} mm")
+        self._log(f"slide sub-frame: {say_units(asked)} (param {param}), "
+                  f"film now {say_units(self._film_mm)}")
         self._work(1.5)
-        return {"asked_mm": asked, "param": param,
-                "forward": millimetres >= 0}
+        # The same keys the real one returns, including the two the hold loop
+        # reads: `_hold_to_approved` takes `clamped` to decide whether to say
+        # a command fell short, and without them that warning was unreachable
+        # at any distance.
+        return {"param": param, "forward": millimetres >= 0,
+                "asked_mm": round(asked, 3),
+                "requested_mm": round(millimetres, 3), "clamped": clamped,
+                "short_mm": round(short, 4) if clamped else 0.0}
 
     def _as_positioned(self, image: np.ndarray) -> np.ndarray:
         """The picture as it sits in the aperture right now.
@@ -472,6 +495,17 @@ class DemoScanner:
     _aim_frame = DirectScanner._aim_frame
     _rejudge_for = DirectScanner._rejudge_for
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
+    #: The transport's law, taken and not retyped. `_aim_frame`'s dry run
+    #: reaches for all three and raised `AttributeError` without them -- so the
+    #: one place the aimer can be watched with no device was the one place that
+    #: died.
+    # Re-wrapped:  is a @staticmethod, so the
+    # plain function comes back through the class and assigning it here
+    # would bind  as its first argument.
+    param_for_mm = staticmethod(DirectScanner.param_for_mm)
+    STEP_MM = DirectScanner.STEP_MM
+    OVERHEAD_MM = DirectScanner.OVERHEAD_MM
+    MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
 
