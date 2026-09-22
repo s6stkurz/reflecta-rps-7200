@@ -7550,10 +7550,10 @@ def main() -> int:
         from rps7200.demo import DemoScanner
         source, entry = args.demo_source, args.demo_entry
         # `--look-only` is a fact about the film, so it goes to the thing that
-    # would know. The backend refuses and the window reports it the way it
-    # reports any other transport fault.
-    session._open_scanner = lambda: DemoScanner(
-        source, entry=entry, no_film=args.look_only)
+        # would know. The backend refuses and the window reports it the way it
+        # reports any other transport fault.
+        session._open_scanner = lambda: DemoScanner(
+            source, entry=entry, no_film=args.look_only)
 
     root = tk.Tk()
     ScannerGui(root, session, demo=args.demo, settings_path=settings_path,
