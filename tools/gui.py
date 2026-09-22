@@ -5230,6 +5230,31 @@ def _propose_positions(results, kept: dict, remembered=None) -> tuple[dict, dict
 MACHINE_SOURCES = ("measured", "unconfirmed", "neighbours")
 
 
+def adjustment_mark(offset_mm: float, width: int) -> int | None:
+    """Where the blue line goes on a thumbnail this wide, or None.
+
+    The thumbnail spans the aperture, so an adjustment is that fraction of its
+    width, measured in from the edge the film is moving toward -- left for a
+    backward move, right for a forward one.
+
+    True to scale and deliberately not exaggerated: the line says how far the
+    film goes, and a mark drawn larger than the move would be the sheet
+    claiming something the transport is not going to do. The consequence is
+    that ordinary corrections sit within a few pixels of the edge, because
+    ordinary corrections *are* a few thousandths of the aperture. Reading the
+    exact size is the caption's job; the line is for seeing at a glance that a
+    whole strip is offset the same way.
+
+    Clamped to half the width so a wild reading cannot draw itself as the
+    picture, and kept off both edges so it is never invisible.
+    """
+    if not offset_mm or width <= 4:
+        return None
+    across = min(abs(offset_mm) / APERTURE_MM, 0.5) * width
+    x = across if offset_mm < 0 else width - across
+    return max(1, min(width - 2, int(round(x))))
+
+
 def frame_caption(offset, source, done=False, contrast=0.0, read=False):
     """One cell's line under the picture, and the colour to write it in.
 
@@ -6503,6 +6528,13 @@ class _ContactSheet:
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
     DONE = "#5b7a5b"                         # already scanned: neither of those
+    #: The adjustment mark. Blue because every other colour on a cell already
+    #: means a state -- amber chosen, red skipped, green done -- and this is
+    #: not a state, it is a measurement drawn on the picture.
+    MOVING = "#3d7fd1"
+    #: How far the ring stands off the picture. Three pixels read as an edge
+    #: artefact of the thumbnail; this reads as a mount around it.
+    RING = 7
 
     def __init__(self, gui, frames, offsets=None, proposals=None,
                  rotations=None, flips=None,
@@ -6578,6 +6610,8 @@ class _ContactSheet:
         self._photos: dict[int, tk.PhotoImage] = {}
         self._pictures: dict[int, tk.Label] = {}
         self._rings: dict[int, tk.Frame] = {}
+        #: The blue adjustment line over each picture, by frame number.
+        self._marks: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
         self._adjuster = None
@@ -6839,7 +6873,11 @@ class _ContactSheet:
 
         cell = ttk.Frame(grid, padding=6)
         cell.grid(row=row, column=column, sticky="n")
-        ring = tk.Frame(cell, background=self.CHOSEN, padx=3, pady=3)
+        # Wider than the picture on purpose: the ring is what says "this one
+        # is going to be scanned", and at three pixels it read as an artefact
+        # of the thumbnail rather than as a mount around it.
+        ring = tk.Frame(cell, background=self.CHOSEN,
+                        padx=self.RING, pady=self.RING)
         ring.pack()
         self._rings[number] = ring
 
@@ -6847,6 +6885,7 @@ class _ContactSheet:
         picture = tk.Label(ring, image=photo, borderwidth=0)
         picture.pack()
         self._pictures[number] = picture
+        self._mark_adjustment(number)
         picture.bind("<Button-1>",
                      lambda _e, n=number, i=index: self._clicked(n, i))
         picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
@@ -6871,6 +6910,38 @@ class _ContactSheet:
             ttk.Label(cell, foreground="#e0605a",
                       text=f"drifted -- {say_units(short, signed=False)} "
                            "outside").pack(anchor="w")
+
+    def _mark_adjustment(self, number: int) -> None:
+        """Draw where this frame is going, on the frame itself.
+
+        A caption says "-4.8 units" and a person has to translate that into a
+        distance on a picture. The line is the translation: it stands off the
+        edge the film is moving toward by exactly the adjustment, scaled so
+        the thumbnail's width is the aperture. Seeing four frames marked at the
+        same inset is what makes a strip-wide offset obvious, which no column
+        of numbers does.
+
+        Placed over the picture rather than drawn into it, so the thumbnail
+        stays the pixels that were scanned and rotating a frame does not have
+        to re-render a decoration.
+        """
+        old = self._marks.pop(number, None)
+        if old is not None:
+            old.destroy()
+        picture = self._pictures.get(number)
+        offset = self.offsets.get(number)
+        if picture is None or not offset:
+            return
+        width = picture.winfo_reqwidth()
+        height = picture.winfo_reqheight()
+        if width <= 1 or height <= 1:
+            return
+        x = adjustment_mark(offset, width)
+        if x is None:
+            return
+        line = tk.Frame(picture, background=self.MOVING, width=2, height=height)
+        line.place(x=x, y=0)
+        self._marks[number] = line
 
     def _render(self, result) -> tk.PhotoImage:
         """This frame's thumbnail, the way up it is currently turned.
@@ -7104,6 +7175,7 @@ class _ContactSheet:
         )
         caption.configure(text=said, foreground={
             "DONE": self.DONE, "CHOSEN": self.CHOSEN}.get(colour, "#777"))
+        self._mark_adjustment(number)
 
     def adjusted(self) -> dict:
         """The positions set by hand, keyed by frame number."""

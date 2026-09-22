@@ -2773,6 +2773,43 @@ def test_the_dialog_is_not_in_millimetres():
     assert "mm" not in note
 
 
+# -- the blue line that says where a frame is going ------------------------
+
+
+def test_the_mark_stands_off_the_edge_the_film_moves_toward():
+    """Backward from the left, forward from the right. The direction is half
+    the information -- a mark that ignored it would say the strip is offset
+    without saying which way."""
+    back = gui.adjustment_mark(-9.84 * 0.1057, 210)
+    fwd = gui.adjustment_mark(+9.84 * 0.1057, 210)
+    assert back is not None and fwd is not None
+    assert back < 210 // 2 < fwd
+    assert back + fwd == 210          # mirrored about the middle
+
+
+def test_the_mark_is_true_to_scale_and_not_exaggerated():
+    """A line drawn larger than the move would have the sheet claiming
+    something the transport is not going to do. A 9.84-unit correction is 2.9%
+    of the aperture, so on a 210 px thumbnail it is 6 px -- small, because the
+    correction is small."""
+    assert gui.adjustment_mark(-9.84 * 0.1057, 210) == 6
+    assert gui.adjustment_mark(-2.84 * 0.1057, 210) == 2
+
+
+def test_no_adjustment_draws_no_mark():
+    assert gui.adjustment_mark(0.0, 210) is None
+    assert gui.adjustment_mark(None, 210) is None
+
+
+def test_a_wild_reading_cannot_draw_itself_as_the_picture():
+    """Clamped at half the width, and never on the edges where it would be
+    invisible -- the same bargain the rest of the sheet makes with a detector
+    it cannot fully trust."""
+    assert gui.adjustment_mark(-999.0, 210) == 105
+    assert 1 <= gui.adjustment_mark(-0.001, 210) <= 208
+    assert gui.adjustment_mark(-9.84 * 0.1057, 3) is None
+
+
 # -- the cell's caption, which had no tests while carrying four mistakes ----
 
 
