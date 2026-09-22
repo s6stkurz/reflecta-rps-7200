@@ -1081,10 +1081,184 @@ def stage14(s: DirectScanner) -> dict:
     return {"rows": rows, "param0_px": good, "param12_px": warm}
 
 
+#: The rungs, and how many times each is sent. Low params repeat because the
+#: per-command cost is determined by the *intercept*, and the intercept is
+#: pinned by the small end of the ladder; the big ones repeat because whether
+#: they are repeatable is the whole question about raising the clamp.
+STAGE15_RUNGS = ((12, 3), (2, 3), (8, 3), (20, 2), (87, 1), (160, 2))
+
+#: A step this far past what the law predicts is not the move that was asked
+#: for. 30% is wide enough for the 1.57-versus-1.84 disagreement the stage
+#: exists to settle, and narrow enough to catch a byte read as something else.
+STAGE15_RUNAWAY = 1.30
+
+
+def stage15(s: DirectScanner) -> dict:
+    """How large a single correction can be, and what a command really costs.
+
+    Two questions in one ladder, because they need the same passes.
+
+    **Can the clamp come up?** `MAX_CORRECTION_PARAM = 8` refuses any
+    correction past about 9.6 units, so a larger one is chained across three
+    commands -- three times the scatter and three times the time. Its stated
+    reason is `MAX_REGISTRATION_MM = 0.49`: "a larger reading is the detector
+    failing, not the film moving". This branch measured otherwise. The walk of
+    2026-09-22 proposed corrections out to 13.78 units and every one of them
+    placed its frame, and walk A sat 1.4 to 2.2 mm out. The premise is gone, so
+    the number resting on it has to be re-derived rather than inherited.
+
+    **What does a command cost?** `DirectScanner.OVERHEAD_MM` says 1.57 units
+    and `framing.COMMAND_COST` says 1.84, a 17% disagreement between two
+    constants describing one command. They came from different sessions using
+    *different correlation estimators*, which is the most likely explanation
+    and is not resolvable from anything already stored. One ladder, one
+    estimator, repeats per rung, settles it.
+
+    Everything runs **backward**. The film sits on the last frame of the strip,
+    so there is nothing forward of it to correlate against -- and a ladder is
+    only as good as the picture it is measured on. Direction costs nothing
+    here: forward and reverse intercepts agree to 6% and slopes to 1.5%
+    (`docs/protocol.md` section 11).
+
+    The warm-up is backward too, for the same reason it exists in stages 13 and
+    14: the first command after a direction change loses two to three commands
+    to backlash, and a rung measured through that is measuring the reversal.
+
+    Afterwards it **walks the film back to where it started**. Sub-frame moves
+    do not touch the frame counter, so a ladder that simply stopped would leave
+    the counter claiming a frame the film is no longer on -- a desync that has
+    cost a run here before. The restore is verified against the opening pass,
+    and what it could not close is reported rather than assumed.
+    """
+    print("\n=== stage 15: how large a correction can be, and what one costs")
+    print("  backward -- the film is on the last frame, nothing lies forward")
+    print(f"  rungs: {', '.join(f'param {p} x{n}' for p, n in STAGE15_RUNGS)}\n")
+
+    start = s.read_state()
+    pos0 = getattr(start, "position", None)
+    home, _ = shot(s, "stage15_home")
+    prev, travel = home, 0.0
+    rows: list[dict] = []
+    print(f"  {'param':>6} {'#':>3} {'moved px':>9} {'units':>8} {'per param':>10} "
+          f"{'conf':>7}  note")
+
+    def one(param: int, tag: str) -> bool:
+        """Send it backward, look, and say whether the ladder may continue."""
+        nonlocal prev, travel
+        try:
+            s.slide(0x01, param=param, value=0x04)
+        except CheckCondition:
+            note = f"REFUSED {Sense.parse(s.sense())}"
+            rows.append({"param": param, "note": note})
+            print(f"  {param:6d}  {note}")
+            return False
+        except UsbError as e:
+            rows.append({"param": param, "note": f"{type(e).__name__}: {e}"})
+            print(f"  {param:6d}  {type(e).__name__}: {e}")
+            return False
+
+        _settle(s, 2.5)
+        img, _ = shot(s, tag)
+        dx, conf = _travel(prev, img)
+        moved = abs(dx)
+        # what the law in direct.py predicts, in prescan columns
+        want = (param + 1.5724) * 1.2423
+        pos = getattr(s.read_state(), "position", None)
+
+        note, stop = "", False
+        if moved > want * STAGE15_RUNAWAY:
+            note, stop = f"RUNAWAY -- {want:.0f} px expected", True
+        elif pos != pos0:
+            note, stop = f"FRAME COUNTER MOVED {pos0}->{pos}", True
+        elif conf < 55:
+            note, stop = "cannot be verified -- the ceiling is below here", True
+
+        travel += moved
+        rows.append({"param": param, "moved_px": round(moved, 3),
+                     "units": round(moved / 1.2423, 3),
+                     "confidence": round(conf, 1), "position": pos,
+                     "note": note})
+        print(f"  {param:6d} {len(rows):3d} {moved:9.2f} {moved/1.2423:8.2f} "
+              f"{moved/max(param, 1):10.3f} {conf:7.1f}  {note}")
+        prev = img
+        return not stop
+
+    stopped = None
+    for param, repeats in STAGE15_RUNGS:
+        for i in range(repeats):
+            if not one(param, f"stage15_p{param:03d}_{i}"):
+                stopped = param
+                break
+        if stopped is not None:
+            break
+
+    # -- put the film back ---------------------------------------------------
+    print(f"\n  travelled {travel:.1f} px back ({travel/1.2423:.1f} units); "
+          "walking it forward again")
+    restored = None
+    for attempt in range(6):
+        left = travel
+        if left < 3.0:
+            break
+        param = min(160, max(1, int(round(left / 1.2423 - 1.5724))))
+        try:
+            s.slide(0x00, param=param, value=0x04)
+        except (CheckCondition, UsbError) as e:
+            print(f"  restore stopped: {type(e).__name__}")
+            break
+        _settle(s, 2.5)
+        img, _ = shot(s, f"stage15_back{attempt}")
+        dx, conf = _travel(prev, img)
+        travel -= abs(dx)
+        prev = img
+        print(f"    forward param {param:3d} -> {abs(dx):6.2f} px, "
+              f"{travel:6.2f} px still to go (conf {conf:.0f})")
+        if conf < 55:
+            print("    the restore cannot be verified; stopping here")
+            break
+    else:
+        restored = travel
+    _dy, dx_home, conf_home = _travel(home, prev) if prev is not home else (0, 0.0, 0.0)
+    print(f"\n  against the opening pass: {abs(dx_home):.1f} px "
+          f"({abs(dx_home)/1.2423:.1f} units) from home, confidence {conf_home:.0f}")
+    if abs(dx_home) > 12:
+        print("  ** the film did NOT come back. The frame counter still reads "
+              f"{pos0}; re-register before scanning. **")
+
+    # -- what it says --------------------------------------------------------
+    good = [r for r in rows if (r.get("confidence") or 0) >= 55
+            and r.get("moved_px") is not None]
+    print()
+    if len(good) >= 3:
+        xs = np.array([r["param"] for r in good], float)
+        ys = np.array([r["moved_px"] for r in good], float)
+        slope, intercept = np.polyfit(xs, ys, 1)
+        cost = intercept / slope
+        print(f"  fit over {len(good)} confident steps: "
+              f"{slope:.4f} px/param + {intercept:.3f} px")
+        print(f"  -> one unit is {slope:.4f} px, a command costs {cost:.3f} units")
+        print("     direct.py says 1.572, framing.py says 1.84")
+        for param, _n in STAGE15_RUNGS:
+            at = [r["moved_px"] for r in good if r["param"] == param]
+            if len(at) > 1:
+                a = np.array(at)
+                print(f"     param {param:>3}: {a.mean():7.2f} px, "
+                      f"sd {a.std(ddof=1):.2f}, spread {a.max()-a.min():.2f}")
+    highest = max((r["param"] for r in good), default=None)
+    print(f"\n  highest param that measured confidently: {highest}")
+    if stopped is not None:
+        print(f"  stopped at param {stopped} -- do not raise the clamp above "
+              f"{highest}")
+    return {"rows": rows, "travelled_px": round(travel, 2),
+            "from_home_px": round(abs(dx_home), 2), "restored": restored,
+            "highest_confident_param": highest, "stopped_at": stopped}
+
+
 STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6,
           7: stage7, 8: stage8, 9: stage9,
-          10: stage10, 11: stage11, 12: stage12, 13: stage13, 14: stage14}
-NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
+          10: stage10, 11: stage11, 12: stage12, 13: stage13, 14: stage14,
+          15: stage15}
+NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 
 def main() -> int:

@@ -82,7 +82,9 @@ from .protocol import (
     METER_MODES,
     METER_NONE,
     METER_ONCE,
+    MM_PER_COMMAND,
     MM_PER_INCH,
+    MM_PER_UNIT,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
@@ -2993,8 +2995,8 @@ class DirectScanner:
     #: The calibrated law for SLIDE actions 0x00 / 0x01, fitted over both
     #: directions: distance = STEP_MM x param + OVERHEAD_MM. Worst residual
     #: 0.0185 mm across ten points; see docs/protocol.md section 11.
-    STEP_MM = 0.1057
-    OVERHEAD_MM = 0.1662
+    STEP_MM = MM_PER_UNIT
+    OVERHEAD_MM = MM_PER_COMMAND
 
     #: Below this the loop leaves the frame alone. Roughly half the smallest
     #: move the hardware can make (param 1 = 0.27 mm), so it never asks for a

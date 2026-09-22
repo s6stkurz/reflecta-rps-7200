@@ -21,6 +21,7 @@ import inspect
 import numpy as np
 import pytest
 
+from rps7200 import framing, protocol
 from rps7200.framing import MAX_HOLD_MOVES
 from rps7200.direct import (
     SLIDE_PREV,
@@ -1002,6 +1003,63 @@ def test_the_smallest_nudge_is_the_smallest_the_hardware_can_do():
     assert s.param_for_mm(0.01) == 1
     assert s.param_for_mm(0.27) == 1
     assert s.param_for_mm(99.0) == DirectScanner.MAX_CORRECTION_PARAM
+
+
+# -- the transport's own unit ----------------------------------------------
+
+
+def test_the_four_step_rungs_are_what_the_menu_claims():
+    """Each rung the window offers is one command, and travels what it says.
+
+    The labels are a promise to the operator. `param 0` was measured inert on
+    2026-09-22, so `param 1` is the finest move there is, and the ramp a
+    command pays first is why it travels 2.57 rather than 1.
+    """
+    assert protocol.units_for_param(1) == pytest.approx(2.57, abs=0.01)
+    assert protocol.units_for_param(3) == pytest.approx(4.57, abs=0.01)
+    assert protocol.units_for_param(8) == pytest.approx(9.57, abs=0.01)
+    assert protocol.units_for_param(20) == pytest.approx(21.57, abs=0.01)
+
+
+def test_the_aperture_is_the_published_number_of_units():
+    """345.2, as CLAUDE.md states it.
+
+    This is the guard against the other law. `framing.COMMAND_COST` describes
+    the same command with a 17% larger ramp; a display built on it would put
+    the aperture at 338 and the finest move at 2.84. The two constants are not
+    interchangeable and this is what catches a swap.
+    """
+    assert protocol.units(framing.APERTURE_MM) == pytest.approx(345.2, abs=0.1)
+
+
+@pytest.mark.parametrize("param", [1, 2, 3, 5, 8])
+def test_what_is_displayed_is_what_the_mover_delivers(param):
+    """The caption and the transport cannot disagree.
+
+    `units()` converts what `nudge` computes from the same two constants, so a
+    number shown to the operator is the number the film travels. That identity
+    is the whole reason the unit lives in one place.
+    """
+    travelled = DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM
+    assert protocol.units(travelled) == pytest.approx(
+        protocol.units_for_param(param), abs=1e-9)
+
+
+def test_a_distance_shown_to_a_person_is_never_in_millimetres():
+    """Stefan's standing instruction, as a test rather than a convention."""
+    assert "mm" not in protocol.say_units(0.4833)
+    assert "mm" not in protocol.say_command(1.0118)
+    assert protocol.say_units(0.4833) == "+4.6 units"
+    assert protocol.say_units(-0.4833) == "-4.6 units"
+    assert protocol.say_units(-0.4833, signed=False) == "4.6 units"
+
+
+def test_a_command_names_the_param_that_goes_on_the_wire():
+    """A log line has to say what was sent, not only how far it went."""
+    assert protocol.say_command(
+        DirectScanner.STEP_MM * 8 + DirectScanner.OVERHEAD_MM) == (
+        "param 8, +9.6 units")
+    assert protocol.say_command(0.5, param=3) == "param 3, +4.6 units"
 
 
 # -- metering looks inside the film ----------------------------------------
