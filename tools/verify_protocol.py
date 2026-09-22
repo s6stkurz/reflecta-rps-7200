@@ -1196,11 +1196,11 @@ def stage15(s: DirectScanner) -> dict:
     print(f"\n  travelled {travel:.1f} px back ({travel/1.2423:.1f} units); "
           "walking it forward again")
     restored = None
-    for attempt in range(6):
+    for attempt in range(10):
         left = travel
         if left < 3.0:
             break
-        param = min(160, max(1, int(round(left / 1.2423 - 1.5724))))
+        param = min(87, max(1, int(round(left / 1.2423 - 1.5724))))
         try:
             s.slide(0x00, param=param, value=0x04)
         except (CheckCondition, UsbError) as e:
@@ -1218,7 +1218,7 @@ def stage15(s: DirectScanner) -> dict:
             break
     else:
         restored = travel
-    _dy, dx_home, conf_home = _travel(home, prev) if prev is not home else (0, 0.0, 0.0)
+    dx_home, conf_home = _travel(home, prev) if prev is not home else (0.0, 0.0)
     print(f"\n  against the opening pass: {abs(dx_home):.1f} px "
           f"({abs(dx_home)/1.2423:.1f} units) from home, confidence {conf_home:.0f}")
     if abs(dx_home) > 12:
@@ -1254,11 +1254,125 @@ def stage15(s: DirectScanner) -> dict:
             "highest_confident_param": highest, "stopped_at": stopped}
 
 
+#: The pass stage 16 walks back to. A ladder leaves its opening shot here.
+STAGE16_HOME = "stage15_home"
+
+#: The largest step the restore will take. `param 160` measured confidence 27
+#: against a floor of 55 on 2026-09-22 -- it moves the film and cannot say how
+#: far, and an unverifiable restore is how a counter and a film part company in
+#: the first place. 87 read 129.
+STAGE16_MAX_PARAM = 87
+
+
+def stage16(s: DirectScanner) -> dict:
+    """Put the film back where a stored pass says it was.
+
+    A sub-frame move does not touch the frame counter, so a sequence that ends
+    somewhere other than where it started leaves the counter naming a frame the
+    film is no longer on. That desync has cost a run here before: a calibration
+    walked the film about ten pitches with sub-frame commands and the counter
+    read 1 while the film sat at frame 12, and `retreat` then refused to go
+    below zero because as far as it knew there was nowhere to go.
+
+    This is the way back, and it is measured rather than counted. It steps
+    **forward only** -- one direction, so backlash is spent once and never
+    re-enters -- and after every command it asks two questions: how far did
+    that step go, against the pass before it, and can the opening pass be seen
+    yet. The first is always answerable because consecutive passes overlap
+    almost entirely. The second is not: at 267 px apart the correlation reads
+    27 and means nothing, but once the film is within about a hundred columns
+    it locks, and from there the remaining distance is known exactly rather
+    than accumulated.
+
+    That two-stage shape is the point. Accumulating steps drifts, because each
+    carries its own error; closing against the original picture does not,
+    because it is the same picture.
+    """
+    home_path = OUT / f"{STAGE16_HOME}.tif"
+    if not home_path.exists():
+        print(f"\n=== stage 16: no {home_path} to walk back to")
+        return {"error": f"missing {home_path}"}
+
+    print("\n=== stage 16: walk the film back to its opening pass")
+    print(f"  forward only, at most param {STAGE16_MAX_PARAM} a step so every "
+          "one can be checked\n")
+
+    home = tiff.read(str(home_path))
+    pos0 = getattr(s.read_state(), "position", None)
+    prev, _ = shot(s, "stage16_00")
+    gone, rows = 0.0, []
+
+    seen, conf_home = _travel(home, prev)
+    print(f"  {'step':>5} {'param':>6} {'moved':>8} {'total':>8} "
+          f"{'to home':>9} {'conf':>7}  note")
+    print(f"  {'start':>5} {'-':>6} {'-':>8} {gone:8.1f} "
+          f"{(abs(seen) if conf_home >= 55 else float('nan')):9.1f} "
+          f"{conf_home:7.1f}")
+
+    remaining = abs(seen) if conf_home >= 55 else None
+    for step in range(1, 11):
+        if remaining is not None and remaining <= 2.0:
+            break
+        # Known remaining sizes the command; unknown takes the largest step
+        # that can still be verified, because the film is far enough away that
+        # the opening pass cannot be seen at all.
+        if remaining is None:
+            param = STAGE16_MAX_PARAM
+        else:
+            param = max(1, min(STAGE16_MAX_PARAM,
+                               int(round(remaining / 1.2247 - 1.948))))
+        try:
+            s.slide(0x00, param=param, value=0x04)
+        except (CheckCondition, UsbError) as e:
+            note = f"{type(e).__name__}"
+            if isinstance(e, CheckCondition):
+                note = f"REFUSED {Sense.parse(s.sense())}"
+            print(f"  {step:>5} {param:>6}  {note}")
+            rows.append({"step": step, "param": param, "note": note})
+            break
+
+        _settle(s, 2.5)
+        img, _ = shot(s, f"stage16_{step:02d}")
+        dx, conf = _travel(prev, img)
+        gone += abs(dx)
+        seen, conf_home = _travel(home, img)
+        got = abs(seen) if conf_home >= 55 else None
+        if got is not None:
+            remaining = got
+        elif remaining is not None:
+            remaining = max(0.0, remaining - abs(dx))
+        pos = getattr(s.read_state(), "position", None)
+        note = "" if pos == pos0 else f"COUNTER MOVED {pos0}->{pos}"
+        rows.append({"step": step, "param": param, "moved_px": round(abs(dx), 2),
+                     "to_home_px": None if got is None else round(got, 2),
+                     "confidence": round(conf, 1),
+                     "home_confidence": round(conf_home, 1), "note": note})
+        print(f"  {step:>5} {param:>6} {abs(dx):8.2f} {gone:8.1f} "
+              f"{(got if got is not None else float('nan')):9.1f} "
+              f"{conf_home:7.1f}  {note}")
+        prev = img
+        if note:
+            break
+
+    print()
+    if remaining is not None and remaining <= 2.0:
+        print(f"  home, to within {remaining:.1f} px "
+              f"({remaining / 1.2247:.1f} units). The counter still reads "
+              f"{pos0} and now means it.")
+    elif remaining is None:
+        print("  ** the opening pass was never seen. The film is somewhere "
+              "forward of where it was; re-register before scanning. **")
+    else:
+        print(f"  ** stopped {remaining:.1f} px ({remaining / 1.2247:.1f} "
+              "units) short of home. **")
+    return {"rows": rows, "remaining_px": remaining, "travelled_px": round(gone, 2)}
+
+
 STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6,
           7: stage7, 8: stage8, 9: stage9,
           10: stage10, 11: stage11, 12: stage12, 13: stage13, 14: stage14,
-          15: stage15}
-NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+          15: stage15, 16: stage16}
+NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 
 
 def main() -> int:
