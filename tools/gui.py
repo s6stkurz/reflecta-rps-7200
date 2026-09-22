@@ -6797,7 +6797,10 @@ class _ContactSheet:
             "sheet_straighten": lambda: self._on_selected(self._straighten),
             "sheet_flip": lambda: self._on_selected(self._flip),
             "sheet_show": self._show_selected,
-            "sheet_close": self.top.destroy,
+            # `_dismiss`, not `destroy`: Escape is a fourth way out of this
+            # window and it used to throw away everything the other three
+            # keep. A tick, a drag and a turn all died with it, silently.
+            "sheet_close": self._dismiss,
         }
 
     def rebind(self) -> None:

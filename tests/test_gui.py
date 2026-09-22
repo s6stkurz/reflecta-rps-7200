@@ -2918,10 +2918,15 @@ def test_one_bad_entry_costs_only_itself():
 
 
 def test_every_way_out_of_the_sheet_keeps_what_was_decided():
-    """The Close button, the title bar's X and commissioning the scan all
-    destroy the window. Each has to go through `_dismiss` first, or the
+    """The Close button, the title bar's X, commissioning the scan and Escape
+    all destroy the window. Each has to go through `_dismiss` first, or the
     decisions are kept for one way out and silently dropped for another --
-    which is the shape of the original bug."""
+    which is the shape of the original bug.
+
+    Escape was the fourth way out and this test did not know about it. It was
+    bound straight to `top.destroy`, so a sheet left by the key everyone
+    reaches for lost every tick, drag and turn without a word.
+    """
     import inspect
 
     built = inspect.getsource(gui._ContactSheet.__init__)
@@ -2929,6 +2934,8 @@ def test_every_way_out_of_the_sheet_keeps_what_was_decided():
     assert 'protocol("WM_DELETE_WINDOW", self._dismiss)' in built
     scan = inspect.getsource(gui._ContactSheet._scan)
     assert "self._dismiss()" in scan and "self.top.destroy()" not in scan
+    keys = inspect.getsource(gui._ContactSheet._actions)
+    assert '"sheet_close": self._dismiss' in keys
 
 
 def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions():
