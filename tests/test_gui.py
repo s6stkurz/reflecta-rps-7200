@@ -3071,6 +3071,125 @@ def _strip(count=8, gap=18):
     return out
 
 
+def _walked_folder(tmp_path, count=8):
+    """A roll folder on disk in the shape `read_survey` expects.
+
+    Built from `_strip()`, so the prescans are the same synthetic frames the
+    proposal tests use, and deliberately without an `approved.json`: that is
+    the state a walk is left in when it is closed before being commissioned,
+    and the state the demo opens.
+    """
+    from rps7200 import tiff
+
+    folder = tmp_path / "walk"
+    folder.mkdir()
+    records = []
+    for frame in _strip(count=count):
+        name = f"prescan{frame.number:02d}.tif"
+        tiff.write(str(folder / name), frame.image.astype(np.uint8))
+        records.append({"number": frame.number, "prescan": name})
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "walk",
+        "settings": {"dpi": 600, "prescan_resolution": 300, "dry_run": True,
+                     "film": "negative", "start_at": 1},
+        "frames": records,
+    }), encoding="utf-8")
+    return folder
+
+
+def test_a_walk_reopened_is_measured_again_not_remembered(tmp_path):
+    """The whole point of the demo: the numbers come from the pixels.
+
+    A walk closed without being commissioned has no `approved.json`, so
+    `read_survey` hands back no offsets and every position on the sheet is one
+    the ensemble has just read off the prescans.
+    """
+    folder = _walked_folder(tmp_path)
+    out = gui.read_survey(folder)
+    assert out["offsets"] == {}, "nothing was committed, so nothing is restored"
+    proposed, notes = gui._propose_positions(
+        out["results"], out["offsets"], out.get("sources"))
+    assert proposed
+    assert all((notes[n] or {}).get("source") in gui.MACHINE_SOURCES
+               for n in proposed)
+
+
+def test_a_stale_remembered_sheet_cannot_reach_a_reopened_walk(tmp_path):
+    """`open_roll` reads disk and nothing else.
+
+    The sheet cache is real and it is a feature -- within one run, reopening
+    the sheet gives back the frames that were dragged. It must not survive into
+    a fresh launch, or the demo would replay last time's answer and call it a
+    measurement.
+    """
+    from rps7200 import settings as settings_mod
+
+    folder = _walked_folder(tmp_path)
+    out = gui.read_survey(folder)
+    first, _notes = gui._propose_positions(
+        out["results"], out["offsets"], out.get("sources"))
+
+    # a previous run's decisions, deliberately wrong
+    path = tmp_path / "gui-settings.json"
+    settings_mod.save({"sheet": {folder.name: {
+        "offsets": {"1": 9.9, "2": -9.9}, "sources": {"1": "operator"},
+        "ticks": {}, "rotations": {}, "flips": {}, "options": {}}}}, path)
+    assert path.exists()
+
+    again = gui.read_survey(folder)
+    second, _notes = gui._propose_positions(
+        again["results"], again["offsets"], again.get("sources"))
+    assert second == first
+    assert 9.9 not in second.values()
+
+
+def test_the_same_walk_measures_the_same_way_twice():
+    """"Re-measured every launch" is only legible if it is also "the same
+    answer every launch". Nothing in the proposal path is random, and this is
+    what says so."""
+    walked = _strip()
+    first, _ = gui._propose_positions(walked, {})
+    second, _ = gui._propose_positions(walked, {})
+    assert first == second
+
+
+def test_the_launch_path_does_not_consult_the_sheet_cache():
+    """`open_roll` re-proposes; `on_contact_sheet` replays. The demo opens a
+    roll, so it gets the measurement. If `open_roll` ever started reading
+    `_recall_sheet_state` the demo would quietly stop measuring."""
+    import inspect
+
+    body = inspect.getsource(gui.ScannerGui.open_roll)
+    assert "_propose_positions(" in body
+    assert "_recall_sheet_state" not in body
+
+
+def test_nothing_in_a_look_only_window_can_commission_a_scan():
+    """Three gates, because the first two are not enough on their own.
+
+    `_changed` runs on every tick and would switch the button back on;
+    `on_scan_chosen` is the sole writer of `approved.json` and the sole
+    submitter of a `Roll`, so it is the last place worth stopping.
+    """
+    import inspect
+
+    assert "look_only" in inspect.getsource(gui._ContactSheet._changed)
+    assert "look_only" in inspect.getsource(gui._ContactSheet._scan)
+    assert "look_only" in inspect.getsource(gui.ScannerGui.on_scan_chosen)
+
+
+def test_the_lock_is_not_the_demo_flag():
+    """`make run-demo` must keep its scan button: `DemoScanner` binds the real
+    hold and aiming loops, so a demo scan is the only coverage those get
+    without a device. A look-only window is a different statement -- there is
+    no film -- and gating on `demo` would delete that coverage."""
+    import inspect
+
+    changed = inspect.getsource(gui._ContactSheet._changed)
+    assert "self.gui.look_only" in changed
+    assert "self.gui.demo" not in changed
+
+
 def test_every_proposal_is_somewhere_the_film_can_actually_go():
     """The caption showed the raw proposal; the commission delivered a snapped
     one. So a frame captioned as moving could be delivered as no move at all,

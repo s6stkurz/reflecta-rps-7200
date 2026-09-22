@@ -13,6 +13,10 @@ make lint         # ruff check
 make type         # ty check (not mypy)
 make fix          # safe autofixes only
 
+make run-sheet    # the contact sheet on a stored walk: no scanner, no film,
+                  # and the frame positions measured again from the prescans
+                  # on every launch. `--open-roll` names a different one.
+
 make reconstruct  # re-decode every stored scan with the current code
 make verify       # check the library's checksums and completeness
 

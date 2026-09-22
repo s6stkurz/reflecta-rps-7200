@@ -3,6 +3,8 @@
 
     make run                      # the real scanner
     make run-demo                 # stored library entries, nothing on the bus
+    make run-sheet                # the contact sheet on a stored walk, with
+                                  # the positions measured again every launch
 
 Prescan, scan, walk a roll, and look at what came off -- including the infrared
 plane on its own, which is the one channel no ordinary viewer will show you.
@@ -218,6 +220,12 @@ MAX_TRAVEL_MM = MAX_FINE_MM
 
 THUMB_H = 76
 POLL_MS = 120
+#: How long to wait before opening a roll named on the command line. The window
+#: is built inside `__init__`, which runs before `mainloop`, so the root is not
+#: mapped yet: `open_roll` ends in a dialog whose parent would be an unmapped
+#: window, and the sheet is a Toplevel sized against a geometry Tk has not
+#: applied. Behind the 120 ms sash restore, so the panes are placed first.
+OPEN_ROLL_MS = 250
 
 #: The body size this window's type was drawn against. Tk reports 13 for
 #: TkDefaultFont on macOS (.AppleSystemUIFont); Windows reports 9 (Segoe UI)
@@ -334,10 +342,17 @@ LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
 
 class ScannerGui:
     def __init__(self, root: tk.Tk, session: ScanSession, demo: bool = False,
-                 settings_path=None):
+                 settings_path=None, look_only: bool = False,
+                 open_roll=None):
         self.root = root
         self.session = session
         self.demo = demo
+        #: There is no film in the transport, so nothing here may commission a
+        #: scan. Separate from `demo`: a demo *does* scan, against stored
+        #: pixels, and that is how the hold loop gets exercised without a
+        #: device. This says the opposite -- look and decide, but the film is
+        #: not there to move.
+        self.look_only = look_only
         # First, because the controls and the presets below start from it.
         self._settings_path = settings_path
         self.remembered = settings.load(settings_path)
@@ -484,6 +499,12 @@ class ScannerGui:
         self.session.start()
         self._bind_shortcuts()
         self._later(POLL_MS, self._pump)
+        if open_roll is not None:
+            # Deferred through `_later` rather than called here, and rather
+            # than `root.after`: `_later` registers in `self._pending`, so
+            # closing the window inside the delay cancels it instead of firing
+            # into a destroyed widget.
+            self._later(OPEN_ROLL_MS, lambda: self.open_roll(open_roll))
 
     # -- layout ------------------------------------------------------------
 
@@ -2539,10 +2560,15 @@ class ScannerGui:
                 f"{len(out['results'])} frames from {out['roll']}"
                 + (", all of them already scanned" if done and not remaining
                    else "")
-                + ".\n\nThe frame numbers are counted from where that walk "
-                "started, so put the film back to the start of the strip "
-                "before scanning anything -- nothing here can see where it is "
-                "now.")
+                + ".\n\n"
+                + ("The positions are measured from these prescans every time "
+                   "this opens, so the sheet shows what the frames say today "
+                   "rather than what was recorded about them."
+                   if self.look_only else
+                   "The frame numbers are counted from where that walk "
+                   "started, so put the film back to the start of the strip "
+                   "before scanning anything -- nothing here can see where it "
+                   "is now."))
 
     def _restore_roll_settings(self, settings: dict) -> list[str]:
         """Put a roll's stored settings back into the controls.
@@ -2574,6 +2600,10 @@ class ScannerGui:
                        options=None) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
 
+        Refuses outright in a look-only window. This is the sole writer of
+        `approved.json` and the sole submitter of a `Roll` from the sheet, so
+        it is the last place worth stopping.
+
         `approved` carries a position for every ticked frame -- his where he
         set one, the ensemble's where he did not, each saying which it is. They
         are written to `approved.json` first, so the numbers can be read back
@@ -2589,6 +2619,8 @@ class ScannerGui:
         the next single scan. Absent -- a caller that has no sheet -- every
         value falls back to the window, which is what used to happen always.
         """
+        if self.look_only:
+            return
         if not numbers:
             return
         if self.busy:
@@ -2983,7 +3015,10 @@ class ScannerGui:
             self._say(event.text)
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
-            if self.session.inquiry_text and not self._asked_to_calibrate:
+            # Not in a look-only window: "calibrate before scanning" is a
+            # lie when nothing can be scanned.
+            if (self.session.inquiry_text and not self._asked_to_calibrate
+                    and not self.look_only):
                 self._asked_to_calibrate = True
                 self._later(50, self.ask_to_calibrate)
             if event.busy:
@@ -6648,18 +6683,27 @@ class _ContactSheet:
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, font=_font(12, bold=True),
                   text=f"{len(self.frames)} frames walked").pack(anchor="w")
+        # Two headers, because half of the usual one is about a scan that
+        # cannot happen here, and a window that describes something it will not
+        # do is the fault this sheet exists to avoid.
+        said = ("Click a picture to tick it, double-click or press Return to "
+                "set where the film should sit, right-click to arrange it. "
+                "The arrow keys move between frames and Space ticks.")
+        if gui.look_only:
+            said = ("There is no film in the transport: this is a walk that "
+                    "was stored earlier, and the positions under the frames "
+                    "were measured from those pictures when this window "
+                    "opened. " + said + " Nothing here will be scanned.")
+        else:
+            said = ("Tick what is worth scanning. " + said + " A frame is "
+                    "scanned the way you leave it here. Positions you set are "
+                    "used as given -- nothing moves until you commission the "
+                    "scan, and the automatic nudge does not apply to frames "
+                    "you adjust. The film is rewound to the start of the strip "
+                    "first, and every frame nobody ticked costs its advance "
+                    "only.")
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
-                  text=("Tick what is worth scanning. Click a picture to tick "
-                        "it, double-click or press Return to set where the film "
-                        "should sit, right-click to arrange it. The arrow keys "
-                        "move between frames and Space ticks. A frame is "
-                        "scanned the way you leave it here. Positions you set "
-                        "are used as given -- nothing moves until you "
-                        "commission the scan, and the automatic nudge does not "
-                        "apply to frames you adjust. The film is rewound to the "
-                        "start of the strip first, and every frame nobody "
-                        "ticked costs its advance only.")).pack(
-            anchor="w", pady=(0, 8))
+                  text=said).pack(anchor="w", pady=(0, 8))
 
         # Canvas-with-a-frame-inside, the same shape as the options column:
         # Tk has no scrollable frame of its own.
@@ -6702,6 +6746,13 @@ class _ContactSheet:
         self.b_scan = ttk.Button(foot, text="Scan chosen frames",
                                  command=self._scan)
         self.b_scan.pack(side="right", padx=6)
+        if gui.look_only:
+            # A greyed control with nothing beside it reads as broken. Say why
+            # it is off, next to it, where the eye already is.
+            # Short: it shares the foot with the count, the estimate and two
+            # buttons, and the first wording ran off the end of the window.
+            ttk.Label(foot, foreground="#777",
+                      text="stored walk -- nothing to scan").pack(side="right")
 
         # Bound after the cells exist: `_scrolls` walks the children it finds.
         gui._scrolls(self.canvas,
@@ -7317,7 +7368,10 @@ class _ContactSheet:
         self.v_count.set(
             f"{len(picked)} of {len(self.frames)} chosen"
             + (f"   ·   about {_duration(per * len(picked))}" if picked else ""))
-        self.b_scan.configure(state="normal" if picked else "disabled")
+        # Gated here and not only where the button is built, because this
+        # runs on every tick and would otherwise switch it back on.
+        self.b_scan.configure(
+            state="normal" if picked and not self.gui.look_only else "disabled")
         if self.v_options:
             differ = self._options_differ()
             self.l_options.configure(
@@ -7325,6 +7379,16 @@ class _ContactSheet:
                       + ", ".join(differ)) if differ else "")
 
     def _scan(self) -> None:
+        if self.gui.look_only:
+            # Belt and braces: the button is its only caller today, and this
+            # is what keeps that from being load-bearing.
+            messagebox.showinfo(
+                "Nothing to scan",
+                "There is no film in the transport -- this window is showing "
+                "a walk that was stored earlier.\n\nThe positions and the "
+                "ticks are real and yours to change; only the scanning is "
+                "off.")
+            return
         picked = self.chosen()
         approved = approved_from_sheet(self.frames, picked, self.offsets,
                                        self.proposals)
@@ -7455,10 +7519,39 @@ def main() -> int:
     ap.add_argument("--settings", default=None,
                     help=f"where the window remembers its setup "
                          f"(default: {settings.DEFAULT_PATH}, or "
-                         f"${settings.PATH_ENV})")
+                         f"${settings.PATH_ENV}, or demo/gui-settings.json "
+                         f"with --demo)")
+    ap.add_argument("--open-roll", default=None, metavar="ROLL",
+                    help="open this roll folder as soon as the window is up, "
+                         "as a path or as a bare name under the rolls "
+                         "directory. Its positions are proposed afresh from "
+                         "the prescans, every launch.")
+    ap.add_argument("--look-only", action="store_true",
+                    help="there is no film in the transport: the sheet can be "
+                         "read and adjusted but nothing can be scanned")
     args = ap.parse_args()
 
     home = DEMO_ROOT if args.demo else Path(".")
+
+    # A demo keeps its own remembered geometry and sheet state. It used to
+    # write them into the real file, which is the one thing DEMO_ROOT exists
+    # to prevent everywhere else.
+    settings_path = args.settings
+    if settings_path is None and args.demo:
+        settings_path = str(DEMO_ROOT / "gui-settings.json")
+
+    # Resolved before a window exists, so a typo is a line of text rather than
+    # a dialog behind a half-built window.
+    open_roll = None
+    if args.open_roll:
+        rolls_dir = Path(args.rolls) if args.rolls else home / "rolls"
+        for candidate in (Path(args.open_roll), rolls_dir / args.open_roll):
+            if candidate.is_dir():
+                open_roll = candidate
+                break
+        else:
+            ap.error(f"no roll folder at {args.open_roll!r}, and none called "
+                     f"that under {rolls_dir}")
     session = ScanSession(
         root=args.library or str(home / "library"),
         reference=args.reference or str(home / "calibration" / "shading.npz"),
@@ -7471,7 +7564,8 @@ def main() -> int:
         session._open_scanner = lambda: DemoScanner(source, entry=entry)
 
     root = tk.Tk()
-    ScannerGui(root, session, demo=args.demo, settings_path=args.settings)
+    ScannerGui(root, session, demo=args.demo, settings_path=settings_path,
+               look_only=args.look_only, open_roll=open_roll)
     root.mainloop()
     return 0
 

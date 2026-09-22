@@ -161,6 +161,30 @@ def run_demo() -> int:
     return run([sys.executable, "tools/gui.py", "--demo"])
 
 
+#: The walk `run-sheet` opens. Fifteen prescans of a hand-aligned strip taken
+#: 2026-09-22, and the only one measured end to end: its proposals come back
+#: 10 measured, 4 unconfirmed, 1 neighbours, which is every word the ensemble
+#: has in one sheet. The `registration-*` folders are the alternates.
+DEMO_ROLL = "rolls/aligned-strip"
+
+
+def run_sheet() -> int:
+    """The contact sheet on a stored walk, with no scanner and no film.
+
+    The positions are proposed from the prescans on every launch rather than
+    read back from anywhere, so the same command twice is the measurement run
+    twice -- which is the point of it. Within one run the sheet remembers what
+    you set, as it always has.
+
+    For a different strip, name it:
+
+        uv run python tools/gui.py --demo --look-only             --open-roll rolls/registration-D
+    """
+    print(f"Opening the contact sheet for {DEMO_ROLL} (no scanner, no film)...")
+    return run([sys.executable, "tools/gui.py", "--demo", "--look-only",
+                "--open-roll", DEMO_ROLL])
+
+
 def format_() -> int:
     """Whole-file reformat. Deliberately NOT part of `all`, and not to be run
     casually: this source is hand-wrapped with aligned comment blocks, and
@@ -216,6 +240,7 @@ TARGETS = {
     "test-all": test_all,
     "run": run_gui,
     "run-demo": run_demo,
+    "run-sheet": run_sheet,
     "format": format_,
     "reconstruct": reconstruct,
     "verify": verify,

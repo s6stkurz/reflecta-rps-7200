@@ -59,6 +59,13 @@ run:
 run-demo:
 	@$(PY) tasks.py run-demo
 
+# The contact sheet on a stored walk: no scanner, no film, and the positions
+# measured again from the prescans every launch. For a different strip:
+#   uv run python tools/gui.py --demo --look-only --open-roll rolls/registration-D
+.PHONY: run-sheet
+run-sheet:
+	@$(PY) tasks.py run-sheet
+
 # Whole-file reformat. Deliberately NOT part of `all`, and not to be run
 # casually: this source is hand-wrapped at ~79 columns with aligned comment
 # blocks, and reformatting it rewrites ~1800 lines across 22 files, which buries
