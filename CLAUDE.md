@@ -370,6 +370,14 @@ It needs a power cycle afterwards, so avoid these:
   than the dust -- measured at +0.97 correlation with green -- and the pass is
   still paid for: about 110 s at 1800 dpi tied to the resolution, ~220 s untied.
   Chromogenic (C-41) B&W is the exception.
+- **`SLIDE param 0` is accepted and does nothing.** Measured 2026-09-22, five
+  sends, 0.00 px every time at correlation 336 where a real move scores 166-284
+  — the signature of an unchanged image, not of a failed measurement. No error,
+  no sense, frame counter untouched. So the per-command cost is a motion ramp
+  rather than a fixed step offset, and **`param 1` (~2.6 units) is the finest
+  move the transport can make** — there is no rung below it and the correction
+  deadband cannot be lowered. Don't spend the question again; see
+  `docs/protocol.md` §5 and `verify_protocol.py` stage 14.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
 - **MODE SELECT byte 14, bit 0, can reverse every row of a scan with no

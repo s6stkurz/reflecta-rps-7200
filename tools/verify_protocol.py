@@ -741,10 +741,350 @@ def _bands_of(image: np.ndarray) -> list:
         runs.append((start, len(is_base) - start))
     return runs
 
+def stage12(s: DirectScanner) -> dict:
+    """How large can `param` go, and does it stay repeatable up there?
+
+    `param` is one byte, so 255 is the ceiling the protocol allows. The vendor
+    never sends above 87 and §11 says in as many words that **nothing above
+    that has been tried**. §11 also says the law is sub-linear -- the effective
+    step decays from about 0.108 at `param` 3-12 to 0.097 at 87 -- and that the
+    87 point is the least trustworthy in the set, two readings 0.84 apart.
+
+    So the question is not only how far a big command goes. It is whether it
+    goes the same distance twice. Every correction wants the fewest commands,
+    because each one costs 1.84 units before it moves at all and scatters on
+    top; but that is only worth having if the big command is repeatable. There
+    should be an optimum, and it has never been looked for.
+
+    **Escalating here is not the `SET_SCAN_HEAD` hazard.** That command is
+    dangerous because it reports nothing, so a step count cannot be calibrated
+    by escalating it. This one is measured by a prescan after every send, and
+    even `param 255` moves less than one frame pitch, so it cannot run away.
+
+    Each value goes twice, so the spread is measured rather than assumed.
+    """
+    print("\n=== stage 12: the top of the parameter range")
+    print("  nothing above param 87 has ever been sent; each value goes twice\n")
+
+    print("  spending backlash -- five forward commands, not measured")
+    for _ in range(5):
+        s.slide(0x00, param=0x0C, value=0x04)
+        _settle(s)
+
+    prev, _ = shot(s, "stage12_start")
+    out: dict = {"params": {}}
+    print(f"  {'param':>6} {'pass':>5} {'moved px':>9} {'per param':>10} "
+          f"{'bands':>26}")
+
+    for param in (87, 120, 160, 200, 255):
+        got, note = [], "accepted"
+        for attempt in range(2):
+            try:
+                s.slide(0x00, param=param, value=0x04)
+            except CheckCondition:
+                note = f"REFUSED {Sense.parse(s.sense())}"
+                print(f"  {param:6d}  {note}")
+                break
+            except UsbError as e:
+                note = f"{type(e).__name__}"
+                print(f"  {param:6d}  {note}: {e}")
+                break
+            _settle(s, 2.5)
+            img, _ = shot(s, f"stage12_p{param:03d}_{attempt}")
+            # The window is generous because a big move leaves little overlap;
+            # the band positions below are the cross-check that does not care.
+            expect = param * 1.1
+            dx, dy = _shift_near(prev, img, expect, window=120)
+            got.append(dx)
+            bands = _bands_of(img)
+            print(f"  {param:6d} {attempt:5d} {dx:9.2f} {dx/param:10.3f} "
+                  f"{str(bands)[:26]:>26}")
+            prev = img
+        if not got:
+            out["params"][param] = {"note": note}
+            print("  stopping: the device refused it")
+            break
+        spread = (max(got) - min(got)) if len(got) > 1 else 0.0
+        out["params"][param] = {
+            "note": note, "moved_px": [round(g, 3) for g in got],
+            "mean_px": round(float(np.mean(got)), 3),
+            "per_param_px": round(float(np.mean(got)) / param, 4),
+            "spread_px": round(spread, 3),
+        }
+        if len(got) > 1:
+            print(f"  {param:6d}  mean {np.mean(got):8.2f} px, "
+                  f"the two differ by {spread:.2f} px "
+                  f"({spread/max(abs(np.mean(got)), 1e-9)*100:.1f}%)")
+        if got and abs(np.mean(got)) < 2.0:
+            print("  stopping: it barely moved")
+            break
+
+    rows = [(p, v) for p, v in out["params"].items() if "per_param_px" in v]
+    if len(rows) > 1:
+        print("\n  effective travel per unit of param, as param grows:")
+        for p, v in rows:
+            print(f"    param {p:>3}: {v['per_param_px']:.3f} px/param, "
+                  f"the two passes {v['spread_px']:.2f} px apart")
+        best = min(rows, key=lambda r: r[1]["spread_px"] / max(r[1]["mean_px"], 1e-9))
+        print(f"\n  most repeatable of these, relative to what it moves: "
+              f"param {best[0]}")
+    return out
+
+def _travel(prev: np.ndarray, cur: np.ndarray) -> tuple[float, float]:
+    """How far the film moved between two passes, and how much to believe it.
+
+    Searched at several reaches and the most confident answer kept. A single
+    reach is what went wrong twice: `measure_shift_mm` looks only +-105 px and
+    refused every large move in stage 12, while `_shift_near` looks in a narrow
+    window around a *predicted* value and returns the tallest bump in it
+    whatever the confidence -- which is how section 11 came to call `param 87`
+    the least repeatable point in its set when it is one of the best.
+    """
+    from rps7200.uniformity import luminance, register
+
+    a, b = luminance(prev), luminance(cur)
+    best = (0.0, -1.0)
+    for reach in (60, 120, 180, 240):
+        _dy, dx, c = register(a, b, max_shift=reach)
+        if c > best[1]:
+            best = (float(-dx), float(c))
+    return best
+
+
+def _gaps(image: np.ndarray) -> list:
+    """Runs of unexposed base, by the two properties base has and nothing else.
+
+    Stricter than stage 11's version, which took any flat run brighter than the
+    frame's median and so fired on sky. Base is both **flat down the column**
+    and near the brightest thing in the window, and a gap is a solid run of it.
+    """
+    grey = image.astype(np.float64).mean(axis=2)
+    level, spread = grey.mean(axis=0), grey.std(axis=0)
+    top = float(np.percentile(level, 92))
+    is_base = (spread < 2.5) & (level > top - 4.0)
+    runs, start = [], None
+    for i, on in enumerate(is_base):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            if i - start >= 4:
+                runs.append((start, i - start))
+            start = None
+    if start is not None and len(is_base) - start >= 4:
+        runs.append((start, len(is_base) - start))
+    return runs
+
+
+def stage13(s: DirectScanner) -> dict:
+    """The film's own geometry, measured in the fewest commands that can be read.
+
+    Stage 11 did this at `param 12` and needed 26 commands to cross a pitch,
+    accumulating about six pixels of scatter. `param 87` crosses it in four for
+    about two, because the per-command scatter is roughly one pixel whatever
+    the command size -- so fewer, larger commands is strictly better, which is
+    the opposite of what one might expect and is measured rather than argued.
+
+    `param 87` and not higher because above about 160 the two passes no longer
+    share enough film for the correlation to lock, and an unmeasurable move is
+    useless however far it goes. At 87 two identical sends landed one pixel
+    apart with confidences of 127 and 113.
+
+    Twelve commands carries about three pitches past the window, so several
+    gaps enter and leave and each one gives its own reading of the spacing.
+    """
+    print("\n=== stage 13: the film's geometry, in the fewest readable commands")
+    print("  param 87, twelve commands, about three frame pitches\n")
+
+    print("  spending backlash -- five forward commands, not measured")
+    for _ in range(5):
+        s.slide(0x00, param=0x57, value=0x04)
+        _settle(s, 2.5)
+
+    prev, _ = shot(s, "stage13_00")
+    travel = 0.0
+    rows = [{"command": 0, "travel_px": 0.0, "confidence": None,
+             "gaps": _gaps(prev)}]
+    print(f"  {'cmd':>3} {'step':>7} {'conf':>7} {'travel':>8}  gaps (start,width)")
+    print(f"  {0:>3} {'-':>7} {'-':>7} {0.0:8.1f}  {rows[0]['gaps']}")
+
+    for i in range(1, 13):
+        s.slide(0x00, param=0x57, value=0x04)
+        _settle(s, 2.5)
+        img, _ = shot(s, f"stage13_{i:02d}")
+        dx, conf = _travel(prev, img)
+        travel += dx
+        gaps = _gaps(img)
+        rows.append({"command": i, "step_px": round(dx, 2),
+                     "confidence": round(conf, 1),
+                     "travel_px": round(travel, 2), "gaps": gaps})
+        flag = "" if conf >= 55 else "   <- weak, do not trust this step"
+        print(f"  {i:>3} {dx:7.2f} {conf:7.1f} {travel:8.1f}  {gaps}{flag}")
+        prev = img
+
+    steps = [r["step_px"] for r in rows[1:] if (r["confidence"] or 0) >= 55]
+    print(f"\n  {len(steps)} of 12 steps measured confidently")
+    if steps:
+        arr = np.array(steps)
+        print(f"  step at param 87: mean {arr.mean():.2f} px, "
+              f"spread {arr.min():.2f}-{arr.max():.2f}, "
+              f"sd {arr.std(ddof=1) if len(arr) > 1 else 0:.2f}")
+        print(f"  per unit of param: {arr.mean()/87:.4f} px")
+    print("\n  the pitch and the frame are reduced from the gap positions above,")
+    print("  offline, against the stored passes.")
+    return {"rows": rows, "param": 87,
+            "steps_px": [round(x, 2) for x in steps]}
+
+#: A step this large is not a sub-frame move. `param 0` cannot legitimately
+#: travel further than `param 12` does, so anything past it means the byte was
+#: read as something other than a step count -- and the run stops before a
+#: second one compounds it.
+RUNAWAY_PX = 37.0
+
+
+def stage14(s: DirectScanner) -> dict:
+    """Does `param 0` move the film, and by how much?
+
+    The question is Stefan's and it is the sharpest one available about the
+    transport, because the two surviving explanations for the per-command cost
+    predict *opposite* answers here. If firmware executes ``param + K`` steps,
+    `param 0` travels the cost alone, about two units. If instead the cost is
+    an accelerate-cruise-decelerate profile, no profile runs for zero steps and
+    `param 0` travels nothing. Nothing in the stored data separates them: both
+    fit every ladder ever taken, because no ladder has ever included zero.
+
+    **`param 0` has never been sent to this device by anyone.** Across all six
+    vendor captures there are 37 SLIDE commands in twelve distinct payloads and
+    the param byte is never 0; the smallest CyberView sends is 1. This driver
+    floors it at 1 in three separate places, none of which says why. So this is
+    an invented payload under the rule in docs/protocol.md -- allowed here
+    because Stefan asked for it by name, not because it is routine.
+
+    It is **not** the `SET_SCAN_HEAD` hazard, and the difference is the whole
+    reason this is safe to ask. 0xD2 reports nothing, so a step count cannot be
+    calibrated by escalating it. Here a prescan witnesses every single command,
+    the frame counter is checked after each one, and a move that went somewhere
+    unexpected is undone by one command in the other direction.
+
+    The shape, and why it is not simply "prescan, send, prescan":
+
+    * **Warm-up first, forward.** The roll left the transport loaded in whatever
+      direction it last moved. A command that reverses direction loses two to
+      three commands to backlash, so an un-warmed `param 0` could read zero for
+      a reason that has nothing to do with `param 0`. Three `param 12` commands
+      spend the slack, and they are measured rather than thrown away because
+      they re-anchor the cost against section 11's ladder using *this* session's
+      estimator -- which is the disagreement (1.57 against 1.86 against 2.09)
+      that no stored data can settle.
+    * **Five sends, not one.** One reading of zero cannot tell a genuine no-op
+      from a command that silently did nothing, and the stored data holds
+      exactly one such event in twenty-eight sends (stage 11, row 15).
+    * **A `param 2` control at the end.** The best-behaved command in the whole
+      set, sd 0.035 units. If it reads clean immediately after the zeros, then
+      the measurement could see a small move at that moment and a zero really
+      was a zero.
+
+    Everything runs forward, so no reading in it is contaminated by a reversal.
+    """
+    print("\n=== stage 14: does param 0 move the film?")
+    print("  an invented payload -- 00 00 00 04 -- never sent by anyone.")
+    print("  warm-up forward, then five sends, then a known-good control.\n")
+
+    start = s.read_state()
+    pos0 = getattr(start, "position", None)
+    print(f"  transport position at the start: {pos0}")
+
+    rows: list[dict] = []
+    prev, _ = shot(s, "stage14_00")
+    print(f"  {'step':>16} {'param':>6} {'moved px':>9} {'conf':>7} "
+          f"{'pos':>4}  note")
+    print(f"  {'baseline':>16} {'-':>6} {'-':>9} {'-':>7} {str(pos0):>4}")
+
+    def send(param: int, label: str, tag: str) -> bool:
+        """One command, then look. False means stop the stage."""
+        nonlocal prev
+        try:
+            s.slide(0x00, param=param, value=0x04)
+        except CheckCondition:
+            # Sense is one-shot: read it now or lose why it refused.
+            note = f"REFUSED {Sense.parse(s.sense())}"
+            rows.append({"step": label, "param": param, "note": note})
+            print(f"  {label:>16} {param:>6} {note}")
+            return False
+        except UsbError as e:
+            rows.append({"step": label, "param": param,
+                         "note": f"{type(e).__name__}: {e}"})
+            print(f"  {label:>16} {param:>6} {type(e).__name__}: {e}")
+            return False
+
+        _settle(s, 2.5)
+        img, _ = shot(s, tag)
+        dx, conf = _travel(prev, img)
+        state = s.read_state()
+        pos = getattr(state, "position", None)
+
+        note = ""
+        stop = False
+        if abs(dx) > RUNAWAY_PX:
+            note, stop = "RUNAWAY -- stopping", True
+        elif pos != pos0:
+            # A sub-frame move must not touch the frame counter. If it did,
+            # this was not a sub-frame move and the premise is void.
+            note, stop = f"FRAME COUNTER MOVED {pos0}->{pos} -- stopping", True
+        elif conf < 55:
+            note = "weak -- do not trust this step"
+
+        rows.append({"step": label, "param": param, "moved_px": round(dx, 3),
+                     "confidence": round(conf, 1), "position": pos,
+                     "note": note})
+        print(f"  {label:>16} {param:>6} {dx:9.2f} {conf:7.1f} {str(pos):>4}"
+              f"  {note}")
+        prev = img
+        return not stop
+
+    for i in range(3):
+        if not send(12, f"warm-up {i + 1}/3", f"stage14_warm{i}"):
+            return {"rows": rows, "aborted": "warm-up"}
+
+    for i in range(5):
+        if not send(0, f"PARAM 0  {i + 1}/5", f"stage14_zero{i}"):
+            return {"rows": rows, "aborted": "param 0"}
+
+    send(2, "control", "stage14_control")
+
+    zeros = [r for r in rows if r.get("param") == 0
+             and r.get("moved_px") is not None]
+    good = [r["moved_px"] for r in zeros if (r.get("confidence") or 0) >= 55]
+    warm = [r["moved_px"] for r in rows if r.get("param") == 12
+            and (r.get("confidence") or 0) >= 55]
+
+    print()
+    if good:
+        a = np.array(good)
+        # One unit is about 1.24 px at 300 dpi; param 1 travels about 2.6.
+        print(f"  param 0 moved {a.mean():.2f} px on average "
+              f"({a.mean() / 1.2423:.2f} units), "
+              f"spread {a.min():.2f}-{a.max():.2f}, "
+              f"sd {a.std(ddof=1) if len(a) > 1 else 0:.2f}")
+        if abs(a.mean()) < 0.6:
+            print("  -> it does NOT move. The cost is part of the first step, "
+                  "and the floor at param 1 was right.")
+        else:
+            print("  -> it DOES move. The cost is per command, and there is a "
+                  "move below the current floor.")
+    else:
+        print("  no confident reading of param 0 -- inconclusive, do not "
+              "change anything on this")
+    if warm:
+        w = np.array(warm)
+        print(f"  param 12 here: {w.mean():.2f} px "
+              f"({w.mean() / 1.2423:.2f} units), for the cost re-anchor")
+    return {"rows": rows, "param0_px": good, "param12_px": warm}
+
+
 STAGES = {1: stage1, 2: stage2, 3: stage3, 4: stage4, 5: stage5, 6: stage6,
           7: stage7, 8: stage8, 9: stage9,
-          10: stage10, 11: stage11}
-NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+          10: stage10, 11: stage11, 12: stage12, 13: stage13, 14: stage14}
+NEEDS_FILM = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
 
 
 def main() -> int:

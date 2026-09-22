@@ -13,6 +13,12 @@ venv/
 # scan output
 *.tif
 *.tiff
+# Contact sheets, comparison sheets and heatmaps. Everything this project
+# renders for a person to look at is a PNG, they are megabytes each, and they
+# are all rebuildable from the stored raw bytes -- so none of them belong in
+# history. Nothing here has ever needed a committed image; the two the docs
+# mention are written to previews/, ignored below.
+*.png
 # the JSON sidecar tools/scan.py writes beside a bare `--out scan.tif`
 # default (out.with_suffix(".json")) -- everything under scans/ is already
 # covered above; this is only the no-flag, throwaway-CLI-run case.
@@ -36,8 +42,8 @@ library/
 rolls/
 
 # registration walks: metered 300 dpi passes, their inverted copies and the
-# contact sheets built from them. The TIFFs are already covered by *.tif, but
-# the sheets are PNGs and would otherwise be committed.
+# contact sheets built from them. Both kinds are already covered above; these
+# directories are named so the whole walk goes, not just its files.
 rollscan/
 walk7/
 probe/
