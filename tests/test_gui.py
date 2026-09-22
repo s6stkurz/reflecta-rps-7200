@@ -3181,12 +3181,53 @@ def test_no_film_does_not_become_a_branch_in_the_window():
         assert "look_only" not in inspect.getsource(where), where.__name__
 
 
-def test_no_film_is_told_to_the_backend():
-    """Which is the only place that could honestly know it."""
-    import inspect
+def _launch(monkeypatch, tmp_path, *argv):
+    """Run `main()` as far as the window and return the session it built.
 
-    main = inspect.getsource(gui.main)
-    assert "no_film=args.look_only" in main
+    Asking the session which opener it holds is the check. This used to read
+    `main`'s source for `no_film=args.look_only`, and it went on passing while
+    that line sat one indent outside `if args.demo:` -- so `make run` handed
+    every launch the demo's opener, and died on a `DemoScanner` it had never
+    imported. A substring cannot see which block it is in.
+    """
+    built = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built["session"] = session
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "gui.py", "--library", str(tmp_path / "library"),
+        "--reference", str(tmp_path / "shading.npz"),
+        "--rolls", str(tmp_path / "rolls"), *argv])
+    assert gui.main() == 0
+    return built["session"]
+
+
+def test_make_run_opens_the_real_scanner(monkeypatch, tmp_path):
+    """No `--demo`, no stand-in: the session keeps the opener it was built
+    with, which is the one that finds the device on the bus."""
+    session = _launch(monkeypatch, tmp_path)
+    assert session._open_scanner == session._default_scanner
+
+
+def test_no_film_is_told_to_the_backend(monkeypatch, tmp_path):
+    """Which is the only place that could honestly know it."""
+    import rps7200.demo
+
+    opened = []
+    monkeypatch.setattr(rps7200.demo, "DemoScanner",
+                        lambda *args, **kwargs: opened.append(kwargs))
+    _launch(monkeypatch, tmp_path, "--demo", "--look-only")._open_scanner()
+    _launch(monkeypatch, tmp_path, "--demo")._open_scanner()
+    assert [kw["no_film"] for kw in opened] == [True, False]
 
 
 def test_an_empty_transport_refuses_where_the_transport_would():
