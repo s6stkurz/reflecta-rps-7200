@@ -2697,18 +2697,40 @@ class ScannerGui:
     def _approved_note(self, approved, correct=None) -> str:
         """What the sheet's positions will do, said plainly in the dialog.
 
-        A ticked "nudge registration between frames" that silently does not
-        apply is worse than one that is not offered.
+        This is the last thing shown before the film moves, and it used to say
+        that every frame carried "a position you set by hand". That was true
+        when typing was the only way to have one. Since the sheet began
+        pre-filling a position for every frame it can read, most of them are
+        the ensemble's -- so the dialog was attributing the machine's decisions
+        to him, on the screen where he confirms them.
+
+        Counted by provenance now, in the ensemble's own words, which is what
+        `Approved.source` was added to carry. `tools/scan_roll.py` prints the
+        same breakdown for the same reason.
         """
-        moved = [a for a in approved if a.offset_mm]
-        if not moved:
+        carried = [a for a in approved if a.offset_mm]
+        if not carried:
             return ""
-        note = (f"\n\n{len(moved)} frame{'s' if len(moved) != 1 else ''} "
-                "carry a position you set by hand; those are used exactly as "
-                "given.")
-        if self.v_correct.get() if correct is None else correct:
-            note += (" The automatic nudge stays on for the frames you did "
-                     "not adjust.")
+        tally: dict[str, int] = {}
+        for a in carried:
+            tally[a.source or "operator"] = tally.get(a.source or "operator", 0) + 1
+        said = ", ".join(
+            f"{tally[name]} {label}" for name, label in (
+                ("operator", "you positioned"),
+                ("measured", "two detectors agreed"),
+                ("unconfirmed", "one detector, uncorroborated"),
+                ("neighbours", "read from the frames either side"),
+                ("none", "nothing could read"),
+            ) if tally.get(name))
+        note = (f"\n\n{len(carried)} frame"
+                f"{'s' if len(carried) != 1 else ''} carry a position: {said}."
+                "\n\nEach is used exactly as given.")
+        # The automatic nudge is deliberately not mentioned. Every ticked frame
+        # gets an `Approved`, including the ones left at zero, and the driver
+        # takes the held branch for any frame that has one -- so `correct`
+        # cannot act on a single frame of a commissioned roll. Saying it "stays
+        # on for the frames you did not adjust" described something that never
+        # happens. See TODO.md: the tick itself should go.
         return note
 
     def _write_approved(self, approved) -> None:

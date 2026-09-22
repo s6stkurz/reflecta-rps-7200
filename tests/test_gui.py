@@ -14,9 +14,12 @@ import inspect
 import json
 import sys
 import time
+import types
 
 import numpy as np
 import pytest
+
+from rps7200.session import Approved
 
 from conftest import load_tool
 from rps7200 import shortcuts
@@ -2626,6 +2629,56 @@ def test_each_kind_keeps_its_own_type():
     assert isinstance(out["offsets"][1], float) and out["offsets"][1] == 2.0
     assert out["rotations"][1] == 180 and isinstance(out["rotations"][1], int)
     assert out["ticks"][1] is True
+
+
+# -- the last thing shown before the film moves ----------------------------
+
+
+class _Confirming:
+    """Enough of the window for `_approved_note`, which reads nothing else."""
+
+    _approved_note = gui.ScannerGui._approved_note
+
+    def __init__(self, correct=True):
+        self.v_correct = types.SimpleNamespace(get=lambda: correct)
+
+
+def test_the_dialog_counts_positions_by_who_decided_them():
+    """It used to say every one of them was "a position you set by hand".
+
+    True when typing was the only way to have one. The sheet pre-fills a
+    position for every frame it can read, so that sentence was attributing the
+    machine's decisions to him -- on the screen where he confirms them.
+    """
+    note = _Confirming()._approved_note([
+        Approved(1, 0.5, source="operator"),
+        Approved(2, 0.5, source="measured"),
+        Approved(3, 0.5, source="measured"),
+        Approved(4, 0.5, source="neighbours"),
+    ])
+    assert "1 you positioned" in note
+    assert "2 two detectors agreed" in note
+    assert "1 read from the frames either side" in note
+    assert "by hand" not in note
+
+
+def test_the_dialog_never_promises_the_automatic_nudge():
+    """Every ticked frame gets an approval, so the held branch always wins and
+    `elif correct` is never reached. The clause described something that cannot
+    happen -- see TODO.md, the tick itself should go."""
+    note = _Confirming(correct=True)._approved_note(
+        [Approved(1, 0.5, source="measured")])
+    assert "nudge" not in note
+
+
+def test_a_roll_where_nothing_moves_says_nothing():
+    assert _Confirming()._approved_note([Approved(1, 0.0)]) == ""
+    assert _Confirming()._approved_note([]) == ""
+
+
+def test_the_dialog_is_not_in_millimetres():
+    note = _Confirming()._approved_note([Approved(1, 0.5, source="measured")])
+    assert "mm" not in note
 
 
 # -- the cell's caption, which had no tests while carrying four mistakes ----

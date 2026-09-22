@@ -1137,3 +1137,16 @@ nothing caps it.
   scanner sent and still matches its raw bytes. Whether the flip belongs in the
   driver depends on whether it is inherent to the transport or to how the strip
   was inserted — untested.
+
+- **The sheet's "nudge registration between frames" tick cannot act on a
+  commissioned scan.** `approved_from_sheet` emits an `Approved` for every
+  ticked frame, including the ones left at zero, and `scan_roll` takes the held
+  branch for any frame that has one -- so `elif correct` is never reached. It
+  is a control offered for something that never happens, which is what the
+  sheet's own `OPTIONS` comment says must not be done. Removing it touches
+  `OPTIONS`, `_options_note`'s map, the state round trip and one test, so it is
+  its own commit.
+- **`approved.json` is one-way.** The window writes and reads it; the command
+  line neither, using its own `held` note in the manifest that the window never
+  reads. So positions set by hand cannot be handed to `scan_roll --approved`,
+  and what `--approved` computed is invisible to the window.
