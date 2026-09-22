@@ -3,6 +3,8 @@
 
     make run                      # the real scanner
     make run-demo                 # stored library entries, nothing on the bus
+    make run-sheet                # the contact sheet on a stored walk, with
+                                  # the positions measured again every launch
 
 Prescan, scan, walk a roll, and look at what came off -- including the infrared
 plane on its own, which is the one channel no ordinary viewer will show you.
@@ -39,7 +41,9 @@ from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library, preview, settings, shortcuts, tiff  # noqa: E402
+from rps7200 import (                                     # noqa: E402
+    export, framing, library, preview, settings, shortcuts, tiff,
+)
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
@@ -55,19 +59,31 @@ from rps7200.mono import (                                 # noqa: E402
     MONO_CHOICES,
     to_monochrome,
 )
-from rps7200.protocol import COORD_PER_INCH, MM_PER_INCH  # noqa: E402
-from rps7200.session import (                             # noqa: E402
+from rps7200.protocol import (                             # noqa: E402
+    COORD_PER_INCH,
+    MM_PER_INCH,
+    MM_PER_COMMAND,
+    MM_PER_UNIT,
+    say_command,
+    say_units,
+    units,
+    units_for_param,
+)
+from rps7200.session import (                              # noqa: E402
+    FINE_MAX_MM,
+    FINE_MIN_MM,
+    INFRARED_TIE_CROSSOVER_DPI,
     Approved,
-    Result,
-    _safe,
-    _unclaimed,
     Calibrate,
     Move,
     Prescan,
+    Result,
     Roll,
     Scan,
     ScanSession,
-    INFRARED_TIE_CROSSOVER_DPI,
+    _safe,
+    _unclaimed,
+    deliverable_mm,
     estimate_seconds,
     plan_nudges,
 )
@@ -174,26 +190,42 @@ ARCHIVE_MAX_SIDE = 512
 #: The transport aperture across the film, from the full scan frame.
 APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 
-#: The smallest move the transport can make: param 1 of the calibrated
-#: sub-frame law. Asking for less does not get you less, it gets you this.
-FINE_STEP_MM = 0.27
+#: The smallest and largest a single SLIDE command delivers. Taken from the
+#: session rather than copied, because a window offering a move the session
+#: then refuses reads to the operator as the button being broken -- and a
+#: rounded copy is how the two drift. `FINE_MIN_MM` is param 1, the finest
+#: move that exists: `param 0` was measured on 2026-09-22 and does nothing.
+FINE_STEP_MM = FINE_MIN_MM
+MAX_FINE_MM = FINE_MAX_MM
 #: How finely `step_offset` looks for the next reachable position. A quarter
 #: of the lattice's own spacing, so it cannot step over one.
 FINEST_PROBE_MM = 0.026
-#: The largest one SLIDE command delivers, param 8.
-MAX_FINE_MM = 1.01
-#: How many of those one move may chain, and how far that reaches.
-#:
-#: Not the twenty the calibration is good for: a fine adjustment that travels
-#: half the aperture is misuse of the tool, and letting a click in the middle
-#: of the picture ask for 18 mm of nudging would be doing badly and slowly what
-#: the slide buttons do properly. Eight covers the worst real mis-framing seen
-#: -- CyberView lost 6 mm on one frame of its own strip -- with margin.
+#: The planner's own chain limit, matched so the two agree.
 MAX_FINE_STEPS = 8
-MAX_TRAVEL_MM = MAX_FINE_MM * MAX_FINE_STEPS
+
+#: How far one fine adjustment may travel: **exactly one command**.
+#:
+#: It used to be eight chained commands, because one reached only 1.01 mm and
+#: the worst real mis-framing seen needed more -- CyberView lost 6 mm on one
+#: frame of its own strip. Raising `MAX_CORRECTION_PARAM` to 87 put that whole
+#: range inside a single command, so the chain is no longer the way to reach
+#: it, and chaining is strictly worse: every command pays the ramp again and
+#: scatters again, and the scatter does not shrink with the size of the move.
+#:
+#: It also bounds the tool. One command reaches about a quarter of the
+#: aperture, which is the right size for a fine adjustment; letting a click in
+#: the middle of the picture ask for half the aperture would be doing badly and
+#: slowly what the slide buttons do properly.
+MAX_TRAVEL_MM = MAX_FINE_MM
 
 THUMB_H = 76
 POLL_MS = 120
+#: How long to wait before opening a roll named on the command line. The window
+#: is built inside `__init__`, which runs before `mainloop`, so the root is not
+#: mapped yet: `open_roll` ends in a dialog whose parent would be an unmapped
+#: window, and the sheet is a Toplevel sized against a geometry Tk has not
+#: applied. Behind the 120 ms sash restore, so the panes are placed first.
+OPEN_ROLL_MS = 250
 
 #: The body size this window's type was drawn against. Tk reports 13 for
 #: TkDefaultFont on macOS (.AppleSystemUIFont); Windows reports 9 (Segoe UI)
@@ -310,10 +342,19 @@ LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
 
 class ScannerGui:
     def __init__(self, root: tk.Tk, session: ScanSession, demo: bool = False,
-                 settings_path=None):
+                 settings_path=None, look_only: bool = False,
+                 open_roll=None):
         self.root = root
         self.session = session
         self.demo = demo
+        #: There is no film in the transport. **Wording only.** The refusal
+        #: belongs to the backend -- `DemoScanner(no_film=True)` raises, the
+        #: session reports a failed job, and the window says so through the
+        #: path it already has. Gating the controls here instead meant the
+        #: sheet-to-roll spine never ran: `on_scan_chosen` writes
+        #: `approved.json` and submits the `Roll`, and a demo that cannot
+        #: reach them is not demonstrating them.
+        self.look_only = look_only
         # First, because the controls and the presets below start from it.
         self._settings_path = settings_path
         self.remembered = settings.load(settings_path)
@@ -460,6 +501,12 @@ class ScannerGui:
         self.session.start()
         self._bind_shortcuts()
         self._later(POLL_MS, self._pump)
+        if open_roll is not None:
+            # Deferred through `_later` rather than called here, and rather
+            # than `root.after`: `_later` registers in `self._pending`, so
+            # closing the window inside the delay cancels it instead of firing
+            # into a destroyed widget.
+            self._later(OPEN_ROLL_MS, lambda: self.open_roll(open_roll))
 
     # -- layout ------------------------------------------------------------
 
@@ -1347,11 +1394,17 @@ class ScannerGui:
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
-        ttk.Label(row, text="mm", width=4).pack(side="left")
-        self.v_fine = tk.StringVar(value=f"{FINE_STEP_MM:.2f}")
+        ttk.Label(row, text="units", width=5).pack(side="left")
+        self.v_fine = tk.StringVar(value=f"{units(FINE_STEP_MM):.1f}")
         ttk.Entry(row, textvariable=self.v_fine, width=7).pack(side="left")
-        ttk.Label(row, text=f"{FINE_STEP_MM:.2f}-{MAX_TRAVEL_MM:.0f}",
+        # A live preview rather than a static range. What he types and what the
+        # transport can deliver are not the same number, and the gap between
+        # them is the thing this window never told him.
+        self.v_fine_note = tk.StringVar(value=fine_preview(self.v_fine.get()))
+        ttk.Label(row, textvariable=self.v_fine_note,
                   foreground="#777").pack(side="left", padx=4)
+        self.v_fine.trace_add("write", lambda *_: self.v_fine_note.set(
+            fine_preview(self.v_fine.get())))
 
         self.v_aim = tk.BooleanVar(value=False)
         ttk.Checkbutton(box, variable=self.v_aim, command=self._schedule_redraw,
@@ -1383,8 +1436,11 @@ class ScannerGui:
         ttk.Checkbutton(box, text="dry run -- prescan and advance only",
                         variable=self.v_dryrun).pack(anchor="w", pady=2)
         self.v_correct = tk.BooleanVar(value=False)
-        ttk.Checkbutton(box, text="nudge registration between frames",
+        ttk.Checkbutton(box, text="aim each frame while prescanning",
                         variable=self.v_correct).pack(anchor="w")
+        self.v_correct_dry = tk.BooleanVar(value=False)
+        ttk.Checkbutton(box, text="    ... but only say what it would do",
+                        variable=self.v_correct_dry).pack(anchor="w")
         self.b_roll = ttk.Button(box, text="Scan roll", command=self.on_roll)
         self.b_roll.pack(fill="x", pady=(6, 0))
         # Opens by itself when a dry run ends; this is for getting back to it
@@ -1794,9 +1850,9 @@ class ScannerGui:
             "and READ_STATE confirms the move, so these are the reliable ones.\n\n"
             "Back / forward move a fraction of a frame. The frame counter does "
             "not see these at all, so only a prescan shows whether one landed. "
-            f"The smallest step the hardware can make is {FINE_STEP_MM:.2f} mm; "
-            f"one command delivers at most {MAX_FINE_MM:.2f} mm, and anything "
-            f"further is several of them, up to {MAX_TRAVEL_MM:.0f} mm before "
+            f"The smallest step the hardware can make is "
+            f"{say_units(FINE_STEP_MM, signed=False)}; one command delivers "
+            f"at most {say_units(MAX_FINE_MM, signed=False)}, and anything "
             "the calibration stops being trustworthy.\n\n"
             "Changing direction swallows two or three steps to backlash, so a "
             "small move that reverses may not move the film at all.\n\n"
@@ -1972,7 +2028,9 @@ class ScannerGui:
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             fast_infrared=self.v_fast_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
-            correct=self.v_correct.get(), mono=self.v_mono.get(),
+            correct=self.v_correct.get(),
+            correct_dry_run=self.v_correct_dry.get(),
+            mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
             name=self.fields["roll"].get().strip(),
             notes=self._notes(), tags=self._tags(),
@@ -2002,11 +2060,26 @@ class ScannerGui:
                                 ("rotations", "turned"),
                                 ("flips", "flipped"))
             if kept[name])
+        proposed, notes = _propose_positions(self.survey, kept["offsets"],
+                                             kept.get("sources"))
+        if notes:
+            counted = ", ".join(
+                f"{n} {label}" for label, n in (
+                    ("measured", sum(1 for v in notes.values()
+                                     if v.get("source") == "measured")),
+                    ("unconfirmed", sum(1 for v in notes.values()
+                                        if v.get("source") == "unconfirmed")),
+                    ("from neighbours", sum(1 for v in notes.values()
+                                            if v.get("source") == "neighbours")))
+                if n)
+            self._say(f"positions proposed for {len(proposed)} frame(s)"
+                      + (f": {counted}" if counted else ""))
         self._say(f"contact sheet: {len(self.survey)} walked "
                   f"{[getattr(r, 'number', '?') for r in self.survey]}"
                   + (f" -- kept {restored}" if restored else ""))
         self.sheet = _ContactSheet(self, self.survey,
-                                   offsets=kept["offsets"],
+                                   offsets=proposed,
+                                   proposals=notes,
                                    rotations=kept["rotations"],
                                    flips=kept["flips"],
                                    ticks=kept["ticks"],
@@ -2107,7 +2180,8 @@ class ScannerGui:
         it got wrong, which is how `_restore` treats the controls.
         """
         out: dict[str, dict] = {"ticks": {}, "offsets": {},
-                                "rotations": {}, "flips": {}, "options": {}}
+                                "rotations": {}, "flips": {}, "sources": {},
+                                "options": {}}
         if not isinstance(raw, dict):
             return out
         for name, cast in (("ticks", bool), ("offsets", float),
@@ -2120,6 +2194,20 @@ class ScannerGui:
                     out[name][int(key)] = cast(value)
                 except (TypeError, ValueError):
                     continue
+        # Only the five words the ensemble and the sheet actually use. A
+        # hand-edited file naming anything else would reach a caption and a
+        # count, and "measured" is a claim about a detector having read the
+        # frame -- not something a settings file gets to assert.
+        known = set(MACHINE_SOURCES) | {"operator", "none"}
+        sources = raw.get("sources")
+        if isinstance(sources, dict):
+            for key, value in sources.items():
+                try:
+                    number = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if str(value) in known:
+                    out["sources"][number] = str(value)
         # The scan options are keyed by name, not by frame number, and only
         # the names the sheet actually offers are let through: a key left over
         # from an older version would be handed to a widget that is not there.
@@ -2287,7 +2375,7 @@ class ScannerGui:
         names = ", ".join(s["roll"] for s in summaries)
         size = human_size(sum(s["size"] for s in summaries))
         decided = sum(1 for s in summaries
-                      if any(read_approved(s["folder"])[1:3]))
+                      if any(read_approved(s["folder"])[1:3]))  # turns/flips
         if not messagebox.askokcancel(
             "Delete",
             f"Delete {len(summaries)} roll folder"
@@ -2421,13 +2509,31 @@ class ScannerGui:
         self.sheet_state = {
             "ticks": {}, "offsets": dict(out["offsets"]),
             "rotations": dict(out["rotations"]), "flips": dict(out["flips"]),
+            # Carried, or the next sheet built from this state stamps every
+            # one of them `operator`: `_propose_positions` reads a kept offset
+            # with no recorded source as one he set by hand. That turns the
+            # ensemble's numbers into his, in the count the confirm dialog
+            # shows him before the film moves.
+            "sources": dict(out["sources"]),
             # Left empty on purpose: `_restore_roll_settings` above has just
             # put this roll's own settings back into the window's controls,
             # and the sheet pre-fills from those. Carrying another roll's
             # options across would override the ones just restored.
             "options": {},
         }
-        self.sheet = _ContactSheet(self, self.survey, offsets=out["offsets"],
+        # Re-proposed, not merely restored. `approved.json` holds positions
+        # that were *committed*; a roll walked and then closed without
+        # commissioning has none, so this used to reopen with nothing at all --
+        # every proposal the walk made died with the window that made it, and
+        # the roll scanned uncorrected with no sign anything was missing.
+        #
+        # Stored positions still win: they go in as `kept`, which
+        # `_propose_positions` leaves alone, and their recorded source with
+        # them so a proposal is not relabelled as his on the way back.
+        proposed, notes = _propose_positions(
+            self.survey, out["offsets"], out.get("sources"))
+        self.sheet = _ContactSheet(self, self.survey, offsets=proposed,
+                                   proposals=notes,
                                    rotations=out["rotations"],
                                    flips=out["flips"], done=done)
         # The film is almost certainly not where the walk left it, and only
@@ -2456,10 +2562,15 @@ class ScannerGui:
                 f"{len(out['results'])} frames from {out['roll']}"
                 + (", all of them already scanned" if done and not remaining
                    else "")
-                + ".\n\nThe frame numbers are counted from where that walk "
-                "started, so put the film back to the start of the strip "
-                "before scanning anything -- nothing here can see where it is "
-                "now.")
+                + ".\n\n"
+                + ("The positions are measured from these prescans every time "
+                   "this opens, so the sheet shows what the frames say today "
+                   "rather than what was recorded about them."
+                   if self.look_only else
+                   "The frame numbers are counted from where that walk "
+                   "started, so put the film back to the start of the strip "
+                   "before scanning anything -- nothing here can see where it "
+                   "is now."))
 
     def _restore_roll_settings(self, settings: dict) -> list[str]:
         """Put a roll's stored settings back into the controls.
@@ -2491,9 +2602,19 @@ class ScannerGui:
                        options=None) -> None:
         """Rewind to where the survey began, then scan only what was ticked.
 
-        `approved` carries the positions set by hand in the sheet. Nothing in
-        this increment consumes them -- they are written down and logged so the
-        numbers can be read back before any of them is allowed to move film.
+        Runs even where there is no film. This is the sole writer of
+        `approved.json` and the sole submitter of a `Roll` from the sheet, so
+        stopping it here is stopping everything the sheet exists to reach --
+        the backend refuses instead, and the refusal arrives as a failed job
+        the way a real transport fault would.
+
+        `approved` carries a position for every ticked frame -- his where he
+        set one, the ensemble's where he did not, each saying which it is. They
+        are written to `approved.json` first, so the numbers can be read back
+        afterwards whatever the roll then does, and then **the roll holds every
+        frame to its own**: `Roll(approved=...)` reaches `_hold_to_approved`,
+        which moves film. A sentence here used to say nothing consumed them,
+        left over from the increment before holding was wired up.
 
         `options` is what the sheet's own panel was set to, and it **wins**:
         the sheet is where a roll is decided, so the roll is scanned with what
@@ -2590,9 +2711,15 @@ class ScannerGui:
         for record in approved:
             self.orientations[("frame", record.number)] = (
                 record.rotation, bool(record.flipped))
-        if back:
-            self.session.submit(Move(frames=-back))
+        # Carried on the roll rather than queued in front of it. A separate
+        # `Move` reports a short rewind by returning a string, which the worker
+        # logs before taking the next job -- so a rewind that got three of
+        # fourteen was followed straight away by a roll scanning frames it had
+        # mis-numbered, and a break after three successes read exactly like a
+        # break after none. One job owns both halves now, and the checked
+        # rewind tolerates the two or three commands backlash swallows.
         self.session.submit(Roll(
+            rewind=back,
             frames=walked, start_at=self._survey_start, resolution=dpi,
             prescan_resolution=predpi, infrared=infrared,
             fast_infrared=fast_ir,
@@ -2632,18 +2759,40 @@ class ScannerGui:
     def _approved_note(self, approved, correct=None) -> str:
         """What the sheet's positions will do, said plainly in the dialog.
 
-        A ticked "nudge registration between frames" that silently does not
-        apply is worse than one that is not offered.
+        This is the last thing shown before the film moves, and it used to say
+        that every frame carried "a position you set by hand". That was true
+        when typing was the only way to have one. Since the sheet began
+        pre-filling a position for every frame it can read, most of them are
+        the ensemble's -- so the dialog was attributing the machine's decisions
+        to him, on the screen where he confirms them.
+
+        Counted by provenance now, in the ensemble's own words, which is what
+        `Approved.source` was added to carry. `tools/scan_roll.py` prints the
+        same breakdown for the same reason.
         """
-        moved = [a for a in approved if a.offset_mm]
-        if not moved:
+        carried = [a for a in approved if a.offset_mm]
+        if not carried:
             return ""
-        note = (f"\n\n{len(moved)} frame{'s' if len(moved) != 1 else ''} "
-                "carry a position you set by hand; those are used exactly as "
-                "given.")
-        if self.v_correct.get() if correct is None else correct:
-            note += (" The automatic nudge stays on for the frames you did "
-                     "not adjust.")
+        tally: dict[str, int] = {}
+        for a in carried:
+            tally[a.source or "operator"] = tally.get(a.source or "operator", 0) + 1
+        said = ", ".join(
+            f"{tally[name]} {label}" for name, label in (
+                ("operator", "you positioned"),
+                ("measured", "two detectors agreed"),
+                ("unconfirmed", "one detector, uncorroborated"),
+                ("neighbours", "read from the frames either side"),
+                ("none", "nothing could read"),
+            ) if tally.get(name))
+        note = (f"\n\n{len(carried)} frame"
+                f"{'s' if len(carried) != 1 else ''} carry a position: {said}."
+                "\n\nEach is used exactly as given.")
+        # The automatic nudge is deliberately not mentioned. Every ticked frame
+        # gets an `Approved`, including the ones left at zero, and the driver
+        # takes the held branch for any frame that has one -- so `correct`
+        # cannot act on a single frame of a commissioned roll. Saying it "stays
+        # on for the frames you did not adjust" described something that never
+        # happens. See TODO.md: the tick itself should go.
         return note
 
     def _write_approved(self, approved) -> None:
@@ -2666,7 +2815,8 @@ class ScannerGui:
                             "offset_mm": round(a.offset_mm, 4),
                             "rotation": int(a.rotation),
                             "flipped": bool(a.flipped),
-                            "reference_entry": str(a.reference_entry or "")}
+                            "reference_entry": str(a.reference_entry or ""),
+                            "source": str(a.source or "operator")}
                            for a in approved],
             }, indent=2, default=str), encoding="utf-8")
         except Exception as exc:                          # noqa: BLE001
@@ -2677,7 +2827,7 @@ class ScannerGui:
             # a button that did nothing at all.
             self._say(f"could not write approved.json ({exc}); scanning anyway")
             return
-        told = ", ".join(f"{a.number}:{a.offset_mm:+.2f}mm"
+        told = ", ".join(f"{a.number}:{say_units(a.offset_mm)}"
                          for a in approved if a.offset_mm) or "none moved"
         self._say(f"approved positions written to "
                   f"{folder / 'approved.json'} ({told})")
@@ -2691,20 +2841,38 @@ class ScannerGui:
             if not values:
                 messagebox.showerror("Fine adjustment", "That has to be a number.")
                 return
-            millimetres = abs(values[0])
-        if millimetres < FINE_STEP_MM:
+            # The field is in the transport's own unit. Everything below this
+            # line, and the whole session interface, stays in millimetres.
+            millimetres = abs(values[0]) * MM_PER_UNIT
+        # Asked of the planner rather than of a rounded copy of its thresholds.
+        # Two hand-maintained numbers used to decide here what the mover would
+        # accept, and a window that refuses what the transport would happily do
+        # reads to the operator as a broken button.
+        if deliverable_mm(millimetres) == 0:
             messagebox.showerror(
                 "Fine adjustment",
                 f"The smallest move the transport can make is "
-                f"{FINE_STEP_MM:.2f} mm.\n\n{millimetres:.2f} mm is less than "
-                "that, so it would not move the film at all.")
+                f"{say_units(FINE_STEP_MM, signed=False)}.\n\n"
+                f"{say_units(millimetres, signed=False)} is less than that, so "
+                f"it would not move the film at all.\n\nparam 0 was sent to "
+                "the scanner and measured: it is accepted and does nothing.")
+            return
+        try:
+            plan_nudges(millimetres)
+        except ValueError as exc:
+            messagebox.showerror(
+                "Fine adjustment",
+                f"{say_units(millimetres, signed=False)} is further than a fine "
+                f"adjustment goes.\n\n{exc}\n\n"
+                "Use the slide buttons for anything this far.")
             return
         if millimetres > MAX_TRAVEL_MM:
             messagebox.showerror(
                 "Fine adjustment",
-                f"{millimetres:.2f} mm would take more than {MAX_FINE_STEPS} "
-                "sub-frame moves, and past that the calibration goes sub-linear "
-                "-- the film would not travel what was asked for.\n\n"
+                f"{say_units(millimetres, signed=False)} is past what one "
+                f"command delivers "
+                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and chaining "
+                "them pays the ramp and the scatter again for each.\n\n"
                 "Use the slide buttons for anything this far.")
             return
         if self.v_reverse.get():
@@ -2972,7 +3140,8 @@ class ScannerGui:
             counted.add(number)
             why = said.get(held.get("outcome"), held.get("outcome", "?"))
             residual = held.get("residual_mm")
-            short = f" ({abs(residual):.2f} mm out)" if residual else ""
+            short = (f" ({say_units(residual, signed=False)} out)"
+                 if residual else "")
             missed.append(f"frame {number} {why}{short}")
         if not missed:
             return
@@ -3186,9 +3355,20 @@ class ScannerGui:
         marks = result.registration
         extra = ("   \u00b7   " + _arrangement(result)
                  if result.rotation or result.flipped else "")
-        if marks.get("offset_mm") is not None:
-            extra = (f"   ·   offset {marks['offset_mm']:+.2f} mm, "
-                     f"short by {marks.get('shortfall_mm', 0):.2f} mm")
+        # Appended, not assigned. It used to overwrite, and because a roll
+        # frame always carries an offset the arrangement note above was
+        # discarded on every one of them -- which is exactly the note that
+        # says a frame was filed sideways.
+        # The offset that used to print here came from `framing.registration`,
+        # the whole-picture detector whose own docstring records it reading
+        # +-0.00 on every real prescan. It sat immediately beside the
+        # ensemble's number from `_aim_note` -- two contradictory figures on
+        # one line, with nothing saying they came from different detectors.
+        # `shortfall` is a different measurement and still means something.
+        if marks.get("shortfall_mm") is not None:
+            extra += (f"   ·   short by "
+                      f"{say_units(marks['shortfall_mm'], signed=False)}")
+        extra += _aim_note(marks)
         shading = (result.meta or {}).get("shading")
         if shading and shading.get("clipped"):
             extra += f"   ·   {shading['clipped']} clipped -- lower the exposure"
@@ -4183,15 +4363,15 @@ class ScannerGui:
         if abs(want) < FINE_STEP_MM:
             messagebox.showinfo(
                 "Aim",
-                f"That point is {abs(want):.2f} mm from the {side} edge of the "
+                f"That point is {say_units(want, signed=False)} from the {side} edge of the "
                 f"aperture, and the smallest move the transport can make is "
-                f"{FINE_STEP_MM:.2f} mm.\n\nIt is already as close as the "
+                f"{say_units(FINE_STEP_MM, signed=False)}.\n\nIt is already as close as the "
                 "hardware can put it.", parent=self.root)
             return
         if abs(want) > MAX_TRAVEL_MM:
             messagebox.showinfo(
                 "Aim",
-                f"That point is {abs(want):.2f} mm from the {side} edge, which "
+                f"That point is {say_units(want, signed=False)} from the {side} edge, which "
                 f"would take more than {MAX_FINE_STEPS} sub-frame moves. Past "
                 "that the calibration goes sub-linear and the film would not "
                 "travel what was asked for.\n\nClick nearer the edge you want "
@@ -4203,7 +4383,8 @@ class ScannerGui:
             way = "back" if want > 0 else "forward"
         if not messagebox.askokcancel(
             "Aim",
-            f"Move the film {abs(want):.2f} mm {way}, so that point sits at the "
+            f"Move the film {say_units(want, signed=False)} {way} "
+            f"({say_command(want)}), so that point sits at the "
             f"{side} edge of the aperture?\n\n"
             f"{steps} sub-frame move{'s' if steps != 1 else ''}, about "
             f"{steps * 1.1:.0f} s.\n\nThe frame counter will not see this, so "
@@ -4235,6 +4416,46 @@ def aim_millimetres(fraction: float) -> float:
     """
     target = 0.0 if fraction < 0.5 else 1.0
     return -(fraction - target) * APERTURE_MM
+
+
+#: What a manifest's `settings` block calls a key, where the top level calls it
+#: something else. Only `dpi` differs: `scan_roll` writes the scan resolution
+#: under the name the driver uses, the window under the name it shows.
+SETTING_ALIASES = {"resolution": "dpi"}
+
+
+def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
+    """One view of a roll's settings, whichever tool wrote it.
+
+    The window writes the settings it restores at the **top level** of
+    `survey.json` and again inside `settings`; `tools/scan_roll.py` writes them
+    only inside `settings`, and calls the scan resolution `dpi`. So a walk made
+    on the command line opened in the window with `prescan_resolution` reading
+    `None` -- and that is not cosmetic. It becomes `_survey_predpi`, which is
+    what pins a commissioned scan's prescan to the resolution its positions
+    were decided at. Unpinned, the reference is resampled and
+    `measure_shift_mm` reads it at about half the confidence: 93.5 falls to
+    47.4 against a floor of 55, so **every frame reads `unverified` and nothing
+    moves**. A roll that costs hours, delivers no correction, and says nothing.
+
+    Read side rather than write side deliberately. Fixing `scan_roll` would
+    help folders that do not exist yet; the eleven already on disk --
+    `registration-D` through `registration-M` -- are the evidence this whole
+    feature was built on, and only the reader recovers them.
+    """
+    out: dict = {}
+    # Least specific first. A `settings` block is what the run was configured
+    # with; the top level is what the window itself wrote and meant; a resumed
+    # roll's progress file is more recent than the survey beside it.
+    for layer in (manifest.get("settings"), manifest,
+                  (progress or {}).get("settings"), progress or {}):
+        for key, value in (layer or {}).items():
+            if key != "settings" and value is not None:
+                out[key] = value
+    for name, alias in SETTING_ALIASES.items():
+        if out.get(name) is None and out.get(alias) is not None:
+            out[name] = out[alias]
+    return out
 
 
 def read_survey(folder) -> dict:
@@ -4276,10 +4497,15 @@ def read_survey(folder) -> dict:
          else roll_path).read_text(encoding="utf-8"))
     progress = (json.loads(roll_path.read_text(encoding="utf-8"))
                 if roll_path.exists() else {})
+    # Merged, because `tools/scan_roll.py` writes these only inside `settings`
+    # and this reader wanted them at the top level. See `manifest_settings`:
+    # the one that matters is `prescan_resolution`, and reading it as None
+    # silently costs every correction in a commissioned roll.
+    settings = manifest_settings(manifest, progress)
     turn = int(manifest.get("rotation") or 0)
     mirrored = bool(manifest.get("flipped"))
 
-    offsets, rotations, flips, entries = read_approved(folder)
+    offsets, rotations, flips, entries, sources = read_approved(folder)
 
     results = []
     for record in manifest.get("frames", []):
@@ -4293,7 +4519,7 @@ def read_survey(folder) -> dict:
             kind="prescan",
             label=f"frame {number} (reopened)",
             image=preview.unorient(image, turn, mirrored),
-            meta={"resolution_dpi": manifest.get("prescan_resolution")},
+            meta={"resolution_dpi": settings.get("prescan_resolution")},
             entry=Path(entries[number]) if number in entries else None,
             registration=record.get("registration") or {},
             position=record.get("transport_position"),
@@ -4309,11 +4535,12 @@ def read_survey(folder) -> dict:
 
     return {
         "results": results,
-        "start_at": int(manifest.get("start_at") or 1),
-        "prescan_resolution": manifest.get("prescan_resolution"),
+        "start_at": int(settings.get("start_at") or 1),
+        "prescan_resolution": settings.get("prescan_resolution"),
         "offsets": offsets,
         "rotations": rotations,
         "flips": flips,
+        "sources": sources,
         "roll": manifest.get("roll") or folder.name,
         "rotation": turn,
         "flipped": mirrored,
@@ -4406,10 +4633,16 @@ def restorable(settings: dict) -> dict:
     """
     out: dict = {}
     for key, (control, kind) in RESTORABLE.items():
-        if settings.get(key) is None:
+        value = settings.get(key)
+        if value is None:
+            # An alias, not a default: `tools/scan_roll.py` calls the scan
+            # resolution `dpi`. Absent under both names still means "this roll
+            # has nothing to say about it", which the guard above preserves.
+            value = settings.get(SETTING_ALIASES.get(key))
+        if value is None:
             continue
         try:
-            out[control] = kind(settings[key])
+            out[control] = kind(value)
         except (TypeError, ValueError):
             continue
     return out
@@ -4430,7 +4663,7 @@ def roll_exports(summary: dict) -> list:
     from types import SimpleNamespace
 
     folder = summary["folder"]
-    _, rotations, flips, _ = read_approved(folder)
+    _, rotations, flips, _, _ = read_approved(folder)
     settings = summary.get("settings") or {}
     turn = int(settings.get("rotation") or 0)
     mirrored = bool(settings.get("flipped"))
@@ -4469,7 +4702,7 @@ def duplicate_name(folder) -> Path:
 
 
 def read_approved(folder):
-    """The operator's own per-frame decisions: `(offsets, rotations, flips, entries)`.
+    """A roll's stored decisions: `(offsets, rotations, flips, entries, sources)`.
 
     `approved.json` is the one thing in a roll folder that is **not** derivable
     from the library -- the frames and the prescans can be rebuilt, these
@@ -4481,13 +4714,17 @@ def read_approved(folder):
     rotations: dict[int, int] = {}
     flips: dict[int, bool] = {}
     entries: dict[int, str] = {}
+    # Who decided each position. Written since the sheet began proposing them,
+    # and read back so a reopened roll does not relabel the ensemble's numbers
+    # as his -- the same reason the sheet's own state carries them.
+    sources: dict[int, str] = {}
     approved_path = folder / "approved.json"
     if not approved_path.exists():
-        return offsets, rotations, flips, entries
+        return offsets, rotations, flips, entries, sources
     try:
         records = json.loads(approved_path.read_text(encoding="utf-8")).get("frames", [])
     except (OSError, ValueError):
-        return offsets, rotations, flips, entries
+        return offsets, rotations, flips, entries, sources
     for record in records:
         try:
             number = int(record["number"])
@@ -4504,7 +4741,9 @@ def read_approved(folder):
             flips[number] = bool(record["flipped"])
         if record.get("reference_entry"):
             entries[number] = record["reference_entry"]
-    return offsets, rotations, flips, entries
+        if record.get("source"):
+            sources[number] = str(record["source"])
+    return offsets, rotations, flips, entries, sources
 
 
 def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
@@ -4617,8 +4856,7 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         # walk can still be resumed, just not looked at first.
         "has_sheet": any(folder.glob("prescan*.tif")),
         "settings": settings,
-        "resolution": settings.get("resolution") or progress.get("dpi")
-        or manifest.get("dpi"),
+        "resolution": manifest_settings(manifest, progress).get("resolution"),
         "film": settings.get("film") or progress.get("film")
         or manifest.get("film"),
         "infrared": settings.get("infrared", progress.get("infrared",
@@ -4818,7 +5056,7 @@ def snap_offset(millimetres: float) -> float:
 
     A number finer than the hardware is a lie. The reachable set starts at one
     SLIDE command and steps by param, so there is nothing at all between zero
-    and `FINE_STEP_MM` -- showing an operator "+0.14 mm" invites him to aim at
+    and `FINE_STEP_MM` -- showing an operator "+1.3 units" invites him to aim at
     a place that does not exist. Clamped to what eight commands can chain,
     which is `MAX_TRAVEL_MM`, so the planner is never asked for a distance it
     would refuse.
@@ -4845,20 +5083,69 @@ def snap_offset(millimetres: float) -> float:
     return 0.0
 
 
-#: What one press of an arrow in the frame position window moves, as the
-#: operator may choose. "finest" is not a distance: it walks to the next
-#: position the transport can actually reach, which is the smallest move there
-#: is and is not a constant -- the gap is 0.27 mm off zero and 0.11 mm
-#: everywhere above that.
-ADJUST_STEPS = ("finest", "0.27 mm", "0.50 mm", "1.00 mm")
+#: What one press of an arrow moves, as the operator may choose. Each rung is
+#: one integer `param`, so each is exactly one command -- no rung can surprise
+#: him with a chain, and the label is what that command travels.
+#:
+#: param 1 is the finest move that exists: `param 0` was sent on 2026-09-22,
+#: five times, and is accepted and does nothing, so there is no rung beneath
+#: this one. param 20 is where `docs/protocol.md` section 5 says the law begins
+#: to bend, and it became a single command when the cap went to 87.
+#:
+#: "finest" is not a distance at all: it walks to the next position the
+#: transport can reach, which is not a constant -- the lattice is 2.57 units
+#: off zero and 1.0 everywhere above it.
+ADJUST_PARAMS = {"small": 3, "medium": 8, "large": 20}
+ADJUST_STEPS = ("finest",) + tuple(
+    f"{name} ({units_for_param(param):.1f} units)"
+    for name, param in ADJUST_PARAMS.items())
 
 
 def step_millimetres(choice: str) -> float:
-    """The chosen step as a distance, or 0.0 meaning "the next one along"."""
-    try:
-        return float(str(choice).split()[0])
-    except (ValueError, IndexError):
+    """The chosen step as a distance, or 0.0 meaning "the next one along".
+
+    Looked up by name rather than parsed out of the label. The label now leads
+    with a word, and the parser this replaces read the first token as a number
+    -- which would have returned 0.0 for every rung, and 0.0 is "finest", so
+    every step would have quietly become the smallest one.
+    """
+    name = str(choice).split()[0] if str(choice).strip() else ""
+    param = ADJUST_PARAMS.get(name)
+    if param is None:
         return 0.0
+    return MM_PER_UNIT * param + MM_PER_COMMAND
+
+
+def fine_preview(text: str) -> str:
+    """What the typed fine adjustment would actually send, in words.
+
+    The operator types a distance and the transport delivers the nearest
+    command to it; the difference between those two is exactly what the window
+    never showed him. Built on the planner rather than on a copy of its
+    arithmetic, so the preview and the move cannot disagree.
+
+    Module level and free of Tk on purpose: it is the part that has to be
+    right, and that is where this file keeps such things.
+    """
+    values = _numbers(text)
+    if not values:
+        return (f"{units(FINE_STEP_MM):.1f}-{units(MAX_TRAVEL_MM):.0f}"
+                if str(text).strip() else "")
+    millimetres = abs(values[0]) * MM_PER_UNIT
+    if deliverable_mm(millimetres) == 0:
+        return f"under {units(FINE_STEP_MM):.1f} -- the film would not move"
+    try:
+        plan = plan_nudges(millimetres)
+    except ValueError:
+        return f"past {units(MAX_TRAVEL_MM):.0f} -- use the slide buttons"
+    if millimetres > MAX_TRAVEL_MM:
+        return f"past {units(MAX_TRAVEL_MM):.0f} -- use the slide buttons"
+    sent = sum(plan)
+    said = say_command(sent)
+    short = units(sent - millimetres)
+    if abs(short) >= 0.05:
+        said += f", {short:+.1f} off"
+    return said
 
 
 def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
@@ -4866,12 +5153,14 @@ def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
 
     `step_mm` of zero means the finest move there is: the adjacent position on
     the transport's own lattice. That is not a fixed distance and cannot be
-    written as one. Off zero the first reachable place is 0.27 mm away -- one
-    SLIDE command, and nothing exists below it -- while above that the
-    positions are 0.11 mm apart, because a command's distance grows by
-    `STEP_MM` per param. Adding a constant and snapping gets this wrong at
-    both ends: 0.27 steps over two thirds of the reachable positions, and
-    0.11 rounds to nothing at all and the frame never moves.
+    written as one. Off zero the first reachable place is one whole SLIDE
+    command away -- `FINE_STEP_MM`, and nothing exists below it, because
+    `param 0` was sent to the scanner on 2026-09-22 and is accepted and does
+    nothing -- while above that the positions are `STEP_MM` apart, since a
+    command's distance grows by one param at a time. Adding a constant and
+    snapping gets this wrong at both ends: the first step's distance steps over
+    two thirds of the reachable positions, and one param's rounds to nothing at
+    all and the frame never moves.
 
     So the finest step is found rather than computed -- probe outward until
     the snapped answer changes. It is a handful of arithmetic per keypress and
@@ -4883,8 +5172,8 @@ def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
         return snap_offset(here + direction * step_mm)
     probe = FINEST_PROBE_MM
     want = here
-    # Enough to cross the widest gap in the lattice, which is the 0.27 mm off
-    # zero, several times over.
+    # Enough to cross the widest gap in the lattice -- the first command off
+    # zero -- several times over.
     for _ in range(64):
         want += direction * probe
         if abs(want) > MAX_TRAVEL_MM:
@@ -4914,6 +5203,156 @@ def picture_of(result) -> tuple | None:
     return None
 
 
+def _propose_positions(results, kept: dict, remembered=None) -> tuple[dict, dict]:
+    """Where the walked strip says each frame should go, his numbers winning.
+
+    Run once when the sheet opens, over the whole survey at once. That is the
+    reason the walk takes one complete pass before anything is decided: a
+    forward walk can only fit the frames behind it, where a finished one fits
+    across all of them and can speak for a frame from both sides.
+
+    A frame the operator has already positioned is left exactly as he left it
+    and is not re-proposed. His number is the authority here and stays it --
+    the sheet is where he corrects this, so overwriting what he typed would
+    undo the correction it exists to collect.
+
+    `remembered` says who decided each kept position, from the sheet's own
+    stored state. Without it every kept offset was stamped `operator`, which
+    was true when the only way to have one was to type it and false from the
+    moment the sheet began proposing them: reopening a sheet relabelled the
+    whole strip as his.
+    """
+    frames = [(int(getattr(r, "number", 0)), r.image)
+              for r in results
+              if getattr(r, "image", None) is not None
+              and getattr(r, "number", None)]
+    if len(frames) < 2:
+        return dict(kept), {}
+    try:
+        offsets, notes = framing.propose_offsets(frames)
+    except Exception as exc:                                  # noqa: BLE001
+        # A sheet that will not open is worse than one with no proposals: the
+        # walk has already been paid for and the frames are still choosable.
+        return dict(kept), {0: {"source": "none", "reason": str(exc)}}
+    # Snapped here rather than where the records are built, so that every
+    # reader of `offsets` sees a position the film can actually reach. The
+    # caption used to show the raw proposal and the commission used to deliver
+    # the snapped one, so a frame captioned as moving could be delivered as no
+    # move at all -- and five other readers carried numbers that do not exist.
+    out = {}
+    for number, value in offsets.items():
+        landed = snap_offset(value)
+        if landed:
+            out[int(number)] = landed
+        else:
+            # Below one command. Not the same as unreadable: the detector saw
+            # it and it is already as close as the transport can put it, which
+            # is what the driver calls `in_place`. Keep the note, drop the move.
+            note = dict(notes.get(int(number)) or {})
+            note["in_place"] = True
+            notes[int(number)] = note
+    out.update(kept)                        # his, over anything measured here
+    known = remembered or {}
+    for number in kept:
+        was = known.get(int(number))
+        if was in MACHINE_SOURCES:
+            # Kept, but not his: this is a proposal surviving a reopen, and
+            # calling it his would be the sheet inventing a decision.
+            notes[int(number)] = {"source": was, "reason": "read on the walk"}
+        else:
+            notes[int(number)] = {"source": "operator",
+                                  "reason": "you set this one"}
+    return out, notes
+
+
+#: The ensemble's words for how it read a frame, as they appear in a caption.
+#: `propose_offsets` produces these and `tests/test_ensemble.py` pins them.
+MACHINE_SOURCES = ("measured", "unconfirmed", "neighbours")
+
+
+def adjustment_mark(offset_mm: float, width: int) -> int | None:
+    """Where the blue line goes on a thumbnail this wide, or None.
+
+    The thumbnail spans the aperture, so an adjustment is that fraction of its
+    width, measured in from the edge the film is moving toward -- left for a
+    backward move, right for a forward one.
+
+    True to scale and deliberately not exaggerated: the line says how far the
+    film goes, and a mark drawn larger than the move would be the sheet
+    claiming something the transport is not going to do. The consequence is
+    that ordinary corrections sit within a few pixels of the edge, because
+    ordinary corrections *are* a few thousandths of the aperture. Reading the
+    exact size is the caption's job; the line is for seeing at a glance that a
+    whole strip is offset the same way.
+
+    Clamped to half the width so a wild reading cannot draw itself as the
+    picture, and kept off both edges so it is never invisible.
+    """
+    if not offset_mm or width <= 4:
+        return None
+    across = min(abs(offset_mm) / APERTURE_MM, 0.5) * width
+    x = across if offset_mm < 0 else width - across
+    return max(1, min(width - 2, int(round(x))))
+
+
+def frame_caption(offset, source, done=False, contrast=0.0, read=False):
+    """One cell's line under the picture, and the colour to write it in.
+
+    Module level and free of Tk because it is the part that has to be right,
+    and because it had no tests at all while carrying four separate mistakes.
+
+    `done` wins the colour. On a resumed roll the marker that has to survive is
+    the one that stops three hours of transport being spent twice -- and since
+    the sheet began proposing a position for every frame it can read, almost
+    every scanned frame had an offset, so almost every one lost its marker. The
+    position still prints beside it, because a frame re-ticked through the
+    documented escape hatch needs to show where it is going.
+
+    `read` says the detector saw the frame and found it already in place. That
+    is not the same as nothing being able to read it, and the driver makes the
+    same distinction -- so dropping an unreachable proposal must not also throw
+    away the fact that it was measured.
+    """
+    if source in MACHINE_SOURCES:
+        said = f"{say_units(offset)} ({source})" if offset else f"in place ({source})"
+    elif offset:
+        said = f"moved {say_units(offset)}"
+    elif read:
+        said = "in place"
+    else:
+        said = ""
+    if done:
+        return (f"scanned - {said}" if said else "scanned"), "DONE"
+    if said:
+        return said, "CHOSEN"
+    return f"contrast {contrast:.2f}", "GREY"
+
+
+def _aim_note(marks: dict) -> str:
+    """What the walk did about this frame's position, in the operator's words.
+
+    Corrected frames say so, refused ones say why. The distinction is the
+    point: a detector that cannot see a frame and one that has checked it are
+    the same silence otherwise, and telling them apart is what `gap_edges`
+    made impossible by answering "registered" for both.
+    """
+    fix = (marks or {}).get("correction")
+    if not fix:
+        return ""
+    outcome = fix.get("outcome")
+    aimed = fix.get("decision_mm")
+    if outcome == "held" and aimed is not None:
+        return f"   ·   aimed {say_units(aimed)}"
+    if outcome == "in_place":
+        return "   ·   in place"
+    if outcome == "dry_run" and aimed is not None:
+        return f"   ·   would aim {say_units(aimed)}"
+    if outcome in ("not_converged", "abandoned", "budget", "stopped"):
+        return f"   ·   not aimed ({outcome.replace('_', ' ')})"
+    reason = (fix.get("reason") or "").split(";")[0].split(" -- ")[0]
+    return f"   ·   not aimed{f': {reason}' if reason else ''}"
+
+
 def _arrangement(result) -> str:
     """How a pass is arranged, in words, for a caption or a line in the log.
 
@@ -4926,7 +5365,7 @@ def _arrangement(result) -> str:
     return ", ".join(parts) or "as the scanner sent it"
 
 
-def approved_from_sheet(frames, ticks, offsets) -> tuple:
+def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
     """The `Approved` records for the ticked frames, in frame order.
 
     Every ticked frame gets one, including those left at zero: an untouched
@@ -4945,8 +5384,16 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
 
     A turn on an unticked frame goes nowhere, which is right: there is no file
     for it to reach. It is the same thing that happens to that frame's offset.
+
+    `sources` says where each number came from -- the sheet's own per-frame
+    note, keyed by frame number. Defaulted, so the records still build without
+    it, and absent means `operator`: that is what an approval used to mean
+    before the sheet pre-filled a position for every frame it could read. It is
+    carried so the driver's log can say `measured` where a detector decided,
+    which is what `_hold_to_approved`'s `source` exists for.
     """
     picked = set(ticks)
+    labels = sources or {}
     out = []
     for result in frames:
         number = getattr(result, "number", None)
@@ -4962,6 +5409,7 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
             # and a Path here reaches json.dumps in _write_approved and
             # raises -- which used to take the whole commission down with it.
             reference_entry=str(getattr(result, "entry", "") or ""),
+            source=(labels.get(number) or {}).get("source") or "operator",
         ))
     return tuple(out)
 
@@ -5737,11 +6185,21 @@ class _FrameAdjuster:
         return self.sheet.offsets.get(self.number, 0.0)
 
     def _set(self, millimetres: float) -> None:
+        """Put this frame where he just put it, and record that it was him.
+
+        The note matters as much as the number. `proposals` was written once,
+        when the sheet opened, and never again -- so a frame he dragged from
+        the detector's suggestion to his own went on wearing the detector's
+        badge, and the confirm dialog went on counting it as measured. It is
+        his the moment he moves it.
+        """
         value = snap_offset(millimetres)
         if value:
             self.sheet.offsets[self.number] = value
         else:
             self.sheet.offsets.pop(self.number, None)
+        self.sheet.proposals[self.number] = {"source": "operator",
+                                             "reason": "you set this one"}
         self._refresh()
         self.sheet._refresh_caption(self.number)
 
@@ -5749,11 +6207,11 @@ class _FrameAdjuster:
         """One step. Drag is coarse; this is how a frame is landed.
 
         "finest" walks to the next position the transport can reach, which is
-        the smallest move there is. What this replaced added a flat 0.27 mm
-        and snapped, and 0.27 is not the lattice's spacing -- it is the
-        distance of a single command off zero. Above that the positions are
-        0.11 mm apart, so the arrows were stepping over two out of every three
-        places the film could actually be put.
+        the smallest move there is. What this replaced added a flat first-step
+        distance and snapped, and that distance is not the lattice's spacing --
+        it is where the lattice starts. Above it the positions are one param
+        apart, so the arrows were stepping over two out of every three places
+        the film could actually be put.
         """
         self._set(step_offset(self.offset, direction,
                               step_millimetres(self.gui.v_adjuststep.get())))
@@ -5801,7 +6259,7 @@ class _FrameAdjuster:
             self.v_read.set("as surveyed")
         else:
             self.v_read.set(
-                f"{self.offset:+.2f} mm   \u00b7   {moves} "
+                f"{say_units(self.offset)}   \u00b7   {moves} "
                 f"move{'s' if moves != 1 else ''}   \u00b7   "
                 f"about {seconds:.0f} s")
         self._draw()
@@ -6110,8 +6568,20 @@ class _ContactSheet:
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
     DONE = "#5b7a5b"                         # already scanned: neither of those
+    #: The adjustment mark. Blue because every other colour on a cell already
+    #: means a state -- amber chosen, red skipped, green done -- and this is
+    #: not a state, it is a measurement drawn on the picture.
+    MOVING = "#3d7fd1"
+    #: The coloured line itself: thin, because it is a marker and not a mount.
+    RING = 2
+    #: The white gap between that line and the picture. The line used to sit
+    #: hard against the thumbnail, where it read as an edge artefact of the
+    #: picture rather than as something drawn around it. Standing it off gives
+    #: the frame a border to be, the way a mounted print has one.
+    MOUNT = 6
 
-    def __init__(self, gui, frames, offsets=None, rotations=None, flips=None,
+    def __init__(self, gui, frames, offsets=None, proposals=None,
+                 rotations=None, flips=None,
                  done=None, ticks=None, options=None):
         self.gui = gui
         self.frames = [r for r in frames if r.image is not None]
@@ -6146,6 +6616,12 @@ class _ContactSheet:
         #: where it was surveyed. Absent means "as surveyed" -- an explicit
         #: zero never lands here, because snap_offset returns it as absent.
         self.offsets: dict[int, float] = dict(offsets or {})
+        #: Where each proposed offset came from, so a caption can say whether
+        #: a number was measured, read by one detector and uncorroborated, or
+        #: predicted from the frames either side. A proposal the operator
+        #: cannot tell from a guess is one he has to check by hand anyway,
+        #: which is the work this exists to save.
+        self.proposals: dict[int, dict] = dict(proposals or {})
         #: Which way up each frame has been *decided* to be, in degrees
         #: clockwise. Per frame because a strip is not one orientation: a
         #: portrait among landscapes is ordinary, and the session's single
@@ -6178,6 +6654,8 @@ class _ContactSheet:
         self._photos: dict[int, tk.PhotoImage] = {}
         self._pictures: dict[int, tk.Label] = {}
         self._rings: dict[int, tk.Frame] = {}
+        #: The blue adjustment line over each picture, by frame number.
+        self._marks: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
         self._adjuster = None
@@ -6189,6 +6667,11 @@ class _ContactSheet:
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Contact sheet")
+        # What the gap inside the ring is filled with. Taken from the window
+        # rather than named, so the border reads as space around the print on
+        # whatever theme this is running under, rather than as a white
+        # rectangle on a grey sheet.
+        self.MOUNT_BG = self.top.cget("background")
         self.top.transient(gui.root)
         self.top.geometry(_geometry(980, 720))
         # Its own menu, parented on this window, so closing the sheet takes it
@@ -6199,18 +6682,29 @@ class _ContactSheet:
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, font=_font(12, bold=True),
                   text=f"{len(self.frames)} frames walked").pack(anchor="w")
+        # Two headers, because half of the usual one is about a scan that
+        # cannot happen here, and a window that describes something it will not
+        # do is the fault this sheet exists to avoid.
+        said = ("Click a picture to tick it, double-click or press Return to "
+                "set where the film should sit, right-click to arrange it. "
+                "The arrow keys move between frames and Space ticks.")
+        if gui.look_only:
+            said = ("There is no film in the transport: this is a walk that "
+                    "was stored earlier, and the positions under the frames "
+                    "were measured from those pictures when this window "
+                    "opened. " + said + " Scanning is offered as it always "
+                    "is, and will say there is no film when it reaches for "
+                    "it.")
+        else:
+            said = ("Tick what is worth scanning. " + said + " A frame is "
+                    "scanned the way you leave it here. Positions you set are "
+                    "used as given -- nothing moves until you commission the "
+                    "scan, and the automatic nudge does not apply to frames "
+                    "you adjust. The film is rewound to the start of the strip "
+                    "first, and every frame nobody ticked costs its advance "
+                    "only.")
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
-                  text=("Tick what is worth scanning. Click a picture to tick "
-                        "it, double-click or press Return to set where the film "
-                        "should sit, right-click to arrange it. The arrow keys "
-                        "move between frames and Space ticks. A frame is "
-                        "scanned the way you leave it here. Positions you set "
-                        "are used as given -- nothing moves until you "
-                        "commission the scan, and the automatic nudge does not "
-                        "apply to frames you adjust. The film is rewound to the "
-                        "start of the strip first, and every frame nobody "
-                        "ticked costs its advance only.")).pack(
-            anchor="w", pady=(0, 8))
+                  text=said).pack(anchor="w", pady=(0, 8))
 
         # Canvas-with-a-frame-inside, the same shape as the options column:
         # Tk has no scrollable frame of its own.
@@ -6354,7 +6848,10 @@ class _ContactSheet:
             "sheet_straighten": lambda: self._on_selected(self._straighten),
             "sheet_flip": lambda: self._on_selected(self._flip),
             "sheet_show": self._show_selected,
-            "sheet_close": self.top.destroy,
+            # `_dismiss`, not `destroy`: Escape is a fourth way out of this
+            # window and it used to throw away everything the other three
+            # keep. A tick, a drag and a turn all died with it, silently.
+            "sheet_close": self._dismiss,
         }
 
     def rebind(self) -> None:
@@ -6439,14 +6936,23 @@ class _ContactSheet:
 
         cell = ttk.Frame(grid, padding=6)
         cell.grid(row=row, column=column, sticky="n")
-        ring = tk.Frame(cell, background=self.CHOSEN, padx=3, pady=3)
+        # Three nested frames, so the coloured line can stand off the picture:
+        # the ring is the line, the mount is the white gap inside it, and the
+        # picture sits in that. One frame with thick padding made a broad band
+        # of colour instead of a border with room around the print.
+        ring = tk.Frame(cell, background=self.CHOSEN,
+                        padx=self.RING, pady=self.RING)
         ring.pack()
         self._rings[number] = ring
+        mount = tk.Frame(ring, background=self.MOUNT_BG,
+                         padx=self.MOUNT, pady=self.MOUNT)
+        mount.pack()
 
         photo = self._render(result)
-        picture = tk.Label(ring, image=photo, borderwidth=0)
+        picture = tk.Label(mount, image=photo, borderwidth=0)
         picture.pack()
         self._pictures[number] = picture
+        self._mark_adjustment(number)
         picture.bind("<Button-1>",
                      lambda _e, n=number, i=index: self._clicked(n, i))
         picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
@@ -6469,7 +6975,40 @@ class _ContactSheet:
             # frame this far out has picture outside the aperture, and no
             # amount of scanning it brings that back.
             ttk.Label(cell, foreground="#e0605a",
-                      text=f"drifted -- {short:.2f} mm outside").pack(anchor="w")
+                      text=f"drifted -- {say_units(short, signed=False)} "
+                           "outside").pack(anchor="w")
+
+    def _mark_adjustment(self, number: int) -> None:
+        """Draw where this frame is going, on the frame itself.
+
+        A caption says "-4.8 units" and a person has to translate that into a
+        distance on a picture. The line is the translation: it stands off the
+        edge the film is moving toward by exactly the adjustment, scaled so
+        the thumbnail's width is the aperture. Seeing four frames marked at the
+        same inset is what makes a strip-wide offset obvious, which no column
+        of numbers does.
+
+        Placed over the picture rather than drawn into it, so the thumbnail
+        stays the pixels that were scanned and rotating a frame does not have
+        to re-render a decoration.
+        """
+        old = self._marks.pop(number, None)
+        if old is not None:
+            old.destroy()
+        picture = self._pictures.get(number)
+        offset = self.offsets.get(number)
+        if picture is None or not offset:
+            return
+        width = picture.winfo_reqwidth()
+        height = picture.winfo_reqheight()
+        if width <= 1 or height <= 1:
+            return
+        x = adjustment_mark(offset, width)
+        if x is None:
+            return
+        line = tk.Frame(picture, background=self.MOVING, width=2, height=height)
+        line.place(x=x, y=0)
+        self._marks[number] = line
 
     def _render(self, result) -> tk.PhotoImage:
         """This frame's thumbnail, the way up it is currently turned.
@@ -6672,24 +7211,38 @@ class _ContactSheet:
 
         When the operator has set a position, that is what the cell shows, in
         the sheet's amber -- it is his number and it is the one that will be
-        acted on. The measured registration offset it replaces reads +-0.00 mm
-        on every real prescan, because film_bounds abstains on all of them.
+        acted on.
+
+        A proposed position shows the same number and says where it came from,
+        because the two are not worth the same and he is the one who decides
+        which to trust:
+
+          (measured)      two independent detectors agreed on it
+          (unconfirmed)   one could read the frame and nothing corroborated it
+          (neighbours)    nothing could read it; the strip's line spoke for it
+
+        The offset this replaced read +-0.00 mm on every real prescan, because
+        `film_bounds` abstains on all of them.
+
+        The wording itself is `frame_caption`, which is testable without a
+        window. This is the lookup around it.
         """
         caption = self._captions.get(number)
         if caption is None:
             return
-        offset = self.offsets.get(number)
-        if offset:
-            caption.configure(text=f"moved {offset:+.2f} mm",
-                              foreground=self.CHOSEN)
-            return
-        if number in self.done:
-            caption.configure(text="scanned", foreground=self.DONE)
-            return
         marks = next((r.registration or {} for r in self.frames
                       if r.number == number), {})
-        caption.configure(text=f"contrast {marks.get('contrast', 0):.2f}",
-                          foreground="#777")
+        note = self.proposals.get(number) or {}
+        said, colour = frame_caption(
+            self.offsets.get(number) or 0.0,
+            note.get("source"),
+            done=number in self.done,
+            contrast=marks.get("contrast", 0),
+            read=bool(note.get("in_place")),
+        )
+        caption.configure(text=said, foreground={
+            "DONE": self.DONE, "CHOSEN": self.CHOSEN}.get(colour, "#777"))
+        self._mark_adjustment(number)
 
     def adjusted(self) -> dict:
         """The positions set by hand, keyed by frame number."""
@@ -6714,6 +7267,14 @@ class _ContactSheet:
             "offsets": {int(n): float(v) for n, v in self.offsets.items()},
             "rotations": {int(n): int(t) for n, t in self.rotations.items()},
             "flips": {int(n): bool(f) for n, f in self.flips.items()},
+            # Who decided each position. Without it a reopened sheet handed
+            # every offset back as `kept`, and `_propose_positions` stamps
+            # `operator` over anything kept -- so closing the window and
+            # opening it again relabelled every machine proposal as his, and
+            # the confirm dialog then counted them as positions he had set.
+            "sources": {int(n): str((v or {}).get("source") or "")
+                        for n, v in self.proposals.items()
+                        if (v or {}).get("source")},
             # Not keyed by frame: one set for the roll. Kept with the rest so
             # a sheet reopened for a strip comes back describing the same scan
             # it described when it was closed.
@@ -6810,7 +7371,8 @@ class _ContactSheet:
 
     def _scan(self) -> None:
         picked = self.chosen()
-        approved = approved_from_sheet(self.frames, picked, self.offsets)
+        approved = approved_from_sheet(self.frames, picked, self.offsets,
+                                       self.proposals)
         # Read before the window goes: these are Tk variables that live in it,
         # and `_dismiss` destroys it.
         options = self.scan_options()
@@ -6938,10 +7500,46 @@ def main() -> int:
     ap.add_argument("--settings", default=None,
                     help=f"where the window remembers its setup "
                          f"(default: {settings.DEFAULT_PATH}, or "
-                         f"${settings.PATH_ENV})")
+                         f"${settings.PATH_ENV}, or demo/gui-settings.json "
+                         f"with --demo)")
+    ap.add_argument("--open-roll", default=None, metavar="ROLL",
+                    help="open this roll folder as soon as the window is up, "
+                         "as a path or as a bare name under the rolls "
+                         "directory. Its positions are proposed afresh from "
+                         "the prescans, every launch.")
+    ap.add_argument("--look-only", action="store_true",
+                    help="there is no film in the transport. Every control "
+                         "still works; anything that reaches for film says so")
     args = ap.parse_args()
 
     home = DEMO_ROOT if args.demo else Path(".")
+
+    # A demo keeps its own remembered geometry and sheet state. It used to
+    # write them into the real file, which is the one thing DEMO_ROOT exists
+    # to prevent everywhere else.
+    settings_path = args.settings
+    if settings_path is None and args.demo:
+        settings_path = str(DEMO_ROOT / "gui-settings.json")
+
+    # Resolved before a window exists, so a typo is a line of text rather than
+    # a dialog behind a half-built window.
+    #
+    # A path is taken as given, which under --demo means a real walk in
+    # `rolls/` and not `demo/rolls`. That is deliberate: the point of the demo
+    # sheet is a strip that was actually walked. It is safe because opening a
+    # roll only reads it -- `_write_approved` derives its folder from
+    # `session.rolls`, which --demo pins under `demo/`, so nothing the window
+    # does afterwards can write back into the walk it is showing.
+    open_roll = None
+    if args.open_roll:
+        rolls_dir = Path(args.rolls) if args.rolls else home / "rolls"
+        for candidate in (Path(args.open_roll), rolls_dir / args.open_roll):
+            if candidate.is_dir():
+                open_roll = candidate
+                break
+        else:
+            ap.error(f"no roll folder at {args.open_roll!r}, and none called "
+                     f"that under {rolls_dir}")
     session = ScanSession(
         root=args.library or str(home / "library"),
         reference=args.reference or str(home / "calibration" / "shading.npz"),
@@ -6951,10 +7549,15 @@ def main() -> int:
     if args.demo:
         from rps7200.demo import DemoScanner
         source, entry = args.demo_source, args.demo_entry
-        session._open_scanner = lambda: DemoScanner(source, entry=entry)
+        # `--look-only` is a fact about the film, so it goes to the thing that
+    # would know. The backend refuses and the window reports it the way it
+    # reports any other transport fault.
+    session._open_scanner = lambda: DemoScanner(
+        source, entry=entry, no_film=args.look_only)
 
     root = tk.Tk()
-    ScannerGui(root, session, demo=args.demo, settings_path=args.settings)
+    ScannerGui(root, session, demo=args.demo, settings_path=settings_path,
+               look_only=args.look_only, open_roll=open_roll)
     root.mainloop()
     return 0
 

@@ -1,0 +1,45 @@
+{
+  "recorded": "2026-09-21",
+  "what": "Stefan's own eye on rolls/registration-K (the prescan walk) and rolls/scan600-v3 (the 600 dpi roll held to positions proposed from it). His read is authoritative -- CLAUDE.md says so, and it has been right against the numbers twice today already.",
+  "his_words": {
+    "prescan": "1,9,14 are still not correct. 1 is not starting on the complete right side. 9 is on left and not on the right and 14 is to big.",
+    "scan": "1 a bit right, 2 a bit left, 3 good, 4 a bit right, 5 good. 6 good, 7 good, 8, good, 9 horrible on the right a bit of the next frame creeps in, so the complete inbetween space is in the frame, 10 is shit way to much right, 11 a bit right, 12 good, 13 right a bit, 14 good, 15 a bit right.",
+    "what_a_bit_right_means": "If i mean a bit right then a bit on the right is black so it should have moved a bit more right."
+  },
+  "key": {
+    "good": "nothing wrong to the eye",
+    "a_bit_right": "a strip of black (unexposed base) shows at the RIGHT, so the picture should have been moved further right",
+    "a_bit_left": "the same at the LEFT",
+    "bad": "grossly wrong, described in the note"
+  },
+  "prescan": {
+    "1": {"verdict": "wrong", "note": "not starting on the complete right side"},
+    "9": {"verdict": "wrong", "note": "on left and not on the right"},
+    "14": {"verdict": "wrong", "note": "too big"},
+    "others": "not called out, so acceptable"
+  },
+  "scan": {
+    "1":  {"verdict": "a_bit_right"},
+    "2":  {"verdict": "a_bit_left"},
+    "3":  {"verdict": "good"},
+    "4":  {"verdict": "a_bit_right"},
+    "5":  {"verdict": "good"},
+    "6":  {"verdict": "good"},
+    "7":  {"verdict": "good"},
+    "8":  {"verdict": "good"},
+    "9":  {"verdict": "bad", "note": "horrible; on the right a bit of the NEXT frame creeps in, so the complete inter-frame space is inside the frame"},
+    "10": {"verdict": "bad", "note": "way too much right"},
+    "11": {"verdict": "a_bit_right"},
+    "12": {"verdict": "good"},
+    "13": {"verdict": "a_bit_right"},
+    "14": {"verdict": "good"},
+    "15": {"verdict": "a_bit_right"}
+  },
+  "tally": {
+    "good": [3, 5, 6, 7, 8, 12, 14],
+    "a_bit_right": [1, 4, 11, 13, 15],
+    "a_bit_left": [2],
+    "bad": [9, 10]
+  },
+  "the_asymmetry_that_matters": "Five frames show black at the RIGHT and only one at the left. That is a systematic bias, not scatter, and it is the single strongest signal in this data."
+}

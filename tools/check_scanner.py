@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -231,13 +232,38 @@ def _ladder(transport: Transport) -> int:
     print("       bit decides anything on its own.")
 
     if state.scanning & STATE_SCANNING:
-        return failed(
-            "the device reports a scan in progress, and nothing here started "
-            "one",
-            "That is a pass abandoned by an earlier session. It stays busy",
-            "until it is power-cycled at the unit's own switch -- do that",
-            "before scanning anything.",
-        )
+        # Tell a pass that is still running from a flag left behind by one
+        # that is not. A real scan changes something -- it finishes, or the
+        # position moves. A stale one sits exactly where it is.
+        settled = True
+        for _ in range(4):
+            time.sleep(2.0)
+            again = scanner.read_state()
+            if (again.scanning, again.position) != (state.scanning,
+                                                    state.position):
+                settled = False
+                state = again
+                break
+        if not settled:
+            return failed(
+                "a scan really is running: the state changed while this "
+                "looked at it",
+                f"now {state.scanning:#04x} at position {state.position}.",
+                "Wait for it to finish rather than starting anything else --",
+                "an abandoned read is what wedges this device.",
+            )
+        print()
+        print(f"NOTE: the scanning bit is set ({state.scanning:#04x}) and "
+              "nothing here started a scan.")
+        print("      It did not change over eight seconds, so this is a flag")
+        print("      left behind rather than a pass still running. Measured")
+        print("      2026-09-21: a state that survived a power cycle cleared")
+        print("      the moment the next session started, and a full walk ran")
+        print("      normally through it. The vendor's own capture reads 0x1d")
+        print("      idle and 0x9d scanning, so the bit means what it says --")
+        print("      it is the staleness that is not dangerous.")
+        print("      If a scan does start misbehaving after this, power-cycle")
+        print("      at the unit's own switch before trying again.")
 
     print()
     for warning in warnings:

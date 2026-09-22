@@ -252,6 +252,72 @@ def test_the_shape_comes_from_the_library_not_from_a_ratio(tmp_path):
     )
 
 
+# -- the stand-in must not drift from what it stands in for -----------------
+#
+# The demo is how this driver is judged when the scanner is off. A demo that
+# diverges does not fail loudly: it reports something plausible and wrong, and
+# the fix then asked for damages the real path. `nudge` was typed out here once
+# and kept a cap of param 8 and a 1.57-unit ramp after the driver moved to 87
+# and 1.84 -- so a frame set 38 units out held in one command on the hardware
+# and came back `not_converged` in the demo.
+
+
+def test_the_demo_has_every_attribute_the_borrowed_methods_reach_for():
+    """`_hold_to_approved` and `_aim_frame` are the real ones, bound onto this
+    class. They reach through `self` for things `DirectScanner` has, and a
+    missing one is an `AttributeError` in the middle of a roll rather than at
+    import. `_aim_frame`'s dry run did exactly that: it wanted `param_for_mm`
+    and the stand-in did not have it."""
+    from rps7200.demo import DemoScanner
+
+    for name in ("param_for_mm", "STEP_MM", "OVERHEAD_MM",
+                 "MAX_CORRECTION_PARAM", "HOLD_SETTLE_S",
+                 "HOLD_GIVE_UP_FRAMES", "nudge", "prescan", "_log"):
+        assert hasattr(DemoScanner, name), name
+
+
+def test_the_transport_law_is_the_drivers_own_and_not_a_copy():
+    """One home for the snapping, which is why `param_for_mm` is a
+    staticmethod. Equal values are not enough -- these must be the same
+    objects, or the next time one moves the other stays where it was."""
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    assert DemoScanner.param_for_mm is DirectScanner.param_for_mm
+    assert DemoScanner.STEP_MM is DirectScanner.STEP_MM
+    assert DemoScanner.OVERHEAD_MM is DirectScanner.OVERHEAD_MM
+    assert DemoScanner.MAX_CORRECTION_PARAM is DirectScanner.MAX_CORRECTION_PARAM
+
+
+def test_a_nudge_picks_the_same_param_the_scanner_would():
+    """The distance the operator asks for becomes the same byte either way.
+
+    38 units is the case that exposed the drift: one command on the hardware,
+    and the stale copy capped it at param 8 and gave up after three moves.
+    """
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    demo = DemoScanner("library")
+    for units in (1, 3, 8, 20, 38, 87, 200):
+        millimetres = units * DirectScanner.STEP_MM
+        assert (demo.param_for_mm(millimetres)
+                == DirectScanner.param_for_mm(millimetres)), units
+
+
+def test_a_nudge_answers_with_everything_the_hold_loop_reads():
+    """`_hold_to_approved` reads `clamped` to say a command fell short, and
+    `asked_mm` to know what it spent. The copy returned neither, so the
+    shortfall warning was unreachable at any distance."""
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    got = DemoScanner("library").nudge(38 * DirectScanner.STEP_MM)
+    for key in ("param", "forward", "asked_mm", "requested_mm",
+                "clamped", "short_mm"):
+        assert key in got, key
+
+
 # -- what a roll walks, which is what a contact sheet shows -----------------
 
 

@@ -791,7 +791,7 @@ def test_a_nudge_says_the_frame_counter_cannot_confirm_it(tmp_path):
     # SLIDE command either way -- param_for_mm snaps both to param 1, and the
     # snap is idempotent -- but the number that changes hands is now the one
     # that is true.
-    assert scanner.moves == [("nudge", pytest.approx(0.2719, abs=1e-4))]
+    assert scanner.moves == [("nudge", pytest.approx(0.3002, abs=1e-4))]
     assert any("prescan to check it landed" in e.text
                for e in kinds(events, "finished"))
     # Position is still whatever it was; nothing pretends otherwise.
@@ -1035,15 +1035,85 @@ def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
 # correction loop -- so it lives in one function and these tests pin it.
 
 
+class _Winding:
+    """A film that can be wound back and can stop part-way."""
+
+    def __init__(self, at, sticks_at=None, swallows=0):
+        self.at, self.sticks_at, self.swallows = at, sticks_at, swallows
+        self.scans = 0
+
+    def position(self):
+        return self.at
+
+    def retreat(self, **kw):
+        if self.swallows:
+            self.swallows -= 1
+            return None
+        if self.sticks_at is not None and self.at <= self.sticks_at:
+            return None
+        self.at -= 1
+        return self.at
+
+
+def test_the_shared_rewind_checks_each_frame_landed():
+    from rps7200.session import rewind
+
+    film = _Winding(14)
+    assert rewind(film, 14) == 0
+    assert film.at == 0
+
+
+def test_a_rewind_that_stops_short_says_so_rather_than_reporting_success():
+    """The caller must not go on: everything after assumes the film arrived."""
+    from rps7200.session import rewind
+
+    assert rewind(_Winding(14, sticks_at=11), 14) is None
+
+
+def test_backlash_at_the_start_is_not_a_failed_rewind():
+    """A roll leaves the transport loaded forward, so the first backward
+    command is a direction change and two or three are swallowed. Measured
+    2026-09-21: the same 14-frame rewind ran first time after one roll and had
+    its first command swallowed after the next, the device healthy either
+    way."""
+    from rps7200.session import BACKLASH_COMMANDS, rewind
+
+    film = _Winding(14, swallows=BACKLASH_COMMANDS)
+    assert rewind(film, 14) == 0
+
+
+def test_a_no_op_after_the_film_has_moved_is_the_end_of_the_strip():
+    """Tolerated at the start, fatal once it is running -- otherwise a strip
+    that ends early reads as backlash forever."""
+    from rps7200.session import rewind
+
+    assert rewind(_Winding(14, sticks_at=9, swallows=1), 14) is None
+
+
+def test_the_rewind_can_say_what_it_is_doing():
+    from rps7200.session import rewind
+
+    said = []
+    rewind(_Winding(3), 3, say=said.append)
+    assert any("rewinding 3" in line for line in said)
+    assert any("1/3" in line for line in said)
+
+
 def test_a_plan_says_what_the_hardware_will_actually_travel():
+    """And since the cap went to param 87, it says it in one command.
+
+    This used to be two -- param 8 then param 3 -- because a single command
+    could not reach 1.5 mm. That chaining was never free: each command pays the
+    ramp again and scatters again, and the scatter does not shrink with the
+    size of the move, so two commands were twice the error for one distance.
+    """
     from rps7200.session import deliverable_mm, plan_nudges
 
     plan = plan_nudges(1.5)
-    assert plan == [pytest.approx(1.0118, abs=1e-4),
-                    pytest.approx(0.4833, abs=1e-4)]
-    # 0.005 mm short of the 1.5 asked for, and that is the honest answer
-    # rather than a rounded promise.
-    assert deliverable_mm(1.5) == pytest.approx(1.4951, abs=1e-4)
+    assert plan == [pytest.approx(1.4629, abs=1e-4)]
+    # 0.04 mm short of the 1.5 asked for, because param is an integer and 12
+    # is the nearest. The honest answer, rather than a rounded promise.
+    assert deliverable_mm(1.5) == pytest.approx(1.4629, abs=1e-4)
 
 
 def test_nothing_exists_between_zero_and_the_smallest_move():
@@ -1065,13 +1135,19 @@ def test_the_plan_keeps_the_sign():
 
 
 def test_too_far_is_refused_rather_than_silently_clamped():
-    """`param_for_mm` clamps at param 8 with no error, so a caller that
-    bypassed the planner would issue commands against a ceiling it could not
-    see. The planner raises instead."""
+    """`param_for_mm` clamps at MAX_CORRECTION_PARAM with no error, so a
+    caller that bypassed the planner would issue commands against a ceiling it
+    could not see. The planner raises instead.
+
+    The refusal starts further out than it did: one command now reaches 9.36 mm
+    rather than 1.01, so 20 mm is three commands where it used to be past the
+    limit entirely. 80 mm still is -- a sub-frame move asked to travel that far
+    is a whole-frame job, and SLIDE_NEXT does those properly.
+    """
     from rps7200.session import MAX_FINE_STEPS, plan_nudges
 
     with pytest.raises(ValueError, match="sub-linear"):
-        plan_nudges(20.0)
+        plan_nudges(80.0)
     assert len(plan_nudges(MAX_FINE_STEPS * 1.0)) <= MAX_FINE_STEPS
 
 
@@ -1458,3 +1534,67 @@ def test_a_reversed_roll_frame_is_turned_in_the_rolls_own_file(tmp_path):
     written = tiff.read(str(tmp_path / "r" / "strip" / "frame01.tif"))
     assert np.array_equal(written, scanner._truth)
     assert not np.array_equal(written, preview.mirror(scanner._truth))
+
+
+def test_the_window_can_ask_what_aiming_would_do_without_doing_it():
+    """`tools/scan_roll.py` has had this since the correction did; the window
+    could only do the real thing, so there was no way to see what aiming would
+    command before letting it command it."""
+    from rps7200.session import Roll
+
+    assert Roll().correct_dry_run is False
+    assert Roll(correct_dry_run=True).correct_dry_run is True
+
+
+# --- a reversed prescan must not turn a correct scan upside down ------------
+
+
+def test_a_reversed_prescan_is_not_evidence_about_the_scan():
+    """Measured on film: five of one roll's fifteen prescans came back with
+    their rows reversed while every scan was fine. `reversal_against` compares
+    a scan against its own prescan and cannot tell which of the two reversed,
+    so it blamed the scan on all five, at margins of 0.32 to 1.21 against a
+    threshold of 0.25 -- and `_note_reversal` acts on that, by its own
+    docstring turning every file that leaves. Five correct frames would have
+    shipped upside down.
+    """
+    import numpy as np
+
+    from rps7200.session import ScanSession
+
+    session = ScanSession.__new__(ScanSession)
+    session.match_prescan = True
+    session._emit = lambda *a, **k: None
+
+    # A picture with a top and a bottom, because `reversal_against` compares
+    # banded profiles and pure noise gives it nothing to tell apart.
+    rng = np.random.default_rng(7)
+    ramp = np.linspace(0, 220, 60)[:, None, None] * np.ones((1, 428, 3))
+    scan = ramp + rng.random((60, 428, 3)) * 30
+    prescan = scan[::-1]                      # the prescan is the odd one out
+
+    blamed = session._note_reversal({}, scan, prescan)
+    assert blamed.get("reversal"), "without the third opinion it blames the scan"
+
+    spared = session._note_reversal({}, scan, prescan, prescan_reversed=True)
+    assert "reversal" not in spared, "told which pass reversed, it must not turn"
+
+
+def test_the_scan_is_still_turned_when_the_scan_is_the_reversed_one():
+    """The detector is not being switched off -- only told which way round the
+    evidence points. A genuinely reversed scan must still be caught."""
+    import numpy as np
+
+    from rps7200.session import ScanSession
+
+    session = ScanSession.__new__(ScanSession)
+    session.match_prescan = True
+    session._emit = lambda *a, **k: None
+
+    rng = np.random.default_rng(8)
+    ramp = np.linspace(0, 220, 60)[:, None, None] * np.ones((1, 428, 3))
+    prescan = ramp + rng.random((60, 428, 3)) * 30
+    turned = prescan[::-1]
+
+    meta = session._note_reversal({}, turned, prescan)
+    assert meta.get("reversal"), "a reversed scan must still be turned back"

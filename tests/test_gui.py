@@ -14,9 +14,12 @@ import inspect
 import json
 import sys
 import time
+import types
 
 import numpy as np
 import pytest
+
+from rps7200.session import Approved
 
 from conftest import load_tool
 from rps7200 import shortcuts
@@ -167,13 +170,25 @@ def test_one_pixel_of_click_is_finer_than_the_transport_can_move():
     assert per_pixel < gui.FINE_STEP_MM
 
 
-def test_a_move_reaches_the_worst_real_misframing_and_not_much_further():
-    """One command is 1.01 mm. The aperture slack a drifted frame shows is
-    about 0.5 mm and the worst mis-framing on record is the 6 mm CyberView lost
-    on one frame of its own strip. Reaching much past that would mean doing
-    badly, in twenty nudges, what one slide button does properly."""
+def test_a_move_reaches_the_worst_real_misframing_in_exactly_one_command():
+    """The worst mis-framing on record is the 6 mm CyberView lost on one frame
+    of its own strip, and a drifted frame shows about 0.5 mm of aperture slack.
+
+    One command used to be 1.01 mm, so reaching 6 took a chain of them. With
+    the cap at param 87 it is 9.36, so the whole range arrives in one -- which
+    is the point, because each command pays the ramp again and scatters again
+    and the scatter does not shrink with the size of the move.
+
+    The upper bound still matters: a fine adjustment that could travel half the
+    aperture would be doing badly, and slowly, what one slide button does
+    properly.
+    """
+    from rps7200.session import plan_nudges
+
     assert gui.MAX_TRAVEL_MM > 6.0
-    assert gui.MAX_TRAVEL_MM < gui.APERTURE_MM / 4
+    assert gui.MAX_TRAVEL_MM < gui.APERTURE_MM / 3
+    assert len(plan_nudges(gui.MAX_TRAVEL_MM)) == 1
+    assert len(plan_nudges(6.0)) == 1
 
 
 def test_the_window_and_the_session_agree_on_how_far_is_too_far():
@@ -205,7 +220,11 @@ def test_numbers_refuses_what_is_not_a_number():
 
 
 def test_the_fine_step_bounds_are_the_calibrated_ones():
-    """param 1 and param 8 of distance = 0.1057 x param + 0.1662."""
+    """param 1 and param 87 of distance = 0.1057 x param + 0.1662.
+
+    Derived rather than copied: the window used to carry rounded literals and
+    they drifted the moment the cap moved.
+    """
     from rps7200.direct import DirectScanner as D
     assert gui.FINE_STEP_MM == pytest.approx(D.STEP_MM * 1 + D.OVERHEAD_MM, abs=0.01)
     assert gui.MAX_FINE_MM == pytest.approx(
@@ -948,8 +967,8 @@ def test_a_dry_run_says_walked_not_scanned(window):
 
 
 def test_an_offset_snaps_to_something_the_transport_can_reach():
-    assert gui.snap_offset(0.48) == pytest.approx(0.4833, abs=1e-4)
-    assert gui.snap_offset(-0.48) == pytest.approx(-0.4833, abs=1e-4)
+    assert gui.snap_offset(0.48) == pytest.approx(0.5116, abs=1e-4)
+    assert gui.snap_offset(-0.48) == pytest.approx(-0.5116, abs=1e-4)
 
 
 def test_an_offset_inside_the_unreachable_hole_becomes_zero():
@@ -985,7 +1004,7 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
     out = gui.approved_from_sheet(frames, (1, 3), {1: 0.48})
 
     assert [a.number for a in out] == [1, 3]
-    assert out[0].offset_mm == pytest.approx(0.4833, abs=1e-4)
+    assert out[0].offset_mm == pytest.approx(0.5116, abs=1e-4)
     assert out[1].offset_mm == 0.0, "an untouched frame is still an approval"
     assert out[0].reference is frames[0].image, "carries the pixels he saw"
     assert out[0].reference_entry == "library/a"
@@ -1931,15 +1950,15 @@ def test_the_sheet_offers_the_same_turns_the_window_does():
 
 
 def test_the_finest_step_lands_on_every_place_the_film_can_go():
-    """0.27 mm is not the lattice's spacing -- it is what a single command
+    """0.30 mm is not the lattice's spacing -- it is what a single command
     delivers off zero. Above that the positions are 0.11 mm apart, because a
-    command's distance grows by STEP_MM per param. Adding a flat 0.27 and
+    command's distance grows by STEP_MM per param. Adding a flat first step and
     snapping stepped over two out of every three of them."""
     reached, offset = [], 0.0
     for _ in range(8):
         offset = gui.step_offset(offset, 1)
         reached.append(round(offset, 3))
-    assert reached == [0.272, 0.378, 0.483, 0.589, 0.695, 0.800, 0.906, 1.012]
+    assert reached == [0.300, 0.406, 0.512, 0.617, 0.723, 0.829, 0.934, 1.040]
 
 
 def test_the_old_step_skipped_most_of_them():
@@ -1978,7 +1997,8 @@ def test_stepping_back_walks_the_same_places_and_crosses_zero():
 
 
 @pytest.mark.parametrize("choice, first", [
-    ("finest", 0.272), ("0.27 mm", 0.272), ("0.50 mm", 0.483), ("1.00 mm", 1.012),
+    ("finest", 0.300), ("small (4.8 units)", 0.512),
+    ("medium (9.8 units)", 1.040), ("large (21.8 units)", 2.308),
 ])
 def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
     """Whatever is asked for, what comes back is somewhere the film can go --
@@ -1986,6 +2006,59 @@ def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
     landed = gui.step_offset(0.0, 1, gui.step_millimetres(choice))
     assert round(landed, 3) == first
     assert landed == gui.snap_offset(landed)
+
+
+@pytest.mark.parametrize("choice", gui.ADJUST_STEPS[1:])
+def test_every_offered_step_is_exactly_one_command(choice):
+    """The labels promise a param, so each has to be a single command.
+
+    Before the cap went to 87 the largest rung would have been three of them,
+    and each command pays the ramp again and scatters again -- so a rung that
+    chains is a rung whose label is not the whole story.
+    """
+    from rps7200.session import plan_nudges
+
+    assert len(plan_nudges(gui.step_millimetres(choice))) == 1
+
+
+def test_the_step_labels_name_a_param_and_are_not_parsed_as_numbers():
+    """The old parser read the first token of the label as a distance.
+
+    These labels lead with a word, so that parser would have returned 0.0 for
+    every rung -- and 0.0 means "finest", so every step would quietly have
+    become the smallest one, with nothing to see in the window.
+    """
+    assert gui.step_millimetres("small (4.8 units)") > 0
+    assert gui.step_millimetres("nonsense") == 0.0
+    assert gui.step_millimetres("") == 0.0
+    for name, param in gui.ADJUST_PARAMS.items():
+        expected = gui.MM_PER_UNIT * param + gui.MM_PER_COMMAND
+        assert gui.step_millimetres(f"{name} (whatever)") == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("typed, wanted", [
+    ("2.8", "param 1"),
+    ("8", "param 6"),
+    ("1.0", "would not move"),
+    ("200", "slide buttons"),
+])
+def test_the_typed_field_says_what_it_will_actually_send(typed, wanted):
+    """He types a distance; the transport delivers the nearest command to it.
+
+    The gap between those two is exactly what the window never showed him, and
+    it is why a frame could be set to a position that was quietly delivered as
+    no move at all.
+    """
+    said = gui.fine_preview(typed)
+    assert wanted in said
+    assert "mm" not in said
+
+
+def test_the_typed_field_reports_the_shortfall_it_cannot_close():
+    """param is an integer, so most asked-for distances are not reachable."""
+    said = gui.fine_preview("8")
+    assert "off" in said
+    assert gui.fine_preview("2.8").endswith("+2.8 units")   # exactly param 1
 
 
 def test_the_offered_steps_read_as_distances_except_the_finest():
@@ -2432,12 +2505,12 @@ def test_approvals_are_read_without_loading_a_survey(tmp_path):
     rebuild, so Delete has to be able to ask about it without reading pixels."""
     folder = _shelf(tmp_path, approved=[
         {"number": 1, "offset_mm": 0.3, "rotation": 90, "flipped": True}])
-    offsets, rotations, flips, _ = gui.read_approved(folder)
+    offsets, rotations, flips, _, _ = gui.read_approved(folder)
     assert offsets == {1: 0.3} and rotations == {1: 90} and flips == {1: True}
     # A folder without one, and a corrupt one, both answer empty.
-    assert gui.read_approved(tmp_path) == ({}, {}, {}, {})
+    assert gui.read_approved(tmp_path) == ({}, {}, {}, {}, {})
     (folder / "approved.json").write_text("{nope", encoding="utf-8")
-    assert gui.read_approved(folder) == ({}, {}, {}, {})
+    assert gui.read_approved(folder) == ({}, {}, {}, {}, {})
 
 
 # --- defaults you can get back to ------------------------------------------
@@ -2558,13 +2631,283 @@ def test_each_kind_keeps_its_own_type():
     assert out["ticks"][1] is True
 
 
+def test_a_walked_roll_reopened_comes_back_with_its_positions():
+    """Closing the window must not throw the walk's proposals away.
+
+    `open_roll` restored `approved.json` -- positions already *committed* --
+    and never re-proposed. A roll walked and then closed without commissioning
+    has no `approved.json`, so it reopened with nothing at all: every proposal
+    died with the window, and the roll then scanned uncorrected with no sign
+    anything was missing. That cost a real 23-minute roll on 2026-09-22.
+    """
+    walked = _strip()
+    proposed, _notes = gui._propose_positions(walked, {})
+    assert proposed, "the fixture has to propose something for this to mean anything"
+
+    # what open_roll does now: stored positions in as `kept`, re-proposed round
+    reopened, notes = gui._propose_positions(walked, {}, {})
+    assert reopened == proposed
+    assert all((notes[n] or {}).get("source") for n in reopened)
+
+
+def test_a_committed_position_still_wins_on_reopen():
+    """His number is the authority and re-proposing must not overwrite it."""
+    walked = _strip()
+    kept = {2: 0.5116}
+    reopened, notes = gui._propose_positions(walked, kept, {2: "operator"})
+    assert reopened[2] == 0.5116
+    assert notes[2]["source"] == "operator"
+
+
+def test_approved_json_carries_who_decided_each_position(tmp_path):
+    """Written since the sheet began proposing them; it has to read back too,
+    or a reopened roll relabels the ensemble's numbers as his."""
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text(json.dumps({
+        "roll": "r",
+        "frames": [{"number": 1, "offset_mm": 0.5116, "source": "measured"},
+                   {"number": 2, "offset_mm": 0.3002}],
+    }), encoding="utf-8")
+    offsets, _rot, _flip, _entries, sources = gui.read_approved(folder)
+    assert offsets[1] == pytest.approx(0.5116)
+    assert sources == {1: "measured"}       # absent means his, as it always did
+
+
+# -- reading a walk the command line wrote ---------------------------------
+
+
+def test_a_command_line_manifest_yields_the_keys_the_window_reads():
+    """`scan_roll` writes these inside `settings`; this reader wanted them at
+    the top level, so they came back None.
+
+    `prescan_resolution` is the one that costs something. It becomes
+    `_survey_predpi`, which pins a commissioned scan's prescan to the
+    resolution its positions were decided at. Unpinned, the reference is
+    resampled and confidence falls 93.5 -> 47.4 against a floor of 55, so every
+    frame reads `unverified` and nothing moves -- hours of transport, no
+    correction, and nothing said.
+    """
+    cli = {"roll": "registration-M",
+           "settings": {"dpi": 1800, "prescan_resolution": 300,
+                        "start_at": 4, "film": "negative"}}
+    merged = gui.manifest_settings(cli)
+    assert merged["prescan_resolution"] == 300
+    assert merged["start_at"] == 4
+    assert merged["resolution"] == 1800          # the CLI calls it dpi
+
+
+def test_the_windows_own_manifest_is_unchanged_by_the_merge():
+    """It writes them at the top level and inside settings, and the top level
+    is what it meant."""
+    own = {"roll": "r", "prescan_resolution": 300, "start_at": 2,
+           "settings": {"resolution": 1200, "prescan_resolution": 300,
+                        "start_at": 2}}
+    merged = gui.manifest_settings(own)
+    assert merged["prescan_resolution"] == 300
+    assert merged["start_at"] == 2
+    assert merged["resolution"] == 1200
+
+
+def test_a_resumed_rolls_progress_wins_over_the_survey():
+    merged = gui.manifest_settings(
+        {"settings": {"dpi": 600}}, {"resolution": 1800})
+    assert merged["resolution"] == 1800
+
+
+def test_restorable_reads_the_alias_but_still_leaves_absent_keys_alone():
+    """Absent means "this roll has nothing to say about it", not "off" -- the
+    walks from before `prescan_resolution` existed depend on that."""
+    assert gui.restorable({"dpi": 1800})["dpi"] == "1800"
+    assert "predpi" not in gui.restorable({"dpi": 1800})
+    assert gui.restorable({}) == {}
+
+
+# -- the last thing shown before the film moves ----------------------------
+
+
+class _Confirming:
+    """Enough of the window for `_approved_note`, which reads nothing else."""
+
+    _approved_note = gui.ScannerGui._approved_note
+
+    def __init__(self, correct=True):
+        self.v_correct = types.SimpleNamespace(get=lambda: correct)
+
+
+def test_the_dialog_counts_positions_by_who_decided_them():
+    """It used to say every one of them was "a position you set by hand".
+
+    True when typing was the only way to have one. The sheet pre-fills a
+    position for every frame it can read, so that sentence was attributing the
+    machine's decisions to him -- on the screen where he confirms them.
+    """
+    note = _Confirming()._approved_note([
+        Approved(1, 0.5, source="operator"),
+        Approved(2, 0.5, source="measured"),
+        Approved(3, 0.5, source="measured"),
+        Approved(4, 0.5, source="neighbours"),
+    ])
+    assert "1 you positioned" in note
+    assert "2 two detectors agreed" in note
+    assert "1 read from the frames either side" in note
+    assert "by hand" not in note
+
+
+def test_the_dialog_never_promises_the_automatic_nudge():
+    """Every ticked frame gets an approval, so the held branch always wins and
+    `elif correct` is never reached. The clause described something that cannot
+    happen -- see TODO.md, the tick itself should go."""
+    note = _Confirming(correct=True)._approved_note(
+        [Approved(1, 0.5, source="measured")])
+    assert "nudge" not in note
+
+
+def test_a_roll_where_nothing_moves_says_nothing():
+    assert _Confirming()._approved_note([Approved(1, 0.0)]) == ""
+    assert _Confirming()._approved_note([]) == ""
+
+
+def test_the_dialog_is_not_in_millimetres():
+    note = _Confirming()._approved_note([Approved(1, 0.5, source="measured")])
+    assert "mm" not in note
+
+
+def test_the_coloured_ring_stands_off_the_picture():
+    """The line says "this one will be scanned". It has to read as drawn
+    around the print, not as part of it.
+
+    It was one frame with thick padding, which made a slab of colour rather
+    than a border with room inside it. Three nested frames now: the ring is the
+    line, the mount is the gap, the picture sits in the mount. Geometry needs a
+    window, but the nesting is the fact that matters and it can be pinned here
+    -- the same way this file pins its other wiring.
+    """
+    body = inspect.getsource(gui._ContactSheet._cell)
+    assert "tk.Frame(ring" in body, "the mount must sit inside the ring"
+    assert "tk.Label(mount" in body, "the picture must sit inside the mount"
+    assert "tk.Label(ring" not in body, "the picture must not touch the line"
+    assert "background=self.MOUNT_BG" in body
+
+
+def test_the_line_is_thin_and_the_gap_is_wider_than_it():
+    """Otherwise it is a band of colour again, which is what was wrong."""
+    assert gui._ContactSheet.RING <= 3
+    assert gui._ContactSheet.MOUNT > gui._ContactSheet.RING
+
+
+# -- the blue line that says where a frame is going ------------------------
+
+
+def test_the_mark_stands_off_the_edge_the_film_moves_toward():
+    """Backward from the left, forward from the right. The direction is half
+    the information -- a mark that ignored it would say the strip is offset
+    without saying which way."""
+    back = gui.adjustment_mark(-9.84 * 0.1057, 210)
+    fwd = gui.adjustment_mark(+9.84 * 0.1057, 210)
+    assert back is not None and fwd is not None
+    assert back < 210 // 2 < fwd
+    assert back + fwd == 210          # mirrored about the middle
+
+
+def test_the_mark_is_true_to_scale_and_not_exaggerated():
+    """A line drawn larger than the move would have the sheet claiming
+    something the transport is not going to do. A 9.84-unit correction is 2.9%
+    of the aperture, so on a 210 px thumbnail it is 6 px -- small, because the
+    correction is small."""
+    assert gui.adjustment_mark(-9.84 * 0.1057, 210) == 6
+    assert gui.adjustment_mark(-2.84 * 0.1057, 210) == 2
+
+
+def test_no_adjustment_draws_no_mark():
+    assert gui.adjustment_mark(0.0, 210) is None
+    assert gui.adjustment_mark(None, 210) is None
+
+
+def test_a_wild_reading_cannot_draw_itself_as_the_picture():
+    """Clamped at half the width, and never on the edges where it would be
+    invisible -- the same bargain the rest of the sheet makes with a detector
+    it cannot fully trust."""
+    assert gui.adjustment_mark(-999.0, 210) == 105
+    assert 1 <= gui.adjustment_mark(-0.001, 210) <= 208
+    assert gui.adjustment_mark(-9.84 * 0.1057, 3) is None
+
+
+# -- the cell's caption, which had no tests while carrying four mistakes ----
+
+
+def test_a_scanned_frame_keeps_saying_so_even_once_it_has_a_position():
+    """The marker that has to survive a resume is "scanned".
+
+    `_refresh_caption` returned on the offset branch before it could reach the
+    `done` check. That was harmless while most frames had no offset; the sheet
+    now proposes a position for every frame it can read, so on a resumed roll
+    almost every scanned frame lost its marker -- and a resume exists precisely
+    so that three hours of transport is not spent twice.
+    """
+    said, colour = gui.frame_caption(0.5116, "measured", done=True)
+    assert "scanned" in said
+    assert colour == "DONE"
+    # and the position is still there, for a frame re-ticked deliberately
+    assert "4.8" in said
+
+
+def test_a_frame_with_nothing_decided_shows_its_contrast():
+    said, colour = gui.frame_caption(0.0, None, contrast=0.42)
+    assert said == "contrast 0.42"
+    assert colour == "GREY"
+
+
+def test_a_position_the_detector_read_says_which_detector_read_it():
+    """The three words are not worth the same and he is the one who decides."""
+    for source in gui.MACHINE_SOURCES:
+        said, _ = gui.frame_caption(0.5116, source)
+        assert source in said
+
+
+def test_a_position_he_set_does_not_wear_the_detectors_badge():
+    said, _ = gui.frame_caption(0.5116, "operator")
+    assert "measured" not in said and "unconfirmed" not in said
+    assert said.startswith("moved")
+
+
+def test_a_frame_read_and_already_in_place_says_so_rather_than_nothing():
+    """Dropping an unreachable proposal must not drop the fact it was read.
+
+    A proposal below one command cannot be delivered, so it leaves `offsets`.
+    But "the detector saw this and it is already as close as the transport can
+    put it" is not the same as "nothing could read it", and the driver makes
+    the same distinction with `in_place`.
+    """
+    said, _ = gui.frame_caption(0.0, "measured")
+    assert said == "in place (measured)"
+    assert gui.frame_caption(0.0, None, read=True)[0] == "in place"
+
+
+def test_no_caption_anywhere_is_in_millimetres():
+    for args in [(0.5116, "measured"), (0.5116, "operator"),
+                 (0.0, "measured"), (0.5116, "measured", True)]:
+        assert "mm" not in gui.frame_caption(*args)[0]
+
+
+# -- what the sheet proposes, and who it says decided it --------------------
+
+
+def test_a_stored_source_that_is_not_one_of_the_five_words_is_dropped():
+    """"measured" is a claim that a detector read the frame. A settings file
+    edited by hand does not get to assert it about something else."""
+    out = gui.ScannerGui._clean_sheet_state(
+        {"sources": {"1": "measured", "2": "invented", "3": 17}})
+    assert out["sources"] == {1: "measured"}
+
+
 @pytest.mark.parametrize("rubbish", [None, "not a dict", 17, [], {"offsets": 9}])
 def test_nonsense_reads_as_no_decisions_rather_than_raising(rubbish):
     """Same bargain as the settings file itself: this is a convenience, and
     nothing about reading it back may stop the sheet opening."""
     out = clean(rubbish)
     assert out == {"ticks": {}, "offsets": {}, "rotations": {}, "flips": {},
-                   "options": {}}
+                   "sources": {}, "options": {}}
 
 
 def test_one_bad_entry_costs_only_itself():
@@ -2575,10 +2918,15 @@ def test_one_bad_entry_costs_only_itself():
 
 
 def test_every_way_out_of_the_sheet_keeps_what_was_decided():
-    """The Close button, the title bar's X and commissioning the scan all
-    destroy the window. Each has to go through `_dismiss` first, or the
+    """The Close button, the title bar's X, commissioning the scan and Escape
+    all destroy the window. Each has to go through `_dismiss` first, or the
     decisions are kept for one way out and silently dropped for another --
-    which is the shape of the original bug."""
+    which is the shape of the original bug.
+
+    Escape was the fourth way out and this test did not know about it. It was
+    bound straight to `top.destroy`, so a sheet left by the key everyone
+    reaches for lost every tick, drag and turn without a word.
+    """
     import inspect
 
     built = inspect.getsource(gui._ContactSheet.__init__)
@@ -2586,6 +2934,23 @@ def test_every_way_out_of_the_sheet_keeps_what_was_decided():
     assert 'protocol("WM_DELETE_WINDOW", self._dismiss)' in built
     scan = inspect.getsource(gui._ContactSheet._scan)
     assert "self._dismiss()" in scan and "self.top.destroy()" not in scan
+    keys = inspect.getsource(gui._ContactSheet._actions)
+    assert '"sheet_close": self._dismiss' in keys
+
+
+def test_reopening_a_roll_keeps_who_decided_each_position():
+    """`open_roll` replaces the sheet state wholesale, and it used to drop the
+    sources while keeping the offsets.
+
+    A kept offset with no recorded source is read as one he set by hand, so the
+    next sheet built from that state relabelled every machine proposal
+    `operator` -- and the confirm dialog then counted them as his, on the
+    screen where he approves them.
+    """
+    import inspect
+
+    body = inspect.getsource(gui.ScannerGui.open_roll)
+    assert '"sources": dict(out["sources"])' in body
 
 
 def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions():
@@ -2651,3 +3016,259 @@ def test_stored_options_come_back_and_unknown_ones_are_dropped():
     is not there."""
     out = clean({"options": {"dpi": "3600", "ir": False, "bogus": 1}})
     assert out["options"] == {"dpi": "3600", "ir": False}
+
+
+# --- what the sheet says a frame's aiming did -------------------------------
+
+
+def test_the_caption_tells_a_corrected_frame_from_a_refused_one():
+    """`gap_edges` made these the same silence: it answered "registered" both
+    for a frame it had checked and for one it could not see."""
+    from tools.gui import _aim_note
+
+    assert "aimed -5.8 units" in _aim_note(
+        {"correction": {"outcome": "held", "decision_mm": -0.61}})
+    assert "in place" in _aim_note({"correction": {"outcome": "in_place"}})
+    assert "would aim" in _aim_note(
+        {"correction": {"outcome": "dry_run", "decision_mm": -0.61}})
+
+
+def test_the_caption_says_why_a_frame_was_not_aimed():
+    from tools.gui import _aim_note
+
+    note = _aim_note({"correction": {
+        "outcome": "abstained",
+        "reason": "only 1 member(s) could measure this frame; two that agree"}})
+    assert "not aimed" in note and "1 member" in note
+    assert "not aimed (not converged)" in _aim_note(
+        {"correction": {"outcome": "not_converged"}})
+
+
+def test_a_frame_nobody_aimed_says_nothing():
+    """An ordinary roll's caption must be exactly what it was."""
+    from tools.gui import _aim_note
+
+    assert _aim_note({}) == ""
+    assert _aim_note({"offset_mm": 0.2}) == ""
+
+
+# --- proposing the whole strip's positions when the sheet opens -------------
+
+
+class _Walked:
+    def __init__(self, number, image):
+        self.number, self.image = number, image
+
+
+def _strip(count=8, gap=18):
+    import numpy as np
+    out = []
+    for n in range(1, count + 1):
+        rng = np.random.default_rng(n)
+        a = rng.random((40, 428, 3)) * 90 + 15
+        a[:, :gap] = 37.0 + rng.random((40, gap, 3)) * 0.6
+        out.append(_Walked(n, a))
+    return out
+
+
+def _walked_folder(tmp_path, count=8):
+    """A roll folder on disk in the shape `read_survey` expects.
+
+    Built from `_strip()`, so the prescans are the same synthetic frames the
+    proposal tests use, and deliberately without an `approved.json`: that is
+    the state a walk is left in when it is closed before being commissioned,
+    and the state the demo opens.
+    """
+    from rps7200 import tiff
+
+    folder = tmp_path / "walk"
+    folder.mkdir()
+    records = []
+    for frame in _strip(count=count):
+        name = f"prescan{frame.number:02d}.tif"
+        tiff.write(str(folder / name), frame.image.astype(np.uint8))
+        records.append({"number": frame.number, "prescan": name})
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "walk",
+        "settings": {"dpi": 600, "prescan_resolution": 300, "dry_run": True,
+                     "film": "negative", "start_at": 1},
+        "frames": records,
+    }), encoding="utf-8")
+    return folder
+
+
+def test_a_walk_reopened_is_measured_again_not_remembered(tmp_path):
+    """The whole point of the demo: the numbers come from the pixels.
+
+    A walk closed without being commissioned has no `approved.json`, so
+    `read_survey` hands back no offsets and every position on the sheet is one
+    the ensemble has just read off the prescans.
+    """
+    folder = _walked_folder(tmp_path)
+    out = gui.read_survey(folder)
+    assert out["offsets"] == {}, "nothing was committed, so nothing is restored"
+    proposed, notes = gui._propose_positions(
+        out["results"], out["offsets"], out.get("sources"))
+    assert proposed
+    assert all((notes[n] or {}).get("source") in gui.MACHINE_SOURCES
+               for n in proposed)
+
+
+def test_a_stale_remembered_sheet_cannot_reach_a_reopened_walk(tmp_path):
+    """`open_roll` reads disk and nothing else.
+
+    The sheet cache is real and it is a feature -- within one run, reopening
+    the sheet gives back the frames that were dragged. It must not survive into
+    a fresh launch, or the demo would replay last time's answer and call it a
+    measurement.
+    """
+    from rps7200 import settings as settings_mod
+
+    folder = _walked_folder(tmp_path)
+    out = gui.read_survey(folder)
+    first, _notes = gui._propose_positions(
+        out["results"], out["offsets"], out.get("sources"))
+
+    # a previous run's decisions, deliberately wrong
+    path = tmp_path / "gui-settings.json"
+    settings_mod.save({"sheet": {folder.name: {
+        "offsets": {"1": 9.9, "2": -9.9}, "sources": {"1": "operator"},
+        "ticks": {}, "rotations": {}, "flips": {}, "options": {}}}}, path)
+    assert path.exists()
+
+    again = gui.read_survey(folder)
+    second, _notes = gui._propose_positions(
+        again["results"], again["offsets"], again.get("sources"))
+    assert second == first
+    assert 9.9 not in second.values()
+
+
+def test_the_same_walk_measures_the_same_way_twice():
+    """"Re-measured every launch" is only legible if it is also "the same
+    answer every launch". Nothing in the proposal path is random, and this is
+    what says so."""
+    walked = _strip()
+    first, _ = gui._propose_positions(walked, {})
+    second, _ = gui._propose_positions(walked, {})
+    assert first == second
+
+
+def test_the_launch_path_does_not_consult_the_sheet_cache():
+    """`open_roll` re-proposes; `on_contact_sheet` replays. The demo opens a
+    roll, so it gets the measurement. If `open_roll` ever started reading
+    `_recall_sheet_state` the demo would quietly stop measuring."""
+    import inspect
+
+    body = inspect.getsource(gui.ScannerGui.open_roll)
+    assert "_propose_positions(" in body
+    assert "_recall_sheet_state" not in body
+
+
+def test_no_film_does_not_become_a_branch_in_the_window():
+    """The demo is the real software with different inputs.
+
+    An empty transport is a fact about the film, so the backend refuses and
+    the window reports it through the path it already has for a transport
+    fault. Gating the controls instead was the first attempt and it skipped
+    the work: `on_scan_chosen` is the sole writer of `approved.json` and the
+    sole submitter of a `Roll`, so nothing between the sheet and the hold loop
+    ran at all -- in the demo built to show exactly that.
+    """
+    import inspect
+
+    for where in (gui._ContactSheet._changed, gui._ContactSheet._scan,
+                  gui.ScannerGui.on_scan_chosen):
+        assert "look_only" not in inspect.getsource(where), where.__name__
+
+
+def test_no_film_is_told_to_the_backend():
+    """Which is the only place that could honestly know it."""
+    import inspect
+
+    main = inspect.getsource(gui.main)
+    assert "no_film=args.look_only" in main
+
+
+def test_an_empty_transport_refuses_where_the_transport_would():
+    """Not a disabled button: a raised error, from the thing that would raise
+    it, carrying a sentence a person can act on."""
+    from rps7200.demo import DemoScanner
+    from rps7200.usb_transport import UsbError
+
+    empty = DemoScanner("library", no_film=True)
+    for call in (lambda: empty.scan(resolution=300, infrared=False),
+                 lambda: list(empty.scan_roll(frames=1, dry_run=True)),
+                 empty.advance, empty.retreat, lambda: empty.nudge(0.5)):
+        with pytest.raises(UsbError, match="no film in the transport"):
+            call()
+
+    # and with film the same methods work, or the demo would refuse its own
+    # reason for existing
+    loaded = DemoScanner("library")
+    assert loaded.advance() is not None
+    assert loaded.nudge(0.5)["param"] > 0
+
+
+def test_every_proposal_is_somewhere_the_film_can_actually_go():
+    """The caption showed the raw proposal; the commission delivered a snapped
+    one. So a frame captioned as moving could be delivered as no move at all,
+    and five other readers of `offsets` carried numbers that do not exist.
+    Snapping at the seam makes every one of them agree."""
+    offsets, _notes = gui._propose_positions(_strip(), {})
+    assert offsets
+    for value in offsets.values():
+        assert value == gui.snap_offset(value)
+        assert value != 0.0
+
+
+def test_a_position_kept_from_a_machine_stays_a_machine_position():
+    """Closing the sheet and opening it again used to relabel the whole strip.
+
+    Every offset comes back as `kept`, and anything kept was stamped
+    `operator` -- true when typing was the only way to have one, false from the
+    moment the sheet began proposing them.
+    """
+    walked, kept = _strip(), {2: 0.5116}
+    _o, notes = gui._propose_positions(walked, kept, {2: "measured"})
+    assert notes[2]["source"] == "measured"
+    _o, notes = gui._propose_positions(walked, kept, {2: "operator"})
+    assert notes[2]["source"] == "operator"
+    # nothing remembered means his, which is what an offset used to mean
+    _o, notes = gui._propose_positions(walked, kept, None)
+    assert notes[2]["source"] == "operator"
+
+
+def test_the_sheet_opens_holding_a_proposal_for_every_frame():
+    from tools.gui import _propose_positions
+
+    offsets, notes = _propose_positions(_strip(), {})
+    assert len(offsets) == 8
+    assert all(notes[n]["source"] in
+               ("measured", "unconfirmed", "neighbours") for n in offsets)
+
+
+def test_a_position_the_operator_set_is_never_re_proposed():
+    """The sheet is where he corrects this, so overwriting what he typed would
+    undo the correction it exists to collect."""
+    from tools.gui import _propose_positions
+
+    offsets, notes = _propose_positions(_strip(), {3: 1.234})
+    assert offsets[3] == 1.234
+    assert notes[3]["source"] == "operator"
+
+
+def test_a_walk_too_short_to_fit_proposes_nothing_and_still_opens():
+    from tools.gui import _propose_positions
+
+    offsets, notes = _propose_positions(_strip(1), {})
+    assert offsets == {} and notes == {}
+
+
+def test_a_detector_that_raises_does_not_stop_the_sheet_opening():
+    """The walk has already been paid for and the frames are still choosable;
+    a sheet that will not open is worse than one with no proposals."""
+    from tools.gui import _propose_positions
+
+    broken = [_Walked(1, "not an image"), _Walked(2, "nor this")]
+    offsets, notes = _propose_positions(broken, {2: 0.5})
+    assert offsets == {2: 0.5}

@@ -21,6 +21,8 @@ import inspect
 import numpy as np
 import pytest
 
+from rps7200 import framing, protocol
+from rps7200.framing import MAX_HOLD_MOVES
 from rps7200.direct import (
     SLIDE_PREV,
     FULL_FRAME,
@@ -551,51 +553,140 @@ def test_correction_is_off_unless_asked():
     assert s.slid == [] or all(a == SLIDE_INIT for a, _, _ in s.slid), s.slid
 
 
+#: A gap this wide is a real error: 10 columns is 0.85 mm, so the frame wants
+#: about -0.61 mm, comfortably past the 0.27 mm the transport can deliver.
+OUT_BY_A_GAP = 10
+
+
+def aimable(count, gap=OUT_BY_A_GAP):
+    """A strip long enough for the ensemble to arm on.
+
+    One frame cannot be aimed and neither can two, by construction rather than
+    by accident: the base needs bands from two frames, and the prior needs an
+    advance between two placed ones before it can say anything. Frame 3 is the
+    first that two members can both see, which is the bootstrap the operator
+    asked for and also the earliest the evidence allows.
+    """
+    return [framed(gap_left=gap, seed=n) for n in range(count)]
+
+
+def test_a_frame_on_its_own_is_never_aimed():
+    """The gate, at the roll level. `gap_edges` would have moved film here on
+    one detector's word, which is what it did wrongly on four of nine frames."""
+    s = FakeRoll(aimable(1))
+    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+    fix = frames[0].registration["correction"]
+    assert fix["outcome"] == "abstained"
+    assert "base level is not calibrated" in fix["reason"]
+
+
 def test_a_dry_run_measures_but_never_moves():
-    s = FakeRoll([framed(gap_left=4) for _ in range(2)])
-    frames = list(s.scan_roll(frames=2, meter=METER_NONE, correct_dry_run=True))
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct_dry_run=True))
     sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
     assert sub == [], sub
-    fix = frames[0].registration["correction"]
+    fix = frames[2].registration["correction"]
     assert fix["moved"] is False
+    assert fix["outcome"] == "dry_run"
     assert fix["would_send"]["action"] == 0x01      # gap left -> move back
     assert fix["would_send"]["param"] >= 1
 
 
 def test_an_error_inside_the_deadband_is_left_alone():
-    """Smallest possible move is 0.27 mm, so correcting 0.1 mm cannot help."""
-    s = FakeRoll([framed(gap_left=1) for _ in range(1)])
-    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    """Smallest possible move is 0.27 mm, so correcting 0.1 mm cannot help.
+
+    Three frames, not one: on a shorter strip this passed because nothing was
+    calibrated yet, which is a different reason for the same silence and would
+    have gone on passing if the deadband were deleted.
+    """
+    s = FakeRoll(aimable(3, gap=3))                 # 0.26 mm -> wants -0.01 mm
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
     assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
-    assert frames[0].registration["correction"]["moved"] is False
+    assert frames[2].registration["correction"]["outcome"] == "in_place"
 
 
 def test_a_real_error_is_corrected_the_other_way():
-    """A gap on the left means the frame sits too far +x, so it must come back."""
-    s = FakeRoll([framed(gap_left=4)])
-    # before, then the after-prescan the loop takes to check its own work
-    s.prescans = [framed(gap_left=4),      # the roll's own look
-                  framed(gap_left=1)]      # the check after nudging
-    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
+    """A gap on the left means the frame sits too far +x, so it must come back.
+
+    Getting this backwards drives every frame of a roll the wrong way, and the
+    transport gives no signal that it happened.
+    """
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
     sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
-    assert len(sub) == 1, sub
+    assert sub, "frame 3 is measurable by two members and should have moved"
     action, param, value = sub[0]
     assert action == 0x01                      # backward
     assert 1 <= param <= 8
     assert value == 0x04
-    fix = frames[0].registration["correction"]
-    assert fix["moved"] and fix["improved"]
+    fix = frames[2].registration["correction"]
+    assert fix["moved"] is True
+    assert fix["decision_mm"] < 0
 
 
 def test_a_correction_that_does_not_land_is_reported():
-    """Backlash swallows a move. Saying so is the whole point of re-measuring."""
-    s = FakeRoll([framed(gap_left=4)])
-    s.prescans = [framed(gap_left=4),      # the roll's own look
-                  framed(gap_left=4)]      # unchanged: the move did not land
-    frames = list(s.scan_roll(frames=1, meter=METER_NONE, correct=True))
-    fix = frames[0].registration["correction"]
+    """Backlash swallows a move. Saying so is the whole point of re-measuring.
+
+    Here the prescan never changes, so the film never appears to move and the
+    loop spends its budget. It must say `not_converged` rather than report the
+    distance it asked for as though it had been delivered.
+    """
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
+    fix = frames[2].registration["correction"]
     assert fix["moved"] is True
-    assert fix["improved"] is False
+    assert fix["outcome"] == "not_converged"
+    assert fix["moves"] == MAX_HOLD_MOVES
+
+
+def test_a_corrected_frame_keeps_the_picture_it_arrived_as():
+    """A corrected prescan replaces the original outright, so without this the
+    only account of whether a correction helped is the detector's own."""
+    s = FakeRoll(aimable(3))
+    # Scripted so the verification pass is a different picture from the one
+    # the frame arrived as; the strip fixture hands back one array object
+    # every time, which cannot show a replacement happening at all.
+    arrived = framed(gap_left=OUT_BY_A_GAP, seed=2)
+    after = framed(gap_left=3, seed=9)
+    s.prescans = [framed(gap_left=OUT_BY_A_GAP, seed=0),
+                  framed(gap_left=OUT_BY_A_GAP, seed=1),
+                  arrived, after, after, after]
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
+    moved = frames[2]
+    assert moved.registration["correction"]["moved"] is True
+    assert moved.prescan_before is arrived
+    assert moved.prescan is not arrived
+
+
+def test_a_frame_that_needed_no_move_keeps_no_before_picture():
+    """No clutter for the frames that were already right -- and a file that
+    exists only where something happened is itself a signal."""
+    s = FakeRoll(aimable(3, gap=3))                 # inside the deadband
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
+    assert all(f.prescan_before is None for f in frames)
+
+
+def test_an_ordinary_roll_carries_no_walk_at_all():
+    """Nothing asked for aiming, so nothing is calibrated, remembered or
+    recorded. A roll that does not want this must be untouched by it."""
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE))
+    assert all("correction" not in (f.registration or {}) for f in frames)
+    assert all("base" not in (f.registration or {}) for f in frames)
+
+
+def test_an_unverified_move_leaves_no_trace_in_the_prior():
+    """The film has moved and nothing knows how far, so what this frame
+    contributed is now a stale number -- and one bad delta is the poison a
+    median cannot fix once a few of them agree."""
+    from rps7200.framing import StripWalk
+
+    walk = StripWalk()
+    walk.placed[4] = -0.6
+    walk.record(4, None, 1.0, verified=False)
+    assert 4 not in walk.placed
+    assert walk.history() == []
 
 
 # --- automatic filing -------------------------------------------------------
@@ -912,6 +1003,63 @@ def test_the_smallest_nudge_is_the_smallest_the_hardware_can_do():
     assert s.param_for_mm(0.01) == 1
     assert s.param_for_mm(0.27) == 1
     assert s.param_for_mm(99.0) == DirectScanner.MAX_CORRECTION_PARAM
+
+
+# -- the transport's own unit ----------------------------------------------
+
+
+def test_the_four_step_rungs_are_what_the_menu_claims():
+    """Each rung the window offers is one command, and travels what it says.
+
+    The labels are a promise to the operator. `param 0` was measured inert on
+    2026-09-22, so `param 1` is the finest move there is, and the ramp a
+    command pays first is why it travels 2.57 rather than 1.
+    """
+    assert protocol.units_for_param(1) == pytest.approx(2.84, abs=0.01)
+    assert protocol.units_for_param(3) == pytest.approx(4.84, abs=0.01)
+    assert protocol.units_for_param(8) == pytest.approx(9.84, abs=0.01)
+    assert protocol.units_for_param(20) == pytest.approx(21.84, abs=0.01)
+
+
+def test_the_aperture_is_the_published_number_of_units():
+    """345.2, as CLAUDE.md states it.
+
+    This is the guard against the other law. `framing.COMMAND_COST` describes
+    the same command with a 17% larger ramp; a display built on it would put
+    the aperture at 338 and the finest move at 2.84. The two constants are not
+    interchangeable and this is what catches a swap.
+    """
+    assert protocol.units(framing.APERTURE_MM) == pytest.approx(345.2, abs=0.1)
+
+
+@pytest.mark.parametrize("param", [1, 2, 3, 5, 8])
+def test_what_is_displayed_is_what_the_mover_delivers(param):
+    """The caption and the transport cannot disagree.
+
+    `units()` converts what `nudge` computes from the same two constants, so a
+    number shown to the operator is the number the film travels. That identity
+    is the whole reason the unit lives in one place.
+    """
+    travelled = DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM
+    assert protocol.units(travelled) == pytest.approx(
+        protocol.units_for_param(param), abs=1e-9)
+
+
+def test_a_distance_shown_to_a_person_is_never_in_millimetres():
+    """Stefan's standing instruction, as a test rather than a convention."""
+    assert "mm" not in protocol.say_units(0.4833)
+    assert "mm" not in protocol.say_command(1.0118)
+    assert protocol.say_units(0.4833) == "+4.6 units"
+    assert protocol.say_units(-0.4833) == "-4.6 units"
+    assert protocol.say_units(-0.4833, signed=False) == "4.6 units"
+
+
+def test_a_command_names_the_param_that_goes_on_the_wire():
+    """A log line has to say what was sent, not only how far it went."""
+    assert protocol.say_command(
+        DirectScanner.STEP_MM * 8 + DirectScanner.OVERHEAD_MM) == (
+        "param 8, +9.8 units")
+    assert protocol.say_command(0.5, param=3) == "param 3, +4.8 units"
 
 
 # -- metering looks inside the film ----------------------------------------
@@ -1300,3 +1448,146 @@ def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
     # Comfortably past what the transport can travel, so any displacement it
     # can produce is inside the window.
     assert SEARCH_MM > 8.08
+
+
+# --- a dry run with approved positions still moves the film ------------------
+#
+# The property the whole CLI `--approved` path rests on, and it was unpinned:
+# `tests/test_roll.py`'s `_roll_once` never passes `dry_run`, and the demo's
+# own `scan_roll` is a reimplementation, so nothing exercised the real branch
+# ordering. It is worth a test in both directions -- that it moves, because a
+# delivery test would otherwise cost a multi-hour scan instead of minutes; and
+# that it scans nothing, because that is what makes it cheap.
+
+
+def _approved(number, offset_mm, reference):
+    from rps7200.session import Approved
+
+    return Approved(number=number, offset_mm=offset_mm, reference=reference)
+
+
+def test_a_dry_run_holding_an_approved_position_still_moves_the_film():
+    """`direct.py`'s approved branch runs ahead of the dry-run check, so a walk
+    can deliver and verify a position without scanning anything."""
+    picture = framed(gap_left=OUT_BY_A_GAP, seed=1)
+    s = FakeRoll([picture])
+    frames = list(s.scan_roll(
+        frames=1, meter=METER_NONE, dry_run=True,
+        approved={0: _approved(1, 0.60, picture)}))
+    sub = [x for x in s.slid if x[0] in (0x00, 0x01)]
+    assert sub, "a dry run with an approved position must still nudge"
+    assert sub[0][0] == 0x00, "a positive offset moves the film forward"
+    assert frames[0].image is None, "and must still scan nothing"
+
+
+def test_a_dry_run_without_approvals_moves_nothing():
+    """The other half: the cheapness is only useful if the default is inert."""
+    s = FakeRoll(aimable(1))
+    list(s.scan_roll(frames=1, meter=METER_NONE, dry_run=True))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+
+
+def test_a_reference_of_another_frame_is_refused_rather_than_acted_on():
+    """Measured on film 2026-09-21, by accident: a roll was started with the
+    strip at the wrong position, so every frame was held against a reference
+    showing a different photograph. Correlation scored 5.2 to 5.5 against a
+    floor of 55, all three frames returned `unverified`, and **no sub-frame
+    command was sent at all**. The fail-safe direction, on real hardware.
+    """
+    s = FakeRoll([framed(gap_left=OUT_BY_A_GAP, seed=1)])
+    stranger = framed(gap_left=4, seed=77)            # a different picture
+    frames = list(s.scan_roll(
+        frames=1, meter=METER_NONE, dry_run=True,
+        approved={0: _approved(1, 0.60, stranger)}))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+    assert frames[0].registration["approved"]["outcome"] == "unverified"
+
+
+# --- a pass that came back with its rows reversed ---------------------------
+
+
+def test_a_reversed_pass_is_still_measured():
+    """MODE SELECT byte 14 bit 0 reverses the pass that immediately follows a
+    bit-0-set one, and this driver sets it on every RGBI scan -- so a frame's
+    prescan, taken straight after the last frame's scan, is exactly the pass at
+    risk. Measured on film 2026-09-21: two of seven frames of a 600 dpi roll
+    came back reversed, each scoring under 9 as it came and over 92 flipped,
+    and each went uncorrected because the reading was refused.
+
+    Safe to try because it is a flip in y and the displacement measured is in
+    x: a reversed pass is not unreadable, only unreadable as it came.
+    """
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(3)
+    reference = rng.random((60, 428, 3)) * 200
+    shifted = np.roll(reference, -7, axis=1)
+
+    upright, _d = measure_shift_mm(reference, shifted)
+    reversed_mm, detail = measure_shift_mm(reference, shifted[::-1])
+    assert upright is not None
+    assert reversed_mm == pytest.approx(upright, abs=0.02)
+    assert detail["row_reversed"] is True
+    assert "rows reversed" in detail["reason"]
+
+
+def test_both_orientations_are_always_read_and_always_reported():
+    """This began as a fallback tried only after the upright reading had been
+    refused, and that was the wrong shape twice over. It privileged "as it
+    came" with nothing behind the privilege -- five of one roll's fifteen
+    prescans came back reversed -- and it left `confidence` meaning the upright
+    score on one frame and the flipped one on the next, in a column
+    `library.save` keeps so `CONFIDENCE_FLOOR` can be re-fitted from it. A
+    column that mixes two populations cannot be re-fitted.
+    """
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(4)
+    reference = rng.random((60, 428, 3)) * 200
+    _mm, detail = measure_shift_mm(reference, np.roll(reference, -5, axis=1))
+    assert detail["row_reversed"] is False
+    assert detail["confidence"] > detail["confidence_other"]
+
+
+def test_a_different_picture_is_still_refused_either_way_up():
+    """The floor has to hold for both attempts, or the fallback would become a
+    second chance for a match that should not happen at all."""
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(5)
+    mm, detail = measure_shift_mm(rng.random((60, 428, 3)) * 200,
+                                  rng.random((60, 428, 3)) * 200)
+    assert mm is None
+    assert "the other way up" in detail["reason"]
+
+
+def test_the_off_axis_gate_means_the_same_at_every_resolution():
+    """The most dangerous latent thing in this loop, and it was invisible.
+
+    Every reversed pass matches about two lines off the film axis -- measured
+    on five of one roll's fifteen prescans, all five at exactly dy = -2 with
+    **zero** margin against a gate of 2 px. That offset is a distance on the
+    film, the forward-versus-reverse start `docs/byte14-plan.md` predicts, so
+    at a 600 dpi prescan it is four pixels. Expressed in pixels the gate would
+    have refused every rescue, and raising `prescan_resolution` for any other
+    reason would have turned the whole thing off without anybody editing it.
+    """
+    from rps7200.framing import APERTURE_HEIGHT_MM, MAX_DY_MM
+
+    at_300 = MAX_DY_MM / (APERTURE_HEIGHT_MM / 287)
+    at_600 = MAX_DY_MM / (APERTURE_HEIGHT_MM / 574)
+    assert at_300 == pytest.approx(2.0, abs=0.05)
+    assert at_600 == pytest.approx(4.0, abs=0.05), (
+        "the gate has to grow with the ruler, or a finer prescan tightens it")
+
+
+def test_a_reversed_pass_is_read_at_a_finer_prescan_too():
+    """The same frame at twice the resolution, reversed, must still be read."""
+    from rps7200.framing import measure_shift_mm
+
+    rng = np.random.default_rng(11)
+    reference = rng.random((120, 856, 3)) * 200
+    shifted = np.roll(reference, -14, axis=1)
+    mm, detail = measure_shift_mm(reference, shifted[::-1])
+    assert mm is not None, detail["reason"]
+    assert detail["row_reversed"] is True

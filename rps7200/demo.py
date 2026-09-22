@@ -41,7 +41,14 @@ import numpy as np
 
 from . import library, tiff
 from .direct import DirectScanner, RollFrame, supports_infrared
-from .framing import APERTURE_MM, FULL_FRAME, frame_contrast, registration
+from .protocol import say_units
+from .framing import (
+    APERTURE_MM,
+    FULL_FRAME,
+    StripWalk,
+    frame_contrast,
+    registration,
+)
 from .protocol import ScanParameters
 from .session import estimate_seconds
 from .shading import ShadingReference, apply_shading
@@ -73,10 +80,15 @@ class DemoScanner:
     """Serves stored library entries as though they had just been scanned."""
 
     def __init__(self, root: str | Path = "library", speed: float = SPEED,
-                 entry: str | Path | None = None):
+                 entry: str | Path | None = None, no_film: bool = False):
         self.root = Path(root)
         #: The entry chosen for each film, so a prescan and the scan after it
         #: show one picture rather than two.
+        #: An empty transport. The film is what a demo cannot have when it
+        #: is showing a walk from disk, and saying so here rather than in
+        #: the window keeps the whole path between the sheet and the hold
+        #: loop running.
+        self._no_film = bool(no_film)
         self._by_film: dict[str, Path | None] = {}
         #: While a roll is on this frame, the entry it shows -- overriding the
         #: per-film choice above. A roll is the one place showing a single
@@ -172,6 +184,7 @@ class DemoScanner:
         return self._position
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
+        self._need_film("advance")
         self._work(7.0)
         if self._position >= 16:                         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -181,6 +194,7 @@ class DemoScanner:
         return self._position
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
+        self._need_film("wind back")
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -190,8 +204,25 @@ class DemoScanner:
         return self._position
 
     def nudge(self, millimetres: float) -> dict[str, Any]:
-        param = max(1, min(8, round((abs(millimetres) - 0.1662) / 0.1057)))
-        asked = 0.1057 * param + 0.1662
+        """Move the simulated film, by the driver's own arithmetic.
+
+        Only the film is pretend. Which `param` byte a distance becomes, what
+        that param delivers, and where the cap falls are all taken from
+        `DirectScanner` -- `param_for_mm` is a `@staticmethod` precisely so
+        there is one home for the snapping.
+
+        This used to be typed out here, and it went stale exactly as that
+        arrangement always does: it kept `param` capped at 8 and a ramp of
+        0.1662 mm after the driver moved to 87 and 0.1945. A frame set 38
+        units out then held in one command on the hardware and came back
+        `not_converged` in the demo -- which reads as a weak hold loop and was
+        a stale copy.
+        """
+        self._need_film("move")
+        param = self.param_for_mm(millimetres)
+        asked = self.STEP_MM * param + self.OVERHEAD_MM
+        short = abs(millimetres) - asked
+        clamped = short > 1e-9
         asked = asked if millimetres >= 0 else -asked
         way = 1 if millimetres >= 0 else -1
 
@@ -214,11 +245,17 @@ class DemoScanner:
 
         self._film_mm += delivered
         self._last_way = way
-        self._log(f"slide sub-frame: {asked:+.3f} mm (param {param}), "
-                  f"film now {self._film_mm:+.3f} mm")
+        self._log(f"slide sub-frame: {say_units(asked)} (param {param}), "
+                  f"film now {say_units(self._film_mm)}")
         self._work(1.5)
-        return {"asked_mm": asked, "param": param,
-                "forward": millimetres >= 0}
+        # The same keys the real one returns, including the two the hold loop
+        # reads: `_hold_to_approved` takes `clamped` to decide whether to say
+        # a command fell short, and without them that warning was unreachable
+        # at any distance.
+        return {"param": param, "forward": millimetres >= 0,
+                "asked_mm": round(asked, 3),
+                "requested_mm": round(millimetres, 3), "clamped": clamped,
+                "short_mm": round(short, 4) if clamped else 0.0}
 
     def _as_positioned(self, image: np.ndarray) -> np.ndarray:
         """The picture as it sits in the aperture right now.
@@ -289,6 +326,7 @@ class DemoScanner:
         keep_raw: bool = False,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        self._need_film("scan")
         if infrared and not supports_infrared(film):
             # The demo refuses exactly what the device refuses. A stand-in that
             # accepts a combination the hardware will not is worse than no
@@ -349,8 +387,11 @@ class DemoScanner:
         film: str = "negative",
         approved: dict | None = None,
         reverse_hold: bool = False,
+        correct: bool = False,
+        correct_dry_run: bool = False,
         **kw: Any,
     ):
+        self._need_film("roll")
         # Up front, as the real one does: a roll spends minutes calibrating
         # before the first frame, so this cannot wait until one is taken.
         if infrared and not supports_infrared(film):
@@ -363,6 +404,7 @@ class DemoScanner:
             )
         limit = frames if frames is not None else 6
         holding = True
+        walk = StripWalk() if (correct or correct_dry_run) else None
         misses = 0
         for i in range(limit):
             self._position = skip + i
@@ -418,6 +460,17 @@ class DemoScanner:
                         "target_mm": round(held.offset_mm, 4), "outcome": "off",
                         "reason": "holding was switched off earlier in this roll",
                     }
+                elif walk is not None:
+                    marks["base"] = walk.observe(skip + i, prescan)
+                    fix = self._aim_frame(
+                        skip + i, prescan, 300, walk,
+                        dry_run=correct_dry_run, keep_raw=False,
+                    )
+                    if fix.get("prescan") is not None:
+                        prescan = fix["prescan"]
+                        marks = self._marks(prescan)
+                    marks["correction"] = {k: v for k, v in fix.items()
+                                           if k != "prescan"}
                 image = meta = None
                 if not dry_run:
                     image, meta = self.scan(
@@ -446,11 +499,47 @@ class DemoScanner:
     #: check as the scanner would, instead of a hand-written imitation that
     #: cannot disagree with it.
     _hold_to_approved = DirectScanner._hold_to_approved
+    #: Same argument as the line above, for the same reason: the demo runs the
+    #: real ensemble and the real aiming loop, so a change that breaks either
+    #: shows up with no scanner on the bus.
+    _aim_frame = DirectScanner._aim_frame
+    _rejudge_for = DirectScanner._rejudge_for
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
+    #: The transport's law, taken and not retyped. `_aim_frame`'s dry run
+    #: reaches for all three and raised `AttributeError` without them -- so the
+    #: one place the aimer can be watched with no device was the one place that
+    #: died.
+    # Re-wrapped:  is a @staticmethod, so the
+    # plain function comes back through the class and assigning it here
+    # would bind  as its first argument.
+    param_for_mm = staticmethod(DirectScanner.param_for_mm)
+    STEP_MM = DirectScanner.STEP_MM
+    OVERHEAD_MM = DirectScanner.OVERHEAD_MM
+    MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
 
     # -- internals ---------------------------------------------------------
+
+    def _need_film(self, doing: str) -> None:
+        """Refuse what an empty transport would refuse, where it would.
+
+        A window showing a walk that was stored earlier has no film behind it,
+        and the honest place to say so is here -- the same place a real
+        transport fault is raised. `ScanSession` turns it into a `failed`
+        event and the window reports it through the path it already has.
+
+        Greying the button instead was the first attempt, and it skipped the
+        work: `on_scan_chosen` is the sole writer of `approved.json` and the
+        sole submitter of a `Roll`, so nothing between the sheet and the hold
+        loop ran at all. A demo that cannot reach the code it is demonstrating
+        is not demonstrating it.
+        """
+        if self._no_film:
+            raise UsbError(
+                f"there is no film in the transport, so there is nothing to "
+                f"{doing}. This window is showing a walk that was stored "
+                "earlier; the positions and the ticks are real.")
 
     def _log(self, message: str) -> None:
         if self.log_hook is not None:

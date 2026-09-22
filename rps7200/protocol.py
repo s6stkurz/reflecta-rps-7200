@@ -20,7 +20,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 4
+PROTOCOL_REVISION = 5
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
@@ -205,6 +205,95 @@ SLIDE_RELOAD = 0x40
 #: Scanner coordinates are in units of 1/7200 inch.
 COORD_PER_INCH = 7200
 MM_PER_INCH = 25.4
+
+
+# --- the transport's own unit -----------------------------------------------
+#
+# **Millimetres are prohibited in anything an operator reads** -- Stefan's
+# instruction, recorded in CLAUDE.md. A sub-frame distance is a number of
+# *param units*, where one unit is what a single increment of the `SLIDE` param
+# byte adds. The transport has never moved a millimetre in its life; it
+# executes a command with a parameter, and every millimetre in this code is a
+# conversion away from what the hardware did.
+#
+# This lives here, in the leaf both `direct` and `framing` import, so the
+# conversion exists **once**. Nineteen separate f-strings formatting their own
+# distances is exactly how a display and a mover drift apart.
+#
+# The numbers are `docs/protocol.md` section 11's law, measured on the
+# hardware: `distance = 0.1057 mm x param + 0.1662 mm`. Two things follow that
+# are easy to get wrong:
+#
+#   * The second term is paid **once per command**, not per unit, which is why
+#     ten small commands travel 2.40x as far as one large one for the same
+#     param total.
+#   * It is a motion ramp rather than a fixed offset in the step count.
+#     Measured 2026-09-22 (`verify_protocol.py` stage 14): `param 0` is
+#     accepted and moves nothing, five sends, 0.00 px every time. Firmware does
+#     not execute `param + K` steps, or param 0 would have travelled K -- so
+#     `param 1` is genuinely the smallest move that exists.
+#
+# `framing.COMMAND_COST` carries 1.84 for the same term, from a later session
+# using a different correlation estimator. **Display code must use the numbers
+# here**, because these are the law the mover obeys (`param_for_mm` ->
+# `nudge`); deriving a caption from the other one would print a distance the
+# film does not travel.
+
+#: One increment of the SLIDE param, in millimetres.
+MM_PER_UNIT = 0.1057
+
+#: What issuing a command costs before any param applies -- the ramp, in param
+#: units, which is the form it was measured in and the form a log reads.
+#:
+#: 1.84 and not the 1.572 this driver carried until 2026-09-22. That older
+#: number came from a fit over params 3-12 in one session; 1.84 came from three
+#: legs of equal param total over ten, five and one commands, where ten small
+#: commands travelled 2.40x as far as one large one -- a composition, which
+#: cannot be a fitting artefact the way an intercept can.
+#:
+#: Stage 15 measured it again the same day with one estimator and repeats per
+#: rung and got 1.948 over twelve confident steps, which corroborates 1.84 and
+#: rules out 1.572 outright. 1.84 is kept because it is the value `framing`
+#: already carried, so the two modules now describe one command with one
+#: number instead of two.
+COMMAND_UNITS = 1.84
+
+#: The ramp in millimetres, for the mover, which works in them.
+MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
+
+
+def units(millimetres: float) -> float:
+    """A distance in the transport's own unit."""
+    return float(millimetres) / MM_PER_UNIT
+
+
+def units_for_param(param: int) -> float:
+    """How far one command at this param actually travels, in units.
+
+    Not `param`: a command pays the ramp first, so `param 1` travels 2.57.
+    """
+    return float(param) + COMMAND_UNITS
+
+
+def say_units(millimetres: float, *, signed: bool = True) -> str:
+    """A distance, for a person to read. Never millimetres."""
+    value = units(millimetres)
+    return f"{value:+.1f} units" if signed else f"{abs(value):.1f} units"
+
+
+def say_command(millimetres: float, param: int | None = None) -> str:
+    """What a single command does, for a log line or a preview.
+
+    Naming the param as well as the distance matters because the param is what
+    goes on the wire, and because a caller that clamped can show the two
+    disagreeing rather than quietly reporting what it asked for.
+    """
+    if param is None:
+        param = max(1, round((abs(millimetres) - MM_PER_COMMAND) / MM_PER_UNIT))
+    delivered = (MM_PER_UNIT * param + MM_PER_COMMAND)
+    if millimetres < 0:
+        delivered = -delivered
+    return f"param {param}, {say_units(delivered)}"
 
 
 def _is_unity(scale: float | Sequence[float]) -> bool:

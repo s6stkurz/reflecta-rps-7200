@@ -37,6 +37,9 @@ from .defects import (
 )
 from .framing import (
     BLANK_CONTRAST,
+    MAX_CORRECTION_MM,
+    StripWalk,
+    frame_offset_mm,
     CALIBRATION_FRAME,
     CCD_MASK_SIZE,
     CLEAR_RATIO,
@@ -79,7 +82,10 @@ from .protocol import (
     METER_MODES,
     METER_NONE,
     METER_ONCE,
+    MM_PER_COMMAND,
     MM_PER_INCH,
+    MM_PER_UNIT,
+    say_units,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
@@ -394,9 +400,30 @@ class RollFrame:
     # had nothing to describe themselves with.
     prescan_meta: dict[str, Any] = field(default_factory=dict)
 
+    #: The frame's prescan as it arrived, present only when a correction
+    #: actually moved the film. Carried rather than re-read: by the time
+    #: anybody asks, the corrector's own last pass has already rebound
+    #: `last_pixels_raw`, so the scanner no longer holds the bytes this
+    #: picture was made from.
+    prescan_before: np.ndarray | None = None
+
     @property
     def ok(self) -> bool:
         return self.error is None and self.image is not None
+
+
+@dataclass(frozen=True)
+class _Aim:
+    """A target for :meth:`DirectScanner._hold_to_approved` that no operator set.
+
+    That loop reads `.offset_mm` and `.reference` and nothing else, so the
+    ensemble can hand it a measured target through the same door. Declared here
+    rather than reusing `session.Approved`, because `session` imports `direct`
+    and the arrow cannot go both ways.
+    """
+
+    offset_mm: float
+    reference: Any
 
 
 class DirectScanner:
@@ -2728,16 +2755,26 @@ class DirectScanner:
         keep_raw: bool = False,
         reverse: bool = False,
         should_stop: Callable[[], bool] | None = None,
+        rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
+        source: str = "operator",
     ) -> dict[str, Any]:
-        """Move the film until this frame sits where the operator put it.
+        """Move the film until this frame sits where it was decided to go.
 
-        The reference is not a measurement -- it is the picture he looked at in
-        the contact sheet and accepted. So this never decides where the frame
-        *should* be; it only asks whether it is still where he left it, and
-        closes the gap if not.
+        Usually the reference is not a measurement -- it is the picture the
+        operator looked at in the contact sheet and accepted -- and then this
+        never decides where the frame *should* be; it only asks whether it is
+        still where he left it, and closes the gap if not. `_aim_frame` passes
+        a target the ensemble measured instead, which is the one case where the
+        reference did come from a detector; `source` says which, so that a log
+        line never claims the operator asked for something he did not.
 
-        Unlike :meth:`_correct_registration` this iterates, because a backward
-        offset spends its first command on backlash: the transport advances
+        ``rejudge`` is looked at after each verification pass and may only
+        **stop**. It never re-aims, because `target` staying a constant of the
+        frame is exactly what makes `hold_plan`'s no-limit-cycle argument hold:
+        a loop that re-aims on its own noise can chase itself.
+
+        It iterates, because a backward offset spends its first command on
+        backlash: the transport advances
         forward between frames, so it enters each one loaded forward, and a
         move the other way loses two to three commands before anything happens.
         One shot would report that as a failure. Two converge.
@@ -2751,6 +2788,7 @@ class DirectScanner:
             "target_mm": round(target, 4), "outcome": "held", "moves": 0,
             "spent_mm": 0.0, "reverse_applied": bool(reverse),
             "history": [], "prescan": None, "roll_abort": None,
+            "source": source, "clamped": False,
         }
 
         measured, detail = measure_shift_mm(approved.reference, image)
@@ -2770,6 +2808,7 @@ class DirectScanner:
 
             before = measured
             asked = self.nudge(want)
+            out["clamped"] = out["clamped"] or bool(asked.get("clamped"))
             delivered_mm = asked["asked_mm"] * (1 if want > 0 else -1)
             spent += abs(delivered_mm)
             direction = 1 if want > 0 else -1
@@ -2793,12 +2832,24 @@ class DirectScanner:
                 if abs(went) > HOLD_TOLERANCE_MM and (went > 0) != (want > 0):
                     out["outcome"] = "wrong_way"
                     out["roll_abort"] = (
-                        f"frame {index}: asked for {want:+.2f} mm and the film "
-                        f"went {went:+.2f} mm. The direction is inverted, so "
+                        f"frame {index}: asked for {say_units(want)} and the "
+                        f"film went {say_units(went)}. The direction is "
+                        "inverted, so "
                         "every frame would be driven the wrong way -- holding "
                         "is off for the rest of this roll."
                     )
                     self._log(out["roll_abort"])
+                    break
+
+            if rejudge is not None:
+                keep, why = rejudge(image)
+                if not keep:
+                    # Not a disagreement about the distance -- the loop does
+                    # not take a second opinion on that. This is the frame no
+                    # longer looking like the one that was judged at all.
+                    out["outcome"] = "abandoned"
+                    out["abandoned"] = why
+                    self._log(f"frame {index}: {why}")
                     break
 
         final = measured
@@ -2807,102 +2858,177 @@ class DirectScanner:
                               else round(target - final, 4))
         out["confidence"] = out["history"][-1].get("confidence")
         out["dy"] = out["history"][-1].get("dy")
+        # Which way up the prescans read. It matters downstream and nothing
+        # else can tell: `reversal_against` compares a scan against its own
+        # prescan and cannot say which of the two reversed, so it blames the
+        # scan. Here there is a third picture -- the approved reference -- and
+        # it settles the question for free.
+        out["row_reversed"] = any(h.get("row_reversed")
+                                  for h in out["history"])
         self._log(
-            f"frame {index}: approved {target:+.3f} mm -> {out['outcome']}"
-            + (f", now {final:+.3f} mm after {out['moves']} move(s)"
+            f"frame {index}: {source} {say_units(target)} -> {out['outcome']}"
+            + (f", now {say_units(final)} after {out['moves']} move(s)"
                if final is not None else ", not verified")
         )
         return out
 
-    def _correct_registration(
+    def _aim_frame(
         self, index: int, image: np.ndarray, prescan_resolution: int,
-        dry_run: bool, keep_raw: bool = False,
+        walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
+        should_stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """Measure the frame's registration and nudge it back, once.
+        """Judge where this frame sits, put it there, and check the work.
 
-        Returns what it did. A re-prescan follows any real move, because that is
-        the only way to tell a correction that landed from one that backlash
-        swallowed -- the failure that would otherwise look identical to success.
-        It is also what the vendor does: in setup CyberView moves, scans, moves,
-        scans, each scan checking the last move.
+        Replaces `_correct_registration`, now deleted, which was one shot on
+        one detector: `registration_error_mm` -> `gap_edges`, which anchors its
+        runs at column 0 and so answers "0.0 mm, registered" for any frame
+        whose gap has a sliver of the neighbour beside it. Four of nine such
+        calls on a real sixteen-frame walk were provably false, and a positive
+        assertion of correctness is worse than an abstention because nothing
+        downstream can tell them apart.
+
+        The judgment is made **once**, from the pass the caller already took,
+        and then delivered by the same loop that holds a frame to an operator's
+        position -- which already iterates through backlash, refuses to reverse
+        inside a frame, watches the direction on its first move and caps at
+        `MAX_HOLD_MOVES`. What is new here is only the number and where it came
+        from.
         """
-        # The caller has already looked at this frame; measuring its prescan
-        # again would cost 12 s to learn nothing.
-        before, why = registration_error_mm(image)
-        out: dict[str, Any] = {"before_mm": before, "reason": why,
-                               "moved": False, "prescan": None}
+        decision, detail = walk.judge(index, image)
+        out: dict[str, Any] = {
+            "decision_mm": None if decision is None else round(decision, 4),
+            "ensemble": detail, "moved": False, "prescan": None,
+            "outcome": "abstained", "roll_abort": None,
+        }
 
-        if before is None:
-            self._log(f"frame {index}: not correcting -- {why}")
-            return out
-        if abs(before) < self.CORRECTION_DEADBAND_MM:
-            self._log(
-                f"frame {index}: registration {before:+.3f} mm, inside the "
-                f"{self.CORRECTION_DEADBAND_MM} mm deadband -- leaving it"
-            )
+        if decision is None:
+            out["reason"] = detail.get("reason", "")
+            self._log(f"frame {index}: left as it came -- {out['reason']}")
             return out
 
-        # A gap on the left means the frame sits too far towards +x, so it has
-        # to come back: the opposite sign to the error.
-        want = -before
+        agreed = "+".join(detail.get("agreed", []))
+        if abs(decision) < HOLD_TOLERANCE_MM:
+            # Inside the smallest move the hardware can make, so there is
+            # nothing to ask for. Not "close enough" -- unaskable.
+            out["outcome"] = "in_place"
+            self._log(f"frame {index}: {say_units(decision)} by {agreed}, "
+                      f"inside the "
+                      f"{say_units(HOLD_TOLERANCE_MM, signed=False)} the "
+                      "transport can move")
+            return out
+
+        if not walk.affordable(decision):
+            walk.record(index, None, 0.0)
+            walk.stop(
+                f"frame {index} wants {say_units(decision)} on top of the "
+                f"{say_units(walk.travel_mm, signed=False)} this roll has "
+                "already nudged")
+            out["outcome"] = "budget"
+            out["reason"] = walk.off_reason
+            self._log(f"frame {index}: {walk.off_reason}")
+            return out
+
         if dry_run:
-            param = self.param_for_mm(want)
+            param = self.param_for_mm(decision)
             out["would_send"] = {
-                "action": 0x00 if want >= 0 else 0x01, "param": param,
+                "action": 0x00 if decision >= 0 else 0x01, "param": param,
                 "asked_mm": round(
                     (self.STEP_MM * param + self.OVERHEAD_MM)
-                    * (1 if want >= 0 else -1), 3),
+                    * (1 if decision >= 0 else -1), 3),
             }
+            out["outcome"] = "dry_run"
             self._log(
-                f"frame {index}: registration {before:+.3f} mm; would send "
+                f"frame {index}: {say_units(decision)} by {agreed}; would send "
                 f"{out['would_send']['action']:#04x} {param:#04x} 00 04 "
-                f"({out['would_send']['asked_mm']:+.3f} mm) -- dry run"
-            )
+                f"({say_units(out['would_send']['asked_mm'])}) -- dry run")
             return out
 
-        out.update(self.nudge(want))
-        out["moved"] = True
-        time.sleep(0.4)
+        self._log(f"frame {index}: {say_units(decision)} by {agreed} "
+                  f"(from {detail.get('chose', '?')})")
+        fix = self._hold_to_approved(
+            index, image, prescan_resolution,
+            _Aim(offset_mm=decision, reference=image),
+            keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
+            rejudge=self._rejudge_for(index, walk, decision),
+        )
+        out.update({k: v for k, v in fix.items() if k != "prescan"})
+        out["prescan"] = fix.get("prescan")
+        out["moved"] = fix["moves"] > 0
 
-        # keep_raw matters here: `last_raw` is only written when it is set
-        # and is never cleared, so a verification prescan taken without it
-        # leaves capture_record() holding the *previous* pass's bytes -- which
-        # then get filed against these pixels. Both passes are 300 dpi
-        # prescans of the same shape, so _file's disagreement guard does not
-        # catch it.
-        image, _ = self.prescan(resolution=prescan_resolution, keep_raw=keep_raw)
-        after, why_after = registration_error_mm(image)
-        out["after_mm"] = after
-        out["after_reason"] = why_after
-        out["prescan"] = image
-        if after is None:
-            self._log(f"frame {index}: after nudging, {why_after}")
+        # Where the frame was actually left, and whether anybody can say so. An
+        # unverified move is the dangerous one: the film has moved and nothing
+        # knows how far, so the arrival this frame contributed is now a stale
+        # number. `record` drops it rather than let the prior build on it.
+        walk.record(index, fix.get("residual_mm"), fix.get("spent_mm", 0.0),
+                    verified=fix.get("final_mm") is not None)
+        if fix["outcome"] == "held":
+            walk.landed()
         else:
-            improved = abs(after) < abs(before)
-            out["improved"] = bool(improved)
-            self._log(
-                f"frame {index}: registration {before:+.3f} -> {after:+.3f} mm "
-                f"({'better' if improved else 'NO BETTER -- backlash?'})"
-            )
+            walk.missed(fix["outcome"])
+        if fix.get("roll_abort"):
+            walk.stop(fix["roll_abort"])
         return out
 
-    # -- sub-frame positioning ---------------------------------------------
+    def _rejudge_for(self, index: int, walk: Any, target_mm: float):
+        """The second look, which may stop this frame and nothing else.
+
+        The operator asked for a judgment call after each pass, and this is it
+        -- but deliberately only in the direction that can refuse. Letting it
+        re-aim would put the detector's own noise inside the feedback loop, and
+        a constant target is what makes `hold_plan` provably unable to chatter.
+
+        So it fires on the gross case only: the frame is no longer anywhere
+        this decision predicted. Reasons that happens are real -- the film
+        slipping, a band that was picture all along -- and none of them are
+        improved by nudging further.
+        """
+        def look(image: np.ndarray) -> tuple[bool, str]:
+            if walk.base is None:
+                return True, ""
+            reading = frame_offset_mm(image, walk.base)
+            if reading.mm is None:
+                return True, ""          # cannot see; not evidence of trouble
+            if abs(reading.mm) > abs(target_mm) + MAX_CORRECTION_MM:
+                return False, (
+                    f"frame {index}: after moving, the gap reads "
+                    f"{say_units(reading.mm)} -- further out than the "
+                    f"{say_units(target_mm)} this started from. The frame is "
+                    "not "
+                    "where any of this predicted, so it is left alone")
+            return True, ""
+        return look
 
     #: The calibrated law for SLIDE actions 0x00 / 0x01, fitted over both
     #: directions: distance = STEP_MM x param + OVERHEAD_MM. Worst residual
     #: 0.0185 mm across ten points; see docs/protocol.md section 11.
-    STEP_MM = 0.1057
-    OVERHEAD_MM = 0.1662
+    STEP_MM = MM_PER_UNIT
+    OVERHEAD_MM = MM_PER_COMMAND
 
     #: Below this the loop leaves the frame alone. Roughly half the smallest
-    #: move the hardware can make (param 1 = 0.27 mm), so it never asks for a
+    #: move the hardware can make (param 1, `FINE_MIN_MM`), so it never asks for a
     #: correction it cannot deliver, and never chatters at measurement noise.
     CORRECTION_DEADBAND_MM = 0.15
 
-    #: A correction larger than this is refused. The aperture allows 0.49 mm of
+    #: The largest `param` a single correction may use, and therefore the
+    #: largest correction there is: past it, `plan_nudges` chains commands and
+    #: pays the ramp and the scatter again for each.
+    #:
+    #: It was 8, on the reasoning that "the aperture allows 0.49 mm of
     #: registration error, so anything beyond about a millimetre means the
-    #: measurement is wrong rather than the film being far out.
-    MAX_CORRECTION_PARAM = 8
+    #: measurement is wrong rather than the film being far out". That premise
+    #: is gone. `MAX_REGISTRATION_MM` is how precisely a frame can be *placed*
+    #: in the aperture, never how badly the transport can *leave* one: the walk
+    #: of 2026-09-22 proposed corrections out to 13.78 units and every one of
+    #: them placed its frame, and walk A sat 1.4 to 2.2 mm out. The old cap
+    #: turned those into three chained commands each.
+    #:
+    #: 87 rather than higher because it is the largest move two prescans can
+    #: still confirm. Measured the same day, `verify_protocol.py` stage 15:
+    #: param 87 moved 109 px at confidence 129, param 160 moved 196 px at
+    #: confidence **27** against a floor of 55 -- it goes somewhere and cannot
+    #: say where, and a correction that cannot be checked is worse than a
+    #: smaller one that can. 87 is also the largest the vendor itself sends.
+    MAX_CORRECTION_PARAM = 87
 
     @staticmethod
     def param_for_mm(millimetres: float) -> int:
@@ -2931,13 +3057,25 @@ class DirectScanner:
         param = self.param_for_mm(millimetres)
         forward = millimetres >= 0
         asked = self.STEP_MM * param + self.OVERHEAD_MM
+        # `param_for_mm` clamps at MAX_CORRECTION_PARAM, and its own comment
+        # calls that a refusal -- but it returns a smaller move instead, which
+        # looks exactly like success. An iterating caller absorbs the shortfall
+        # on its next pass; one that does not deserves to be told.
+        short = abs(millimetres) - asked
+        clamped = short > 1e-9
         self._log(
-            f"nudge {'+' if forward else '-'}{asked:.3f} mm "
-            f"(param {param}) for a {millimetres:+.3f} mm error"
+            f"nudge {'+' if forward else '-'}"
+            f"{say_units(asked, signed=False)} (param {param}) for a "
+            f"{say_units(millimetres)} error"
+            + (f" -- the largest single command is "
+               f"{say_units(asked, signed=False)}, so "
+               f"{say_units(short, signed=False)} remains" if clamped else "")
         )
         self.slide(0x00 if forward else 0x01, param=param, value=0x04)
         return {"param": param, "forward": forward,
-                "asked_mm": round(asked if forward else -asked, 3)}
+                "asked_mm": round(asked if forward else -asked, 3),
+                "requested_mm": round(millimetres, 3), "clamped": clamped,
+                "short_mm": round(short, 4) if clamped else 0.0}
 
     # -- rolls -------------------------------------------------------------
 
@@ -3051,6 +3189,10 @@ class DirectScanner:
         #: came back inverted, or several frames running would not reach the
         #: position asked for. Scanning continues either way.
         holding = True
+        # The only thing in a roll that remembers anything across frames. Built
+        # once so the base level and the advance it learns carry forward; None
+        # when nothing asked for aiming, so an ordinary roll is untouched.
+        walk = StripWalk() if (correct or correct_dry_run) else None
         misses = 0
         index = 0
 
@@ -3107,6 +3249,7 @@ class DirectScanner:
                 continue
 
             started = time.monotonic()
+            prescan_before = None
             prescan_image = None
             raw_prescan = None
             prescan_meta: dict[str, Any] = {}
@@ -3125,8 +3268,8 @@ class DirectScanner:
                 self._log(
                     f"frame {index}: contrast {contrast:.3f}, "
                     f"picture x{marks['x0']}..{marks['x1']}, "
-                    f"offset {marks['offset_mm']:+.2f} mm, "
-                    f"short by {marks['shortfall_mm']:.2f} mm"
+                    f"offset {say_units(marks['offset_mm'])}, "
+                    f"short by {say_units(marks['shortfall_mm'], signed=False)}"
                 )
 
                 if contrast < blank_contrast:
@@ -3136,6 +3279,9 @@ class DirectScanner:
                         "end of film"
                     )
                     return
+
+                if walk is not None:
+                    marks["base"] = walk.observe(index, prescan_image)
 
                 # An approved position beats the automatic detector outright.
                 # That is the whole point of it: the operator looked at this
@@ -3149,6 +3295,10 @@ class DirectScanner:
                         index, prescan_image, prescan_resolution, held,
                         keep_raw=keep_raw, reverse=reverse_hold,
                         should_stop=should_stop,
+                        # Without this every machine proposal logged as
+                        # `operator` -- the one thing `source`'s own docstring
+                        # says the field exists to prevent.
+                        source=getattr(held, "source", None) or "operator",
                     )
                     if fix.get("roll_abort"):
                         holding = False
@@ -3184,12 +3334,19 @@ class DirectScanner:
                         "reason": "holding was switched off earlier in this roll",
                     }
                 elif correct or correct_dry_run:
-                    fix = self._correct_registration(
-                        index, prescan_image, prescan_resolution,
-                        correct_dry_run, keep_raw=keep_raw,
+                    fix = self._aim_frame(
+                        index, prescan_image, prescan_resolution, walk,
+                        dry_run=correct_dry_run, keep_raw=keep_raw,
+                        should_stop=should_stop,
                     )
-                    marks["correction"] = fix
+                    marks["correction"] = {k: v for k, v in fix.items()
+                                           if k != "prescan"}
                     if fix.get("prescan") is not None:
+                        # The picture as it arrived, kept because the pass that
+                        # replaced it is otherwise the only one anybody sees --
+                        # and a correction that moved the frame somewhere worse
+                        # would look exactly like one that worked.
+                        prescan_before = prescan_image
                         prescan_image = fix.pop("prescan")
                         # The replacement prescan was the helper's last pass,
                         # so its raw pixels are the ones on hand now.
@@ -3209,7 +3366,8 @@ class DirectScanner:
                     # is picture hanging outside the aperture, which no amount
                     # of nudging brings back.
                     self._log(
-                        f"frame {index}: picture is {marks['shortfall_mm']:.2f} mm "
+                        f"frame {index}: picture is "
+                        f"{say_units(marks['shortfall_mm'], signed=False)} "
                         "narrower than a whole frame -- the film has drifted and "
                         "part of it is outside the aperture"
                     )
@@ -3217,7 +3375,8 @@ class DirectScanner:
                 if dry_run:
                     yield RollFrame(index, position, None, {}, prescan_image,
                                     marks, raw_prescan=raw_prescan,
-                                    prescan_meta=prescan_meta)
+                                    prescan_meta=prescan_meta,
+                                    prescan_before=prescan_before)
                 else:
                     if meter != METER_NONE and not (meter == METER_ONCE and metered):
                         # `infrared` here says the scan that follows is RGBI;
@@ -3263,14 +3422,15 @@ class DirectScanner:
                     yield RollFrame(index, position, image, meta, prescan_image,
                                     marks, raw_image=self.last_pixels_raw,
                                     raw_prescan=raw_prescan,
-                                    prescan_meta=prescan_meta)
+                                    prescan_meta=prescan_meta,
+                                    prescan_before=prescan_before)
                 failures = 0
             # UsbError covers CheckCondition and NoDataYet. ValueError is in
             # here because a roll runs for hours unattended: one frame that
             # decodes to an unexpected shape should cost that frame, not the
             # thirty after it.
             except (UsbError, ScanReadError, CalibrationRequired,
-                    TimeoutError, ValueError) as exc:
+                    ShadingUnavailable, TimeoutError, ValueError) as exc:
                 failures += 1
                 self._log(f"frame {index} failed ({failures}/{max_failures}): {exc}")
                 yield RollFrame(

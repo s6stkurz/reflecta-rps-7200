@@ -72,6 +72,12 @@ from rps7200.console import use_utf8_stdout  # noqa: E402
 from rps7200.framing import (                # noqa: E402
     APERTURE_MM,
     BLANK_CONTRAST,
+    HOLD_TOLERANCE_MM,
+    StripWalk,
+    combine,
+    frame_offset_mm,
+    predict_offset,
+    right_gap_closure,
     CLEAR_RATIO,
     CONFIDENCE_FLOOR,
     GAP_FLATNESS,
@@ -604,6 +610,203 @@ def report_position(rows, images, base: float, scale: float) -> dict:
             "mean_px": float(arr.mean()), "sd_px": float(arr.std())}
 
 
+def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
+    """Replay a stored walk through the ensemble, causally, in walk order.
+
+    What each frame would have been told to do knowing only what the walk knew
+    when it reached it: the base armed from the frames already passed, the prior
+    from the advances already seen.
+
+    **Observe-only, and it has to be.** The film in a stored walk never moved,
+    so frame 8's image shows where the film actually was -- not where it would
+    have been had frame 7 been corrected. An earlier version of this simulated
+    the corrections landing and so manufactured advance errors of -0.78 mm
+    against a real wander of +/-0.17, then reported the ensemble refusing frames
+    it would not refuse. What this measures is whether the members agree about
+    where the film *is*, which is the question the gate actually asks.
+
+    Costs no scanner time: `rolls/` keeps the prescans.
+    """
+    walk = StripWalk()
+    seen: list[np.ndarray] = []
+    rows, moved, in_place, refused = [], 0, 0, 0
+
+    print("\n-- the ensemble, replayed in walk order --\n")
+    print(f"  {'frame':<14} {'base':>6} {'left':>7} {'prior':>7} {'right':>7}"
+          f"  outcome")
+    for order, (name, image) in enumerate(images, 1):
+        seen.append(image)
+        walk.observe(order, image)
+        if walk.base is None:
+            print(f"  {name[:14]:<14} {'-':>6} {'-':>7} {'-':>7} {'-':>7}  "
+                  f"no base yet: {walk.base_detail.get('reason', '')[:34]}")
+            rows.append({"frame": name, "outcome": "no_base"})
+            continue
+
+        left = frame_offset_mm(image, walk.base)
+        right = right_gap_closure(image, walk.base)
+        prior = predict_offset(walk.history(order), order)
+        decision, detail = combine([left, right, prior])
+        if left.mm is not None:
+            walk.placed[order] = left.mm
+
+        if decision is None:
+            outcome = "refused: " + detail.get("reason", "")[:44]
+            refused += 1
+        elif abs(decision) < HOLD_TOLERANCE_MM:
+            outcome = f"in place ({detail['chose']})"
+            in_place += 1
+        else:
+            outcome = f"move {decision:+.2f} mm ({detail['chose']})"
+            moved += 1
+
+        def show(r):
+            return f"{r.mm:+7.2f}" if r.mm is not None else "      -"
+
+        print(f"  {name[:14]:<14} {walk.base.level:6.1f} {show(left)} "
+              f"{show(prior)} {show(right)}  {outcome}")
+        rows.append({
+            "frame": name, "decision_mm": decision,
+            "outcome": outcome.split(":")[0].split(" (")[0],
+            "members": detail.get("members"), "chose": detail.get("chose"),
+        })
+
+    print(f"\n  {moved} would move, {in_place} in place, {refused} refused")
+    if walk.base is not None:
+        print(f"  base {walk.base.level:.2f} counts, spread "
+              f"{walk.base.spread * 100:.2f}%, {walk.base.bands} bands from "
+              f"{walk.base_detail.get('frames')} frames")
+    print("\n  A refusal is the safe failure and the common one early: the "
+          "prior\n  needs two placed frames behind it before it can speak at "
+          "all.")
+    return {"rows": rows, "moved": moved, "in_place": in_place,
+            "refused": refused,
+            "base": None if walk.base is None else walk.base.level}
+
+def report_held(folder: Path) -> dict:
+    """What a roll's holding actually delivered, from the manifest it wrote.
+
+    Read back rather than recomputed, per CLAUDE.md: the interesting thing is
+    what the loop decided and measured while it ran, and a recomputation would
+    quietly agree with itself.
+
+    The question this answers is not "did it converge" -- `hold_plan` says that
+    and would say it of a frame that never moved -- but three separate ones:
+
+      * **did anything move at all**, which `moves: 0` and `spent_mm: 0.0`
+        settle, and which a manifest otherwise reports identically to success;
+      * **how much of what was commanded arrived**, the delivery ratio, which
+        is `final_mm / spent_mm` and which one earlier frame put at 1.011;
+      * **does a nudge survive an advance**. That is the one nobody has
+        measured. A sub-frame move does not touch the frame counter, so a
+        correction should still be in the film's position when the next frame
+        arrives -- and if it is, frame N's first reading is not about frame N's
+        own error at all. The prediction is
+
+            history[0].px  ~=  -final_mm(N-1) / mm_per_px
+
+        and a reading near zero on every frame refutes it.
+    """
+    manifest = json.loads(
+        (folder / ("roll.json" if (folder / "roll.json").exists()
+                   else "survey.json")).read_text(encoding="utf-8"))
+    rows = []
+    for record in manifest.get("frames", []):
+        held = ((record.get("registration") or {}).get("approved") or {})
+        if not held:
+            continue
+        history = held.get("history") or [{}]
+        rows.append({
+            "frame": record.get("number"),
+            "target_mm": held.get("target_mm"),
+            "outcome": held.get("outcome"),
+            "moves": held.get("moves", 0),
+            "spent_mm": held.get("spent_mm", 0.0),
+            "final_mm": held.get("final_mm"),
+            "residual_mm": held.get("residual_mm"),
+            "arrived_px": history[0].get("px"),
+            "confidence": history[0].get("confidence"),
+            "clamped": held.get("clamped"),
+        })
+    if not rows:
+        print(f"\nno held frames in {folder}")
+        return {"rows": []}
+
+    scale = APERTURE_MM / 428.0
+    print(f"\n-- what the holding delivered, from {folder.name}'s own "
+          f"manifest --\n")
+    print(f"  {'fr':>3} {'asked':>7} {'sent':>7} {'landed':>7} {'left':>6} "
+          f"{'mv':>3} {'arrived':>9} {'conf':>6}  outcome")
+    for r in rows:
+        def mm(key, width=7):
+            v = r.get(key)
+            return f"{v:+{width}.3f}" if isinstance(v, (int, float)) else f"{'-':>{width}}"
+        arrived = r["arrived_px"]
+        # A displacement the correlator refused is not a small reading, it is
+        # no reading: below the floor `register` is matching noise, and the
+        # number it returns is the position of the tallest bump in it.
+        trusted = (r["confidence"] or 0) >= CONFIDENCE_FLOOR
+        shown = ("-" if arrived is None
+                 else f"{arrived:+d} px" if trusted else "(refused)")
+        print(f"  {r['frame']:>3} {mm('target_mm')} {r['spent_mm']:>7.3f} "
+              f"{mm('final_mm')} {mm('residual_mm', 6)} {r['moves']:>3} "
+              f"{shown:>9} {(r['confidence'] or 0):>6.1f}  {r['outcome']}")
+
+    moved = [r for r in rows if r["moves"]]
+    still = [r for r in rows if not r["moves"]]
+    print(f"\n  {len(moved)} frame(s) moved, {len(still)} sent no command at "
+          f"all")
+    if still:
+        print(f"    a frame that never moved reports outcome "
+              f"'{still[0]['outcome']}' too -- which is why `moves` is the "
+              f"column that matters")
+
+    # `final_mm` is the total displacement from the reference, not the
+    # distance this frame travelled: a frame arrives already carrying whatever
+    # the last one was corrected by. What was delivered is the difference.
+    ratios = []
+    for r in moved:
+        if r["final_mm"] is None or not r["spent_mm"]:
+            continue
+        arrived_mm = (r["arrived_px"] or 0) * scale
+        ratios.append(abs(r["final_mm"] - arrived_mm) / abs(r["spent_mm"]))
+    if ratios:
+        print(f"  delivered per mm commanded: "
+              f"{min(ratios):.3f}-{max(ratios):.3f}, median "
+              f"{float(np.median(ratios)):.3f}   (one earlier frame: 1.011)")
+
+    # Does a nudge survive an advance? The prediction, frame by frame.
+    print(f"\n  does a nudge survive the advance? "
+          f"(predicted arrival = final(N-1) / {scale:.5f} mm/px)")
+    checked, agreed = 0, 0
+    for before, after in zip(rows, rows[1:]):
+        if before.get("final_mm") is None or after.get("arrived_px") is None:
+            continue
+        if (after.get("confidence") or 0) < CONFIDENCE_FLOOR:
+            continue                  # no reading to compare the prediction to
+        # Where the last frame was LEFT is where this one arrives: a
+        # sub-frame move does not touch the frame counter, so the film
+        # is still displaced by that much when the next frame reaches
+        # the gate. Same sign, which the first version of this had
+        # backwards -- and so reported 14 of 14 magnitudes agreeing
+        # within a pixel as "DOES NOT AGREE".
+        predicted = before["final_mm"] / scale
+        seen = after["arrived_px"]
+        checked += 1
+        close = abs(predicted - seen) <= 2.0
+        agreed += close
+        print(f"    frame {after['frame']:>2}: predicted {predicted:+6.1f} px, "
+              f"saw {seen:+4d} px   {'agrees' if close else 'DOES NOT AGREE'}")
+    if checked:
+        print(f"\n    {agreed} of {checked} within 2 px. "
+              + ("The correction carries across the advance, so a frame's "
+                 "first reading is mostly the LAST frame's correction."
+                 if agreed > checked / 2 else
+                 "The correction does NOT survive the advance -- each frame "
+                 "arrives where the transport put it, independent of the last."))
+    return {"rows": rows, "moved": len(moved), "still": len(still),
+            "carry_checked": checked, "carry_agreed": agreed}
+
 def main(argv: list[str] | None = None) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(
@@ -619,7 +822,24 @@ def main(argv: list[str] | None = None) -> int:
                     help="the resolution to select when reading a library")
     ap.add_argument("--json", type=Path, default=None,
                     help="also write the whole result here")
+    ap.add_argument("--glob", default=None,
+                    help="the filename pattern to read, for a cohort not "
+                         "named prescanNN.tif -- walk A's passes came from an "
+                         "earlier probe and are A01_p1.tif and so on")
+    ap.add_argument("--held", type=Path, default=None,
+                    help="a roll folder whose frames were held to approved "
+                         "positions; reports what the holding actually "
+                         "delivered, read back from that run's own manifest")
+    ap.add_argument("--ensemble", action="store_true",
+                    help="replay the walk through the ensemble that decides "
+                         "corrections, frame by frame in walk order, using "
+                         "only what each frame could have known at the time")
     args = ap.parse_args(argv)
+
+    if args.held and not args.walk and not args.ensemble:
+        # Reporting on a finished roll needs its manifest and nothing else.
+        report_held(args.held)
+        return 0
 
     pairs: list[dict] = []
     if args.walk:
@@ -634,7 +854,11 @@ def main(argv: list[str] | None = None) -> int:
         if not args.root.is_dir():
             print(f"no folder at {args.root}")
             return 1
-        images = cohort(args.root, args.dpi)
+        if args.glob:
+            images = [(q.name, tiff.read(str(q)).astype(np.float64))
+                      for q in sorted(args.root.glob(args.glob))]
+        else:
+            images = cohort(args.root, args.dpi)
         if not images:
             print(f"no comparable prescans in {args.root}")
             return 1
@@ -651,6 +875,12 @@ def main(argv: list[str] | None = None) -> int:
     base = result.get("base", {}).get("mean")
     if base:
         result["position"] = report_position(rows, images, base, scale)
+
+    if args.held:
+        result["held"] = report_held(args.held)
+
+    if args.ensemble:
+        result["ensemble"] = report_ensemble(images)
 
     if pairs:
         noise = noise_floor(pairs, args.dpi, scale)

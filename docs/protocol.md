@@ -233,17 +233,35 @@ Three things worth having:
 
 Four bytes: `action param 00 value`. Every payload ever observed:
 
-| payload | count | meaning |
-|---|---|---|
-| `10 16 00 00` | 37 | INIT — sent before every scan |
-| `10 15 00 00` | 22 | INIT, different param |
-| `10 13/14/01 00 00` | 6 | INIT, other params; no observed difference |
-| `04 01 00 01` | 11 | advance one frame |
-| `04 01 00 02` | 9 | advance one frame — the value differs, the movement does not exceed 0.05 mm |
-| `05 01 00 01` | 16 | **reverse** one frame; used only to rewind a finished roll |
-| `03 f6 dd 00` | 1 | eject, the last command of a session |
-| `00 <param> 00 <value>` | 4 | **sub-frame movement, forward** — calibrated, below |
-| `01 <param> 00 <value>` | 2 | **sub-frame movement, backward** — calibrated, below |
+Recounted 2026-09-22 from all six captures with `tools/parse_capture.py`:
+**37 SLIDE commands, twelve distinct payloads.**
+
+| payload | count | action | param | meaning |
+|---|---|---|---|---|
+| `10 15 00 00` | 22 | INIT | 21 | sent before a scan |
+| `04 01 00 01` | 3 | advance | 1 | advance one frame |
+| `10 13 00 00` | 3 | INIT | 19 | |
+| `10 16 00 00` | 1 | INIT | 22 | |
+| `10 14 00 00` | 1 | INIT | 20 | |
+| `10 01 00 00` | 1 | INIT | 1 | |
+| `04 01 00 02` | 1 | advance | 1 | the `value` differs, the movement does not |
+| `00 01 00 04` | 1 | sub-frame fwd | 1 | **the smallest param the vendor ever sends** |
+| `00 46 00 00` | 1 | sub-frame fwd | 70 | |
+| `00 4c 00 01` | 1 | sub-frame fwd | 76 | |
+| `01 46 00 00` | 1 | sub-frame back | 70 | |
+| `01 57 00 03` | 1 | sub-frame back | 87 | the vendor's largest |
+
+**The previous version of this table was wrong and is kept nowhere.** It totalled
+108 commands; there are 37. It gave `10 16 00 00` a count of 37, which is the
+total of every SLIDE payload rather than that row's. It listed 16 x
+`05 01 00 01` (SLIDE_PREV) and one `03 f6 dd 00` (eject) — **neither appears in
+any capture**, so *our evidence that `SLIDE_PREV` works is our own measurement,
+not the vendor's*. And its "param 71" row was `01 47 00 03`; the capture holds
+`01 57 00 03`, which is param 87.
+
+**`param` is never 0 in any of them**, for any action. The smallest the vendor
+sends, in every action family, is 1 — which is what made the question below
+worth asking.
 
 ### Sub-frame movement — the operational answer
 
@@ -267,13 +285,59 @@ Three things a caller will otherwise get wrong:
 - **Backlash swallows two to three steps after a direction change.** A small
   correction that reverses direction may not move the film at all. Re-measure; do not
   assume.
-- **The smallest single move is 0.27 mm** (`param 1`). Asking for less is not possible.
+- **The smallest single move is `param 1`, and that is now measured rather than
+  assumed.** `param 0` is **accepted and does nothing** — see below. So there is
+  no rung under `param 1`, and a correction finer than it cannot be requested by
+  any means.
 - **The frame counter does not move**, so `READ STATE` position cannot confirm any of
   this. Only a prescan can.
 
 The law bends slightly above `param` ~20 and repeatability collapses at the vendor's
 largest, 87 — see §11. None of that matters for registration, which works in the
 0.27-1.0 mm range where the law is accurate.
+
+#### `param 0` is accepted and is a no-op — *measured*
+
+Measured 2026-09-22, `tools/verify_protocol.py` stage 14, passes in
+`probe/param-zero/`. `00 00 00 04` had **never been sent to this device by
+anyone**: not by CyberView in 37 SLIDE commands across six captures, not by this
+driver, which floors `param` at 1 in three places, and not by any reference
+implementation. Stefan asked for it by name; it is an invented payload and was
+sent as a granted exception, not as routine.
+
+Three `param 12` commands forward first, to spend backlash — an un-warmed
+`param 0` could read zero for a reason that has nothing to do with `param 0`.
+Then five sends, then a `param 2` control.
+
+| step | param | moved | confidence | counter |
+|---|---|---|---|---|
+| warm-up x3 | 12 | 16, 17, 17 px | 194, 284, 196 | 14 |
+| **`00 00 00 04` x5** | **0** | **0.00 px, every one** | **336** | 14 |
+| control | 2 | 6.00 px | 166 | 14 |
+
+No `CHECK CONDITION`, no sense, no error: the device takes the command and does
+not move. The frame counter never changed.
+
+**The confidence of 336 is the evidence, not the zero.** Every real move in the
+session scored 166-284; 336 is what correlating an image against an *unchanged*
+one gives. The measurement was not failing to see a move — it was seeing
+identity. And the `param 2` control immediately afterwards moved 6.00 px, so a
+small move was visible at that moment.
+
+**What it settles.** The per-command cost is *not* a fixed offset in the step
+count: firmware does not execute `param + K` steps, or `param 0` would have
+travelled K. It is a property of the motion itself — an acceleration and
+deceleration ramp that only runs when there are steps to take. So the cost is
+unavoidable and cannot be spent separately, and `param 1` at about 2.6 units is
+genuinely the finest move this transport can make.
+
+**What it does not settle.** The warm-up was meant to re-anchor the per-command
+cost, and it did not. `param 12` gives 16.67 px, so a cost near 1.4 units;
+the single `param 2` gives 6.00 px, so a cost near 2.8. `register` returns whole
+pixels, so every reading here carries +-0.5 px, and the control is one sample.
+`DirectScanner.OVERHEAD_MM` (1.57 units) and `framing.COMMAND_COST` (1.84) still
+disagree and this did not choose between them. A proper ladder, one estimator,
+several repeats per rung, is what that needs.
 
 The scanner's physical **Forward/Reverse keys produce no USB traffic at all**. In
 `full_17_strip` the window in which they were pressed carries 117 `READ_STATE` polls

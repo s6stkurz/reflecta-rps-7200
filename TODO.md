@@ -200,15 +200,22 @@ bit is not evidence, not a new problem.
   problem that turned out not to exist. See `docs/whole-roll-plan.md`'s
   "Settled" and "Overturned" sections.
 
-- ~~**`registration()` cannot see picture position mid-strip.**~~ **Closed.**
-  `film_bounds` keys on film-versus-empty-aperture and is blind mid-strip, as
-  this entry said -- but `gap_edges` (`rps7200/framing.py`) does not have that
-  blind spot: the inter-frame gap is unexposed base, both brighter than the
-  picture *and* flatter down the column, and keying on both together is what
-  the four failed detectors above each missed by keying on one. It backs
-  `registration_error_mm`, which `_correct_registration` calls -- this is the
-  same mechanism the 17-slide roll ran on, not a standalone measurement
-  nobody wired up.
+- **`registration()` cannot see picture position mid-strip.** *Reopened, then
+  closed a second way (2026-09-21).* This entry was marked closed on the
+  strength of `gap_edges`, and that was wrong. `gap_edges` keys on brightness
+  and flatness **relative to the frame's own content**, so the worse a frame is
+  placed, the more gap is in view, the higher the frame's own median climbs and
+  the less the detector sees. Measured on a ladder with known offsets it read
+  5, 8, then 0, 0, 0, 0, 0 while the gap widened from 7 to 26 px; and because
+  it requires the run to start at column 0 exactly, a gap with a sliver of the
+  neighbour beside it reads as no gap at all. On a real sixteen-frame walk four
+  of nine calls asserted "registered" about a frame it could not see.
+
+  What closes it is `picture_start`, which keys on the gap's **absolute** level
+  -- unexposed base is one object under one lamp at one exposure, and its level
+  held to 0.66-0.71% across two strips -- plus the rule that no single detector
+  may move film. `combine` requires two members that agree in millimetres. See
+  `tests/test_ensemble.py`.
 - **The gain register is a digital multiplier** (measured 2026-09-10, closed).
   It was the only lever left for blue in plain RGB, where the exposure timer
   runs out with blue still ~30% below red and green. It is honoured, and not
@@ -655,6 +662,20 @@ driver for Nikon Coolscans:
     orange at R:B 3-7 -- not the neutral empty aperture at R:B ~0.93 that the
     docstring is written for. They are different physical objects.
 
+    Confirmed 2026-09-21 against walk D's fifteen prescans, and the figure is
+    much tighter than the range suggests: base holds **R:B 4.21-4.29**, a
+    spread of 1.9%. `docs/whole-roll-plan.md`'s "film reads R/B ~1.2-1.3" is
+    describing a different pair of objects and should not be quoted.
+
+    **But the mask does not work as a position detector, and this is the second
+    time it has been tried.** The picture's own R:B reaches down to 4.28, so it
+    is not a threshold; taken instead as a tight cluster -- columns within 3% of
+    the strip's own base ratio -- it locates the edge a median **4 px** from
+    where the level detector puts it, spread **-11..0 px**. Red is the soft
+    channel, so the ratio's transition at a picture edge is gradual where the
+    level's is not. It is nowhere near the 1-3 px a member needs. Do not try a
+    third time without a different mechanism.
+
   So: do not implement Otsu on the strength of the old entry. Land the harness
   first, run it against the 217-entry library, and let the numbers say what the
   rule should be. The harness is incomplete in one visible way -- its docstring
@@ -663,6 +684,242 @@ driver for Nikon Coolscans:
 
   (The variance-based `detect_frame` this item used to name has been deleted;
   it was documented as unreliable and nothing called it.)
+
+- **A roll from the window can reach the lazy shading calibration that stalls
+  this machine.** `ScanSession._roll` never calls `ensure_shading` -- the only
+  caller is the `Calibrate` job (`rps7200/session.py:759`) -- and
+  `ask_to_calibrate` is deliberately non-modal, so it can be dismissed. If the
+  roll's first prescan is what finds `self._shading is None`, `scan()`
+  calibrates from inside the scan flow, which is the documented stall: *"bulk
+  read of 16384 bytes failed after 0 bytes: LIBUSB_ERROR_PIPE, right after the
+  shading descriptor, and the device stops answering"*, measured twice.
+
+  `tools/scan_roll.py` was fixed for exactly this (see
+  `tests/test_scan_roll_calibration.py`); the window was not. The fix is **not**
+  to call `ensure_shading` unconditionally: with `reuse=False` it recalibrates
+  rather than no-opping, so that would add 3-4 minutes to every roll. It has to
+  fire only where `self._shading is None`, and it needs a reference path, which
+  `Roll` does not carry. Left until someone decides what that path should be
+  rather than guessed at.
+
+- **Nothing bounds a roll's total sub-frame travel on the approved path.**
+  `framing.ROLL_TRAVEL_LIMIT_MM` is enforced through `StripWalk`, which only
+  exists when `correct` or `correct_dry_run` is set (`rps7200/direct.py:3162`).
+  A roll driven from contact-sheet positions has only `hold_plan`'s per-frame
+  budget, `|target| + HOLD_HEADROOM_MM`, which nothing sums across frames. A
+  nudge does not touch the frame counter, so nothing downstream would notice
+  the film creeping. Not reached by any real strip measured so far -- walk E's
+  peak cumulative displacement is 0.86 mm against a 12 mm limit -- but the
+  path is genuinely unguarded.
+
+- **A dry run through `tools/scan_roll.py` files nothing in the library.**
+  `debug=False` is passed deliberately at `tools/scan_roll.py:176` because the
+  tool files its own entries -- but it does that only in the real-scan branch.
+  The dry-run branch writes `prescanNN.tif` and no raw bytes, so a walk's
+  passes cannot be re-decoded later. `ScanSession` does file them ("on a dry
+  run the prescans are the entire product"), so the window is right and the
+  tool is not. CLAUDE.md's "file every scan in the library, with its raw bytes"
+  is what this breaks.
+
+- **A correctly placed frame is invisible to the detector that placed it.**
+  Measured 2026-09-21 on film, comparing `rolls/registration-G` (as it came)
+  with `rolls/registration-H` (held to the positions proposed from G):
+  `picture_start` placed **14 of 15** frames before the correction and **4 of
+  15** after it, seven of them reading "no unexposed base in view".
+
+  It is arithmetic, not bad luck. `TARGET_GAP_MM` is `(36.4913 - 36.0)/2 =
+  0.2457` mm and `GAP_MIN_MM` is `0.25` mm, so a frame placed exactly where it
+  is aimed shows **2.9 px** of gap at each edge and the detector needs 3. The
+  better the correction, the less there is to see.
+
+  This did not spoil the run -- delivery was measured independently at
+  1.013-1.059 mm per mm commanded, and the median distance from target fell
+  0.820 -> 0.053 mm on the four frames still measurable -- but it has
+  consequences worth knowing before anything is built on it:
+
+  * a correction cannot be verified with the same detector, which is why
+    `_rejudge_for` in the in-walk path abstains on a frame it has just fixed;
+  * re-walking a corrected strip proposes almost nothing;
+  * "no unexposed base in view" on a corrected frame is weak evidence that it
+    is centred, and is not a measurement.
+
+  Do not simply raise `TARGET_GAP_MM`: it is where the frame is centred, and
+  moving it decentres every frame to suit the detector. Lowering `GAP_MIN_MM`
+  to ~0.15 mm (1.8 px at 300 dpi) would let a centred frame be seen, at the
+  cost of calling shorter runs gaps. Either way it wants measuring rather than
+  choosing, against the stored walks, which costs no scanner time.
+
+- ~~**A reversed *prescan* makes the window turn a correct scan upside down.**~~
+  **Fixed 2026-09-21.** Kept below because the measurement is the useful part.
+  The hold loop compares that prescan against a *third* picture -- the approved
+  reference -- so it already knows which pass reversed; `_hold_to_approved` now
+  reports `row_reversed` and `_note_reversal` declines to turn the scan when
+  the prescan is the odd one out. The detector is not switched off: a genuinely
+  reversed scan is still caught, which `tests/test_session.py` pins both ways.
+
+  It was **five** frames of fifteen, not four: 3, 7, 9, 11 and 13.
+
+- **The original finding, for the record.**
+  Found on film 2026-09-21, scanning `rolls/scan600` at 600 dpi RGBI with each
+  frame held to a contact-sheet position. Frame 3's **prescan** came back with
+  every row reversed -- 8.85 confidence against that frame's own walk
+  reference as it came, **92.84** with the rows flipped -- which is the
+  MODE SELECT byte 14 bit 0 hazard CLAUDE.md already names. The **scan** was
+  fine: `frame03.tif` reads 91.03 against the same reference as saved and 7.96
+  reversed.
+
+  `reversal_against(prescan, scan)` cannot tell those two cases apart. Both
+  produce the same relative mismatch, and it blamed the scan: *"reads 180
+  mirrored"*, margin **0.40** against a `REVERSAL_MARGIN` of 0.25 -- confidently
+  wrong, which is what every detector written for this scanner has been at
+  least once. `ScanSession.match_prescan` is `True` by default
+  (`rps7200/session.py:570`) and `_note_reversal` writes `reversal=[180, True]`
+  into the meta, and by its own docstring *"every file that leaves is turned by
+  it"*. So a correct frame would be delivered 180 degrees rotated and mirrored,
+  in both the TIFF and the JPEG.
+
+  `tools/scan_roll.py` is unaffected -- it drives `FrameWriter` directly and
+  never calls `_note_reversal` -- so the frames scanned by the tool are right.
+  The window is the path at risk, and it is the path an operator uses.
+
+  Two ways out, neither chosen yet:
+
+  * **Break the tie with a third opinion.** In the held path there already is
+    one: the contact sheet's own prescan of that frame. If the fresh prescan
+    disagrees with it *and* the scan agrees with it, the prescan is the pass
+    that reversed. That is exactly how this was diagnosed, and it is free
+    wherever positions are being held.
+  * **Stop it happening.** Byte 14 bit 0 reverses a pass that immediately
+    follows another bit-0-set pass; a prescan taken straight after a frame's
+    RGBI scan is exactly that. Never sending two bit-0-set passes in a row is
+    deterministic and needs no detector -- and it would bump
+    `PROTOCOL_REVISION`, which is why it wants deciding rather than doing.
+
+  The same reversal is also why frame 3 was never corrected: the hold read
+  `unverified` at confidence 8.85 and sent no command. That half failed safe.
+
+- **Do not shrink `HOLD_TOLERANCE_MM`.** Looked at 2026-09-21 after a roll
+  appeared to leave held frames up to 0.24 mm off. It did not: that table was
+  measured with a broken yardstick (below). With the yardstick fixed the
+  post-hoc numbers agree with the loop's own residuals to **0.046 mm** on all
+  eleven held frames, the worst being 0.18 mm. The loop delivered what it said.
+
+  The tempting change -- deadband to half the smallest move, 0.136 -- is wrong
+  on four counts, all measured:
+
+  * **The constant has five roles, not one.** It is also the roll-wide
+    `wrong_way` abort (`direct.py`), `AGREE_MM` (the ensemble's agreement
+    ceiling), and the precision floor of both the causal prior and the strip
+    line. Halving it would make members agree less often, which produces *more*
+    of the unverified frames that were this roll's actual problem. If the
+    deadband moves it needs its own constant.
+  * **0.136 is the wrong half.** Break-even is half the *delivered* move, not
+    half the asked one: at the measured ratio of 1.013 that is 0.1377, and at
+    1.059 it is 0.144. A 0.136 deadband commands moves that are guaranteed to
+    make things worse.
+  * **It has less margin than the delivery scatter.** 0.136 tolerates a ratio
+    error of 8.2%; this roll's own scatter was about 13%.
+  * **`param_for_mm` stops rounding below 0.219** (`OVERHEAD_MM + STEP_MM/2`)
+    and starts clamping to param 1, which *over*-delivers -- and `nudge` reports
+    only under-delivery, so below 0.219 the loop runs into a branch that says
+    nothing. 0.219 is the floor for any future value, and in replay it changes
+    nothing, because nothing the loop measured exceeded 0.181.
+
+  Also worth knowing: **the limit-cycle comment credits the wrong mechanism.**
+  Chatter is impossible for *any* deadband above zero, because `direction`
+  latches on the first move and `hold_plan` refuses a reversal, with
+  `MAX_HOLD_MOVES` capping the run. What the present value actually buys is the
+  two things above -- that `nudge` stays a rounding, and that one move always
+  lands inside the deadband.
+
+- **`measure_shift_mm` is biased when the two passes are different widths.**
+  A 300 dpi prescan is 428 px and a 600 dpi scan decimated by two is 430;
+  `_resample_to` stretches the reference to fill the target about column 0, so
+  about a pixel of scale error accumulates by mid-frame -- **0.085 mm**, which
+  is exactly the one-signed discrepancy that made a good roll look badly
+  adjusted. Replacing the stretch with an exact 2x reference moves every
+  reading by +0.085 to +0.127 mm **and raises confidence** (median 116 -> 127),
+  which says the stretch was smearing the peak rather than resampling costing
+  what its docstring claims.
+
+  The driver is not affected: every reading the hold loop took on this roll
+  carries `resampled: false`, because the window pins a commissioned scan to
+  the survey's own prescan resolution. It is the offline comparisons that are
+  wrong, which is where it bit. Worth fixing before any cross-resolution number
+  is trusted, and the fix wants a measurement rather than a guess -- what the
+  two passes each actually cover, given a 300 dpi prescan comes back 428 px
+  where the aperture is 431.
+
+- **`strip_offsets` can never propose a positive offset.** `want` is
+  `TARGET_GAP_MM / mm_px` = 2.88 px and `picture_start` cannot report a start
+  below `GAP_MIN_MM` = 3 px, so every proposal is at most -0.010 mm. The
+  detector is structurally one-sided: it can say "the frame is too far along"
+  and never "not far enough". Harmless while every strip measured drifts the
+  same way, and a trap the first time one does not.
+
+- **`CORRECTION_DEADBAND_MM = 0.15` is defined and never read.**
+  `rps7200/direct.py`, one occurrence in the repo. Left over from the one-shot
+  corrector; it is not the deadband anything uses.
+
+- **A set scanning bit can be stale, and a power cycle does not always clear
+  it.** Measured 2026-09-21. After a 600 dpi roll the state byte sat at `0x9d`
+  -- the vendor's own value for "scanning", per the 155 READ_STATE responses of
+  the power-on capture -- with nothing running, for over an hour. It read
+  **byte for byte identical after a power cycle**, position counter included,
+  which is the part nobody has explained.
+
+  Stefan said to disregard it and try. A 14-frame rewind and a full 15-frame
+  walk then ran normally, and the flag went to `0x1d` the moment the session
+  started. So the bit means what the capture says; what was wrong was treating
+  a set bit as a reason to stop.
+
+  `tools/check_scanner.py` now tells the two apart the only way available: a
+  real pass changes something within a few seconds -- it finishes, or the
+  position moves -- and a stale one does not. It reports a running scan as a
+  failure and a settled one as a note.
+
+  Still unexplained, and worth someone's attention: **the position counter
+  survived a power cycle.** Either the unit does not lose that state, or the
+  power cycle did not reach it. Both matter, because a rewind is computed from
+  that counter.
+
+- **The frame is about 35.3 mm across, not the 36.0 `FRAME_WIDTH_MM` assumes.**
+  Measured 2026-09-21 from film already on disk, at no scanner cost. Fifteen
+  frames across six separate walks show unexposed base at **both** edges, which
+  gives the picture width directly: **34.62 to 35.47 mm, median 35.30**.
+
+  Stefan found it by eye before the measurement did. Shown a frame the software
+  wanted to move +1.12 mm, he said it looked good and nothing needed doing --
+  and he was right: the picture actually visible there was 35.13 mm against a
+  real frame of 35.30, so **0.17 mm was being lost, two pixels**, not 1.12. The
+  software was measuring an assumption.
+
+  What it costs: `TARGET_GAP_MM = (APERTURE_MM - FRAME_WIDTH_MM) / 2` is 0.246
+  mm and should be about 0.596, so **every proposal on every strip is biased by
+  0.35 mm** -- four pixels at 300 dpi, and in the direction of correcting
+  frames that do not need it. It also feeds the right-edge reading added the
+  same evening, which converts "the picture ends here" into "it begins there"
+  through this number.
+
+  **Not changed yet, deliberately.** The spread is 0.85 mm where the boundary
+  uncertainty is about 0.17, and the values fall in two clusters near 34.66 and
+  35.35 rather than scattering about one number. That wants explaining before a
+  constant this load-bearing moves -- most likely the transition column at each
+  boundary being counted as picture on some frames and base on others, which
+  would mean the true width is at the top of the range. `base_runs` returns
+  every band, so this is re-derivable offline from the stored walks.
+
+- **`EDGE_FRACTION` is about eight times looser than the film allows.** It lets
+  a band of base begin **51 columns -- 4.3 mm** -- from the edge and still count
+  as the gap that entered there. Unexposed base creeps in from one side; to see
+  it starting 4.3 mm in you would have to be seeing 4.3 mm of the *previous*
+  frame as well as the gap, and the whole inter-frame gap on 135 is about 2 mm.
+
+  The allowance exists for a real thing -- a sliver of the neighbouring frame
+  ahead of the gap, confirmed on four frames of walk A where 2 to 6 columns of
+  darker, varying content sit in front of clean flat base. But the largest
+  sliver measured is **6 columns, 0.51 mm**. Something near 1 mm would cover
+  every case observed and still refuse what physics does not permit.
 
 ## Measured and left alone
 
@@ -880,3 +1137,16 @@ nothing caps it.
   scanner sent and still matches its raw bytes. Whether the flip belongs in the
   driver depends on whether it is inherent to the transport or to how the strip
   was inserted — untested.
+
+- **The sheet's "nudge registration between frames" tick cannot act on a
+  commissioned scan.** `approved_from_sheet` emits an `Approved` for every
+  ticked frame, including the ones left at zero, and `scan_roll` takes the held
+  branch for any frame that has one -- so `elif correct` is never reached. It
+  is a control offered for something that never happens, which is what the
+  sheet's own `OPTIONS` comment says must not be done. Removing it touches
+  `OPTIONS`, `_options_note`'s map, the state round trip and one test, so it is
+  its own commit.
+- **`approved.json` is one-way.** The window writes and reads it; the command
+  line neither, using its own `held` note in the manifest that the window never
+  reads. So positions set by hand cannot be handed to `scan_roll --approved`,
+  and what `--approved` computed is invisible to the window.

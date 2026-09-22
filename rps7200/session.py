@@ -48,6 +48,7 @@ from .direct import METER_EACH, DirectScanner
 from .framing import reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
+from .protocol import say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
@@ -91,6 +92,62 @@ FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
 FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
                + DirectScanner.OVERHEAD_MM)
 
+#: How many commands a rewind may spend on backlash before giving up. A roll
+#: leaves the transport loaded forward, so the first backward command is a
+#: direction change and two to three of them are swallowed -- measured
+#: 2026-09-21, where a 14-frame rewind ran first time after one roll and had
+#: its first command swallowed after the next, the device healthy either way.
+BACKLASH_COMMANDS = 3
+
+
+def rewind(scanner, frames: int, say=None) -> int | None:
+    """Wind the film back, one frame at a time, checking each one landed.
+
+    One at a time deliberately. `retreat(steps=N)` exists, but the wait
+    underneath only watches for the position to *change*, so a multi-step call
+    returns as soon as it has moved at all -- it cannot tell sixteen frames
+    from one.
+
+    Checking each one is the other half. A rewind that got three of fourteen
+    and one that got none are the same silence otherwise, and a roll queued
+    behind either scans frames it has mis-numbered.
+
+    The first command or two may do nothing, and that is expected rather than a
+    failure -- see `BACKLASH_COMMANDS`. So a no-op is tolerated while the film
+    has not started moving, and is the end of the strip once it has.
+
+    Returns where the film ended up, or None if it stopped short: a caller that
+    gets None **must not go on**, because everything after this assumes the
+    film is where it was asked to be.
+
+    Lives here rather than in `tools/scan_roll.py` so the window and the
+    command line share one, the same arrangement `plan_nudges` already has --
+    a second copy of this drifts, and the copy that drifted was the window's.
+    """
+    def tell(message):
+        if say is not None:
+            say(message)
+
+    start = scanner.position()
+    tell(f"rewinding {frames} frame(s) from position {start}")
+    done, swallowed = 0, 0
+    while done < frames:
+        before = scanner.position()
+        landed = scanner.retreat()
+        now = scanner.position()
+        if landed is None or now == before:
+            if done == 0 and swallowed < BACKLASH_COMMANDS:
+                swallowed += 1
+                tell(f"  (no movement yet -- backlash, command "
+                     f"{swallowed}/{BACKLASH_COMMANDS})")
+                continue
+            tell(f"  stopped after {done} of {frames}: position still {before}")
+            return None
+        done += 1
+        tell(f"  {done}/{frames}: {before} -> {now}")
+    return scanner.position()
+
+
 #: How many sub-frame commands one move may use. The law itself holds over
 #: twenty steps and goes sub-linear past them, but the guard sits lower: a
 #: sub-frame move asked to travel further than this is a whole-frame job, and
@@ -105,7 +162,7 @@ def plan_nudges(millimetres: float) -> list[float]:
     delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in 1..8,
     so the reachable set is a lattice starting at ``FINE_MIN_MM`` -- and
     **nothing in ``(0, FINE_MIN_MM)`` exists at all**. Asking for 0.1 mm does
-    not get you 0.1 mm; it gets you nothing or 0.27 mm.
+    not get you 0.1 mm; it gets you nothing or a whole first command.
 
     This exists so the three places that need that truth share it rather than
     each modelling it: :meth:`ScanSession._move` executes the plan, the
@@ -126,7 +183,8 @@ def plan_nudges(millimetres: float) -> list[float]:
     steps = max(1, -(-int(want * 1000) // int(FINE_MAX_MM * 1000)))
     if steps > MAX_FINE_STEPS:
         raise ValueError(
-            f"{want:.2f} mm needs {steps} sub-frame moves; past "
+            f"{say_units(want, signed=False)} needs {steps} sub-frame "
+            "moves; past "
             f"{MAX_FINE_STEPS} the calibration goes sub-linear and the "
             "distance would not be what was asked for"
         )
@@ -244,6 +302,15 @@ class Approved:
     reference_entry: str = ""
     rotation: int = 0
     flipped: bool = False
+    #: Who decided the number: ``operator`` when he set it himself, or the
+    #: ensemble's own word for how it read the frame -- ``measured``,
+    #: ``unconfirmed``, ``neighbours``, ``none``, the vocabulary
+    #: `propose_offsets` uses and `tests/test_ensemble.py` pins. The sheet
+    #: pre-fills a position for every frame it can read, so "he approved this"
+    #: stopped being true of most of them, and a driver logging `operator`
+    #: about a detector's number is claiming he asked for something he did not.
+    #: Appended and defaulted: `tests/test_demo.py` builds these positionally.
+    source: str = "operator"
 
 
 @dataclass(frozen=True)
@@ -310,6 +377,16 @@ class Roll:
     mono: bool | None = None
     mono_channel: str = MONO_CHANNEL
     prescan_resolution: int = 300
+    #: Frames to wind back before anything else, checked one at a time.
+    #:
+    #: Part of the roll rather than a `Move` queued in front of it, because the
+    #: failure is *across* jobs: `_move` reports a short rewind by returning a
+    #: string, the worker logs it and takes the next job, and the roll then
+    #: scans frames it has mis-numbered. A job cannot cancel the one behind it
+    #: however it reports, and inventing a queue-abort would be new semantics
+    #: for every job type to fix one sequence. One job owning both halves is
+    #: smaller, and it is already how the window describes it to the operator.
+    rewind: int = 0
     dry_run: bool = False
     #: The frame numbers worth scanning, as the window numbers them -- 1 for the
     #: first picture. Anything else is advanced past unprescanned and unscanned,
@@ -318,6 +395,12 @@ class Roll:
     #: that earn them. None scans every frame.
     only: tuple[int, ...] | None = None
     correct: bool = False
+    #: Judge every frame and log what would be commanded, without sending it.
+    #: The walk costs what it costs today, no film moves, and the sheet says
+    #: what aiming would have done -- which is the only way to see that before
+    #: letting it happen. `tools/scan_roll.py` has had this since the
+    #: correction did; the window could only do the real thing.
+    correct_dry_run: bool = False
     #: Positions the operator set by hand in the contact sheet, one per frame
     #: he picked. These are authoritative: a frame carrying one is held to it
     #: and `correct` does not apply to that frame. Frames without one are
@@ -833,7 +916,7 @@ class ScanSession:
         image, where = self._last_prescan
         return image if where == self._position() else None
 
-    def _note_reversal(self, meta, image, reference):
+    def _note_reversal(self, meta, image, reference, prescan_reversed=False):
         """Record any half turn this pass needs to read like its prescan.
 
         Written into the meta rather than applied to the pixels here, which is
@@ -847,6 +930,23 @@ class ScanSession:
         up a photograph is.
         """
         if not self.match_prescan or reference is None:
+            return meta
+        if prescan_reversed:
+            # The reference is the pass that came back reversed, not this one.
+            # `reversal_against` cannot tell those apart -- both give the same
+            # relative mismatch -- so on a roll where five of fifteen prescans
+            # reversed it blamed the scan every time, at margins of 0.32 to
+            # 1.21 against a threshold of 0.25. Confidently wrong, and acted
+            # on: every file that leaves is turned by what this writes, so
+            # five correct frames would have shipped upside down.
+            #
+            # Something else has already settled it. The hold loop compared
+            # that prescan against a third picture, the approved reference,
+            # and said which way up it read.
+            self._emit("log", text=(
+                "this frame's prescan came back with its rows reversed, so it "
+                "is not evidence about which way up the scan is; the scan is "
+                "left exactly as it came"))
             return meta
         extra, detail = reversal_against(reference, image)
         if extra == (0, False):
@@ -903,11 +1003,24 @@ class ScanSession:
             position = self._scanner.position()
             self._emit("transport", done=-1 if position is None else position)
             how = f" in {done} moves" if done > 1 else ""
-            return (f"moved {sign * moved:+.2f} mm{how} -- the frame counter "
+            return (f"moved {say_units(sign * moved)}{how} -- the frame counter "
                     "does not see this; prescan to check it landed")
         return "nothing to move"
 
     def _roll(self, job: Roll) -> str | None:
+        # Before the directory, before the manifest: a rewind that stops short
+        # must leave nothing behind and scan nothing. The window used to queue
+        # this as a separate `Move`, which reports a short rewind by returning
+        # a string -- logged, and then the roll ran anyway over frames it had
+        # mis-numbered.
+        if job.rewind:
+            landed = rewind(self._scanner, job.rewind,
+                            say=lambda m: self._emit("log", text=m))
+            if landed is None:
+                return ("the rewind stopped short, so nothing was scanned -- "
+                        "the film is not where the roll would have assumed")
+            if self._stop.is_set():
+                return "stopped during the rewind"
         name = job.name or time.strftime("%Y-%m-%d")
         out = Path(job.out) if job.out else self.rolls / name
         out.mkdir(parents=True, exist_ok=True)
@@ -983,6 +1096,7 @@ class ScanSession:
                 "mono_channel": job.mono_channel,
                 "prescan_resolution": job.prescan_resolution,
                 "correct": job.correct,
+                "correct_dry_run": job.correct_dry_run,
                 "reverse_hold": job.reverse_hold,
                 "max_failures": job.max_failures,
                 "frames": job.frames,
@@ -1033,6 +1147,7 @@ class ScanSession:
             max_failures=job.max_failures,
             dry_run=job.dry_run,
             correct=job.correct,
+            correct_dry_run=job.correct_dry_run,
             # Keyed the driver's way, from 1-based as the window counts.
             approved={a.number - 1: a for a in job.approved},
             reverse_hold=job.reverse_hold,
@@ -1079,6 +1194,27 @@ class ScanSession:
                             path=surveyed,
                             roll=name,
                         )
+                        if rf.prescan_before is not None:
+                            # The picture as the frame arrived, kept beside the
+                            # one that replaced it. Without it a correction
+                            # that moved a frame somewhere worse is
+                            # indistinguishable from one that worked, and the
+                            # only account of either would be the detector's
+                            # own -- which is the thing under test.
+                            self._file(
+                                seq, number, rf.prescan_before,
+                                dict(rf.prescan_meta or {
+                                    "resolution_dpi": job.prescan_resolution,
+                                    "channel_order": ["R", "G", "B"]}),
+                                replace(job.notes, frame=job.notes.frame
+                                        or f"{name}-{number:02d}"),
+                                tuple(job.tags) + ("gui", "roll", "prescan",
+                                                   name),
+                                kind="prescan",
+                                path=out / f"prescan{number:02d}-before.tif",
+                                roll=name,
+                                file_entry=False,
+                            )
                 # The scan's own meta, for the manifest below. Bound out here
                 # because `record` is written for a dry run too, where there is
                 # no scan and no exposure to record.
@@ -1094,7 +1230,10 @@ class ScanSession:
                     # frame a minute earlier, which is the only evidence there
                     # is that the carriage reversed: see `_note_reversal`.
                     frame_meta = self._note_reversal(
-                        rf.meta, rf.image, rf.prescan)
+                        rf.meta, rf.image, rf.prescan,
+                        prescan_reversed=bool(
+                            ((rf.registration or {}).get("approved") or {})
+                            .get("row_reversed")))
                     scanned = frame_meta
                     seq = self._deliver(
                         "frame", label, rf.image, frame_meta,
@@ -1235,7 +1374,21 @@ class ScanSession:
         roll: str = "",
         mono: bool = False,
         mono_channel: str = MONO_CHANNEL,
+        file_entry: bool = True,
     ) -> None:
+        """Write this picture, and unless told otherwise file it in the library.
+
+        ``file_entry=False`` writes the file and no entry. It exists for the
+        prescan a correction replaced, and the reason is specific: the capture
+        record below describes the scanner's **last** pass, which by then is the
+        verification prescan -- and the shape guard cannot catch the swap,
+        because both passes are identically shaped prescans of the same frame at
+        the same resolution. That is exactly the failure the guard was written
+        for, in the one form it is blind to. Under `RPS7200_DEBUG=1` that
+        picture already has a correct entry anyway, filed at the instant it was
+        taken, which is the only moment its bytes and its pixels are certainly
+        the same pass.
+        """
         if self._writer is None:
             return
         # A roll frame has its own place in the roll directory *and* wants a
@@ -1306,7 +1459,7 @@ class ScanSession:
             quality=self.jpeg_quality,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
-            library=self.root,
+            library=self.root if file_entry else None,
             film=notes,
             tags=list(tags),
             prescan=prescan,
@@ -1402,5 +1555,5 @@ def _describe(job: Job) -> str:
             way = "forward" if job.frames > 0 else "back"
             n = abs(job.frames)
             return f"moving {n} frame{'s' if n != 1 else ''} {way} (~7 s each)"
-        return f"nudging the film {job.millimetres:+.2f} mm"
+        return f"nudging the film {say_units(job.millimetres)}"
     return str(job)

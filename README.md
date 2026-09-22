@@ -214,6 +214,8 @@ with DirectScanner() as s:
 ```sh
 make run                        # the scanner
 make run-demo                   # no scanner: stored library entries drive the window
+make run-sheet                  # no scanner, no film: the contact sheet on a
+                                # stored walk, re-measured on every launch
 ```
 
 The demo decodes each entry's **raw bytes**, not the TIFF beside them, so it runs the same
