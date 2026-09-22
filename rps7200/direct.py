@@ -3271,6 +3271,10 @@ class DirectScanner:
                         index, prescan_image, prescan_resolution, held,
                         keep_raw=keep_raw, reverse=reverse_hold,
                         should_stop=should_stop,
+                        # Without this every machine proposal logged as
+                        # `operator` -- the one thing `source`'s own docstring
+                        # says the field exists to prevent.
+                        source=getattr(held, "source", None) or "operator",
                     )
                     if fix.get("roll_abort"):
                         holding = False

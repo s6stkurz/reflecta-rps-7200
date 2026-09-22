@@ -244,6 +244,15 @@ class Approved:
     reference_entry: str = ""
     rotation: int = 0
     flipped: bool = False
+    #: Who decided the number: ``operator`` when he set it himself, or the
+    #: ensemble's own word for how it read the frame -- ``measured``,
+    #: ``unconfirmed``, ``neighbours``, ``none``, the vocabulary
+    #: `propose_offsets` uses and `tests/test_ensemble.py` pins. The sheet
+    #: pre-fills a position for every frame it can read, so "he approved this"
+    #: stopped being true of most of them, and a driver logging `operator`
+    #: about a detector's number is claiming he asked for something he did not.
+    #: Appended and defaulted: `tests/test_demo.py` builds these positionally.
+    source: str = "operator"
 
 
 @dataclass(frozen=True)

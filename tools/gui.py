@@ -2687,7 +2687,8 @@ class ScannerGui:
                             "offset_mm": round(a.offset_mm, 4),
                             "rotation": int(a.rotation),
                             "flipped": bool(a.flipped),
-                            "reference_entry": str(a.reference_entry or "")}
+                            "reference_entry": str(a.reference_entry or ""),
+                            "source": str(a.source or "operator")}
                            for a in approved],
             }, indent=2, default=str), encoding="utf-8")
         except Exception as exc:                          # noqa: BLE001
@@ -5010,7 +5011,7 @@ def _arrangement(result) -> str:
     return ", ".join(parts) or "as the scanner sent it"
 
 
-def approved_from_sheet(frames, ticks, offsets) -> tuple:
+def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
     """The `Approved` records for the ticked frames, in frame order.
 
     Every ticked frame gets one, including those left at zero: an untouched
@@ -5029,8 +5030,16 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
 
     A turn on an unticked frame goes nowhere, which is right: there is no file
     for it to reach. It is the same thing that happens to that frame's offset.
+
+    `sources` says where each number came from -- the sheet's own per-frame
+    note, keyed by frame number. Defaulted, so the records still build without
+    it, and absent means `operator`: that is what an approval used to mean
+    before the sheet pre-filled a position for every frame it could read. It is
+    carried so the driver's log can say `measured` where a detector decided,
+    which is what `_hold_to_approved`'s `source` exists for.
     """
     picked = set(ticks)
+    labels = sources or {}
     out = []
     for result in frames:
         number = getattr(result, "number", None)
@@ -5046,6 +5055,7 @@ def approved_from_sheet(frames, ticks, offsets) -> tuple:
             # and a Path here reaches json.dumps in _write_approved and
             # raises -- which used to take the whole commission down with it.
             reference_entry=str(getattr(result, "entry", "") or ""),
+            source=(labels.get(number) or {}).get("source") or "operator",
         ))
     return tuple(out)
 
@@ -6914,7 +6924,8 @@ class _ContactSheet:
 
     def _scan(self) -> None:
         picked = self.chosen()
-        approved = approved_from_sheet(self.frames, picked, self.offsets)
+        approved = approved_from_sheet(self.frames, picked, self.offsets,
+                                       self.proposals)
         # Read before the window goes: these are Tk variables that live in it,
         # and `_dismiss` destroys it.
         options = self.scan_options()

@@ -235,7 +235,8 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     offsets, notes = framing.propose_offsets(
         [(n, im.astype(float)) for n, im in frames])
     held = {
-        n: Approved(number=n, offset_mm=float(offsets[n]), reference=im)
+        n: Approved(number=n, offset_mm=float(offsets[n]), reference=im,
+                    source=(notes.get(n) or {}).get("source") or "none")
         for n, im in frames if n in offsets
     }
     return held, {"offsets": {n: round(v, 4) for n, v in offsets.items()},
