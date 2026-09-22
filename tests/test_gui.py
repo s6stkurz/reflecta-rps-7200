@@ -2773,6 +2773,29 @@ def test_the_dialog_is_not_in_millimetres():
     assert "mm" not in note
 
 
+def test_the_coloured_ring_stands_off_the_picture():
+    """The line says "this one will be scanned". It has to read as drawn
+    around the print, not as part of it.
+
+    It was one frame with thick padding, which made a slab of colour rather
+    than a border with room inside it. Three nested frames now: the ring is the
+    line, the mount is the gap, the picture sits in the mount. Geometry needs a
+    window, but the nesting is the fact that matters and it can be pinned here
+    -- the same way this file pins its other wiring.
+    """
+    body = inspect.getsource(gui._ContactSheet._cell)
+    assert "tk.Frame(ring" in body, "the mount must sit inside the ring"
+    assert "tk.Label(mount" in body, "the picture must sit inside the mount"
+    assert "tk.Label(ring" not in body, "the picture must not touch the line"
+    assert "background=self.MOUNT_BG" in body
+
+
+def test_the_line_is_thin_and_the_gap_is_wider_than_it():
+    """Otherwise it is a band of colour again, which is what was wrong."""
+    assert gui._ContactSheet.RING <= 3
+    assert gui._ContactSheet.MOUNT > gui._ContactSheet.RING
+
+
 # -- the blue line that says where a frame is going ------------------------
 
 

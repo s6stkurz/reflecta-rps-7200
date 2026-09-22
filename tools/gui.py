@@ -6532,9 +6532,13 @@ class _ContactSheet:
     #: means a state -- amber chosen, red skipped, green done -- and this is
     #: not a state, it is a measurement drawn on the picture.
     MOVING = "#3d7fd1"
-    #: How far the ring stands off the picture. Three pixels read as an edge
-    #: artefact of the thumbnail; this reads as a mount around it.
-    RING = 7
+    #: The coloured line itself: thin, because it is a marker and not a mount.
+    RING = 2
+    #: The white gap between that line and the picture. The line used to sit
+    #: hard against the thumbnail, where it read as an edge artefact of the
+    #: picture rather than as something drawn around it. Standing it off gives
+    #: the frame a border to be, the way a mounted print has one.
+    MOUNT = 6
 
     def __init__(self, gui, frames, offsets=None, proposals=None,
                  rotations=None, flips=None,
@@ -6623,6 +6627,11 @@ class _ContactSheet:
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Contact sheet")
+        # What the gap inside the ring is filled with. Taken from the window
+        # rather than named, so the border reads as space around the print on
+        # whatever theme this is running under, rather than as a white
+        # rectangle on a grey sheet.
+        self.MOUNT_BG = self.top.cget("background")
         self.top.transient(gui.root)
         self.top.geometry(_geometry(980, 720))
         # Its own menu, parented on this window, so closing the sheet takes it
@@ -6873,16 +6882,20 @@ class _ContactSheet:
 
         cell = ttk.Frame(grid, padding=6)
         cell.grid(row=row, column=column, sticky="n")
-        # Wider than the picture on purpose: the ring is what says "this one
-        # is going to be scanned", and at three pixels it read as an artefact
-        # of the thumbnail rather than as a mount around it.
+        # Three nested frames, so the coloured line can stand off the picture:
+        # the ring is the line, the mount is the white gap inside it, and the
+        # picture sits in that. One frame with thick padding made a broad band
+        # of colour instead of a border with room around the print.
         ring = tk.Frame(cell, background=self.CHOSEN,
                         padx=self.RING, pady=self.RING)
         ring.pack()
         self._rings[number] = ring
+        mount = tk.Frame(ring, background=self.MOUNT_BG,
+                         padx=self.MOUNT, pady=self.MOUNT)
+        mount.pack()
 
         photo = self._render(result)
-        picture = tk.Label(ring, image=photo, borderwidth=0)
+        picture = tk.Label(mount, image=photo, borderwidth=0)
         picture.pack()
         self._pictures[number] = picture
         self._mark_adjustment(number)
