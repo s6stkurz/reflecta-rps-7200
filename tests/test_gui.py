@@ -2628,13 +2628,81 @@ def test_each_kind_keeps_its_own_type():
     assert out["ticks"][1] is True
 
 
+# -- the cell's caption, which had no tests while carrying four mistakes ----
+
+
+def test_a_scanned_frame_keeps_saying_so_even_once_it_has_a_position():
+    """The marker that has to survive a resume is "scanned".
+
+    `_refresh_caption` returned on the offset branch before it could reach the
+    `done` check. That was harmless while most frames had no offset; the sheet
+    now proposes a position for every frame it can read, so on a resumed roll
+    almost every scanned frame lost its marker -- and a resume exists precisely
+    so that three hours of transport is not spent twice.
+    """
+    said, colour = gui.frame_caption(0.5116, "measured", done=True)
+    assert "scanned" in said
+    assert colour == "DONE"
+    # and the position is still there, for a frame re-ticked deliberately
+    assert "4.8" in said
+
+
+def test_a_frame_with_nothing_decided_shows_its_contrast():
+    said, colour = gui.frame_caption(0.0, None, contrast=0.42)
+    assert said == "contrast 0.42"
+    assert colour == "GREY"
+
+
+def test_a_position_the_detector_read_says_which_detector_read_it():
+    """The three words are not worth the same and he is the one who decides."""
+    for source in gui.MACHINE_SOURCES:
+        said, _ = gui.frame_caption(0.5116, source)
+        assert source in said
+
+
+def test_a_position_he_set_does_not_wear_the_detectors_badge():
+    said, _ = gui.frame_caption(0.5116, "operator")
+    assert "measured" not in said and "unconfirmed" not in said
+    assert said.startswith("moved")
+
+
+def test_a_frame_read_and_already_in_place_says_so_rather_than_nothing():
+    """Dropping an unreachable proposal must not drop the fact it was read.
+
+    A proposal below one command cannot be delivered, so it leaves `offsets`.
+    But "the detector saw this and it is already as close as the transport can
+    put it" is not the same as "nothing could read it", and the driver makes
+    the same distinction with `in_place`.
+    """
+    said, _ = gui.frame_caption(0.0, "measured")
+    assert said == "in place (measured)"
+    assert gui.frame_caption(0.0, None, read=True)[0] == "in place"
+
+
+def test_no_caption_anywhere_is_in_millimetres():
+    for args in [(0.5116, "measured"), (0.5116, "operator"),
+                 (0.0, "measured"), (0.5116, "measured", True)]:
+        assert "mm" not in gui.frame_caption(*args)[0]
+
+
+# -- what the sheet proposes, and who it says decided it --------------------
+
+
+def test_a_stored_source_that_is_not_one_of_the_five_words_is_dropped():
+    """"measured" is a claim that a detector read the frame. A settings file
+    edited by hand does not get to assert it about something else."""
+    out = gui.ScannerGui._clean_sheet_state(
+        {"sources": {"1": "measured", "2": "invented", "3": 17}})
+    assert out["sources"] == {1: "measured"}
+
+
 @pytest.mark.parametrize("rubbish", [None, "not a dict", 17, [], {"offsets": 9}])
 def test_nonsense_reads_as_no_decisions_rather_than_raising(rubbish):
     """Same bargain as the settings file itself: this is a convenience, and
     nothing about reading it back may stop the sheet opening."""
     out = clean(rubbish)
     assert out == {"ticks": {}, "offsets": {}, "rotations": {}, "flips": {},
-                   "options": {}}
+                   "sources": {}, "options": {}}
 
 
 def test_one_bad_entry_costs_only_itself():
@@ -2774,6 +2842,35 @@ def _strip(count=8, gap=18):
         a[:, :gap] = 37.0 + rng.random((40, gap, 3)) * 0.6
         out.append(_Walked(n, a))
     return out
+
+
+def test_every_proposal_is_somewhere_the_film_can_actually_go():
+    """The caption showed the raw proposal; the commission delivered a snapped
+    one. So a frame captioned as moving could be delivered as no move at all,
+    and five other readers of `offsets` carried numbers that do not exist.
+    Snapping at the seam makes every one of them agree."""
+    offsets, _notes = gui._propose_positions(_strip(), {})
+    assert offsets
+    for value in offsets.values():
+        assert value == gui.snap_offset(value)
+        assert value != 0.0
+
+
+def test_a_position_kept_from_a_machine_stays_a_machine_position():
+    """Closing the sheet and opening it again used to relabel the whole strip.
+
+    Every offset comes back as `kept`, and anything kept was stamped
+    `operator` -- true when typing was the only way to have one, false from the
+    moment the sheet began proposing them.
+    """
+    walked, kept = _strip(), {2: 0.5116}
+    _o, notes = gui._propose_positions(walked, kept, {2: "measured"})
+    assert notes[2]["source"] == "measured"
+    _o, notes = gui._propose_positions(walked, kept, {2: "operator"})
+    assert notes[2]["source"] == "operator"
+    # nothing remembered means his, which is what an offset used to mean
+    _o, notes = gui._propose_positions(walked, kept, None)
+    assert notes[2]["source"] == "operator"
 
 
 def test_the_sheet_opens_holding_a_proposal_for_every_frame():

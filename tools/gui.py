@@ -2037,7 +2037,8 @@ class ScannerGui:
                                 ("rotations", "turned"),
                                 ("flips", "flipped"))
             if kept[name])
-        proposed, notes = _propose_positions(self.survey, kept["offsets"])
+        proposed, notes = _propose_positions(self.survey, kept["offsets"],
+                                             kept.get("sources"))
         if notes:
             counted = ", ".join(
                 f"{n} {label}" for label, n in (
@@ -2156,7 +2157,8 @@ class ScannerGui:
         it got wrong, which is how `_restore` treats the controls.
         """
         out: dict[str, dict] = {"ticks": {}, "offsets": {},
-                                "rotations": {}, "flips": {}, "options": {}}
+                                "rotations": {}, "flips": {}, "sources": {},
+                                "options": {}}
         if not isinstance(raw, dict):
             return out
         for name, cast in (("ticks", bool), ("offsets", float),
@@ -2169,6 +2171,20 @@ class ScannerGui:
                     out[name][int(key)] = cast(value)
                 except (TypeError, ValueError):
                     continue
+        # Only the five words the ensemble and the sheet actually use. A
+        # hand-edited file naming anything else would reach a caption and a
+        # count, and "measured" is a claim about a detector having read the
+        # frame -- not something a settings file gets to assert.
+        known = set(MACHINE_SOURCES) | {"operator", "none"}
+        sources = raw.get("sources")
+        if isinstance(sources, dict):
+            for key, value in sources.items():
+                try:
+                    number = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if str(value) in known:
+                    out["sources"][number] = str(value)
         # The scan options are keyed by name, not by frame number, and only
         # the names the sheet actually offers are let through: a key left over
         # from an older version would be handed to a widget that is not there.
@@ -5036,7 +5052,7 @@ def picture_of(result) -> tuple | None:
     return None
 
 
-def _propose_positions(results, kept: dict) -> tuple[dict, dict]:
+def _propose_positions(results, kept: dict, remembered=None) -> tuple[dict, dict]:
     """Where the walked strip says each frame should go, his numbers winning.
 
     Run once when the sheet opens, over the whole survey at once. That is the
@@ -5048,6 +5064,12 @@ def _propose_positions(results, kept: dict) -> tuple[dict, dict]:
     and is not re-proposed. His number is the authority here and stays it --
     the sheet is where he corrects this, so overwriting what he typed would
     undo the correction it exists to collect.
+
+    `remembered` says who decided each kept position, from the sheet's own
+    stored state. Without it every kept offset was stamped `operator`, which
+    was true when the only way to have one was to type it and false from the
+    moment the sheet began proposing them: reopening a sheet relabelled the
+    whole strip as his.
     """
     frames = [(int(getattr(r, "number", 0)), r.image)
               for r in results
@@ -5061,12 +5083,73 @@ def _propose_positions(results, kept: dict) -> tuple[dict, dict]:
         # A sheet that will not open is worse than one with no proposals: the
         # walk has already been paid for and the frames are still choosable.
         return dict(kept), {0: {"source": "none", "reason": str(exc)}}
-    out = dict(offsets)
+    # Snapped here rather than where the records are built, so that every
+    # reader of `offsets` sees a position the film can actually reach. The
+    # caption used to show the raw proposal and the commission used to deliver
+    # the snapped one, so a frame captioned as moving could be delivered as no
+    # move at all -- and five other readers carried numbers that do not exist.
+    out = {}
+    for number, value in offsets.items():
+        landed = snap_offset(value)
+        if landed:
+            out[int(number)] = landed
+        else:
+            # Below one command. Not the same as unreadable: the detector saw
+            # it and it is already as close as the transport can put it, which
+            # is what the driver calls `in_place`. Keep the note, drop the move.
+            note = dict(notes.get(int(number)) or {})
+            note["in_place"] = True
+            notes[int(number)] = note
     out.update(kept)                        # his, over anything measured here
+    known = remembered or {}
     for number in kept:
-        notes[int(number)] = {"source": "operator",
-                              "reason": "you set this one"}
+        was = known.get(int(number))
+        if was in MACHINE_SOURCES:
+            # Kept, but not his: this is a proposal surviving a reopen, and
+            # calling it his would be the sheet inventing a decision.
+            notes[int(number)] = {"source": was, "reason": "read on the walk"}
+        else:
+            notes[int(number)] = {"source": "operator",
+                                  "reason": "you set this one"}
     return out, notes
+
+
+#: The ensemble's words for how it read a frame, as they appear in a caption.
+#: `propose_offsets` produces these and `tests/test_ensemble.py` pins them.
+MACHINE_SOURCES = ("measured", "unconfirmed", "neighbours")
+
+
+def frame_caption(offset, source, done=False, contrast=0.0, read=False):
+    """One cell's line under the picture, and the colour to write it in.
+
+    Module level and free of Tk because it is the part that has to be right,
+    and because it had no tests at all while carrying four separate mistakes.
+
+    `done` wins the colour. On a resumed roll the marker that has to survive is
+    the one that stops three hours of transport being spent twice -- and since
+    the sheet began proposing a position for every frame it can read, almost
+    every scanned frame had an offset, so almost every one lost its marker. The
+    position still prints beside it, because a frame re-ticked through the
+    documented escape hatch needs to show where it is going.
+
+    `read` says the detector saw the frame and found it already in place. That
+    is not the same as nothing being able to read it, and the driver makes the
+    same distinction -- so dropping an unreachable proposal must not also throw
+    away the fact that it was measured.
+    """
+    if source in MACHINE_SOURCES:
+        said = f"{say_units(offset)} ({source})" if offset else f"in place ({source})"
+    elif offset:
+        said = f"moved {say_units(offset)}"
+    elif read:
+        said = "in place"
+    else:
+        said = ""
+    if done:
+        return (f"scanned - {said}" if said else "scanned"), "DONE"
+    if said:
+        return said, "CHOSEN"
+    return f"contrast {contrast:.2f}", "GREY"
 
 
 def _aim_note(marks: dict) -> str:
@@ -5926,11 +6009,21 @@ class _FrameAdjuster:
         return self.sheet.offsets.get(self.number, 0.0)
 
     def _set(self, millimetres: float) -> None:
+        """Put this frame where he just put it, and record that it was him.
+
+        The note matters as much as the number. `proposals` was written once,
+        when the sheet opened, and never again -- so a frame he dragged from
+        the detector's suggestion to his own went on wearing the detector's
+        badge, and the confirm dialog went on counting it as measured. It is
+        his the moment he moves it.
+        """
         value = snap_offset(millimetres)
         if value:
             self.sheet.offsets[self.number] = value
         else:
             self.sheet.offsets.pop(self.number, None)
+        self.sheet.proposals[self.number] = {"source": "operator",
+                                             "reason": "you set this one"}
         self._refresh()
         self.sheet._refresh_caption(self.number)
 
@@ -6880,25 +6973,25 @@ class _ContactSheet:
 
         The offset this replaced read +-0.00 mm on every real prescan, because
         `film_bounds` abstains on all of them.
+
+        The wording itself is `frame_caption`, which is testable without a
+        window. This is the lookup around it.
         """
         caption = self._captions.get(number)
         if caption is None:
             return
-        offset = self.offsets.get(number)
-        if offset:
-            source = (self.proposals.get(number) or {}).get("source")
-            said = f"moved {offset:+.2f} mm"
-            if source in ("measured", "unconfirmed", "neighbours"):
-                said = f"{offset:+.2f} mm ({source})"
-            caption.configure(text=said, foreground=self.CHOSEN)
-            return
-        if number in self.done:
-            caption.configure(text="scanned", foreground=self.DONE)
-            return
         marks = next((r.registration or {} for r in self.frames
                       if r.number == number), {})
-        caption.configure(text=f"contrast {marks.get('contrast', 0):.2f}",
-                          foreground="#777")
+        note = self.proposals.get(number) or {}
+        said, colour = frame_caption(
+            self.offsets.get(number) or 0.0,
+            note.get("source"),
+            done=number in self.done,
+            contrast=marks.get("contrast", 0),
+            read=bool(note.get("in_place")),
+        )
+        caption.configure(text=said, foreground={
+            "DONE": self.DONE, "CHOSEN": self.CHOSEN}.get(colour, "#777"))
 
     def adjusted(self) -> dict:
         """The positions set by hand, keyed by frame number."""
@@ -6923,6 +7016,14 @@ class _ContactSheet:
             "offsets": {int(n): float(v) for n, v in self.offsets.items()},
             "rotations": {int(n): int(t) for n, t in self.rotations.items()},
             "flips": {int(n): bool(f) for n, f in self.flips.items()},
+            # Who decided each position. Without it a reopened sheet handed
+            # every offset back as `kept`, and `_propose_positions` stamps
+            # `operator` over anything kept -- so closing the window and
+            # opening it again relabelled every machine proposal as his, and
+            # the confirm dialog then counted them as positions he had set.
+            "sources": {int(n): str((v or {}).get("source") or "")
+                        for n, v in self.proposals.items()
+                        if (v or {}).get("source")},
             # Not keyed by frame: one set for the roll. Kept with the rest so
             # a sheet reopened for a strip comes back describing the same scan
             # it described when it was closed.
