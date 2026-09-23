@@ -2832,8 +2832,8 @@ class DirectScanner:
                 if abs(went) > HOLD_TOLERANCE_MM and (went > 0) != (want > 0):
                     out["outcome"] = "wrong_way"
                     out["roll_abort"] = (
-                        f"frame {index}: asked for {say_units(want)} and the "
-                        f"film went {say_units(went)}. The direction is "
+                        f"frame {index + 1}: asked for {say_units(want)} and "
+                        f"the film went {say_units(went)}. The direction is "
                         "inverted, so "
                         "every frame would be driven the wrong way -- holding "
                         "is off for the rest of this roll."
@@ -2849,7 +2849,7 @@ class DirectScanner:
                     # longer looking like the one that was judged at all.
                     out["outcome"] = "abandoned"
                     out["abandoned"] = why
-                    self._log(f"frame {index}: {why}")
+                    self._log(f"frame {index + 1}: {why}")
                     break
 
         final = measured
@@ -2866,7 +2866,8 @@ class DirectScanner:
         out["row_reversed"] = any(h.get("row_reversed")
                                   for h in out["history"])
         self._log(
-            f"frame {index}: {source} {say_units(target)} -> {out['outcome']}"
+            f"frame {index + 1}: {source} {say_units(target)} -> "
+            f"{out['outcome']}"
             + (f", now {say_units(final)} after {out['moves']} move(s)"
                if final is not None else ", not verified")
         )
@@ -2903,7 +2904,7 @@ class DirectScanner:
 
         if decision is None:
             out["reason"] = detail.get("reason", "")
-            self._log(f"frame {index}: left as it came -- {out['reason']}")
+            self._log(f"frame {index + 1}: left as it came -- {out['reason']}")
             return out
 
         agreed = "+".join(detail.get("agreed", []))
@@ -2911,7 +2912,7 @@ class DirectScanner:
             # Inside the smallest move the hardware can make, so there is
             # nothing to ask for. Not "close enough" -- unaskable.
             out["outcome"] = "in_place"
-            self._log(f"frame {index}: {say_units(decision)} by {agreed}, "
+            self._log(f"frame {index + 1}: {say_units(decision)} by {agreed}, "
                       f"inside the "
                       f"{say_units(HOLD_TOLERANCE_MM, signed=False)} the "
                       "transport can move")
@@ -2920,12 +2921,12 @@ class DirectScanner:
         if not walk.affordable(decision):
             walk.record(index, None, 0.0)
             walk.stop(
-                f"frame {index} wants {say_units(decision)} on top of the "
+                f"frame {index + 1} wants {say_units(decision)} on top of the "
                 f"{say_units(walk.travel_mm, signed=False)} this roll has "
                 "already nudged")
             out["outcome"] = "budget"
             out["reason"] = walk.off_reason
-            self._log(f"frame {index}: {walk.off_reason}")
+            self._log(f"frame {index + 1}: {walk.off_reason}")
             return out
 
         if dry_run:
@@ -2938,12 +2939,13 @@ class DirectScanner:
             }
             out["outcome"] = "dry_run"
             self._log(
-                f"frame {index}: {say_units(decision)} by {agreed}; would send "
+                f"frame {index + 1}: {say_units(decision)} by {agreed}; "
+                f"would send "
                 f"{out['would_send']['action']:#04x} {param:#04x} 00 04 "
                 f"({say_units(out['would_send']['asked_mm'])}) -- dry run")
             return out
 
-        self._log(f"frame {index}: {say_units(decision)} by {agreed} "
+        self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
                   f"(from {detail.get('chose', '?')})")
         fix = self._hold_to_approved(
             index, image, prescan_resolution,
@@ -2990,7 +2992,7 @@ class DirectScanner:
                 return True, ""          # cannot see; not evidence of trouble
             if abs(reading.mm) > abs(target_mm) + MAX_CORRECTION_MM:
                 return False, (
-                    f"frame {index}: after moving, the gap reads "
+                    f"frame {index + 1}: after moving, the gap reads "
                     f"{say_units(reading.mm)} -- further out than the "
                     f"{say_units(target_mm)} this started from. The frame is "
                     "not "

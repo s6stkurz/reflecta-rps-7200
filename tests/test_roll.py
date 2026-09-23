@@ -1697,3 +1697,18 @@ def test_the_roll_log_counts_frames_the_way_the_window_does():
     contrast = [line for line in lines if "contrast" in line]
     assert [line.split(":")[0] for line in contrast] == ["frame 1", "frame 2"]
     assert not any(line.startswith("frame 0") for line in lines), lines
+
+
+def test_the_hold_loop_counts_frames_the_way_the_window_does():
+    """Its lines sit between the roll's own in one log, so they count from 1
+    as well -- `tools/hold_probe.py` holds index 0 as `Approved(number=1)`,
+    which now reads as the same frame in both."""
+    from rps7200.session import Approved
+
+    image = picture(seed=3)
+    s = FakeRoll([image])
+    lines = []
+    s.log_hook = lines.append
+    s._hold_to_approved(0, image, 300,
+                        Approved(number=1, offset_mm=0.0, reference=image))
+    assert lines and lines[-1].startswith("frame 1:"), lines
