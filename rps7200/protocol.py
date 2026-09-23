@@ -12,6 +12,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 6: the transport is asked where the film is, and a roll goes there first.
+#    No payload changes; the sequence does. READ STATE is sent when a window
+#    session opens and after every job that ended normally, a whole-frame
+#    or sub-frame move excepted (those already asked). Before every roll --
+#    the window's and `tools/scan_roll.py`'s -- TEST UNIT READY is polled
+#    until the lamp is warm (REQUEST SENSE after each one refused), READ
+#    STATE is asked up to eight times, the film is wound with SLIDE_PREV
+#    `05 01 00 01` or stepped with SLIDE_NEXT `04 01 00 01`, one frame per
+#    command, each followed by the usual READ STATE polls, and READ STATE is
+#    asked once more. Inside a roll READ STATE is read at the top of every
+#    frame, the ones advanced past unchosen included, where it was read only
+#    before a chosen frame's prescan. And the roll tool calibrates before
+#    any of that rather than after it.
+# 5: `MAX_CORRECTION_PARAM` 8 -> 87, so a sub-frame SLIDE correction can
+#    carry a param up to 87 in one command (df7d4e6).
 # 4: `scan()` now clears the fast-infrared quality bit on an RGB pass. It
 #    used to forward whatever it was given, so the window -- which passes the
 #    box straight through, ticked by default -- sent 0x0088 on ordinary RGB
@@ -20,7 +35,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 5
+PROTOCOL_REVISION = 6
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
