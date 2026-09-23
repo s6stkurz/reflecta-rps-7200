@@ -2238,7 +2238,7 @@ def test_a_prescan_of_a_different_picture_is_never_used_to_judge_a_scan(tmp_path
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     open_scanner=FakeScanner, verbose=False)
     s._scanner = FakeScanner()
-    s._last_prescan = (np.zeros((4, 4)), 3)
+    s._last_prescan = (np.zeros((4, 4)), 3, {})
     s._scanner.t = None
 
     s._position = lambda: 3
@@ -2369,3 +2369,84 @@ def test_the_scan_is_still_turned_when_the_scan_is_the_reversed_one():
 
     meta = session._note_reversal({}, turned, prescan)
     assert meta.get("reversal"), "a reversed scan must still be turned back"
+
+
+# --- a pass whose own lines said which way it was read -------------------------
+
+
+def _judge():
+    from rps7200.session import ScanSession
+
+    said = []
+    session = ScanSession.__new__(ScanSession)
+    session.match_prescan = True
+    session._emit = lambda kind, **k: said.append(k.get("text", ""))
+    return session, said
+
+
+def _pictures(seed=11):
+    rng = np.random.default_rng(seed)
+    ramp = np.linspace(0, 220, 60)[:, None, None] * np.ones((1, 428, 3))
+    return ramp + rng.random((60, 428, 3)) * 30
+
+
+@pytest.mark.parametrize("direction", ["forward", "reversed"])
+def test_a_scan_whose_lines_said_which_way_is_never_turned_by_a_picture(direction):
+    """The decode already put it upright. A prescan that still disagrees --
+    one filed before the decode turned passes, or simply a different picture
+    -- is not the carriage, and turning the scan would ship it upside down."""
+    session, said = _judge()
+    scan = _pictures()
+    meta = {"read_direction": {"direction": direction, "turned": direction == "reversed"}}
+    out = session._note_reversal(meta, scan, scan[::-1], {})
+    assert "reversal" not in out
+    assert any("left as it came" in line for line in said)
+
+
+def test_an_agreeing_prescan_says_nothing():
+    session, said = _judge()
+    scan = _pictures()
+    session._note_reversal({"read_direction": {"direction": "forward"}}, scan, scan, {})
+    assert said == []
+
+
+def test_only_a_pass_of_unknown_direction_is_still_judged_by_picture():
+    session, _ = _judge()
+    prescan = _pictures(12)
+    for meta in ({}, {"read_direction": {"direction": "unknown"}}):
+        out = session._note_reversal(meta, prescan[::-1], prescan,
+                                     {"read_direction": {"direction": "forward"}})
+        assert out.get("reversal"), meta
+
+
+def test_the_window_scan_is_judged_against_the_prescan_with_its_record(tmp_path):
+    """`_prescan_here` hands over the prescan's meta with its picture, so the
+    judgement knows how the reference was read."""
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    open_scanner=FakeScanner, verbose=False)
+    s._position = lambda: 3
+    s._last_prescan = (np.zeros((4, 4)), 3, {"read_direction": {"direction": "reversed"}})
+    image, meta = s._prescan_here()
+    assert meta["read_direction"]["direction"] == "reversed"
+
+
+def test_a_roll_frame_files_its_prescan_with_the_way_it_was_read(tmp_path):
+    from conftest import load_tool
+
+    from rps7200.library import FilmNotes
+
+    writer = load_tool("scan_roll").FrameWriter()
+    read = {"direction": "reversed", "turned": True, "lead": "B", "trail": "R"}
+    writer.submit(
+        number=1, paths=[], dpi=600, image=np.zeros((8, 8, 3), np.uint16),
+        meta={"resolution_dpi": 600, "channels": 3},
+        prescan=np.zeros((4, 8, 3), np.uint8),
+        prescan_meta={"read_direction": read},
+        library=str(tmp_path / "lib"), inquiry=None,
+        capture={"reference": None, "ccd_mask": None, "raw": None,
+                 "raw_layout": None},
+        tags=["roll"], film=FilmNotes(frame="roll/01"))
+    writer.finish()
+    (_, entry), = writer.done
+    record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+    assert record["prescan"]["read_direction"] == read

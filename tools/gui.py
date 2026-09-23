@@ -3565,6 +3565,7 @@ class ScannerGui:
             extra += f"   ·   {shading['clipped']} clipped -- lower the exposure"
         if result.supersedes:
             extra += "   ·   replaced its prescan"
+        extra += read_note((result.meta or {}).get("read_direction"))
         self.v_caption.set(result.label + extra)
         self._measure_histogram()
         self._schedule_redraw()
@@ -5538,6 +5539,21 @@ def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[di
 #: `tools/frame_edges.propose_centred` produces these -- the same words
 #: `framing.propose_offsets` used, so a sheet saved by either reads the same.
 MACHINE_SOURCES = ("measured", "unconfirmed", "neighbours")
+
+
+def read_note(read: dict | None) -> str:
+    """The caption's word on which way the carriage read a pass, when it matters.
+
+    Nothing for an ordinary top-down pass. A pass read bottom-up was turned
+    upright in the decode, and says so rather than silently -- it is the case
+    that used to arrive upside down. An unknown one is shown as it came.
+    """
+    state = (read or {}).get("direction")
+    if state == "reversed":
+        return "   ·   read bottom-up, turned upright"
+    if state == "unknown":
+        return "   ·   which way it was read is unknown; shown as it came"
+    return ""
 
 
 def frame_status(done: int, total: int | None) -> str:

@@ -41,6 +41,7 @@ import numpy as np
 
 from . import library, tiff
 from .direct import DirectScanner, RollFrame, supports_infrared
+from .direction import FORWARD, REVERSED, ReadDirection, encode_index, reverse_lines
 from .protocol import say_units
 from .framing import (
     APERTURE_MM,
@@ -49,7 +50,7 @@ from .framing import (
     frame_contrast,
     registration,
 )
-from .protocol import ScanParameters
+from .protocol import ONE_PASS_COLOR, ONE_PASS_RGBI, ScanParameters
 from .session import estimate_seconds
 from .shading import ShadingReference, apply_shading
 from .usb_transport import UsbError
@@ -141,6 +142,16 @@ class DemoScanner:
         self.ccd_mask = None
         self.last_raw = None
         self.last_raw_layout = None
+        self.last_scan_meta: dict[str, Any] | None = None
+        #: Where this pretend carriage waits between passes. A pass that
+        #: starts at the far end is read bottom-up and ends at home; one that
+        #: starts at home is read top-down and stays at the far end when its
+        #: byte-14 bit 0 is set -- `DirectScanner.byte14_for`, not a copy.
+        #: That is the documented mechanism and nothing more: the hardware
+        #: sometimes goes home between passes for reasons not known, so the
+        #: demo reads bottom-up at least as often as the scanner does, never
+        #: less, which is the useful direction for an exercise.
+        self._carriage_far = False
         self._inquiry = _Inquiry()
         self._entries: list[Path] = []
         self._next = 0
@@ -330,7 +341,66 @@ class DemoScanner:
         if image.ndim == 3 and image.shape[2] > 3:
             image = image[..., :3]
             self._drop_raw("a prescan is three channels")
-        return self._as_positioned(image), None
+        image, read = self._read_as_carriage(self._as_positioned(image),
+                                             ONE_PASS_COLOR)
+        self.last_scan_meta = {
+            "resolution_dpi": resolution, "channels": 3,
+            "channel_order": ["R", "G", "B"], "film": film, "depth": 8,
+            "width": image.shape[1], "height": image.shape[0],
+            "demo": True, **read,
+        }
+        return image, None
+
+    def _read_as_carriage(self, image: np.ndarray, passes: int
+                          ) -> tuple[np.ndarray, dict[str, Any]]:
+        """This pass, handed over the way the scanner would hand it over.
+
+        Bottom-up when the carriage starts at the far end: the picture is
+        encoded as index-format lines in the order a reversed read sends
+        them, and decoded by the driver's own `decode_index`, which turns it
+        upright and says so. Stored raw bytes are reversed the same way, so
+        what is filed decodes to what is shown and its record agrees with its
+        bytes.
+        """
+        reversed_now = self._carriage_far
+        a = np.asarray(image)
+        if a.dtype in (np.uint8, np.uint16):
+            channels = a.shape[2] if a.ndim == 3 else 1
+            width = a.shape[1]
+            params = ScanParameters(
+                width=width, lines=a.shape[0],
+                bytes_per_line=width * a.dtype.itemsize, filter_offset1=0,
+                filter_offset2=0, available_lines=0)
+            blob = encode_index(a, reversed=reversed_now)
+            upright, direction = DirectScanner.decode_index(blob, params, channels)
+            upright = upright.reshape(a.shape).astype(a.dtype, copy=False)
+        else:
+            # Not a shape the scanner sends, so not one to encode: the model's
+            # answer is recorded as what it is.
+            upright = a
+            direction = ReadDirection(REVERSED if reversed_now else FORWARD,
+                                      why="modelled; not a scanner pixel type")
+        if reversed_now:
+            raw = self._capture.get("raw")
+            layout = self._capture.get("raw_layout") or {}
+            # Only bytes that describe this very picture: a pass read from a
+            # TIFF has none of its own, and reversing a previous pass's would
+            # file a record that disagrees with its bytes.
+            if (raw is not None and layout.get("line_stride")
+                    and layout.get("width") == a.shape[1]
+                    and layout.get("lines") == a.shape[0]):
+                self._capture = dict(self._capture, raw=reverse_lines(
+                    raw, int(layout["line_stride"])))
+            self._log("the carriage started at the far end: read bottom-up, "
+                      "turned upright")
+            self._carriage_far = False
+        else:
+            self._carriage_far = bool(DirectScanner.byte14_for(passes) & 1)
+        return upright, {
+            "read_direction": direction.as_record(),
+            "carriage_state": {"far_end": reversed_now, "stale": False,
+                               "modelled": True},
+        }
 
     def scan(
         self,
@@ -359,6 +429,9 @@ class DemoScanner:
             self._log("auto-exposure: probing in RGB")
             self._work(48.0)
             self._log("auto-exposure: [1.82, 0.94, 2.11, 1.0]")
+            # The probes are RGB passes, byte-14 bit 0 clear: whichever way the
+            # first of them was read, they leave the carriage at home.
+            self._carriage_far = False
         started = time.monotonic()
         self._work(
             estimate_seconds(resolution, infrared),
@@ -392,6 +465,10 @@ class DemoScanner:
             "duration_s": round(time.monotonic() - started, 1),
             "demo": True,
         }
+        image, read = self._read_as_carriage(
+            image, ONE_PASS_RGBI if image.shape[2] > 3 else ONE_PASS_COLOR)
+        meta.update(read)
+        self.last_scan_meta = dict(meta)
         return image, meta
 
     def scan_roll(
@@ -549,6 +626,9 @@ class DemoScanner:
                             marks = self._marks(prescan)
                         marks["correction"] = {k: v for k, v in fix.items()
                                                if k != "prescan"}
+                    # The frame's last prescan, as it was read -- taken before
+                    # the scan below replaces it.
+                    prescan_meta = dict(self.last_scan_meta or {})
                     image = meta = None
                     if not dry_run:
                         image, meta = self.scan(
@@ -564,6 +644,7 @@ class DemoScanner:
                     meta=meta or {},
                     prescan=prescan,
                     registration=marks,
+                    prescan_meta=prescan_meta,
                 )
                 index += 1
                 if finished(index):

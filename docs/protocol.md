@@ -137,14 +137,31 @@ finding above already brushed against — bit 0 alternating in lockstep with
 that direction is the wrong word for what varies; *order* is what reverses,
 not merely a coordinate.
 
-**This driver's default sends bit 0 set on every RGBI scan** (`0x21`).
-Ordinary use has avoided the reversed case so far by the shape of the code,
-not by design: `scan_roll` always prescans RGB (bit 0 clear) immediately
-before the RGBI capture, and `auto_exposure` always probes RGB first, so the
-RGBI pass is normally the *first* bit-0-set command since the last reset.
-Nothing enforces that. See `docs/byte14-plan.md` for what this means for
-real scans, including one already-filed library entry that carries the
-reversed signature.
+**Corrected 2026-09-23: bit 0 decides where the carriage waits *after* the
+pass, and it is the next pass that reads bottom-up, whatever its own bit.**
+The ladder above could not tell the two readings apart. The vendor captures
+and this driver's own rolls can:
+
+- CyberView's 17-frame roll is 0x21 / 0x20 prescan pairs, and every 0x20 pass
+  (bit 0 clear) came back reversed. 35 of the 83 passes in the captures are
+  reversed.
+- On this driver's RGBI rolls, 38 of 114 frame prescans (all sent `0x10`)
+  came back reversed. It was always the first prescan after an RGBI scan,
+  often on every other frame; CyberView's 600 dpi capture alternates the
+  same way.
+- Why the carriage sometimes goes home between passes is not known. READ
+  STATE says when it has not (§7).
+
+**Only rows reverse, never columns.** Checked on CyberView's own pairs by
+picture: a reversed pass matches its sibling at 0.72-0.98 with its rows
+reversed and never with its columns reversed. So nothing measured along the
+strip is affected.
+
+This driver reads the direction from each pass's line tags and decodes it
+upright (`rps7200/direction.py`, `DirectScanner.decode_index`). The trilinear
+CCD's rows make a top-down pass start with R and end with B, and a bottom-up
+one start with B and end with R. Every library entry records the direction as
+`scan.read_direction`. See `docs/byte14-plan.md`.
 
 ### There is a greyscale mode, and it is not worth using
 
@@ -399,6 +416,17 @@ Byte 8 is listed as constant above because it is 0 in all 737 capture responses 
 but every capture had film loaded. **Measured on an empty transport it reads 1**,
 which the captures could not have shown. See §11.
 
+**Byte 6 bit 7 (`0x80`) and byte 11 = 8 say the carriage is waiting at the far
+end**, so the next pass will be read bottom-up. In the READ STATE CyberView
+takes just before each SCAN, they were set before all 32 passes that came back
+reversed and clear before all 48 that did not. The only three misses were each
+session's first pass, whose last READ STATE predates the calibration that
+moved the carriage. CyberView reads this and then writes the scan frame with
+`y0` one line lower on exactly those passes, so it knows the direction before
+it scans. Confirmed from the captures only. This driver records the bytes with
+every pass (`carriage_state`) and decides nothing on them. The direction it
+acts on is read from each pass's own lines (§4, `rps7200/direction.py`).
+
 **Nothing reports position within a frame.** There is no field a host loop could
 read to close a registration loop, which is consistent with the vendor not
 attempting one.
@@ -552,6 +580,12 @@ Reading it clears the condition. `s.sense()` followed by `s.read_sense()` return
 a device that reported nothing. Parse the bytes from the first read; never ask twice.
 
 ### The vertical flip is real, and nothing I can send controls it — *measured*
+
+*Resolved 2026-09-23.* It is the carriage reading the pass bottom-up. Whether it
+will is decided by where the previous pass left the carriage, which READ STATE
+reports (§7). Whether it did is readable from the pass's own line tags (§4).
+The decode now turns every such pass upright. The account below is the
+measurement as it was taken.
 
 Scans come back in one of **two orientations, mirrored from each other**: matched
 as-is they correlate about **-0.63**, mirrored about **+0.95**. There is no

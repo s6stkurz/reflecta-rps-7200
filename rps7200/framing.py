@@ -1064,11 +1064,15 @@ def measure_shift_mm(
 
     # Both orientations, always, and the stronger one wins.
     #
-    # A pass can come back with every row reversed and nothing says so: MODE
-    # SELECT byte 14 bit 0 reverses the pass that immediately follows a
-    # bit-0-set one, and this driver sets it on every RGBI scan -- so a frame's
-    # prescan, taken straight after the previous frame's scan, is exactly the
-    # pass at risk. Measured on one 600 dpi roll: **five of fifteen**.
+    # A pass can come back with every row reversed: the byte-14 bit 0 of an
+    # RGBI scan leaves the carriage at the far end, and the prescan after it
+    # may be read bottom-up. Measured on one 600 dpi roll: **five of fifteen**.
+    # The decode now turns every pass upright from its own line tags
+    # (`rps7200.direction`), so both pictures normally arrive upright -- the
+    # flipped reading stays for a reference taken before that, such as a
+    # walk's stored `prescanNN.tif`, and for a pass whose direction was
+    # unknown. `row_reversed` therefore says the reference and this pass
+    # disagree top to bottom, not that this pass came back reversed.
     #
     # Safe to compare because the reversal is a flip in **y** while the
     # displacement wanted is in **x**. `reversal_against` reports it as

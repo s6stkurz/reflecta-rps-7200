@@ -540,6 +540,17 @@ class State:
     #: trustworthy signal that an advance has happened -- see
     #: :meth:`DirectScanner.advance`.
     position: int = 0
+    #: The whole 13-byte response. Byte 6 bit 7 and byte 11 were set before
+    #: every pass CyberView got back bottom-up and clear before every other,
+    #: 80 of 80 across the captures -- the carriage waiting at the far end.
+    #: Kept so that can be checked on this driver's own passes; nothing here
+    #: decides on it.
+    raw: bytes = b""
+
+    @property
+    def carriage_far(self) -> bool | None:
+        """Byte 6 bit 7, which the captures tie to the carriage at the far end."""
+        return bool(self.raw[6] & 0x80) if len(self.raw) > 6 else None
 
     @property
     def media_loaded(self) -> bool:

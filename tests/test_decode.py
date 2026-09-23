@@ -98,7 +98,10 @@ def test_the_infrared_plane_is_the_fourth():
 
 
 def test_the_tag_decides_the_channel_not_the_arrival_order():
-    """The scanner tags every line; nothing may depend on the order they land."""
+    """The scanner tags every line, and the tag alone says which plane a line
+    belongs to. The order they land in says something else -- which way the
+    carriage read the pass (see below) -- so the planes here are flat, where
+    that cannot show."""
     planes = [np.full((4, WIDTH), v, np.uint16) for v in (100, 200, 300)]
     forward = DirectScanner._deinterleave(stream(planes), params(), 3)
     shuffled = DirectScanner._deinterleave(
@@ -204,3 +207,180 @@ def test_shading_columns_needed_at_7200dpi_is_exactly_double():
     from rps7200.direct import FULL_FRAME
     assert DirectScanner._shading_columns_needed(FULL_FRAME, 3600) == 5172
     assert DirectScanner._shading_columns_needed(FULL_FRAME, 7200) == 10344
+
+
+# --- which way the pass was read ----------------------------------------------
+#
+# A pass read bottom-up arrives with its lines in reverse order: B first and R
+# last, where a top-down pass starts with R and ends with B. `decode_index`
+# reads that from the tags and turns the rows back, so every path from bytes to
+# pixels delivers the picture upright. `rps7200/direction.py` has the evidence.
+
+from pathlib import Path  # noqa: E402
+
+from rps7200.direction import (  # noqa: E402
+    FORWARD, REVERSED, UNKNOWN, encode_index, read_direction, reverse_lines,
+)
+
+
+def picture(rows=6, width=WIDTH, channels=3, seed=1):
+    rng = np.random.default_rng(seed)
+    return rng.integers(0, 65535, (rows, width, channels), dtype=np.uint16)
+
+
+@pytest.mark.parametrize("channels", [3, 4])
+def test_a_pass_read_bottom_up_is_turned_upright(channels):
+    image = picture(channels=channels)
+    p = params(lines=image.shape[0])
+    down, read_down = DirectScanner.decode_index(encode_index(image), p, channels)
+    up, read_up = DirectScanner.decode_index(
+        encode_index(image, reversed=True), p, channels)
+    assert np.array_equal(down, image) and np.array_equal(up, image)
+    assert (read_down.state, read_down.lead, read_down.trail) == (FORWARD, "R", "B"
+                                                                 if channels == 3 else "I")
+    assert (read_up.state, read_up.lead, read_up.trail) == (REVERSED,
+                                                            "B" if channels == 3 else "I",
+                                                            "R")
+    assert read_up.as_record()["turned"] is True
+    assert read_down.as_record()["turned"] is False
+
+
+def test_only_the_rows_are_turned_never_the_columns():
+    """Columns run along the strip, where the transport moves: a column that
+    moved would put every edge and every hold in the wrong place."""
+    image = picture(rows=5)
+    turned = DirectScanner._deinterleave(encode_index(image, reversed=True),
+                                         params(lines=5), 3)
+    assert np.array_equal(turned[0], image[0]), "rows back in place"
+    assert np.array_equal(turned[:, 0], image[:, 0]), "and no column moved"
+
+
+def test_a_short_bottom_up_read_is_cut_to_aligned_planes_before_it_is_turned():
+    """A read that stops short loses its last lines -- the top of the picture
+    on a pass read bottom-up. The planes are aligned by index from the start
+    of the read first, then turned; the other way round would misalign them by
+    however many lines each plane lost."""
+    image = picture(rows=8)
+    stride = WIDTH * 2 + INDEX_HEADER
+    blob = encode_index(image, reversed=True)
+    short = blob[: stride * (3 * 8 - 4)]            # row 0 and row 1's R missing
+    got, read = DirectScanner.decode_index(short, params(lines=8), 3)
+    assert read.state == REVERSED and read.trail is None
+    assert np.array_equal(got, image[2:])
+
+
+def test_evidence_that_contradicts_itself_is_unknown_and_nothing_is_turned():
+    image = picture(rows=4)
+    stride = WIDTH * 2 + INDEX_HEADER
+    lines = [encode_index(image)[k * stride:(k + 1) * stride] for k in range(12)]
+    # the last row arrives B, G, R -- a tail that says bottom-up under a head
+    # that says top-down
+    lines[9:12] = lines[9:12][::-1]
+    blob = b"".join(lines)
+    read = read_direction(blob, stride, lines=4, channels=3)
+    assert read.state == UNKNOWN and "last" in read.why
+    got, _ = DirectScanner.decode_index(blob, params(lines=4), 3)
+    assert np.array_equal(got[:3], image[:3]), "left as it came"
+
+
+def test_a_single_plane_cannot_say_which_way_it_was_read():
+    blob = stream([np.zeros((4, WIDTH), np.uint16)], order=["G"])
+    assert read_direction(blob, WIDTH * 2 + INDEX_HEADER).state == UNKNOWN
+    assert read_direction(b"", 18).state == UNKNOWN
+
+
+def test_reversing_the_lines_is_exactly_a_read_the_other_way():
+    """What the demo does to a stored pass, and what the carriage does."""
+    image = picture(rows=5, channels=4)
+    stride = WIDTH * 2 + INDEX_HEADER
+    assert reverse_lines(encode_index(image), stride) == encode_index(image,
+                                                                      reversed=True)
+
+
+LIBRARY = Path(__file__).resolve().parent.parent / "library"
+#: Found by their tags and confirmed by picture: three passes of the byte-14
+#: ladder, and one real 1800 dpi pass filed on 2026-08-28.
+BOTTOM_UP = ("20260911T091346Z_unknown-film_600dpi-2",
+             "20260911T091346Z_unknown-film_600dpi-4",
+             "20260911T091347Z_unknown-film_600dpi",
+             "20260828T012327Z_unknown-film_1800dpi_ir")
+TOP_DOWN = ("20260911T091346Z_unknown-film_600dpi",
+            "20260911T091346Z_unknown-film_600dpi-3",
+            "20260828T011439Z_unknown-film_1800dpi_ir")
+
+
+def _stored(name):
+    import json
+
+    from rps7200 import library
+
+    path = LIBRARY / name
+    raw = library.read_raw(path) if path.exists() else None
+    if raw is None:
+        pytest.skip(f"{name} is not in this library")
+    layout = json.loads((path / "scan.json").read_text())["raw"]["layout"]
+    p = ScanParameters(width=layout["width"], lines=layout["lines"],
+                       bytes_per_line=layout["bytes_per_line"], filter_offset1=0,
+                       filter_offset2=0, available_lines=0)
+    return DirectScanner.decode_index(raw, p, layout["channels"])
+
+
+@pytest.mark.parametrize("name", BOTTOM_UP)
+def test_the_passes_known_to_be_bottom_up_read_that_way(name):
+    image, read = _stored(name)
+    assert read.state == REVERSED and (read.lead, read.trail) == ("B", "R")
+    # and turned, the colour planes still agree with each other row for row
+    g = image[..., 1].astype(np.float64)
+    for c in (0, 2):
+        other = image[..., c].astype(np.float64)
+        same = np.corrcoef(g[1:-1].ravel(), other[1:-1].ravel())[0, 1]
+        shifted = np.corrcoef(g[2:].ravel(), other[:-2].ravel())[0, 1]
+        assert same > shifted, "a plane slipped a row against green"
+
+
+@pytest.mark.parametrize("name", TOP_DOWN)
+def test_their_neighbours_read_top_down(name):
+    _image, read = _stored(name)
+    assert read.state == FORWARD and (read.lead, read.trail) == ("R", "B")
+
+
+def test_a_pass_read_off_the_wire_bottom_up_arrives_upright_and_says_so(monkeypatch):
+    """`read_planes` is the live path: what `scan()` records as the pass's
+    `read_direction` is what this leaves behind."""
+    image = picture(rows=6)
+    blob = encode_index(image, reversed=True)
+    stride = WIDTH * 2 + INDEX_HEADER
+    s = DirectScanner.__new__(DirectScanner)
+    s.verbose = False
+    s.progress_hook = None
+    s._log = lambda *a, **k: None
+    lines = iter(blob[k * stride:(k + 1) * stride] for k in range(len(blob) // stride))
+    monkeypatch.setattr(s, "read_lines",
+                        lambda n, bpl, retries=1: b"".join(next(lines) for _ in range(n)),
+                        raising=False)
+    got = s.read_planes(params(lines=6), 3)
+    assert np.array_equal(got, image)
+    assert s.last_read_direction.state == REVERSED
+
+
+def test_the_state_before_a_pass_is_kept_and_marked_stale_by_a_calibration():
+    from conftest import FakeTransport
+
+    far = bytearray(13)
+    far[6], far[11] = 0x8D, 0x08
+
+    class Far(FakeTransport):
+        def command(self, command, data=None, **kw):
+            if command[0] == 0xDD:
+                self.sent.append((command[0], b""))
+                return bytes(far)
+            return super().command(command, data, **kw)
+
+    s = DirectScanner(transport=Far())
+    s.read_state()
+    record = s.carriage_record()
+    assert record == {"read_state": bytes(far).hex(), "far_end": True, "stale": False}
+    s._calibrated_since_state = True           # what calibrate_shading leaves
+    assert s.carriage_record()["stale"] is True
+    s.read_state()
+    assert s.carriage_record()["stale"] is False

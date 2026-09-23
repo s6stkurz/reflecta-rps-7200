@@ -138,6 +138,7 @@ def save(
     reference: ShadingReference | None = None,
     ccd_mask: bytes | None = None,
     prescan: np.ndarray | None = None,
+    prescan_meta: dict[str, Any] | None = None,
     inquiry: Any = None,
     raw: bytes | None = None,
     raw_path: Path | str | None = None,
@@ -156,6 +157,10 @@ def save(
     operator sees, exports or saves is corrected while what is kept here is
     not. `corrections` names anything a caller has nonetheless baked into
     ``image``, so a file that is not raw is at least labelled as such.
+
+    ``prescan_meta`` is the framing pass's own meta, from the scanner, for a
+    frame filed with its prescan: `prescan.tif` has no raw bytes of its own,
+    so this is the only record of which way it was read.
     """
     film = film or FilmNotes()
     when = datetime.now(timezone.utc)
@@ -236,6 +241,11 @@ def save(
                 "channels", "channel_order", "bytes_per_line", "film",
                 "exposure_scale", "exposure_metered", "duration_s",
                 "protocol_revision", "rotation", "flipped", "reversal",
+                # Which way the carriage read the pass, from its own line tags,
+                # and whether `scan.tif` was turned upright from the order the
+                # raw bytes are in (`rps7200.direction`). And the READ STATE
+                # before it, as evidence of where the carriage was.
+                "read_direction", "carriage_state",
                 # Which side of a fast-infrared ladder this pass came from.
                 # Without it `signature` cannot tell the halves apart -- the
                 # whole ladder is one frame at one dpi, depth, channel count
@@ -284,6 +294,13 @@ def save(
             # identical to a scan deliberately taken raw.
             "skipped": meta.get("shading_skipped"),
         },
+        # The framing pass stored beside the scan, and which way it was read.
+        # Absent when there is no `prescan.tif`.
+        **({"prescan": {
+            "file": "prescan.tif",
+            "read_direction": (prescan_meta or {}).get("read_direction"),
+            "carriage_state": (prescan_meta or {}).get("carriage_state"),
+        }} if prescan is not None else {}),
         "film": asdict(film),
         "tags": sorted(set(tags or [])),
         "provenance": provenance(),
@@ -444,7 +461,8 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
             filter_offset2=0,
             available_lines=0,
         )
-        image = DirectScanner._deinterleave(raw, params, int(layout["channels"]))
+        image, direction = DirectScanner.decode_index(
+            raw, params, int(layout["channels"]))
     except (KeyError, ValueError, TypeError) as exc:
         return None, f"could not decode: {exc}"
 
@@ -477,13 +495,145 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         return image, (
             f"decode CHANGED: now {image.shape}, stored {stored.shape}"
         )
+    recorded = ((record.get("scan") or {}).get("read_direction") or {}).get("direction")
+    if recorded is not None and recorded != direction.state:
+        return image, (
+            f"read direction CHANGED: recorded {recorded}, the line tags now "
+            f"say {direction.state} ({direction.why})")
     if np.array_equal(image, stored):
         return image, "identical to the stored image"
+    if direction.reversed and np.array_equal(image[::-1], stored):
+        # Filed before passes were turned upright in the decode: the stored
+        # image is the pass in the order it was read. Not a regression, and
+        # `tools/library.py migrate-direction` is what brings it up to date.
+        return image, ("stored as it was read, bottom-up; today's decode "
+                       "turns it upright -- see migrate-direction")
     differing = int(np.count_nonzero(image != stored))
     return image, (
         f"decode CHANGED: {differing} of {image.size} samples differ "
         f"({100 * differing / image.size:.3f}%)"
     )
+
+
+def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
+    """Bring one entry filed before passes were read upright up to date.
+
+    Returns what was (or, with ``write`` False, would be) done, one line each;
+    empty when the entry already says which way it was read.
+
+    * **The scan**, from its raw bytes: the direction its line tags say goes
+      into the record. A pass read bottom-up whose `scan.tif` is still in the
+      order it was read is rewritten upright -- only when the stored image is
+      exactly that, so a file that matches neither reading is reported and
+      left alone. No raw bytes: recorded as unknown.
+    * **Its `prescan.tif`**, which has no bytes of its own: judged against the
+      upright scan, both ways up, and turned only when the rows-reversed
+      reading wins by `framing.REVERSAL_MARGIN`. Anything less certain is
+      recorded as unknown and not touched.
+
+    Raw bytes are never changed, so every rewrite here can be undone from them
+    -- and for a prescan by turning it again, which its record says was done.
+    """
+    from .direction import FORWARD, REVERSED, UNKNOWN
+    from .framing import REVERSAL_MARGIN, _comparable
+
+    path = Path(path)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    scan_part = record.setdefault("scan", {})
+    done: list[str] = []
+    upright = None
+
+    if not scan_part.get("read_direction"):
+        raw = read_raw(path)
+        layout = (record.get("raw") or {}).get("layout") or {}
+        if raw is None or layout.get("format") != "index":
+            scan_part["read_direction"] = {
+                "direction": UNKNOWN, "lead": None, "trail": None, "turned": False,
+                "evidence": None, "why": "no raw bytes to read the line tags from"}
+            done.append("scan: no raw bytes -- recorded as unknown")
+        else:
+            params = ScanParameters(
+                width=int(layout["width"]), lines=int(layout["lines"]),
+                bytes_per_line=int(layout["bytes_per_line"]),
+                filter_offset1=0, filter_offset2=0, available_lines=0)
+            decoded, direction = DirectScanner.decode_index(
+                raw, params, int(layout["channels"]))
+            stored = tiff.read(str(path / "scan.tif"))
+            read = direction.as_record()
+            applied = (record.get("image") or {}).get("corrections_applied") or []
+            plain = not applied and stored.shape == decoded.shape
+            if plain and np.array_equal(stored, decoded):
+                done.append(f"scan: read {direction.state} -- recorded")
+                upright = decoded
+            elif (plain and direction.reversed
+                    and np.array_equal(stored, decoded[::-1])):
+                done.append("scan: read bottom-up and stored that way -- "
+                            "turned upright")
+                if write:
+                    tiff.write(str(path / "scan.tif"), decoded,
+                               resolution=scan_part.get("resolution_dpi") or None)
+                    record.setdefault("image", {})["sha256"] = _sha256(
+                        path / "scan.tif")
+                upright = decoded
+            else:
+                # The direction is a fact of the bytes and is kept; whether
+                # `scan.tif` was turned is not known, because it is not the
+                # plain decode (corrected pixels, a realigned 7200 dpi pass).
+                read.update(turned=None, why=read["why"] + "; scan.tif is not "
+                            "the plain decode of these bytes, so it was left "
+                            "as it is")
+                done.append(f"scan: read {direction.state} -- recorded; "
+                            "scan.tif is not a plain decode and was left alone")
+            scan_part["read_direction"] = read
+    else:
+        said = scan_part.get("read_direction") or {}
+        if (path / "scan.tif").exists() and (
+                said.get("direction") == FORWARD
+                or (said.get("direction") == REVERSED and said.get("turned"))):
+            upright = tiff.read(str(path / "scan.tif"))
+
+    pre = record.get("prescan") or {}
+    if (path / "prescan.tif").exists() and not pre.get("read_direction"):
+        if upright is None and (path / "scan.tif").exists():
+            said = scan_part.get("read_direction") or {}
+            if (said.get("direction") == FORWARD
+                    or (said.get("direction") == REVERSED and said.get("turned"))):
+                upright = tiff.read(str(path / "scan.tif"))
+        prescan = tiff.read(str(path / "prescan.tif"))
+        a, b = _comparable(prescan), (_comparable(upright) if upright is not None
+                                      else None)
+        judged: dict[str, Any] = {"direction": UNKNOWN, "lead": None,
+                                  "trail": None, "turned": False,
+                                  "evidence": "picture against its upright scan"}
+        if a is None or b is None:
+            judged["why"] = "no upright scan to judge it against"
+        else:
+            scores = {"upright": float((a * b).sum()),
+                      "rows reversed": float((a[::-1] * b).sum()),
+                      "mirrored": float((a[:, ::-1] * b).sum()),
+                      "half turn": float((a[::-1, ::-1] * b).sum())}
+            best = max(scores, key=lambda k: scores[k])
+            margin = scores["rows reversed"] - scores["upright"]
+            judged["scores"] = {k: round(v, 4) for k, v in scores.items()}
+            if best == "rows reversed" and margin >= REVERSAL_MARGIN:
+                judged.update(direction=REVERSED, turned=True,
+                              why=f"reads rows-reversed by {margin:+.2f}")
+                if write:
+                    tiff.write(str(path / "prescan.tif"),
+                               np.ascontiguousarray(prescan[::-1]))
+            elif best == "upright" and -margin >= REVERSAL_MARGIN:
+                judged.update(direction=FORWARD, why=f"reads upright by {-margin:+.2f}")
+            else:
+                judged["why"] = f"not decisive ({best} best, margin {margin:+.2f})"
+        record["prescan"] = dict(pre, file="prescan.tif", read_direction=judged)
+        done.append(f"prescan: {judged['direction']}"
+                    + (" -- turned upright" if judged["turned"] else "")
+                    + f" ({judged.get('why', '')})")
+
+    if done and write:
+        (path / "scan.json").write_text(json.dumps(record, indent=2, default=str),
+                                        encoding="utf-8")
+    return done
 
 
 def signature(record: dict[str, Any]) -> tuple:

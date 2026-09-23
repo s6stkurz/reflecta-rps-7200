@@ -560,6 +560,9 @@ def main() -> int:
                         raw_image=frame.raw_image,
                         meta=frame.meta,
                         prescan=frame.prescan,
+                        # Which way the prescan was read; it has no raw bytes
+                        # of its own to say so in the entry.
+                        prescan_meta=frame.prescan_meta,
                         library=args.library,
                         inquiry=info,
                         capture=s.capture_record(),
