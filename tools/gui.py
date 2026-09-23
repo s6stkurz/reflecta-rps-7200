@@ -74,7 +74,6 @@ from rps7200.session import (                              # noqa: E402
     FINE_MIN_MM,
     FORWARD_FRAME_S,
     INFRARED_TIE_CROSSOVER_DPI,
-    LAST_PLAUSIBLE_POSITION,
     NUMBERING,
     Approved,
     Calibrate,
@@ -90,6 +89,7 @@ from rps7200.session import (                              # noqa: E402
     estimate_seconds,
     legacy_shift,
     plan_nudges,
+    plausible,
     renumbered,
     walked_prescans,
 )
@@ -487,6 +487,11 @@ class ScannerGui:
         self._roll_frames_total: int | None = None
         self._roll_frames_done = 0
         self._roll_seconds_per_frame = 0.0
+        # True from a roll's submission until its seek has landed: the roll
+        # moves the film to its first frame before scanning anything, and the
+        # pace is measured from there. The session says where the seek put
+        # the film with the roll's first "transport" event.
+        self._roll_seeking = False
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         root.geometry(_fits(root, self.remembered["window"].get("geometry"))
@@ -1987,10 +1992,10 @@ class ScannerGui:
         if dpi is None or predpi is None:
             return
         frames = self._int(self.v_frames, "Frames", 0, 100)
-        # Bounded by the counter a roll will believe, so a frame no strip has
-        # is refused here rather than after the film has been wound for it.
-        start_at = self._int(self.v_startat, "Start at", 1,
-                             LAST_PLAUSIBLE_POSITION + 1)
+        # A shape check only. Whether a strip has that frame is the seek's to
+        # say, and it refuses before it reads or moves anything -- one place
+        # for the refusal, the backend, where the failed-job path shows it.
+        start_at = self._int(self.v_startat, "Start at", 1, 100)
         if frames is None or start_at is None:
             return
         dry = self.v_dryrun.get()
@@ -2006,7 +2011,7 @@ class ScannerGui:
             f"at {dpi} dpi"
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
             f"{move}\n\n"
-            f"Roughly {_duration(per * (frames or 6) + move_s)}.\n\n"
+            f"{roll_estimate(per, frames, move_s)}\n\n"
             "Start?",
         ):
             return
@@ -2037,6 +2042,7 @@ class ScannerGui:
         # The button this handler is behind is disabled while busy, so this
         # cannot race a job that is still running.
         self._roll_wall_start = time.monotonic()
+        self._roll_seeking = True
         self._roll_dry = dry
         self._roll_frames_total = frames or None
         self._roll_frames_done = 0
@@ -3071,8 +3077,19 @@ class ScannerGui:
         elif event.kind == "transport":
             known = event.done if event.done >= 0 else None
             self.v_position.set(position_label(known))
-            if known is not None:
-                self._transport = known
+            # Unknown replaces what was known. Keeping the older value had the
+            # Roll dialog forecast "the transport last said frame 11" beside a
+            # readout saying "film on frame ?", from a counter since lost.
+            self._transport = known
+            if self._roll_seeking:
+                # The roll's seek has landed -- the session reports where it
+                # put the film before the first frame -- so the roll's pace is
+                # timed from here. From the submission, a minute's wind back
+                # counted as frame 1's and inflated every "left" after it.
+                self._roll_seeking = False
+                if self._roll_wall_start is not None:
+                    self._roll_wall_start = time.monotonic()
+                    self._update_roll_eta()
         elif event.kind == "filed":
             for r in self.results:
                 if r.seq == event.done:
@@ -3082,6 +3099,7 @@ class ScannerGui:
             self.v_pass_eta.set("")
             self.progress.configure(value=1000)
             self._roll_wall_start = None
+            self._roll_seeking = False
             self.v_roll_eta.set("")
             if self._surveying:
                 self._surveying = False
@@ -3108,6 +3126,7 @@ class ScannerGui:
             self.v_caption.set(event.text)
             self.progress.configure(value=0)
             self._roll_wall_start = None
+            self._roll_seeking = False
             self.v_roll_eta.set("")
             self._set_busy(False)
             self._light("broken")
@@ -3332,7 +3351,9 @@ class ScannerGui:
             self.orientations[key] = (result.rotation, result.flipped)
         if self._surveying and result.kind == "prescan" and result.number:
             self.survey.append(result)
-        if result.position is not None:
+        # Through the same filter the session's readout reports use, so a
+        # counter no strip can have never becomes a forecast either.
+        if plausible(result.position):
             self._transport = result.position
         # Surveyed frames are exempt. The contact sheet displays these arrays
         # and the adjuster zooms into them, so decimating one in place would
@@ -5497,6 +5518,22 @@ def chosen_span(numbers) -> tuple[int, int]:
     """
     chosen = sorted(int(n) for n in numbers)
     return chosen[0], chosen[-1] - chosen[0] + 1
+
+
+def roll_estimate(per: float, frames: int | None, move_s: float) -> str:
+    """The Roll dialog's time, for a count of frames or for the whole strip.
+
+    With no count the roll runs until the strip does, and nothing here knows
+    how long the strip is -- so it says the pace rather than a total. It used
+    to multiply by six while the sentence above it said "every frame to the
+    end of the strip": a figure for a strip of six, on any strip.
+    """
+    if frames:
+        return f"Roughly {_duration(per * frames + move_s)}."
+    getting_there = (f", plus about {_duration(move_s)} to reach the first "
+                     "frame" if move_s else "")
+    return (f"Roughly {_duration(per)} a frame{getting_there}, for as many "
+            "frames as the strip holds -- there is no count to add up.")
 
 
 def seek_note(here: int | None, start_at: int) -> tuple[str, float]:

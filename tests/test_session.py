@@ -847,6 +847,18 @@ def test_a_move_never_files_anything(tmp_path):
     assert library.entries(tmp_path) == []
 
 
+@pytest.mark.parametrize("job", [Move(frames=1), Move(frames=-1),
+                                 Move(millimetres=0.27)])
+def test_a_move_reports_a_counter_no_strip_has_as_unknown(tmp_path, job):
+    """As `_report_position` does. A stale 72 went to the window as the film
+    being on frame 73, which the Roll dialog then forecast a 72-frame wind
+    from."""
+    scanner = FakeTransportScanner(position=72)
+    _, _, events = run(job, tmp_path, scanner=scanner)
+    reported = [e.done for e in kinds(events, "transport")]
+    assert reported and all(done == -1 for done in reported), reported
+
+
 def test_moving_several_frames_steps_one_at_a_time(tmp_path):
     """So the position is confirmed at every frame, and a strip that runs out
     part-way stops there rather than being asked for the rest."""

@@ -1297,7 +1297,11 @@ class ScanSession:
                 landed = step()
                 if landed is None:
                     break
-                self._emit("transport", done=landed)
+                # Through the filter `_report_position` uses: a counter no
+                # strip can have is unknown, not "film on frame 73", and the
+                # Roll dialog would forecast a wind from it.
+                self._emit("transport", done=landed if plausible(landed)
+                           else -1)
             if landed is None:
                 return "the film did not move -- it may be at the end of the strip"
             return f"on frame {_frame(landed)} of the strip"
@@ -1332,7 +1336,8 @@ class ScanSession:
             # is reported as whatever it still says rather than pretending it
             # changed. Only a prescan can confirm a nudge landed.
             position = self._scanner.position()
-            self._emit("transport", done=-1 if position is None else position)
+            self._emit("transport",
+                       done=position if plausible(position) else -1)
             how = f" in {done} moves" if done > 1 else ""
             return (f"moved {say_units(sign * moved)}{how} -- the frame counter "
                     "does not see this; prescan to check it landed")

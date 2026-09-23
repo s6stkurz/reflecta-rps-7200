@@ -6,12 +6,15 @@
         --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 
 Frame numbers are places on the strip: frame N is where the transport's own
-counter reads N-1, and it reads 0 once a strip goes in. The roll starts at
+counter reads N-1, counted from where the strip went in. It has been seen
+resetting to 0 as a strip goes in -- once, in `full_17_strip` -- so the numbers
+are right as long as the strip is in the way it was when it was walked, which
+only the operator can see. Shading is calibrated first, once, and reused for the
+whole roll -- which is what the vendor does, and the reason a 17-pass session in
+the captures contains no calibration at all. The roll then starts at
 `--start-at` (frame 1 unless told otherwise) and winds or advances the film
-there first, from wherever the transport says it is -- refusing, with nothing
-scanned, if it cannot tell -- then advances between frames. Shading is
-calibrated once and reused for the whole roll -- which is what the vendor does,
-and the reason a 17-pass session in the captures contains no calibration at all.
+there, from wherever the transport says it is -- refusing, with nothing scanned
+and nothing written, if it cannot tell -- then advances between frames.
 
 Every frame goes to disk the moment it exists: a library entry with the raw
 bytes, the shading reference and the CCD mask beside the pixels, plus a
@@ -80,10 +83,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--start-at", type=int, default=1, metavar="N",
                     help="start at frame N of the strip, winding the film "
                          "there first from wherever it is. Frame 1 is where "
-                         "the transport's counter reads 0, which it does once "
-                         "a strip goes in; the frames are numbered by their "
-                         "place on the strip, so a roll resumed with N files "
-                         "its frames under the same numbers as before")
+                         "the transport's counter reads 0, counted from where "
+                         "the strip went in (it has been seen resetting to 0 "
+                         "as a strip goes in, once); the frames are numbered "
+                         "by their place on the strip, so a roll resumed with "
+                         "N files its frames under the same numbers as "
+                         "before, as long as the strip went back in the same "
+                         "way -- which only you can see")
     ap.add_argument("--rewind", type=int, default=0,
                     help="wind the film back this many frames before doing "
                          "anything else, one frame at a time, checking each "

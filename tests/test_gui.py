@@ -1106,6 +1106,91 @@ def test_a_dry_run_says_walked_not_scanned(window):
     assert "scanned" not in app.v_roll_eta.get()
 
 
+def _press_roll(app, monkeypatch, frames="3", start_at="1", answer=True):
+    """Press Scan roll with these fields; return (dialog texts, jobs, errors)."""
+    said, jobs, errors = [], [], []
+
+    def ask(title, message, **kw):
+        said.append(message)
+        return answer
+
+    monkeypatch.setattr(gui.messagebox, "askokcancel", ask)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: errors.append(a))
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.v_frames.set(frames)
+    app.v_startat.set(start_at)
+    app.v_dryrun.set(True)
+    app.on_roll()
+    return said, jobs, errors
+
+
+def test_the_roll_pace_is_timed_from_where_the_seek_landed(window,
+                                                           monkeypatch):
+    """The Roll button winds the film to its first frame inside the job, and
+    the clock started at the press -- so a minute's wind back became frame
+    1's time, and "left" read about 19 minutes on a 15-frame walk that had
+    about five. It restarts when the session says where the seek put the
+    film, which it does before the first frame."""
+    from rps7200.session import Event
+
+    app, root = window
+    _press_roll(app, monkeypatch, frames="15")
+    app._roll_wall_start -= 60.0                      # the wind back
+    app._handle(Event(kind="transport", done=0))      # and where it landed
+    assert time.monotonic() - app._roll_wall_start < 5.0
+    later = app._roll_wall_start
+    app._handle(Event(kind="transport", done=1))      # a frame's own report
+    assert app._roll_wall_start == later, "only the seek restarts it"
+
+
+def test_an_unknown_position_replaces_the_one_before_it(window):
+    """After a report of "unknown" the readout said "film on frame ?" while
+    the Roll dialog went on forecasting a wind from the older value."""
+    from rps7200.session import Event
+
+    app, root = window
+    app._handle(Event(kind="transport", done=10))
+    assert app._transport == 10
+    app._handle(Event(kind="transport", done=-1))
+    assert app.v_position.get() == "film on frame ?"
+    assert app._transport is None
+    assert "has not heard" in gui.seek_note(app._transport, 1)[0]
+
+
+def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
+                                                            monkeypatch):
+    """`start at` 45 was refused by the window, on the premise that the film
+    would otherwise be wound first. It would not: the seek refuses a frame no
+    strip has before it reads or moves anything, and says so on the
+    failed-job path. One refusal, in the backend."""
+    from conftest import StripScanner
+
+    from rps7200 import session
+
+    app, root = window
+    _said, jobs, errors = _press_roll(app, monkeypatch, start_at="45")
+    assert errors == []
+    assert [job.start_at for job in jobs] == [45]
+    film = StripScanner(at=0)
+    with pytest.raises(session.FilmNotPlaced, match="frame 45 is past"):
+        session.seek(film, 44)
+    assert film.moves == [] and film.warmed == 0, "refused before anything"
+
+
+def test_a_roll_to_the_end_of_the_strip_gives_a_pace_not_a_total(
+        window, monkeypatch):
+    """"Every frame to the end of the strip", then a figure for six frames,
+    whatever the strip held."""
+    app, root = window
+    said, _jobs, _errors = _press_roll(app, monkeypatch, frames="0",
+                                       answer=False)
+    assert "every frame to the end of the strip" in said[0]
+    assert "a frame" in said[0] and "no count to add up" in said[0]
+    assert gui.roll_estimate(23.0, 6, 0.0) == "Roughly 2m 18s."
+    assert gui.roll_estimate(23.0, 0, 0.0).startswith("Roughly 23 s a frame")
+
+
 # -- the approved-offset helpers ---------------------------------------------
 #
 # Pure module-level functions, so they are tested directly rather than through
