@@ -938,6 +938,29 @@ def test_an_8a9ba17_roll_that_went_over_a_place_twice_reopens_as_scanned(
     assert sorted(gui.roll_summary(folder)["done"]) == scanned
 
 
+def test_a_roll_the_tool_wrote_reopens_as_one_run(tmp_path):
+    """A roll.json from `tools/scan_roll.py` -- `dry_run` only inside
+    `settings`, and one roll, since the tool wrote each afresh -- whose last
+    frame's counter read one frame late, 5, 6, 7, 7. Read as two rolls, it
+    kept that frame on 8 beside frame 3, so the window and the browser called
+    strip frame 9 not scanned and offered it again."""
+    folder = tmp_path / "t"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "t", "started": "2026-09-01T10:00:00+00:00",
+        "settings": {"dpi": 300, "dry_run": False, "start_at": 1,
+                     "frames": 4, "prescan_resolution": 300},
+        "frames": [{"number": n, "index": n - 1, "transport_position": p,
+                    "registration": {}, "error": None, "done": True}
+                   for n, p in enumerate([5, 6, 7, 7], start=1)],
+    }), encoding="utf-8")
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == [6, 7, 8, 9]
+    assert sorted(gui.roll_summary(folder)["done"]) == [6, 7, 8, 9]
+    assert len(said) == 1 and "frame 4 of t" in said[0], said
+
+
 @pytest.mark.parametrize("positions, stale", [([72, 1, 2, 3], 1),
                                               ([0, 1, 72, 3], 3)])
 def test_a_walk_that_recorded_the_stale_72_reopens_on_the_strips_numbers(

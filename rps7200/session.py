@@ -374,30 +374,50 @@ def legacy_shift(manifest: dict) -> int | None:
     return max(seen, key=lambda k: seen[k])
 
 
-def _runs(records: list[dict], shift: int, walk: bool) -> dict[int, int]:
+def _is_one_run(manifest: dict) -> bool:
+    """Whether an old manifest holds what one walk or one roll counted.
+
+    A walk's does -- each walk wrote `survey.json` afresh -- and says it is a
+    walk with ``dry_run``: at the top level from the session, inside
+    ``settings`` from `tools/scan_roll.py`. So does every `roll.json` the
+    tool wrote, which is the file with ``dry_run`` only inside ``settings``:
+    every version of the tool began its manifest with no frames and never
+    read one back. Only the session's `roll.json` merged runs -- 8a9ba17
+    resumed a roll into the file the last one under that name left -- and
+    the session writes ``dry_run`` at the top level, so a file the tool
+    wrote and the session then resumed into reads as the session's.
+
+    False where neither says, which leaves a file to be read as several.
+    """
+    settings = manifest.get("settings")
+    if "dry_run" in manifest:
+        return bool(manifest["dry_run"])
+    return isinstance(settings, dict) and "dry_run" in settings
+
+
+def _runs(records: list[dict], shift: int, one_run: bool) -> dict[int, int]:
     """The shift of the run each old record sits in, by its place in the file.
 
     A run is what one walk, or one roll, counted: its numbers went up once
     per advance from wherever it started, so one shift holds across it.
 
-    A walk's file is one run -- each walk wrote `survey.json` afresh, and
-    ``walk`` says this is one -- so all of it is on ``shift``. A `roll.json`
-    can hold several: 8a9ba17 merged every roll into the file the last one
-    left under that name, and a roll with no name typed was named by the
-    date, so every such roll of a day went into one file. There a run is
-    records next to each other whose positions give one shift, and a lone
-    record is a run too: a roll of one frame, which is one way to take a
-    frame again. Except between two stretches of one shift it does not share,
-    which is read as one misread counter inside a run, 5, 5, 7, rather than
-    three rolls placed so that the first and the last agree. Neither has been
-    seen; the second takes more.
+    A file that is ``one_run`` (:func:`_is_one_run`) is all on ``shift``. A
+    `roll.json` the session wrote can hold several: 8a9ba17 merged every roll
+    into the file the last one left under that name, and a roll with no name
+    typed was named by the date, so every such roll of a day went into one
+    file. There a run is records next to each other whose positions give one
+    shift, and a lone record is a run too: a roll of one frame, which is one
+    way to take a frame again. Except between two stretches of one shift it
+    does not share, which is read as one misread counter inside a run, 5, 5,
+    7, rather than three rolls placed so that the first and the last agree.
+    Neither has been seen; the second takes more.
 
     A record with no position a strip has goes with the runs either side of
     it when they agree, or with the one beside it at an end of the file.
     Between two that disagree it has none, and nor does anything in a file
     where no record has a shift; those are left to the manifest's.
     """
-    if walk:
+    if one_run:
         return dict.fromkeys(range(len(records)), shift)
     blocks: list[tuple[int, list[int]]] = []
     for i, record in enumerate(records):
@@ -466,11 +486,12 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
     back, or the strip put in again, between two rolls into one file -- and
     both pictures are of that frame; no two numbers that kept them apart
     would both be true. A misread and a film that really went back look the
-    same here, and so do a misread at either end of a `roll.json` and a roll
-    of one frame, which this reads as the roll: it keeps the place its own
-    counter named. Nothing stored has any of it -- every manifest under
-    `rolls/` with positions has one shift throughout, 213 frames across 25 of
-    them, checked 2026-09-23.
+    same here, and so do a misread at either end of the session's
+    `roll.json` and a roll of one frame, which this reads as the roll: it
+    keeps the place its own counter named; a `roll.json` the tool wrote is
+    one run (:func:`_is_one_run`). Nothing stored has any of it -- every
+    manifest under `rolls/` with positions has one shift throughout, 213
+    frames across 25 of them, checked 2026-09-23.
 
     ``start_at``, ``only`` and ``wanted`` carry no positions and are moved by
     the manifest's shift.
@@ -494,11 +515,8 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
         return None if values is None else [moved(v) for v in values]
 
     records = [dict(record) for record in manifest.get("frames") or ()]
-    # `tools/scan_roll.py` writes it inside `settings`, the session at the
-    # top level.
-    walk = manifest.get("dry_run",
-                        (manifest.get("settings") or {}).get("dry_run"))
-    run = _runs(records, shift, walk=bool(walk))
+    one_run = _is_one_run(manifest)
+    run = _runs(records, shift, one_run)
     own: dict[int, int] = {}          # what each frame's position says
     nowhere: dict[int, int] = {}      # a reading no strip has
     for i, record in enumerate(records):

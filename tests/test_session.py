@@ -1598,18 +1598,92 @@ def test_a_walks_misread_takes_the_walks_shift_wherever_it_is(positions,
                                                               where):
     """A walk's file is one run -- each walk wrote survey.json afresh -- so a
     lone disagreeing position at either end of it is read as the middle one
-    is: a misread, on the walk's shift. At an end of a roll.json the same
-    record could be a roll of one frame, and is read as one. The session
-    says it is a walk at the top level, `tools/scan_roll.py` in `settings`."""
-    old = _counted("walk", positions)
-    if where == "top":
-        old["dry_run"] = True
-    else:
-        old["settings"] = {"dry_run": True}
+    is: a misread, on the walk's shift. At an end of a roll.json the session
+    merged, 8a9ba17's, the same record could be a roll of one frame, and is
+    read as one; a roll.json `tools/scan_roll.py` wrote is one run, as a walk
+    is (see the next test). The session says it is a walk at the top level,
+    the tool in `settings`."""
+    old = _one_run(positions, where)
     said = []
     new = session.renumbered(old, say=said.append)
     assert [f["number"] for f in new["frames"]] == [6, 7, 8]
     assert len(said) == 1, said
+
+
+def _one_run(positions, where):
+    """`positions` counted 1, 2, ... in a file that is one run: a walk, which
+    the session marks at the top level and `tools/scan_roll.py` in
+    `settings`, or a roll.json the tool wrote -- `dry_run` false and only in
+    `settings`, as every version of it wrote one, afresh."""
+    old = _counted("w", positions)
+    if where == "top":
+        old["dry_run"] = True
+    elif where == "settings":
+        old["settings"] = {"dry_run": True}
+    else:
+        old["started"] = "2026-09-01T10:00:00+00:00"
+        old["settings"] = {"dry_run": False, "start_at": 1,
+                           "frames": len(positions)}
+    return old
+
+
+@pytest.mark.parametrize("positions", [[5, 6, 7, 7], [6, 6, 7, 8],
+                                       [6, 6, 7], [5, 6, 6]])
+def test_a_roll_json_the_tool_wrote_is_one_run(positions):
+    """Every version of `tools/scan_roll.py` began its roll.json with no
+    frames and never read one back, so it holds one roll: a lone
+    disagreeing position at an end of it is a misread, as in a walk, and not
+    a roll of one frame. Read as one, the last frame of 5, 6, 7, 7 was kept
+    on frame 8 beside frame 3, so the window offered strip frame 9 again,
+    and the log blamed two rolls filed under one name, which the tool never
+    made. The session writes `dry_run` at the top level; the tool only inside
+    `settings`."""
+    said = []
+    new = session.renumbered(_one_run(positions, "tool roll"),
+                             say=said.append)
+    assert [f["number"] for f in new["frames"]] == list(
+        range(6, 6 + len(positions)))
+    assert len(said) == 1, said
+    assert "two rolls" not in said[0], said
+
+
+@pytest.mark.parametrize("where", ["top", "settings", "tool roll"])
+@pytest.mark.parametrize("positions", [[5, 6, 8, 9], [5, 6, 7, 9, 10, 11]])
+def test_one_run_that_went_two_frames_at_once_keeps_its_own_positions(
+        positions, where):
+    """A double step inside a walk: frames 3 and 4 of 5, 6, 8, 9 are strip
+    frames 9 and 10, whatever the walk counted. Read with one shift for the
+    whole walk, as a0de517 read it, they were 8 and 9, and frame 3's picture
+    of 9 was filed under 8. A walk is one run, and all that keeps its frames
+    on their own positions is that only a frame whose position collides takes
+    the run's shift; nothing here collides, so nothing is said."""
+    said = []
+    new = session.renumbered(_one_run(positions, where), say=said.append)
+    assert [f["number"] for f in new["frames"]] == [p + 1 for p in positions]
+    assert said == []
+
+
+@pytest.mark.parametrize("positions, written", [
+    ([5, 6, 7, 7], [(6, 5), (7, 6), (8, 7), (9, 8)]),
+    ([6, 6, 7, 8], [(6, 6), (7, 6), (8, 7), (9, 8), (10, 9)]),
+])
+def test_a_resume_of_a_roll_the_tool_wrote_takes_it_as_one_run(
+        tmp_path, positions, written):
+    """The write-back half, through the real session: the frame after the
+    roll resumed with the film where it stopped. Read as two rolls, 5, 6, 7,
+    7 wrote the old scan of strip frame 9 back as a second frame 8, for good,
+    and 6, 6, 7, 8 wrote two frame 7s."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "w"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(
+        json.dumps(_one_run(positions, "tool roll")), encoding="utf-8")
+    last = max(positions) + 1
+    _, frames = walk(Roll(frames=1, start_at=last + 1, infrared=False,
+                          resolution=300, name="w"), tmp_path,
+                     StripScanner(at=last))
+    assert frames == written
 
 
 @pytest.mark.parametrize("which, strip", [
