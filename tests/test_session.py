@@ -1334,6 +1334,32 @@ def test_a_roll_tells_the_window_where_the_film_went(tmp_path):
     assert 0 in reported, "and where the seek put it"
 
 
+def test_the_readout_follows_a_roll_frame_by_frame(tmp_path):
+    """Each frame's counter reading goes to the window as the roll reaches
+    it, already read, so the readout follows the walk rather than jumping
+    from where the seek landed to where the roll stopped. A counter no
+    strip has is left out of it, as every other report leaves it out."""
+    from dataclasses import replace
+
+    from conftest import StripScanner
+
+    class Stale(StripScanner):
+        """Frame 2's record says 72; the film is where it always was."""
+
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index == 1:
+                    frame = replace(frame, position=72)
+                yield frame
+
+    _, _, events = run(Roll(frames=4, start_at=1, dry_run=True, name="strip"),
+                       tmp_path, scanner=Stale(at=0))
+    reported = [e.done for e in kinds(events, "transport")]
+    assert 2 in reported, "frame 3 was reported as the roll reached it"
+    assert 72 not in reported
+    assert reported[-1] == 3, "and the last frame walked"
+
+
 def test_resuming_a_roll_numbered_the_old_way_renumbers_it_by_position(
         tmp_path):
     """A roll.json written before frame numbers were places on the strip is

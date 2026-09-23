@@ -455,15 +455,17 @@ class DemoScanner:
                     self._log("stopping before the next frame, as asked")
                     return
                 # Numbered by where the film is, as the real loop numbers it.
-                # This film never moves two places for one advance, so here it
-                # only ever agrees -- but the decision is the driver's, and a
+                # This film never moves two places for one advance, so inside
+                # a roll it only ever agrees -- but the decision is the
+                # driver's, a caller can start one away from its film, and a
                 # stand-in that skips it cannot show what the driver does.
-                index, moved = self.place_on_strip(index, self._position,
-                                                   wanted)
+                placed, moved = self.place_on_strip(index, self._position,
+                                                    wanted, finished)
                 if moved is not None:
                     self._log(moved)
-                    if finished(index):
-                        return
+                if placed is None:
+                    return            # past the end, or behind the count
+                index = placed
                 self._index = index
                 # Each frame starts where the advance left it, as the real one
                 # does; the offset an operator asked for is what the loop below

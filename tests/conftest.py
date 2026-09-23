@@ -264,17 +264,21 @@ class StripTransport:
 
     ``double_steps`` are the places whose advance moves the film two: the one
     failure a roll's own count cannot see, and the counter can.
+    ``goes_back`` maps a place to where its next advance lands instead, once
+    -- a counter that reads behind the count, which nothing has seen here.
 
     ``warm_at`` is when the lamp is warm, on ``clock`` (a `NoWaiting`). Until
     then every command but REQUEST SENSE is refused, and the sense says NOT
-    READY -- what the device does for its first ~80 s, READ_STATE included.
+    READY -- what the device does for its first ~80 s, READ_STATE included,
+    by `DirectScanner.wait_warm`'s docstring rather than by a measurement.
     ``while_warming`` is every opcode sent before then.
     """
 
     def __init__(self, at=0, last=16, double_steps=(), warm_at=0.0,
-                 clock=None):
+                 clock=None, goes_back=None):
         self.at, self.last = at, last
         self.double_steps = set(double_steps)
+        self.goes_back = dict(goes_back or {})
         self.warm_at, self.clock = warm_at, clock
         self.sent = []
         self.while_warming = []
@@ -301,7 +305,9 @@ class StripTransport:
         if opcode == SCSI_REQUEST_SENSE:
             return bytes(14)
         if opcode == SCSI_SLIDE and data:
-            if data[0] == SLIDE_NEXT and self.at < self.last:
+            if data[0] == SLIDE_NEXT and self.at in self.goes_back:
+                self.at = self.goes_back.pop(self.at)
+            elif data[0] == SLIDE_NEXT and self.at < self.last:
                 step = 2 if self.at in self.double_steps else 1
                 self.at = min(self.last, self.at + step)
             elif data[0] == SLIDE_PREV and self.at > 0:
@@ -332,9 +338,10 @@ class ScannerOnStrip(DirectScanner):
     """
 
     def __init__(self, at=0, last=16, double_steps=(), warm_at=0.0,
-                 clock=None):
+                 clock=None, goes_back=None):
         super().__init__(
-            transport=StripTransport(at, last, double_steps, warm_at, clock),
+            transport=StripTransport(at, last, double_steps, warm_at, clock,
+                                     goes_back),
             verbose=False, debug=False)
         self.held = []
         self.logged = []

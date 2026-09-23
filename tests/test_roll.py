@@ -1680,6 +1680,53 @@ def test_a_chosen_frame_is_held_to_its_own_position_after_a_jump(
                for line in s.logged), s.logged
 
 
+def test_a_jump_onto_a_chosen_frame_through_an_unchosen_one_is_caught(
+        monkeypatch):
+    """Only 4 ticked, and the advance from place 1 lands on 3. The counter
+    read at the top of index 2 -- a frame nobody chose -- is what finds the
+    film already on the chosen frame. Read only at chosen frames, the roll
+    advanced past it, and the one frame chosen was lost."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, double_steps={1})
+    walked = [(f.index, f.position) for f in s.scan_roll(
+        only=(3,), dry_run=True, meter=METER_NONE, infrared=False)]
+    assert walked == [(3, 3)]
+
+
+def test_a_counter_behind_the_count_ends_the_roll(monkeypatch):
+    """The advance from place 3 lands back on place 1. Followed, the roll
+    took frames 2 to 4 again under the numbers it had already filed them as,
+    overwrote their prescans, and gave eight pictures for five asked. It
+    ends there, as a jump past the end already did, and says which frames
+    the film went back over."""
+    from conftest import NoWaiting, ScannerOnStrip, strip_picture
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, goes_back={3: 1})
+    walked = _walked(s, frames=5)
+    assert [(i, p) for i, p, _ in walked] == [(0, 0), (1, 1), (2, 2), (3, 3)]
+    for index, _, prescan in walked:
+        assert np.array_equal(prescan, strip_picture(index)), index
+    assert any("frame 5: the transport says the film is on frame 2" in line
+               and "went back over frames 2, 3, 4" in line
+               and "ends here" in line for line in s.logged), s.logged
+
+
+def test_where_the_counter_ends_a_roll_is_one_decision():
+    """Behind the count, or past the roll's end: both are ``None``, which is
+    how both loops -- the driver's and the demo's -- know to stop."""
+    ends = DirectScanner.roll_ends(0, 0, 4, None)
+    assert DirectScanner.place_on_strip(4, 1, finished=ends)[0] is None
+    assert DirectScanner.place_on_strip(2, 4, finished=ends)[0] is None
+    assert DirectScanner.place_on_strip(2, 3, finished=ends)[0] == 3
+    back = DirectScanner.place_on_strip(4, 3)[1]
+    assert back is not None and "went back over frame 4," in back
+
+
 def test_a_counter_no_strip_has_does_not_renumber_a_frame():
     """A stale reading is logged, and the count kept."""
     assert DirectScanner.place_on_strip(3, 72)[0] == 3
@@ -1712,3 +1759,32 @@ def test_the_hold_loop_counts_frames_the_way_the_window_does():
     s._hold_to_approved(0, image, 300,
                         Approved(number=1, offset_mm=0.0, reference=image))
     assert lines and lines[-1].startswith("frame 1:"), lines
+
+
+def test_the_reasons_a_roll_stops_correcting_count_frames_from_1():
+    """These reach the manifest as well as the log: a roll's `roll_abort`
+    and the aim's travel budget are filed with the frame they stopped on,
+    and said 'frame 0' of the frame the window calls 1."""
+    from rps7200.framing import ROLL_TRAVEL_LIMIT_MM, StripWalk
+
+    # Asked forward, and the film went back: the direction check.
+    reference = _lit()
+    s = FakeRoll([reference, reference.copy(), None])
+    s.prescans = [reference.copy(), np.roll(reference, -14, axis=1),
+                  reference.copy()]
+    frames = list(s.scan_roll(
+        frames=2, resolution=300, infrared=False, meter=METER_NONE,
+        approved={0: _approved(1, 0.5, reference),
+                  1: _approved(2, 0.5, reference)}))
+    abort = frames[0].registration["approved"]["roll_abort"]
+    assert abort.startswith("frame 1:"), abort
+
+    # A roll that has already nudged as far as a strip should ever need.
+    class Spent(StripWalk):
+        def judge(self, number, image):
+            return 5 * DirectScanner.STEP_MM, {"agreed": ["left"]}
+
+    walk = Spent(travel_mm=ROLL_TRAVEL_LIMIT_MM)
+    out = FakeRoll([reference])._aim_frame(0, reference, 300, walk)
+    assert out["outcome"] == "budget"
+    assert out["reason"].startswith("frame 1 wants"), out["reason"]

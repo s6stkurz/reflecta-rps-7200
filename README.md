@@ -501,11 +501,13 @@ only the operator can see that. A roll — from the window or from `--start-at N
 waits for the lamp, reads that counter and winds or advances the film to its first frame,
 and refuses with nothing scanned if the counter will not answer or the film does not
 arrive. A frame is numbered by that counter throughout, so a film that jumps two places
-mid-roll is filed where it landed and the log names the frame it went past. A roll used
-to start wherever the film happened to be and call that frame 1. Manifests written before
-this say so by lacking `"numbering": "strip"`, and are moved onto the strip's numbers by
-the shift their frames' recorded transport positions give rather than read by their
-numbers.
+mid-roll is filed where it landed and the log names the frame it went past; a counter
+that reads behind the roll's count ends the roll, naming the frames it went back over,
+rather than scan them twice. A roll used to start wherever the film happened to be and
+call that frame 1. Manifests written before this say so by lacking
+`"numbering": "strip"`, and each frame in them is moved onto the strip's numbers by its
+own recorded transport position rather than read by its number — by the file's commonest
+shift only where two positions give one number, which is how a misread counter looks.
 
 `--start-at` resumes a roll that stopped, `--max-failures 3` gives up after three bad
 frames rather than grinding through a whole strip, and a resumed roll carries forward what

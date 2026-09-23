@@ -519,6 +519,32 @@ def test_a_demo_roll_ends_after_its_last_chosen_frame(tmp_path):
     assert [f.index for f in frames] == [1, 3]
 
 
+def test_a_demo_roll_numbers_its_frames_by_where_its_film_is(tmp_path):
+    """The driver's `place_on_strip`, called by the demo's own loop -- which
+    nothing checked, only that the demo had it. Told it starts on 2 with its
+    film on 5, it files the pictures under 5 and 6 as the scanner would,
+    where counting would have filed the pictures on 8 and 9 there."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        _on_frame(s, 5)
+        frames = list(s.scan_roll(only=(5, 6), first_index=2, dry_run=True))
+    assert [(f.index, f.position) for f in frames] == [(5, 5), (6, 6)]
+
+
+def test_a_demo_roll_behind_its_count_ends_as_the_drivers_does(tmp_path):
+    """Film on 0, told it starts on 5, two frames: the counter reads behind
+    the count, so the roll ends before it takes anything and says which
+    frames it would have gone back over. Following it, the demo walked seven
+    frames, 0 to 6, for two asked."""
+    lines = []
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        s.log_hook = lines.append
+        frames = list(s.scan_roll(frames=2, first_index=5, dry_run=True))
+        assert s.position() == 0, "nothing moved"
+    assert frames == []
+    assert any("went back over frames 1, 2, 3, 4, 5" in line
+               for line in lines), lines
+
+
 def test_the_demo_is_wound_back_by_the_sessions_own_seek(tmp_path):
     """The reported case, run through the whole of the real software with the
     demo standing where the scanner stands: nine frames on, a roll from frame
