@@ -39,10 +39,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import (                                     # noqa: E402
-    export, framing, library, preview, settings, shortcuts, tiff,
+    export, library, preview, settings, shortcuts, tiff,
 )
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                              # noqa: E402
@@ -52,6 +54,7 @@ from rps7200.direct import (                              # noqa: E402
     METER_MODES,
 )
 from rps7200.framing import FULL_FRAME                    # noqa: E402
+from tools import frame_edges                             # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
 from rps7200.mono import (                                 # noqa: E402
     MONO_AVERAGE,
@@ -61,6 +64,7 @@ from rps7200.mono import (                                 # noqa: E402
 )
 from rps7200.protocol import (                             # noqa: E402
     COORD_PER_INCH,
+    FILM_NEGATIVE,
     MM_PER_INCH,
     MM_PER_COMMAND,
     MM_PER_UNIT,
@@ -345,6 +349,12 @@ _GESTURE_FACTOR = 3
 _SETTLE_MS = 130
 
 LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
+#: The frame-edge reader's light, beside the scanner's: blue while it reads,
+#: green when every frame has its final reading, red when the detector failed
+#: on one. Grey with nothing to read, or on film it does not read.
+EDGE_LIGHT = {frame_edges.IDLE: "#5a5a5a", frame_edges.READING: "#3d7bd9",
+              frame_edges.DONE: "#3fb950", frame_edges.FAILED: "#f05050",
+              frame_edges.SKIPPED: "#5a5a5a"}
 
 
 class ScannerGui:
@@ -388,8 +398,11 @@ class ScannerGui:
         self._drawn_at = 0.0
         self._alive = True
         self._job = ""                       # what is running, for the stop label
+        # A calibration asked for counts from the moment it is queued: the
+        # session runs jobs in order, so a scan pressed next waits behind it.
+        # The session's "calibrated" event then says how it actually ended.
         self.calibrated = False
-        self._asked_to_calibrate = False
+        self._calibrate_prompt = None        # "calibrate first", while open
         self._session_closed = False
         self._last_nudge = 0                 # which way the film last went
         self._zoom = 0.0                     # 0 = fit; otherwise pixels per pixel
@@ -435,6 +448,10 @@ class ScannerGui:
         #: real passes -- enough to drop a good match below the floor and
         #: report a frame as unverified for no reason.
         self._survey_predpi = None
+        #: The film the survey was walked on, which is what its edges are read
+        #: as: the detector reads negatives only, and on colour and B&W
+        #: differently. None until a walk or a reopened roll says.
+        self._survey_film: str | None = None
         #: The transport's own counter as it last reported it -- 0-based, so
         #: frame N of the strip is N-1 -- or None before it has said anything.
         #: Only ever what it last *said*: the scanner's keys move the film
@@ -473,6 +490,13 @@ class ScannerGui:
         self._panel_boxes: dict = {}         # title -> the LabelFrame
         self._panel_job = None               # a pending recount
         self._saves: queue.Queue = queue.Queue()
+        #: Reads the walk's frame edges on its own thread as the prescans
+        #: arrive -- or all at once for a walk opened from disk -- so the
+        #: contact sheet opens on answers rather than starting the detector.
+        #: `_pump` takes each newer answer to the light and the sheet.
+        self.edge_watch = frame_edges.EdgeWatch()
+        self._edge_seen = -1                 # the watch's version last shown
+        self._edge_said: tuple | None = None  # (generation, state) logged
 
         # -- the two live time estimates -----------------------------------
         # One pass, interpolated from its own line count -- reset whenever the
@@ -542,6 +566,21 @@ class ScannerGui:
         self.light.pack(side="right", padx=(0, 8))
         self._bulb = self.light.create_oval(2, 2, 12, 12, fill=LIGHT["idle"],
                                             outline="")
+        # The frame-edge reader, which works on its own thread whatever the
+        # scanner is doing: how many of the walk's frames it has read.
+        self.v_edges = tk.StringVar(value="frame edges")
+        ttk.Label(head, textvariable=self.v_edges).pack(side="right", padx=(0, 24))
+        self.edge_light = tk.Canvas(head, width=_px(14), height=_px(14),
+                                    highlightthickness=0)
+        self.edge_light.pack(side="right", padx=(0, 8))
+        self._edge_bulb = self.edge_light.create_oval(
+            2, 2, 12, 12, fill=EDGE_LIGHT[frame_edges.IDLE], outline="")
+        # Where a roll has got to, in the middle where it is seen from across
+        # the room: "frame 12 of 36". Empty when no roll is running.
+        self.v_frame_status = tk.StringVar()
+        ttk.Label(head, textvariable=self.v_frame_status,
+                  font=_font(13, bold=True)).place(relx=0.5, rely=0.5,
+                                                   anchor="center")
         ttk.Separator(self.root).pack(fill="x")
 
         # Every divider is a sash, so the widths and heights are the
@@ -789,6 +828,8 @@ class ScannerGui:
         if self.busy:
             self._say(f"the scanner is working -- that key starts {what} once "
                       "it has finished")
+            return
+        if self._calibration_missing():
             return
         if messagebox.askokcancel(
             what[0].upper() + what[1:],
@@ -1369,7 +1410,7 @@ class ScannerGui:
                             ("reuse", "reuse the cached reference")):
             ttk.Radiobutton(box, text=text, value=value,
                             variable=self.v_shading).pack(anchor="w")
-        self.b_calibrate = ttk.Button(box, text="Calibrate again",
+        self.b_calibrate = ttk.Button(box, text="Calibrate",
                                       command=self.on_calibrate)
         self.b_calibrate.pack(fill="x", pady=(6, 2))
         self.b_prescan = ttk.Button(box, text="Prescan", command=self.on_prescan)
@@ -1889,23 +1930,59 @@ class ScannerGui:
         self.session.submit(Calibrate(mode=mode or self.v_shading.get(),
                                       reference=self.session.reference))
         self.calibrated = True
+        self._sync_calibration()
+        # Whichever button started it, the question the prompt asks is answered.
+        top, self._calibrate_prompt = self._calibrate_prompt, None
+        if top is not None:
+            try:
+                top.destroy()
+            except tk.TclError:
+                pass
 
-    def ask_to_calibrate(self) -> None:
-        """The first thing the window does, before anything else can be run.
+    def _sync_calibration(self) -> None:
+        self.b_calibrate.configure(
+            text="Calibrate again" if self.calibrated else "Calibrate")
+
+    def _calibration_missing(self, parent=None) -> bool:
+        """True, having asked for one, when a scan would run uncalibrated.
+
+        Called by every control that takes a picture -- prescan, scan, a roll
+        or a walk, the sheet's scan, and their keys -- and by nothing else:
+        without a calibration every setting can still be changed, the film
+        moved and a stored walk opened. It asks rather than greying the
+        buttons, because a greyed button does not say what it is waiting for.
+        """
+        if self.calibrated:
+            return False
+        self.ask_to_calibrate(parent)
+        return True
+
+    def ask_to_calibrate(self, parent=None) -> None:
+        """Say that a scan needs a calibration, and offer to start one.
 
         The reference belongs to the power-on that measured it, so a session
         that scans before calibrating is a session whose corrections describe
         some other day's sensor. Not a modal: a modal here sits inside the event
-        pump and stops it, and the device is opening behind this window.
+        pump and stops it. Pressed twice, it raises the one already open.
         """
-        top = tk.Toplevel(self.root)
-        top.title("Calibrate")
-        top.transient(self.root)
+        if self._calibrate_prompt is not None:
+            try:
+                self._calibrate_prompt.lift()
+                self._calibrate_prompt.focus_force()
+                return
+            except tk.TclError:
+                self._calibrate_prompt = None
+        parent = parent or self.root
+        top = tk.Toplevel(parent)
+        self._calibrate_prompt = top
+        top.title("Calibrate first")
+        top.transient(parent)
         top.resizable(False, False)
         frame = ttk.Frame(top, padding=16)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, font=_font(13, bold=True),
-                  text="Calibrate before scanning").pack(anchor="w")
+                  text="Without a calibration no picture can be scanned"
+                  ).pack(anchor="w")
         ttk.Label(
             frame, wraplength=430, justify="left", padding=(0, 8),
             text=("The scanner measures its own per-column response and hands "
@@ -1915,7 +1992,9 @@ class ScannerGui:
                   "it is done once per session -- and with the film loaded, "
                   "which is what the vendor software does. The calibration "
                   "frame is the lower part of the transport, which the film "
-                  "does not cover, so the sensor is measured either way.")
+                  "does not cover, so the sensor is measured either way.\n\n"
+                  "Nothing is scanned now. Press the scan button again once "
+                  "the calibration has finished.")
         ).pack(anchor="w")
         cached = Path(self.session.reference)
         if cached.exists():
@@ -1931,12 +2010,15 @@ class ScannerGui:
         buttons.pack(fill="x", pady=(14, 0))
 
         def choose(mode: str | None) -> None:
-            top.destroy()
             if mode:
                 self.v_shading.set(mode)
-                self.on_calibrate(mode)
+                self.on_calibrate(mode)          # closes this prompt
+                return
+            self._calibrate_prompt = None
+            top.destroy()
 
-        ttk.Button(buttons, text="Not yet",
+        top.protocol("WM_DELETE_WINDOW", lambda: choose(None))
+        ttk.Button(buttons, text="Not now",
                    command=lambda: choose(None)).pack(side="left")
         if cached.exists():
             ttk.Button(buttons, text="Use the cached one",
@@ -1948,11 +2030,13 @@ class ScannerGui:
         top.bind("<Return>", lambda _e: choose("measure"))
         top.bind("<Escape>", lambda _e: choose(None))
         top.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - top.winfo_width()) // 2
-        y = self.root.winfo_rooty() + 120
+        x = parent.winfo_rootx() + (parent.winfo_width() - top.winfo_width()) // 2
+        y = parent.winfo_rooty() + 120
         top.geometry(f"+{max(0, x)}+{max(0, y)}")
 
     def on_prescan(self) -> None:
+        if self._calibration_missing():
+            return
         dpi = self._prescan_dpi()
         if dpi is None:
             return
@@ -1961,6 +2045,8 @@ class ScannerGui:
                                     tags=self._tags()))
 
     def on_scan(self) -> None:
+        if self._calibration_missing():
+            return
         dpi, exposure = self._dpi(), self._exposure()
         if dpi is None or exposure is None:
             return
@@ -1989,6 +2075,8 @@ class ScannerGui:
             self.session.flip = self.current.flipped
 
     def on_roll(self) -> None:
+        if self._calibration_missing():
+            return
         dpi, predpi = self._dpi(), self._prescan_dpi()
         if dpi is None or predpi is None:
             return
@@ -2041,6 +2129,8 @@ class ScannerGui:
             self._sheet_roll = None
             self._surveying = True
             self._survey_predpi = predpi
+            self._survey_film = self.v_film.get()
+            self.edge_watch.begin(self._survey_film, expected=frames or None)
         # Starts the whole-roll estimate at the same rough figure the dialog
         # above just showed, so the number on screen does not jump the moment
         # scanning begins. `frames` is already "how many this run will do",
@@ -2091,31 +2181,29 @@ class ScannerGui:
                                 ("rotations", "turned"),
                                 ("flips", "flipped"))
             if kept[name])
-        proposed, notes = _propose_positions(self.survey, kept["offsets"],
-                                             kept.get("sources"))
-        if notes:
-            counted = ", ".join(
-                f"{n} {label}" for label, n in (
-                    ("measured", sum(1 for v in notes.values()
-                                     if v.get("source") == "measured")),
-                    ("unconfirmed", sum(1 for v in notes.values()
-                                        if v.get("source") == "unconfirmed")),
-                    ("from neighbours", sum(1 for v in notes.values()
-                                            if v.get("source") == "neighbours")))
-                if n)
-            self._say(f"positions proposed for {len(proposed)} frame(s)"
-                      + (f": {counted}" if counted else ""))
+
         self._say(f"contact sheet: {len(self.survey)} walked "
                   f"{[getattr(r, 'number', '?') for r in self.survey]}"
                   + (f" -- kept {restored}" if restored else ""))
-        self.sheet = _ContactSheet(self, self.survey,
-                                   offsets=proposed,
+        self._open_sheet(kept["offsets"], kept.get("sources"),
+                         rotations=kept["rotations"], flips=kept["flips"],
+                         ticks=kept["ticks"], options=kept["options"],
+                         done=self._sheet_done)
+
+    def _open_sheet(self, offsets: dict, sources, **cells) -> None:
+        """The sheet, now, on whatever the frame-edge reader has so far.
+
+        It does not wait for the reader: the positions it has not read yet
+        arrive through `_edges_changed` while the sheet is open, and the light
+        in the header says how far it has got. His own positions (``offsets``
+        whose ``sources`` say he set them) stand whatever it reads.
+        """
+        progress = self.edge_watch.progress()
+        kept, notes = _merge_kept({}, {}, offsets, sources)
+        self.sheet = _ContactSheet(self, self.survey, offsets=kept,
                                    proposals=notes,
-                                   rotations=kept["rotations"],
-                                   flips=kept["flips"],
-                                   ticks=kept["ticks"],
-                                   options=kept["options"],
-                                   done=self._sheet_done)
+                                   readings=(progress.offsets, progress.notes),
+                                   generation=progress.generation, **cells)
 
     def _per_frame_seconds(self, dpi=None, ir=None, fast_ir=None) -> float:
         """Roughly what one frame of the roll will cost, metering included.
@@ -2514,6 +2602,7 @@ class ScannerGui:
 
         self.survey = out["results"]
         self._survey_predpi = out["prescan_resolution"]
+        self._survey_film = out.get("film")
         for result in out["results"]:
             self.results.append(result)
         self.b_sheet.configure(state="normal")
@@ -2559,15 +2648,16 @@ class ScannerGui:
         # every proposal the walk made died with the window that made it, and
         # the roll scanned uncorrected with no sign anything was missing.
         #
+        # Read in the background, and the sheet opens without waiting for it.
         # Stored positions still win: they go in as `kept`, which
-        # `_propose_positions` leaves alone, and their recorded source with
-        # them so a proposal is not relabelled as his on the way back.
-        proposed, notes = _propose_positions(
-            self.survey, out["offsets"], out.get("sources"))
-        self.sheet = _ContactSheet(self, self.survey, offsets=proposed,
-                                   proposals=notes,
-                                   rotations=out["rotations"],
-                                   flips=out["flips"], done=done)
+        # `_merge_kept` leaves alone, and their recorded source with them so a
+        # proposal is not relabelled as his on the way back.
+        self.edge_watch.load(
+            [(r.number, r.image) for r in self.survey if r.image is not None],
+            self._survey_film or self.v_film.get())
+        self._open_sheet(out["offsets"], out.get("sources"),
+                         rotations=out["rotations"], flips=out["flips"],
+                         done=done)
         # The film is almost certainly not where the walk left it, and that no
         # longer matters: the roll goes to each frame by the transport's own
         # counter. What does matter, and only Stefan can see it, is that the
@@ -2673,6 +2763,12 @@ class ScannerGui:
                 "The scanner is busy. Wait for it to finish, or stop it, then "
                 "press this again -- the ticks stay where they are.")
             return
+        # Over the sheet when the sheet asked, so the prompt is not hidden
+        # behind the window it was pressed in.
+        if self._calibration_missing(
+                self.sheet.top if self.sheet is not None and self.sheet.alive()
+                else None):
+            return
         if options:
             # Read from the sheet rather than through `_dpi`, which reads the
             # window's box and would complain about a value this roll is not
@@ -2728,10 +2824,21 @@ class ScannerGui:
             f"roughly {_duration(per * len(numbers) + move_s)}. The frames "
             "nobody ticked cost their advance only."
             + self._approved_note(approved, correct)
-            + self._options_note(options) + "\n\nStart?",
+            + self._options_note(options) + self._edges_pending()
+            + "\n\nStart?",
         ):
             return
         self._write_approved(approved)
+        # Counted like a roll from the Roll button, so the header says which
+        # of the chosen frames it is on and the line under the picture times
+        # it. A sheet's roll used to run with neither.
+        self._roll_wall_start = time.monotonic()
+        self._roll_seeking = True
+        self._roll_dry = False
+        self._roll_frames_total = len(numbers)
+        self._roll_frames_done = 0
+        self._roll_seconds_per_frame = per
+        self._update_roll_eta()
         # Kept so the frames that come back are shown the way they were
         # written. Without it a roll returns pictures the filmstrip draws one
         # way up and the file on disk holds another.
@@ -2962,6 +3069,7 @@ class ScannerGui:
 
     def _quit(self) -> None:
         self._alive = False
+        self.edge_watch.close()
         # Anything still scheduled is cancelled first. A callback that fires
         # after the widgets are gone cannot do anything useful, and Tk complains
         # about the command it can no longer find -- which is how a clean quit
@@ -2976,6 +3084,33 @@ class ScannerGui:
             self.root.destroy()
         except tk.TclError:
             pass
+
+    def _edges_changed(self, progress) -> None:
+        """The frame-edge reader said something new: the light, the count, the sheet."""
+        self.edge_light.itemconfigure(self._edge_bulb,
+                                      fill=EDGE_LIGHT[progress.state])
+        self.v_edges.set(edges_label(progress))
+        if (self.sheet is not None and self.sheet.alive()
+                and self.sheet.generation == progress.generation):
+            self.sheet.take_readings(progress.offsets, progress.notes)
+            self.sheet.v_edges.set(edges_label(progress))
+        said = (progress.generation, progress.state)
+        if (progress.state in (frame_edges.DONE, frame_edges.FAILED)
+                and self._edge_said != said):
+            self._edge_said = said
+            self._say(proposals_said(progress.notes)
+                      or f"frame edges: {progress.done} frame(s) read")
+            for problem in progress.errors:
+                self._say(f"frame edges: {problem}")
+
+    def _edges_pending(self) -> str:
+        """For the dialog that starts a roll: whether positions are still coming."""
+        progress = self.edge_watch.progress()
+        if progress.state != frame_edges.READING:
+            return ""
+        return (f"\n\nThe frame edges are still being read ({progress.done} of "
+                f"{progress.total}). A frame the reader has not placed yet is "
+                "scanned where the walk left it.")
 
     def _later(self, milliseconds: int, call):
         """`after`, remembered so it can be cancelled when the window closes."""
@@ -2996,6 +3131,10 @@ class ScannerGui:
     def _pump(self) -> None:
         if not self._alive:
             return
+        version = self.edge_watch.version
+        if version != self._edge_seen:
+            self._edge_seen = version
+            self._edges_changed(self.edge_watch.progress())
         while True:
             try:
                 message = self._saves.get_nowait()
@@ -3044,9 +3183,6 @@ class ScannerGui:
             self._say(event.text)
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
-            if self.session.inquiry_text and not self._asked_to_calibrate:
-                self._asked_to_calibrate = True
-                self._later(50, self.ask_to_calibrate)
             if event.busy:
                 self._job = event.text
                 self.v_progress.set(event.text)
@@ -3096,6 +3232,9 @@ class ScannerGui:
                 if self._roll_wall_start is not None:
                     self._roll_wall_start = time.monotonic()
                     self._update_roll_eta()
+        elif event.kind == "calibrated":
+            self.calibrated = bool(event.done)
+            self._sync_calibration()
         elif event.kind == "filed":
             for r in self.results:
                 if r.seq == event.done:
@@ -3109,6 +3248,7 @@ class ScannerGui:
             self.v_roll_eta.set("")
             if self._surveying:
                 self._surveying = False
+                self.edge_watch.finish()
                 # Where the walk wrote its manifest, asked for rather than
                 # rebuilt from the roll's name. The decisions about to be made
                 # in the sheet belong to this strip, and until the roll is
@@ -3138,6 +3278,9 @@ class ScannerGui:
             self._light("broken")
             if self._surveying:
                 self._surveying = False
+                # What was walked before the failure is still a walk, and the
+                # sheet still opens on it.
+                self.edge_watch.finish()
                 self.b_sheet.configure(
                     state="normal" if self.survey else "disabled")
             if not self.session.inquiry_text:
@@ -3262,10 +3405,12 @@ class ScannerGui:
         """
         if self._roll_wall_start is None:
             self.v_roll_eta.set("")
+            self.v_frame_status.set("")
             return
         elapsed = time.monotonic() - self._roll_wall_start
         per = self._roll_seconds_per_frame
         done, total = self._roll_frames_done, self._roll_frames_total
+        self.v_frame_status.set(frame_status(done, total))
         measured = " (measured)" if done else " (estimated)"
         verb = "walked" if self._roll_dry else "scanned"
         if total:
@@ -3357,6 +3502,7 @@ class ScannerGui:
             self.orientations[key] = (result.rotation, result.flipped)
         if self._surveying and result.kind == "prescan" and result.number:
             self.survey.append(result)
+            self.edge_watch.add(result.number, result.image)
         # Through the same filter the session's readout reports use, so a
         # counter no strip can have never becomes a forecast either.
         if plausible(result.position):
@@ -4609,6 +4755,7 @@ def read_survey(folder, say=None) -> dict:
         "results": results,
         "start_at": int(settings.get("start_at") or 1),
         "prescan_resolution": settings.get("prescan_resolution"),
+        "film": settings.get("film"),
         "offsets": offsets,
         "rotations": rotations,
         "flips": flips,
@@ -5289,18 +5436,31 @@ def picture_of(result) -> tuple | None:
     return None
 
 
-def _propose_positions(results, kept: dict, remembered=None) -> tuple[dict, dict]:
+def _propose_positions(results, kept: dict, remembered=None, *, film=None,
+                       progress=None) -> tuple[dict, dict]:
     """Where the walked strip says each frame should go, his numbers winning.
 
-    Run once when the sheet opens, over the whole survey at once. That is the
-    reason the walk takes one complete pass before anything is decided: a
-    forward walk can only fit the frames behind it, where a finished one fits
-    across all of them and can speak for a frame from both sides.
+    The positions centre each frame between its two edges, as the frame-edge
+    detector reads them (`tools/frame_edges`, a copy of the study's
+    `ensemble_v2`): every frame against the other frames of its walk, and the
+    frame taken to be `framing.FRAME_WIDTH_UNITS` wide -- measured, and wider
+    than the aperture, so a centred frame shows no base at either edge.
+    ``film`` is the film the walk was on; the detector reads negatives only.
+
+    The whole survey in one call. The window no longer calls this: it reads a
+    walk in the background as the prescans arrive (`frame_edges.EdgeWatch`)
+    and puts the answer through `_snap_proposals` and `_merge_kept`, which is
+    this function after its first step -- so both reach the same positions.
+    Every frame is read against the whole walk, not only the frames behind it:
+    a finished walk can speak for a frame from both sides.
 
     A frame the operator has already positioned is left exactly as he left it
     and is not re-proposed. His number is the authority here and stays it --
     the sheet is where he corrects this, so overwriting what he typed would
-    undo the correction it exists to collect.
+    undo the correction it exists to collect. A position remembered from the
+    *machine* is different: it is read again, so every number on the sheet
+    that is not his is today's detector's. Every frame carries the detector's
+    reading of its edges either way.
 
     `remembered` says who decided each kept position, from the sheet's own
     stored state. Without it every kept offset was stamped `operator`, which
@@ -5312,19 +5472,28 @@ def _propose_positions(results, kept: dict, remembered=None) -> tuple[dict, dict
               for r in results
               if getattr(r, "image", None) is not None
               and getattr(r, "number", None)]
-    if len(frames) < 2:
+    if not frames:
         return dict(kept), {}
     try:
-        offsets, notes = framing.propose_offsets(frames)
+        offsets, notes = frame_edges.propose_centred(
+            frames, film=film or FILM_NEGATIVE, progress=progress)
     except Exception as exc:                                  # noqa: BLE001
         # A sheet that will not open is worse than one with no proposals: the
         # walk has already been paid for and the frames are still choosable.
         return dict(kept), {0: {"source": "none", "reason": str(exc)}}
-    # Snapped here rather than where the records are built, so that every
-    # reader of `offsets` sees a position the film can actually reach. The
-    # caption used to show the raw proposal and the commission used to deliver
-    # the snapped one, so a frame captioned as moving could be delivered as no
-    # move at all -- and five other readers carried numbers that do not exist.
+    return _merge_kept(*_snap_proposals(offsets, notes), kept, remembered)
+
+
+def _snap_proposals(offsets: dict, notes: dict) -> tuple[dict, dict]:
+    """The detector's positions, each on a place the film can actually reach.
+
+    Snapped here rather than where the records are built, so that every
+    reader of `offsets` sees a position the film can actually reach. The
+    caption used to show the raw proposal and the commission used to deliver
+    the snapped one, so a frame captioned as moving could be delivered as no
+    move at all -- and five other readers carried numbers that do not exist.
+    """
+    notes = {int(n): dict(v) for n, v in notes.items()}
     out = {}
     for number, value in offsets.items():
         landed = snap_offset(value)
@@ -5337,48 +5506,139 @@ def _propose_positions(results, kept: dict, remembered=None) -> tuple[dict, dict
             note = dict(notes.get(int(number)) or {})
             note["in_place"] = True
             notes[int(number)] = note
-    out.update(kept)                        # his, over anything measured here
-    known = remembered or {}
-    for number in kept:
-        was = known.get(int(number))
-        if was in MACHINE_SOURCES:
-            # Kept, but not his: this is a proposal surviving a reopen, and
-            # calling it his would be the sheet inventing a decision.
-            notes[int(number)] = {"source": was, "reason": "read on the walk"}
-        else:
-            notes[int(number)] = {"source": "operator",
-                                  "reason": "you set this one"}
     return out, notes
 
 
-#: The ensemble's words for how it read a frame, as they appear in a caption.
-#: `propose_offsets` produces these and `tests/test_ensemble.py` pins them.
+def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[dict, dict]:
+    """His positions over the detector's: ``out`` and ``notes`` changed in place.
+
+    A kept position whose recorded source is the machine's is dropped rather
+    than kept, so today's reading replaces it; see `_propose_positions`.
+    """
+    known = remembered or {}
+    for number, value in kept.items():
+        n = int(number)
+        fresh = notes.get(n) or {}
+        if known.get(n) in MACHINE_SOURCES:
+            # A machine position surviving a reopen is read again rather than
+            # replayed: a remembered number is only as good as the detector
+            # that made it, and one an older detector left in the settings or
+            # in `approved.json` would otherwise hide today's reading --
+            # its position on the sheet and its edge lines both.
+            continue
+        out[n] = value                      # his, over anything measured here
+        # His position, and still the detector's reading of the frame: the
+        # edge lines are drawn whoever decided where the frame goes.
+        notes[n] = {"source": "operator", "reason": "you set this one",
+                    "edges": fresh.get("edges"), "width": fresh.get("width")}
+    return out, notes
+
+
+#: The detector's words for how it read a frame, as they appear in a caption.
+#: `tools/frame_edges.propose_centred` produces these -- the same words
+#: `framing.propose_offsets` used, so a sheet saved by either reads the same.
 MACHINE_SOURCES = ("measured", "unconfirmed", "neighbours")
 
 
-def adjustment_mark(offset_mm: float, width: int) -> int | None:
-    """Where the blue line goes on a thumbnail this wide, or None.
+def frame_status(done: int, total: int | None) -> str:
+    """The header's middle while a roll runs: the frame it is on, of how many.
 
-    The thumbnail spans the aperture, so an adjustment is that fraction of its
-    width, measured in from the edge the film is moving toward -- left for a
-    backward move, right for a forward one.
-
-    True to scale and deliberately not exaggerated: the line says how far the
-    film goes, and a mark drawn larger than the move would be the sheet
-    claiming something the transport is not going to do. The consequence is
-    that ordinary corrections sit within a few pixels of the edge, because
-    ordinary corrections *are* a few thousandths of the aperture. Reading the
-    exact size is the caption's job; the line is for seeing at a glance that a
-    whole strip is offset the same way.
-
-    Clamped to half the width so a wild reading cannot draw itself as the
-    picture, and kept off both edges so it is never invisible.
+    Counted within this roll -- frame 1 is the first it takes, wherever on the
+    strip that is -- the way the roll line under the picture counts.
     """
-    if not offset_mm or width <= 4:
-        return None
-    across = min(abs(offset_mm) / APERTURE_MM, 0.5) * width
-    x = across if offset_mm < 0 else width - across
-    return max(1, min(width - 2, int(round(x))))
+    if total:
+        return f"frame {min(done + 1, total)} of {total}"
+    return f"frame {done + 1}"
+
+
+def edges_label(progress) -> str:
+    """What sits beside the frame-edge light: how many frames it has read.
+
+    ``36/36`` with the light still blue is the walk read once and being read
+    again against its whole self, which it can only be once it has ended.
+    """
+    if progress.state == frame_edges.IDLE:
+        return "frame edges"
+    if progress.state == frame_edges.SKIPPED:
+        return f"frame edges: not read on {progress.film}"
+    said = f"frame edges {progress.done}/{progress.total}"
+    if progress.state == frame_edges.FAILED:
+        said += " -- failed on some"
+    return said
+
+
+def proposals_said(notes: dict) -> str:
+    """One log line for what the detector made of a walk, by source."""
+    counted = ", ".join(
+        f"{n} {label}" for label, n in (
+            (label, sum(1 for v in notes.values() if v.get("source") == source))
+            for source, label in (("measured", "measured"),
+                                  ("unconfirmed", "unconfirmed"),
+                                  ("neighbours", "from neighbours"),
+                                  ("none", "not placed")))
+        if n)
+    if not counted:
+        return ""
+    return f"frame edges read on {len(notes)} frame(s): {counted}"
+
+
+def axis_mark(fraction: float, degrees: int = 0, flipped: bool = False) -> tuple[str, float]:
+    """Where a point along the transport axis lands on a thumbnail turned this way.
+
+    ``fraction`` is how far across the prescan *as scanned* the point is: 0 its
+    left edge, 1 its right. Returns ``("x", f)`` for a vertical line ``f`` of the
+    way across the thumbnail, or ``("y", f)`` for a horizontal one ``f`` of the
+    way down -- which is what a quarter turn makes of it. The same order as
+    `preview.orient`: mirrored first, then turned clockwise, so a line drawn
+    over a turned cell sits on the pixels it was measured on.
+    """
+    f = 1.0 - fraction if flipped else fraction
+    turn = int(degrees) % 360
+    if turn == 0:
+        return "x", f
+    if turn == 90:
+        return "y", f
+    if turn == 180:
+        return "x", 1.0 - f
+    return "y", 1.0 - f
+
+
+#: The frame-edge detector's line on a thumbnail: red, and dotted so the base
+#: strip it marks still shows between the dots.
+EDGE_RGB = (224, 48, 42)
+EDGE_DOT, EDGE_GAP, EDGE_PX = 4, 3, 2
+
+
+def paint_edges(arr: np.ndarray, read: dict | None, degrees: int = 0,
+                flipped: bool = False) -> np.ndarray:
+    """A thumbnail with the detector's edges painted in, as red dotted lines.
+
+    ``arr`` is the thumbnail as drawn -- already turned and mirrored -- and
+    ``read`` the detector's note for the frame (``edges`` per side, ``width``
+    of the prescan it read them on). Painted into the pixels rather than laid
+    over them, so the lines are there wherever the thumbnail is, in whichever
+    way the cell is turned (`axis_mark`). Sides where the picture runs to the
+    border draw nothing.
+    """
+    if not read or not read.get("width"):
+        return arr
+    out = arr.copy()
+    h, w = out.shape[:2]
+    cols = float(read["width"])
+    for side in ("left", "right"):
+        edge = ((read.get("edges") or {}).get(side)) or {}
+        if edge.get("state") != "edge" or edge.get("x") is None:
+            continue
+        axis, f = axis_mark(float(edge["x"]) / cols, degrees, flipped)
+        if axis == "x":
+            c = int(np.clip(round(f * w) - EDGE_PX // 2, 0, w - EDGE_PX))
+            for y in range(0, h, EDGE_DOT + EDGE_GAP):
+                out[y:y + EDGE_DOT, c:c + EDGE_PX] = EDGE_RGB
+        else:
+            r = int(np.clip(round(f * h) - EDGE_PX // 2, 0, h - EDGE_PX))
+            for x in range(0, w, EDGE_DOT + EDGE_GAP):
+                out[r:r + EDGE_PX, x:x + EDGE_DOT] = EDGE_RGB
+    return out
 
 
 def frame_caption(offset, source, done=False, contrast=0.0, read=False):
@@ -6187,6 +6447,10 @@ class _FrameAdjuster:
 
     WIDTH, HEIGHT = 900, 640
     GUIDE = "#e8b64c"                        # the sheet's amber, reused
+    #: The frame-edge detector's reading: red like the sheet's edge marks,
+    #: dotted so the pixels under it stay visible, and heavier than the
+    #: guides -- Stefan: "a red dotted line and a bit bigger".
+    EDGE_DASH, EDGE_WIDTH = (4, 4), 3
 
     def __init__(self, sheet, gui, index: int):
         # Per instance, not in the class body: no Tk root exists there. These
@@ -6217,7 +6481,11 @@ class _FrameAdjuster:
                   "film should sit. \u201cfinest\u201d moves to the next "
                   "position the transport can reach; the others move by that "
                   "much and land on the nearest one. The dashed lines are the "
-                  "aperture -- anything past them will not be scanned. Return "
+                  "aperture -- anything past them will not be scanned. The red "
+                  "dotted line is where the edge detector reads the picture "
+                  "ending and unexposed film beginning; it moves with the "
+                  "picture. Centre puts the frame back as it was walked; Reset "
+                  "puts it back where the detector puts it. Return "
                   "keeps this frame and moves to the next. Shown as the film "
                   "sits, not arranged.")
         ).pack(anchor="w", pady=(0, 6))
@@ -6237,6 +6505,8 @@ class _FrameAdjuster:
         ttk.Button(row, text="\u25b6", width=3,
                    command=lambda: self._step(1)).pack(side="left", padx=(2, 8))
         ttk.Button(row, text="Centre", command=self._centre).pack(side="left")
+        ttk.Button(row, text="Reset", command=self._reset).pack(side="left",
+                                                                 padx=(4, 0))
         ttk.Label(row, text="step").pack(side="left", padx=(12, 4))
         ttk.Combobox(row, textvariable=gui.v_adjuststep, width=8,
                      state="readonly", values=list(ADJUST_STEPS)).pack(side="left")
@@ -6381,6 +6651,12 @@ class _FrameAdjuster:
     def _centre(self) -> None:
         self._set(0.0)
 
+    def _reset(self) -> None:
+        """This frame back where the detector puts it; the others keep theirs."""
+        self.sheet.reset(self.number)
+        self._refresh()
+        self.gui._say(f"frame {self.number}: position reset to the detector's")
+
     # -- drawing -----------------------------------------------------------
 
     def _source(self):
@@ -6459,6 +6735,30 @@ class _FrameAdjuster:
             self.canvas.create_rectangle(
                 left, top, left + width, top + height,
                 outline="#6a6a6a", dash=(2, 4))
+        self._draw_edges(left + shift, top, width, height)
+
+    def _draw_edges(self, x0: int, top: int, width: int, height: int) -> None:
+        """The detector's edges, on the picture as it is drawn at ``x0``.
+
+        On the film, not on the aperture: the line moves with the picture, so
+        with the proposed move applied it shows where the edge lands against
+        the guides -- just outside them, for a frame wider than the aperture.
+        Tilted when the reading was, from its top row to its bottom row.
+        """
+        read = self.sheet.edges.get(self.number)
+        if not read or not read.get("width"):
+            return
+        per_column = width / float(read["width"])
+        for side in ("left", "right"):
+            edge = (read.get("edges") or {}).get(side) or {}
+            if edge.get("state") != "edge" or edge.get("x") is None:
+                continue
+            x = float(edge["x"])
+            x_top = float(edge["x_top"]) if edge.get("x_top") is not None else x
+            x_bottom = float(edge["x_bottom"]) if edge.get("x_bottom") is not None else x
+            self.canvas.create_line(
+                x0 + x_top * per_column, top, x0 + x_bottom * per_column, top + height,
+                fill=self.sheet.EDGE_LINE, dash=self.EDGE_DASH, width=self.EDGE_WIDTH)
 
     # -- dragging ----------------------------------------------------------
 
@@ -6730,10 +7030,10 @@ class _ContactSheet:
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
     DONE = "#5b7a5b"                         # already scanned: neither of those
-    #: The adjustment mark. Blue because every other colour on a cell already
-    #: means a state -- amber chosen, red skipped, green done -- and this is
-    #: not a state, it is a measurement drawn on the picture.
-    MOVING = "#3d7fd1"
+    #: Where the frame-edge detector says the picture ends and unexposed base
+    #: begins -- red, as in the study's contact sheets, and thin: it is drawn
+    #: on the picture so Stefan can judge the reading before the film moves.
+    EDGE_LINE = "#e0302a"
     #: The coloured line itself: thin, because it is a marker and not a mount.
     RING = 2
     #: The white gap between that line and the picture. The line used to sit
@@ -6744,8 +7044,16 @@ class _ContactSheet:
 
     def __init__(self, gui, frames, offsets=None, proposals=None,
                  rotations=None, flips=None,
-                 done=None, ticks=None, options=None):
+                 done=None, ticks=None, options=None,
+                 readings=None, generation=None):
         self.gui = gui
+        #: Which of the frame-edge reader's walks this sheet shows, so an
+        #: answer about another walk is never taken for this one's.
+        self.generation = generation
+        #: The detector's latest answer per frame, snapped -- ``(offset or
+        #: None, note)`` -- kept apart from `offsets` so a frame he positioned
+        #: can be put back where the detector puts it (`reset`).
+        self.detected: dict[int, tuple[float | None, dict]] = {}
         self.frames = [r for r in frames if r.image is not None]
         # A frame that was walked but cannot be shown is not a cosmetic
         # problem: it cannot be ticked, so it silently does not get scanned.
@@ -6784,6 +7092,13 @@ class _ContactSheet:
         #: cannot tell from a guess is one he has to check by hand anyway,
         #: which is the work this exists to save.
         self.proposals: dict[int, dict] = dict(proposals or {})
+        #: The detector's reading of each frame's edges, kept apart from
+        #: `proposals` because adjusting a frame by hand replaces its note --
+        #: and the prescan still shows where its edges were read.
+        self.edges: dict[int, dict] = {
+            int(n): {"edges": note["edges"], "width": note.get("width")}
+            for n, note in self.proposals.items()
+            if isinstance(note, dict) and note.get("edges")}
         #: Which way up each frame has been *decided* to be, in degrees
         #: clockwise. Per frame because a strip is not one orientation: a
         #: portrait among landscapes is ordinary, and the session's single
@@ -6816,8 +7131,6 @@ class _ContactSheet:
         self._photos: dict[int, tk.PhotoImage] = {}
         self._pictures: dict[int, tk.Label] = {}
         self._rings: dict[int, tk.Frame] = {}
-        #: The blue adjustment line over each picture, by frame number.
-        self._marks: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
         self._adjuster = None
@@ -6826,6 +7139,10 @@ class _ContactSheet:
         #: sheet had no notion of "this one" at all before there were keys.
         self.selected = 0
         self._bound: list[str] = []
+        # What the reader had when the sheet opened; the rest arrives later
+        # through the same door.
+        if readings is not None:
+            self.take_readings(*readings)
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Contact sheet")
@@ -6853,10 +7170,10 @@ class _ContactSheet:
         if gui.look_only:
             said = ("There is no film in the transport: this is a walk that "
                     "was stored earlier, and the positions under the frames "
-                    "were measured from those pictures when this window "
-                    "opened. " + said + " Scanning is offered as it always "
-                    "is, and will say there is no film when it reaches for "
-                    "it.")
+                    "are measured from those pictures in the background -- "
+                    "the frame edges count says how far that has got. "
+                    + said + " Scanning is offered as it always is, and will "
+                    "say there is no film when it reaches for it.")
         else:
             said = ("Tick what is worth scanning. " + said + " A frame is "
                     "scanned the way you leave it here. Positions you set are "
@@ -6900,6 +7217,13 @@ class _ContactSheet:
             side="left", padx=4)
         self.v_count = tk.StringVar()
         ttk.Label(foot, textvariable=self.v_count, foreground="#777").pack(
+            side="left", padx=10)
+        ttk.Button(foot, text="Reset positions",
+                   command=self.reset_all).pack(side="left", padx=(10, 4))
+        # The main window's count, repeated here because the sheet usually
+        # covers the window that carries it.
+        self.v_edges = tk.StringVar(value=edges_label(gui.edge_watch.progress()))
+        ttk.Label(foot, textvariable=self.v_edges, foreground="#777").pack(
             side="left", padx=10)
         ttk.Button(foot, text="Close", command=self._dismiss).pack(side="right")
         # The title bar's X as well: it is the way a window gets closed, and
@@ -7114,7 +7438,6 @@ class _ContactSheet:
         picture = tk.Label(mount, image=photo, borderwidth=0)
         picture.pack()
         self._pictures[number] = picture
-        self._mark_adjustment(number)
         picture.bind("<Button-1>",
                      lambda _e, n=number, i=index: self._clicked(n, i))
         picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
@@ -7140,38 +7463,6 @@ class _ContactSheet:
                       text=f"drifted -- {say_units(short, signed=False)} "
                            "outside").pack(anchor="w")
 
-    def _mark_adjustment(self, number: int) -> None:
-        """Draw where this frame is going, on the frame itself.
-
-        A caption says "-4.8 units" and a person has to translate that into a
-        distance on a picture. The line is the translation: it stands off the
-        edge the film is moving toward by exactly the adjustment, scaled so
-        the thumbnail's width is the aperture. Seeing four frames marked at the
-        same inset is what makes a strip-wide offset obvious, which no column
-        of numbers does.
-
-        Placed over the picture rather than drawn into it, so the thumbnail
-        stays the pixels that were scanned and rotating a frame does not have
-        to re-render a decoration.
-        """
-        old = self._marks.pop(number, None)
-        if old is not None:
-            old.destroy()
-        picture = self._pictures.get(number)
-        offset = self.offsets.get(number)
-        if picture is None or not offset:
-            return
-        width = picture.winfo_reqwidth()
-        height = picture.winfo_reqheight()
-        if width <= 1 or height <= 1:
-            return
-        x = adjustment_mark(offset, width)
-        if x is None:
-            return
-        line = tk.Frame(picture, background=self.MOVING, width=2, height=height)
-        line.place(x=x, y=0)
-        self._marks[number] = line
-
     def _render(self, result) -> tk.PhotoImage:
         """This frame's thumbnail, the way up it is currently turned.
 
@@ -7194,6 +7485,10 @@ class _ContactSheet:
             "RGB", self.gui.v_invert.get(),
             cuts=(preview.channel_levels(result.levels, "RGB")
                   if getattr(result, "levels", None) is not None else None))
+        # The detector's edges, on the picture itself -- the only lines a cell
+        # carries, so every line on the sheet is the detector's reading.
+        arr = paint_edges(arr, self.edges.get(result.number), result.rotation,
+                          result.flipped)
         photo = tk.PhotoImage(data=preview.to_ppm(arr))
         self._photos[result.number] = photo
         return photo
@@ -7404,11 +7699,91 @@ class _ContactSheet:
         )
         caption.configure(text=said, foreground={
             "DONE": self.DONE, "CHOSEN": self.CHOSEN}.get(colour, "#777"))
-        self._mark_adjustment(number)
 
     def adjusted(self) -> dict:
         """The positions set by hand, keyed by frame number."""
         return dict(self.offsets)
+
+    # -- the detector's answers, as they arrive ----------------------------
+
+    def take_readings(self, offsets: dict, notes: dict) -> None:
+        """The frame-edge reader's newest answer for this walk.
+
+        Arrives while the sheet is open -- first each frame as the walk
+        delivered it, then again against the whole walk -- so a frame's
+        position and edge lines can change under his eyes until the light
+        goes green. Only the detector's: a position he set stands, and only
+        its edge lines follow the reading.
+        """
+        snapped, notes = _snap_proposals(offsets, notes)
+        changed = []
+        for result in self.frames:
+            number = result.number
+            note = notes.get(number)
+            if note is None:
+                continue                          # not read yet
+            answer = (snapped.get(number), note)
+            if self.detected.get(number) == answer:
+                continue
+            self.detected[number] = answer
+            edges = ({"edges": note["edges"], "width": note.get("width")}
+                     if note.get("edges") else None)
+            redraw = self.edges.get(number) != edges
+            if edges is None:
+                self.edges.pop(number, None)
+            else:
+                self.edges[number] = edges
+            if (self.proposals.get(number) or {}).get("source") != "operator":
+                self._apply_detected(number)
+            picture = self._pictures.get(number)
+            if redraw and picture is not None:
+                picture.configure(image=self._render(result))
+            self._refresh_caption(number)
+            changed.append(number)
+        if (changed and self._adjuster is not None and self._adjuster.alive()
+                and self._adjuster.number in changed):
+            self._adjuster._refresh()
+
+    def _apply_detected(self, number: int) -> None:
+        value, note = self.detected.get(number, (None, None))
+        if value:
+            self.offsets[number] = value
+        else:
+            self.offsets.pop(number, None)
+        if note is not None:
+            self.proposals[number] = dict(note)
+        else:
+            self.proposals.pop(number, None)
+
+    def reset(self, number: int) -> None:
+        """Put one frame back where the detector puts it, forgetting his position.
+
+        Not `Centre`, which is a position of his own -- "as surveyed". A frame
+        the reader has not got to yet goes back to as surveyed, and takes its
+        reading when that arrives.
+        """
+        self._apply_detected(number)
+        self._refresh_caption(number)
+
+    def reset_all(self) -> None:
+        """Every frame back where the detector puts it, after asking."""
+        mine = sorted(n for n, v in self.proposals.items()
+                      if (v or {}).get("source") == "operator")
+        if mine and not messagebox.askyesno(
+                "Reset positions",
+                "Put every frame back where the frame-edge detector puts it?"
+                f"\n\nThe position{'s' if len(mine) != 1 else ''} you set on "
+                f"frame{'s' if len(mine) != 1 else ''} "
+                f"{', '.join(str(n) for n in mine)} "
+                f"{'are' if len(mine) != 1 else 'is'} dropped. Ticks and turns "
+                "stay as they are.", parent=self.top):
+            return
+        for result in self.frames:
+            self.reset(result.number)
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster._refresh()
+        self.gui._say("contact sheet: every position is the detector's again"
+                      + (f" -- dropped yours on {mine}" if mine else ""))
 
     def state(self) -> dict:
         """Every decision made here, in plain types, for reopening it.
@@ -7708,6 +8083,9 @@ def main() -> int:
         rolls=args.rolls or str(home / "rolls"),
         out_dir=args.out,
     )
+    # The roll's in-walk correction reads edges with the same detector as the
+    # sheet; `rps7200` is handed it, never imports it.
+    session.edge_reader = frame_edges.walk_reader
     if args.demo:
         from rps7200.demo import DemoScanner
         source, entry = args.demo_source, args.demo_entry

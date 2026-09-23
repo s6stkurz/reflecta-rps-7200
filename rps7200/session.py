@@ -37,6 +37,7 @@ import json
 import queue
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -995,8 +996,12 @@ class Event:
 #: It is sent when the session opens, after every job that finished, and as a
 #: roll moves, so the window's readout follows the film rather than only the
 #: moves its own buttons made.
+#: "calibrated" is sent when a `Calibrate` job ends, with 1 in `done` when the
+#: session now holds a shading reference and 0 when it does not -- a
+#: measurement can come back with nothing usable, and one that fails leaves
+#: whatever the session held before.
 KINDS = ("state", "log", "progress", "result", "filed", "transport",
-         "finished", "failed", "closed")
+         "calibrated", "finished", "failed", "closed")
 
 
 # ---------------------------------------------------------------------------
@@ -1133,6 +1138,11 @@ class ScanSession:
         self.root = str(root) if root else None
         self.reference = str(reference)
         self.rolls = Path(rolls)
+        #: Makes the reader a roll's in-walk correction asks about each frame's
+        #: edges: ``edge_reader(film)`` -> a fresh reader, or None. The window
+        #: sets it to `tools/frame_edges.walk_reader`; left None, the driver's
+        #: own strip-level detector decides, as it always has.
+        self.edge_reader: Callable[[str], Any] | None = None
         #: Where the last roll or walk wrote its manifest. The folder is
         #: derived here, from the job's name and a date fallback, so a caller
         #: that wants to file something beside that manifest -- the contact
@@ -1186,6 +1196,10 @@ class ScanSession:
         self._seq = 0
         self.dead = False                    # set by force_abort
         self.inquiry_text = ""
+        #: Whether a `Calibrate` job has left this session a shading reference.
+        #: Written on the worker, read by the window through the "calibrated"
+        #: event rather than directly, so it never reads one job behind.
+        self.calibrated = False
 
     # -- the UI's side -----------------------------------------------------
 
@@ -1363,12 +1377,24 @@ class ScanSession:
     # -- jobs --------------------------------------------------------------
 
     def _calibrate(self, job: Calibrate) -> None:
-        summary = self._scanner.ensure_shading(
-            Path(job.reference),
-            reuse=job.mode == "reuse",
-            skip=job.mode == "off",
-        )
+        try:
+            summary = self._scanner.ensure_shading(
+                Path(job.reference),
+                reuse=job.mode == "reuse",
+                skip=job.mode == "off",
+            )
+        except Exception:
+            # A calibration that failed part way leaves the reference the
+            # session already had, if it had one.
+            self._emit("calibrated", done=int(self.calibrated))
+            raise
         self._emit("log", text=summary["summary"])
+        # Skipped is raw pixels by request, and a measurement can end with no
+        # usable reference; neither is a calibration. `get`, because a stand-in
+        # need not hand back the reference object itself.
+        self.calibrated = (summary.get("action") in ("loaded", "calibrated")
+                           and summary.get("reference", True) is not None)
+        self._emit("calibrated", done=int(self.calibrated))
 
     def _prescan(self, job: Prescan) -> None:
         # The scanner's own meta, not a hand-built one. Substituting a short
@@ -1736,6 +1762,7 @@ class ScanSession:
             approved={a.number - 1: a for a in job.approved},
             reverse_hold=job.reverse_hold,
             keep_raw=True,
+            edge_reader=self.edge_reader,
         )
         stopped = None
         try:

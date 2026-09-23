@@ -451,6 +451,25 @@ It needs a power cycle afterwards, so avoid these:
   An optic falls off in both directions; this falls off in neither. Re-run with
   `tools/uniformity.py analyse --tag vignette-study` after any correction change:
   it rebuilds from stored raw bytes, so the answer tracks the current pipeline.
+- **A frame is wider than the aperture: 350.6 units against 344.5.** That is
+  `framing.FRAME_WIDTH_UNITS`, measured on prescans of one frame. So a centred
+  frame shows **no** unexposed base at either edge, and even a sliver of base
+  means the frame is several units off. The window and the roll centre with
+  it.
+- **Unexposed base is not the brightest thing on a negative.** Exposed C-41
+  loses its orange mask, so some picture is brighter than base in a channel.
+  Base is known by its colour ratio (R/G 2.1-2.3, B/G ~0.53) and a straight
+  full-height edge. That is why every level-and-flatness detector here found
+  silhouettes.
+- **Frame edges are read by `tools/frame_edges`**, a copy of the
+  `research/frame-edge` study's detector. After any change under it, run
+  `FRAME_EDGE_PARITY=1 uv run pytest tests/test_frame_edges_parity.py`. It holds
+  the copy to the study's stored answers on real film, and runs only where
+  those frames are on disk (about three minutes). `rps7200` never imports it:
+  the window hands it to the driver as `session.edge_reader`. The window
+  reads a walk with `frame_edges.EdgeWatch` on its own thread as prescans
+  arrive, never when the sheet opens; its final answer must equal
+  `propose_centred`'s, and `tests/test_frame_edges.py` checks that it does.
 
 ## Never commit
 

@@ -232,7 +232,11 @@ only — what reaches `library/` is the raw negative. Inverting for real is NegP
 
 Opening the window claims the device, asks it who it is and reads the transport's frame
 counter (`READ_STATE`) for the readout, and nothing else: no calibration, no lamp, and
-nothing moves until a button is pressed.
+nothing moves until a button is pressed. Nothing is asked either, and every setting can be
+changed before calibrating. The first button that would take a picture — prescan, scan,
+a roll or a walk, the contact sheet's scan, or one of their keys — says that without a
+calibration no picture can be scanned and offers *Calibrate now*; once one is started,
+nothing asks again.
 
 **The contact sheet.** A dry run walks the strip prescanning and advancing only — about 20
 seconds a frame — and opens every picture it found in a grid with its frame number and its
@@ -245,6 +249,17 @@ its ~7 s advance instead of the minutes a scan would. Seventeen frames at 3600 d
 is about an hour and a half, and a strip with four keepers should not cost the same as
 one with seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame,
 so a strip can be looked at again tomorrow instead of walked again.
+
+Each frame's position is proposed by the frame-edge detector (`tools/frame_edges`),
+which centres the picture between the edges it reads and draws them as red dotted lines.
+It reads the prescans in the background as the walk delivers them, or as a stored walk
+is opened, so the sheet never waits for it. The light beside the scanner's in the top
+right is blue while it reads, green when every frame has its final reading, and red if
+it failed on one, with a count beside it (`12/36`). While a roll runs, the middle of
+the header says which frame it is on, as in *frame 12 of 36*. A position you set by hand
+stands whatever the detector reads. *Reset* in a frame's big view puts that one frame
+back where the detector puts it, and *Reset positions* under the sheet does the same for
+the whole roll after asking.
 
 **A roll that died can be finished, however much later.** *Rolls …* is a table of every
 roll on disk — Roll, Frames, Resolution, Film, Created, Last opened, Size — sortable by

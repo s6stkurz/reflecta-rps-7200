@@ -193,7 +193,41 @@ byte. `command_for` returns what the integer actually buys, so a caller carries
 the difference rather than pretending it asked for what it got, and it refuses
 a distance beyond what one command can deliver and still be checked.
 
-### Not done: finding the edge
+### Done: finding the edge (2026-09-23, `tools/frame_edges`)
+
+What this section asked for was built offline, from stored prescans only, in
+`research/frame-edge/` (its `REPORT.md` has everything). In short:
+
+* **A ground truth by eye.** 122 frame positions from the library, each
+  labelled twice. They agree with edges measured independently on the
+  600-3600 dpi scans stored beside 41 of them to **0.16 columns**. A second
+  library added 125 more.
+* **Seven detector families**, and a vote of four whose errors fall on
+  different frames (`ensemble_v2`). On frames none of them was tuned on it
+  gets **97%** of sides right on Gold 200 and **91%** on unseen library-2
+  pictures, against 80% and 24% for the rule this section describes. It
+  claims base inside the picture on **none** of them. It reads per row, never
+  averaging the rows away, and a gap with the neighbour's picture beyond it is
+  two-sided evidence the others cannot see.
+* **Base is not the brightest thing on the film.** Exposed C-41 loses its
+  orange mask, so a few percent of picture pixels are brighter than base in a
+  channel. Base is recognised by its colour ratio (R/G 2.1-2.3, B/G ~0.53) and
+  a straight full-height edge. That is why every level-and-flatness rule above
+  failed.
+* **The frame is 350.6 units wide** (`framing.FRAME_WIDTH_UNITS`, 435.6
+  columns): measured on 39 pairs of prescans of one frame, one showing its
+  left edge and the other its right, the registered shift between them
+  closing the width with no pitch assumed. It is wider than the aperture, so
+  "the frame comes out wider than the aperture" above was true, not a
+  measurement error. A centred frame shows no base at all, and the gap is
+  about 16 units.
+
+The window and the roll now centre each frame with it. `tools/frame_edges` is a
+copy of the study's detector, and `tests/test_frame_edges_parity.py` holds it
+to the study's stored answers. The rule below is kept for the record and still
+decides only when no reader is handed to `StripWalk`.
+
+### Superseded: the per-row rule on the prescan
 
 **The per-row rule does not separate a gap from a silhouette on a 300 dpi
 prescan.** Four statistics were tried against walk K, whose false bands on

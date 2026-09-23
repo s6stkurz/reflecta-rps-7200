@@ -523,9 +523,9 @@ def test_an_old_walks_prescans_are_held_under_the_strips_numbers(
          "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]}),
         encoding="utf-8")
     monkeypatch.setattr(
-        scan_roll.framing, "propose_offsets",
-        lambda frames: ({n: 0.0 for n, _ in frames},
-                        {n: {"source": "measured"} for n, _ in frames}))
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"} for n, _ in frames}))
     held, _note = scan_roll.hold_from_walk(folder)
     assert sorted(held) == [15, 16, 17]
     assert all(a.number == n for n, a in held.items())
@@ -556,9 +556,9 @@ def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(
                     "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
         encoding="utf-8")
     monkeypatch.setattr(
-        scan_roll.framing, "propose_offsets",
-        lambda frames: ({n: 0.0 for n, _ in frames},
-                        {n: {"source": "measured"} for n, _ in frames}))
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"} for n, _ in frames}))
     held, note = scan_roll.hold_from_walk(folder)
     assert sorted(held) == [6, 7]
     assert note["walked"] == 2
@@ -591,9 +591,9 @@ def test_a_walk_with_only_its_roll_json_is_held_from_that(tmp_path,
          "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]}),
         encoding="utf-8")
     monkeypatch.setattr(
-        scan_roll.framing, "propose_offsets",
-        lambda frames: ({n: 0.0 for n, _ in frames},
-                        {n: {"source": "measured"} for n, _ in frames}))
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"} for n, _ in frames}))
     held, note = scan_roll.hold_from_walk(folder)
     assert sorted(held) == [3, 4, 5]
     assert note["walked"] == 3
@@ -615,9 +615,9 @@ def test_a_walk_whose_transport_stalled_is_held_frame_for_frame(
                    for n, p in enumerate([5, 6, 6, 7, 8], start=1)]}),
         encoding="utf-8")
     monkeypatch.setattr(
-        scan_roll.framing, "propose_offsets",
-        lambda frames: ({n: 0.0 for n, _ in frames},
-                        {n: {"source": "measured"} for n, _ in frames}))
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"} for n, _ in frames}))
     held, note = scan_roll.hold_from_walk(folder)
     assert note["walked"] == 5
     assert sorted(held) == [5, 6, 7, 8, 9]

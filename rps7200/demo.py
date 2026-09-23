@@ -180,10 +180,14 @@ class DemoScanner:
     def inquiry(self, refresh: bool = False) -> _Inquiry:
         return self._inquiry
 
-    #: Where this pretend strip ends: seventeen frames, 0 to 16 on the counter,
-    #: as long as the strip in `full_17_strip`. A fact about the film being
-    #: pretended, not about the driver, so it is the demo's own number.
-    LAST_POSITION = 16
+    #: Where this pretend strip ends: thirty-eight frames, 0 to 37 on the
+    #: counter -- a whole 35 mm roll, as Stefan asked, where it used to be the
+    #: seventeen of `full_17_strip`. Each frame is a library prescan
+    #: (`_strip_for`: 41 on this machine, so a roll repeats none of them), and
+    #: 37 stays inside what the driver believes a strip can reach
+    #: (`DirectScanner.LAST_PLAUSIBLE_POSITION`, 39). A fact about the film
+    #: being pretended, not about the driver, so it is the demo's own number.
+    LAST_POSITION = 37
 
     def wait_warm(self, timeout: float = 300.0, poll: float = 5.0) -> None:
         """Answered, because `session.seek` asks it of the real one first.
@@ -405,6 +409,7 @@ class DemoScanner:
         correct_dry_run: bool = False,
         first_index: int = 0,
         should_stop: Any = None,
+        edge_reader: Any = None,
         **kw: Any,
     ):
         """The roll, walked the way `DirectScanner.scan_roll` walks it.
@@ -447,7 +452,9 @@ class DemoScanner:
             index += 1
 
         holding = True
-        walk = StripWalk() if (correct or correct_dry_run) else None
+        # the driver's own construction: the reader the window hands in, or none
+        walk = (StripWalk(reader=edge_reader(film) if edge_reader else None)
+                if (correct or correct_dry_run) else None)
         misses = 0
         try:
             while not finished(index):
