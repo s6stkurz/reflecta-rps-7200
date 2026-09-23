@@ -76,6 +76,10 @@ class FakeScanner:
         #: film went and whether it went before the roll started.
         self.moves = []
 
+    def wait_warm(self, timeout=300.0, poll=5.0):
+        # Asked by every roll before the counter is; the lamp here is warm.
+        self.warmed = getattr(self, "warmed", 0) + 1
+
     def position(self):
         return self.pos
 
@@ -1224,6 +1228,30 @@ def test_a_roll_refuses_when_the_transport_will_not_say(tmp_path, monkeypatch):
     assert not (tmp_path / "rolls" / "strip").exists()
     failed = kinds(events, "failed")
     assert failed and "would not say" in failed[0].text
+    # And the likeliest reason is said: the scanner is silent while its lamp
+    # warms, and this sentence used to send the operator to check the strip.
+    assert "lamp" in failed[0].text
+
+
+def test_seek_waits_for_the_lamp_with_status_queries_only(monkeypatch):
+    """A roll started while the lamp warmed asked the counter, heard nothing
+    -- the scanner answers NOT READY to everything for its first ~80 s,
+    READ_STATE included -- and refused. It waits for the lamp now, and what
+    it sends while waiting is TEST UNIT READY and REQUEST SENSE: nothing that
+    moves the film and nothing that scans."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+    from rps7200.protocol import SCSI_REQUEST_SENSE, SCSI_TEST_UNIT_READY
+
+    clock = NoWaiting()
+    monkeypatch.setattr(direct, "time", clock)
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    scanner = ScannerOnStrip(at=3, warm_at=80.0, clock=clock)
+    assert session.seek(scanner, 1) == 1
+    assert scanner.t.at == 1
+    assert scanner.t.while_warming, "the lamp was warming when it began"
+    assert set(scanner.t.while_warming) <= {SCSI_TEST_UNIT_READY,
+                                            SCSI_REQUEST_SENSE}
 
 
 def test_a_counter_no_strip_has_is_not_a_place_to_start(tmp_path):

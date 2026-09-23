@@ -279,7 +279,6 @@ def main() -> int:
 
     roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
     out = Path(args.out or f"rolls/{roll_name}")
-    out.mkdir(parents=True, exist_ok=True)
     # A dry run and the scan that follows it share a directory, so they must
     # not share a file: the record of what was walked is what says which frames
     # are worth scanning, and writing the scan over it loses that.
@@ -318,9 +317,16 @@ def main() -> int:
         manifest_path.write_text(json.dumps(manifest, indent=2, default=str),
                                  encoding="utf-8")
 
-    checkpoint()
     started = time.monotonic()
     scanned = failed = 0
+    #: Whether the film reached the roll's first frame, and so whether this
+    #: run has a manifest at all. Nothing is written before that, which is
+    #: `ScanSession._roll`'s "before the directory, before the manifest": the
+    #: default roll name is today's date, the name the window's walks use,
+    #: and the manifest used to be written before the device was even
+    #: opened -- so a seek that refused replaced that day's survey.json with
+    #: an empty one, and the walk it described was gone.
+    placed = False
 
     writer = FrameWriter()
     # debug=False deliberately: this tool files its own library entries,
@@ -350,6 +356,19 @@ def main() -> int:
             # It also made `--reuse` inert on a dry run: the flag is read
             # here and nowhere else, so the lazy path ignored it and
             # recalibrated regardless.
+            #
+            # And first, before the film is moved or asked where it is. A
+            # calibration waits out the lamp, and while the lamp warms the
+            # scanner answers NOT READY to everything, READ_STATE included
+            # (`DirectScanner.wait_warm`) -- so a roll started from cold
+            # asked the counter, heard nothing eight times and refused, where
+            # 8a9ba17 had calibrated first and waited. Where the film sits
+            # does not matter to it: calibration measures the band below the
+            # film, `(0, 3431, 10343, 6888)`, with the strip in (CLAUDE.md,
+            # "Calibrate with the film loaded"). `seek` waits for the lamp
+            # too, for a run that reuses a reference or skips shading.
+            if args.frames != 0:
+                calibrate(s, args)
             if args.rewind:
                 landed = rewind(s, args.rewind)
                 if landed is None:
@@ -403,7 +422,11 @@ def main() -> int:
                 print("nothing else asked for")
                 return 0
 
-            calibrate(s, args)
+            # The film is on the roll's first frame now, so there is a roll
+            # to record -- and not before. See `placed`.
+            out.mkdir(parents=True, exist_ok=True)
+            checkpoint()
+            placed = True
 
             for frame in s.scan_roll(
                 frames=args.frames,
@@ -559,6 +582,14 @@ def main() -> int:
     for problem in writer.errors:
         failed += 1
         print(f"could not file {problem}", file=sys.stderr)
+
+    if not placed:
+        # Stopped before the film reached the roll -- the device would not
+        # open, or calibrating failed -- so nothing was scanned and there is
+        # no roll to record. A manifest already in this folder is left as it
+        # was, for the reason `placed` gives.
+        print("nothing was scanned, and nothing was written", file=sys.stderr)
+        return 1
 
     manifest["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     manifest["duration_s"] = round(time.monotonic() - started, 1)

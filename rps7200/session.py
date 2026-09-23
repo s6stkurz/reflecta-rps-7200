@@ -242,10 +242,17 @@ def seek(scanner, target: int, say=None) -> int:
     Every one of those would otherwise be a roll numbering frames it is not
     on. Returns the position it arrived at, which is ``target``.
 
-    Above the seam on purpose. It speaks only through `position`, `advance`
-    and `retreat`, so the demo's stand-in runs it unchanged -- the arrangement
-    CLAUDE.md asks for, and the reason it is not inside `scan_roll`, which
-    each backend has its own copy of.
+    Waits for the lamp first. While it warms -- about 80 s from cold -- the
+    scanner answers NOT READY to every command, READ_STATE included, so a
+    roll started straight after power-on heard nothing from the counter and
+    refused, where the one before it had waited inside the calibration.
+    `wait_warm` sends only TEST UNIT READY, and REQUEST SENSE to read why one
+    was refused: no transport command and no scan.
+
+    Above the seam on purpose. It speaks only through `wait_warm`,
+    `position`, `advance` and `retreat`, so the demo's stand-in runs it
+    unchanged -- the arrangement CLAUDE.md asks for, and the reason it is not
+    inside `scan_roll`, which each backend has its own copy of.
     """
     def tell(message):
         if say is not None:
@@ -256,13 +263,22 @@ def seek(scanner, target: int, say=None) -> int:
         raise FilmNotPlaced(
             f"frame {frame} is past the {LAST_PLAUSIBLE_POSITION + 1} frames "
             "a strip is taken to have, so nothing was scanned")
+    waiting = time.monotonic()
+    scanner.wait_warm()
+    waited = time.monotonic() - waiting
+    if waited >= 1.0:
+        tell(f"waited {waited:.0f} s for the lamp to warm up before asking "
+             "where the film is")
     here = _ask_position(scanner)
     if here is None:
         raise FilmNotPlaced(
             "the transport would not say which frame the film is on, so "
             "nothing was scanned: a roll numbers its frames by where they are "
             "on the strip, and without that every number would be a guess. "
-            "Check the strip is in, then start the roll again.")
+            "The scanner says nothing while its lamp warms up, about 80 s "
+            "after it is switched on -- if it was just switched on, wait a "
+            "minute; otherwise check the strip is in. Then start the roll "
+            "again.")
     if not plausible(here):
         raise FilmNotPlaced(
             f"the transport says the film is on frame {here + 1}, which no "

@@ -302,6 +302,19 @@ def test_when_a_roll_ends_is_the_drivers_decision_and_not_a_copy():
     assert DemoScanner.place_on_strip is DirectScanner.place_on_strip
 
 
+def test_the_demo_answers_everything_the_seek_asks_of_the_scanner():
+    """`session.seek` runs above the seam and asks the scanner to wait for
+    its lamp before anything else. The demo answers it as the real one does
+    once warm, so the demo runs the seek with no branch of its own."""
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    for name in ("wait_warm", "position", "advance", "retreat"):
+        assert callable(getattr(DirectScanner, name)), name
+        assert callable(getattr(DemoScanner, name, None)), name
+    assert DemoScanner("library").wait_warm() is None
+
+
 def test_the_demo_roll_logs_distances_in_the_transports_units(tmp_path):
     """As the real loop does. It said 'offset +0.00 mm' where the scanner's
     own log says units, in lines a person reads beside each other."""

@@ -339,6 +339,83 @@ def test_a_roll_the_tool_cannot_place_scans_nothing(tmp_path, monkeypatch):
     assert not list((tmp_path / "roll").glob("frame*.tif"))
 
 
+def test_a_roll_from_cold_calibrates_before_it_asks_where_the_film_is(
+        tmp_path, monkeypatch):
+    """8a9ba17 calibrated first, and the calibration waited the lamp out. The
+    seek then put in front of it asked the counter while the lamp warmed,
+    heard nothing -- the scanner is NOT READY to everything for ~80 s -- and
+    the tool exited 1 telling the operator to check the strip."""
+    from rps7200 import session
+
+    order = []
+    created = []
+
+    class Cold(FakeRollScanner):
+        warm = False
+
+        def position(self):
+            order.append("position")
+            return self.at if self.warm else None
+
+        def ensure_shading(self, path, reuse=False, skip=False):
+            # `calibrate_shading` waits for the lamp before it measures.
+            order.append("calibrate")
+            self.warm = True
+            return super().ensure_shading(path, reuse, skip)
+
+    class Patched(Cold):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--reference", str(tmp_path / "shading.npz"), "--roll", "cold",
+         "--dry-run", "--frames", "2"])
+    assert scan_roll.main() == 0
+    assert order.index("calibrate") < order.index("position"), order
+    assert created[0].asked["first_index"] == 0
+
+
+def test_a_roll_that_cannot_be_placed_leaves_the_folder_as_it_was(
+        tmp_path, monkeypatch):
+    """The default roll name is today's date, the same name the window's
+    walks use, and the manifest was written before the device was opened --
+    so a seek that refused replaced that day's survey.json with an empty
+    one. Nothing is written until the film is on the roll's first frame."""
+    import json
+
+    from rps7200 import session
+
+    class Silent(FakeRollScanner):
+        def position(self):
+            return None
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0, raising=False)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: Silent(frames=2))
+
+    walked = tmp_path / "2026-09-23"
+    walked.mkdir()
+    before = {"roll": "2026-09-23", "frames": [
+        {"number": 1, "transport_position": 5, "prescan": "prescan01.tif"}]}
+    (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
+    fresh = tmp_path / "never-placed"
+    for out in (walked, fresh):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["scan_roll.py", "--out", str(out), "--library", "",
+             "--no-shading", "--roll", out.name, "--dry-run",
+             "--frames", "2"])
+        assert scan_roll.main() == 1
+    assert json.loads((walked / "survey.json").read_text(
+        encoding="utf-8")) == before, "the walk was overwritten"
+    assert not fresh.exists(), "a folder for a roll that never started"
+
+
 def test_an_old_walks_prescans_are_held_under_the_strips_numbers(
         tmp_path, monkeypatch):
     """`registration-F` named its prescans 01 to 03 from a walk begun on the

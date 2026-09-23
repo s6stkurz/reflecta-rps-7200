@@ -124,6 +124,12 @@ class FilmOnFrame:
     at = 0
     last = 16
     moves: list | None = None
+    #: How many times the lamp was waited for. A roll does before it asks the
+    #: counter anything, as `session.seek` does of the real scanner.
+    warmed = 0
+
+    def wait_warm(self, timeout=300.0, poll=5.0):
+        self.warmed += 1
 
     def position(self):
         return self.at
@@ -258,22 +264,42 @@ class StripTransport:
 
     ``double_steps`` are the places whose advance moves the film two: the one
     failure a roll's own count cannot see, and the counter can.
+
+    ``warm_at`` is when the lamp is warm, on ``clock`` (a `NoWaiting`). Until
+    then every command but REQUEST SENSE is refused, and the sense says NOT
+    READY -- what the device does for its first ~80 s, READ_STATE included.
+    ``while_warming`` is every opcode sent before then.
     """
 
-    def __init__(self, at=0, last=16, double_steps=()):
+    def __init__(self, at=0, last=16, double_steps=(), warm_at=0.0,
+                 clock=None):
         self.at, self.last = at, last
         self.double_steps = set(double_steps)
+        self.warm_at, self.clock = warm_at, clock
         self.sent = []
+        self.while_warming = []
         self.closed = False
         self._empty = 0
 
+    def warming(self):
+        return self.clock is not None and self.clock.now < self.warm_at
+
     def command(self, command, data=None, read_size=0, timeout_ms=0,
                 max_wait_s=60.0):
-        from rps7200.protocol import (SCSI_READ_STATE, SCSI_SLIDE,
-                                      SLIDE_NEXT, SLIDE_PREV)
+        from rps7200.protocol import (SCSI_READ_STATE, SCSI_REQUEST_SENSE,
+                                      SCSI_SLIDE, SLIDE_NEXT, SLIDE_PREV)
 
         opcode = command[0]
         self.sent.append((opcode, bytes(data) if data else b""))
+        if self.warming():
+            self.while_warming.append(opcode)
+            if opcode == SCSI_REQUEST_SENSE:
+                sense = bytearray(14)
+                sense[2], sense[12] = 0x02, 0x04          # NOT READY
+                return bytes(sense)
+            raise CheckCondition(opcode)
+        if opcode == SCSI_REQUEST_SENSE:
+            return bytes(14)
         if opcode == SCSI_SLIDE and data:
             if data[0] == SLIDE_NEXT and self.at < self.last:
                 step = 2 if self.at in self.double_steps else 1
@@ -305,9 +331,11 @@ class ScannerOnStrip(DirectScanner):
     ``(index, the Approved's number)``.
     """
 
-    def __init__(self, at=0, last=16, double_steps=()):
-        super().__init__(transport=StripTransport(at, last, double_steps),
-                         verbose=False, debug=False)
+    def __init__(self, at=0, last=16, double_steps=(), warm_at=0.0,
+                 clock=None):
+        super().__init__(
+            transport=StripTransport(at, last, double_steps, warm_at, clock),
+            verbose=False, debug=False)
         self.held = []
         self.logged = []
         self.log_hook = self.logged.append

@@ -185,6 +185,15 @@ class DemoScanner:
     #: pretended, not about the driver, so it is the demo's own number.
     LAST_POSITION = 16
 
+    def wait_warm(self, timeout: float = 300.0, poll: float = 5.0) -> None:
+        """Answered, because `session.seek` asks it of the real one first.
+
+        There is no lamp here to wait for, so it returns at once -- which is
+        also what the real one does once the lamp is warm. The seek above the
+        seam calls it on whatever stands at the seam, with no branch for the
+        demo, so the demo runs the same seek the scanner does.
+        """
+
     def position(self) -> int | None:
         return self._position
 
