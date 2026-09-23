@@ -1,0 +1,26 @@
+{
+  "id": "x0920_46",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor runs to column 0 (~36); the dark patch in the top band at cols 0-8 is scene (a shoe/shadow), not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.2,
+    "lo": 425.8,
+    "hi": 426.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "thin black sliver: col 427 base (~113) in all bands, col 426 partial (72-113), col 425 a brownish fringe. Per-band crossings 426.1/426.4/426.2/425.8, no consistent tilt"
+  },
+  "frame_note": "right: 1.5-column sliver"
+}

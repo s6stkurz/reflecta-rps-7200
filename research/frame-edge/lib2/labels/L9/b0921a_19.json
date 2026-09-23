@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_19", "labeller": "L9", "view": "B",
+  "left":  {"state": "edge", "x": 18.9, "lo": 18.6, "hi": 19.3,
+            "outer": null, "x_top": 18.9, "x_bottom": 19.8,
+            "note": "clean straight edge: base 0-17 (95, R/G 2.33, B/G 0.55), col 18 ~90-95% base, foliage from col 19. Edge ~18.9 over most of the height, moving to ~19.5-20.0 in the bottom band"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "jeans/path run to 428"},
+  "frame_note": ""
+}

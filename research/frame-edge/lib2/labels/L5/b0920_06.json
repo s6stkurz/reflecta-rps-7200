@@ -1,0 +1,26 @@
+{
+  "id": "b0920_06",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-~60 are base-coloured (R/G 2.27, B/G 0.54, raw 64/28/15 = the base level of b0920_05) and full height, but there is no boundary anywhere in 0-110: the flash falloff darkens the grass smoothly into unexposed film, so a gap (if any) merges with unexposed scene. Neighbouring frames b0920_03..05 have a 7-9 column gap at left, but nothing in this frame shows one."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grass runs to 427; the dark top-right corner (420-427, top band only) is a scene object"
+  },
+  "frame_note": "night flash shot; left third fades into unexposed film"
+}

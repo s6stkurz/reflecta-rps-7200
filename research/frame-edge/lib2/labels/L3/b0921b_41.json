@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_41", "labeller": "L3", "view": "B",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate cols 0-4 (~177 neutral, R/G 1.00); film end tilted, ~5 at top to ~2.5 at bottom. BASE lies between gate and picture: cols 5-26 uniform (R/G 2.13-2.28, B/G 0.54); base/picture boundary at 26.0 in the top ~35% of rows and 27.0 below (one-column step), ~26.7 overall"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trees/grass to col 427 (likeness 10-18, below base's 20), textured"},
+  "frame_note": "strip end; the gate dominates the stretch so view B is pale cyan. Same frame and same step as b0921b_49, shifted 10 columns"
+}

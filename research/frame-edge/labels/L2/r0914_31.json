@@ -1,0 +1,26 @@
+{
+  "id": "r0914_31",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base: cols 0-5 are a DENSE strip (cream in B, navy in A; table 5-70, varies by band) with a straight vertical boundary at ~5.5-6 -- looks like an overlapping/abutting exposure (neighbour frame or light leak), not base; picture continues to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.8,
+    "lo": 426.5,
+    "hi": 427.0,
+    "outer": null,
+    "x_top": 426.9,
+    "x_bottom": 425.5,
+    "note": "thin base sliver: col 427 = 106-110 all bands (brighter than frame max; white-cyan in A like base elsewhere on roll, so read as base not no_film); col 426 = 26/25/31/109 -> crossing ~426.85 in b1-b3, ~425.6 in b4: tilt, base starts further left at the bottom"
+  },
+  "frame_note": "left border has a dense straight-edged strip (0-5) with no base; right is a 1-2 col base sliver"
+}

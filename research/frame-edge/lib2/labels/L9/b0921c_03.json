@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_03", "labeller": "L9", "view": "A",
+  "left":  {"state": "edge", "x": 62.2, "lo": 61.9, "hi": 63.0,
+            "outer": 45.1, "x_top": 62.1, "x_bottom": 63.6,
+            "note": "clean sharp edge, base 45/46-61 (93-97). Edge sits at 62.0-62.3 over the upper two thirds and drifts to ~63.7 in the bottom rows (corner rounding / slight tilt). Neighbour picture cols 0-44; outer 45.0-45.2 through the middle, ~46.0 in the top rows"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "scene (dress/table) runs to 428"},
+  "frame_note": ""
+}

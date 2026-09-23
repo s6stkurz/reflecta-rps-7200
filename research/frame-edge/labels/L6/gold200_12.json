@@ -1,0 +1,26 @@
+{
+  "id": "gold200_12",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright wall background reaches border but bottom band (foreground) is picture to col 0; no full-height plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright wall top, dark foreground bottom, both to col 427; no vertical line"
+  },
+  "frame_note": "frame is a bright wall, featureless but not base (lower band picture runs to both borders)"
+}

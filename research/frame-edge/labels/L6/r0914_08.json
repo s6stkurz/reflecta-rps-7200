@@ -1,0 +1,26 @@
+{
+  "id": "r0914_08",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark painting (clear on negative) runs to col 0 between white wall above and below; not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 427.5,
+    "lo": 427.0,
+    "hi": 427.9,
+    "outer": null,
+    "x_top": 427.85,
+    "x_bottom": 426.9,
+    "note": "sub-column sliver, tilted: col 427 base fraction b1 17%, b2 33%, b3 70%, b4 100% (col 426 b4 ~8%); base ~100, black in B at the bottom"
+  },
+  "frame_note": ""
+}

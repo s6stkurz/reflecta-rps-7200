@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_04",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night background is almost base-clear (~80) everywhere. Bench ends sharply at col 7, but cols 0-6 in the bottom band read 64 = same ground tone as right of the bench at 394+, not base. No distinct plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night background and ground run to 428, bottom band ~61 matches ground, no brighter plateau"
+  },
+  "frame_note": "B&W night scene: background density close to base, so a hidden base sliver cannot be fully excluded"
+}

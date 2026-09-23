@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_30",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey backdrop runs to 0 (R/G 2.1, B/G 0.59, G 17 vs base 29: picture)"
+  },
+  "right": {
+    "state": "edge",
+    "x": 402.7,
+    "lo": 402.0,
+    "hi": 403.3,
+    "outer": 419.2,
+    "x_top": 403.5,
+    "x_bottom": 401.1,
+    "note": "base cols 403-417 (R/G 2.25, B/G 0.54), neighbour picture from ~419. Inner edge steps: ~403.5 at rows 30-40, 403.0 rows 40-150, 402.0 rows 180-240, ~401.2 at the bottom; rows 150-180 picture is base-coloured so hidden. Outer edge irregular: 418.0 in rows 0-40, 419-420 mid, ~419.2 at the bottom"
+  },
+  "frame_note": "no interior gap; frame is the large left part"
+}

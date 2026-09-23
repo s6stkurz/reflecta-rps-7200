@@ -1,0 +1,26 @@
+{
+  "id": "strip3_03",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 6.9,
+    "lo": 6.2,
+    "hi": 7.1,
+    "outer": null,
+    "x_top": 7.0,
+    "x_bottom": 6.3,
+    "note": "clean black base cols 0-5 (~90) with sharp line. Col 6 full base in b1/b2, 75% in b3, 31% in b4: edge tilts from ~7.0 at top to ~6.3 at bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky, hedge and houses run to 428, no black band"
+  },
+  "frame_note": ""
+}

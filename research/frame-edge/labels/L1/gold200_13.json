@@ -1,0 +1,26 @@
+{
+  "id": "gold200_13",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grass/figure to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "right ~60 cols are pale and featureless in A (dark grey in B) but it is a gradual falloff (81 at ~380 sliding to 72 at 427), with faint texture and no sharp straight boundary: underexposed scene, not base. Low confidence"
+  },
+  "frame_note": "right side ambiguous: underexposed dark region reads ~72-81 in all bands, near-uniform, but no step"
+}

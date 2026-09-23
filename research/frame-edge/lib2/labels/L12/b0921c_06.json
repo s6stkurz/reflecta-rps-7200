@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_06",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 73.9,
+    "lo": 73.5,
+    "hi": 74.4,
+    "outer": 57.0,
+    "x_top": 73.6,
+    "x_bottom": 74.3,
+    "note": "interior gap: base cols 57-72 (R/G 2.2, B/G 0.53), neighbour picture 0-56 on the left, this frame 74-427. Inner edge ~73.6 in the top half, ~74.2 below; bottom-corner rows 260+ reach ~75. Outer edge ~57.6 at top, 57.0 mid, ~56.5 at the bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dress/plant run to 428"
+  },
+  "frame_note": "frame = right part (354 picture cols vs 57)"
+}

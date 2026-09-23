@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_08", "labeller": "L9", "view": "B",
+  "left":  {"state": "edge", "x": 23.1, "lo": 22.9, "hi": 23.5,
+            "outer": 9.6, "x_top": 23.0, "x_bottom": 24.3,
+            "note": "sharp edge: base 10-22 (93-99, R/G 2.3, B/G 0.53; col 22 slightly brighter), dense sky from col 23/24. Col 23 is 0-30% base over most of the height (x ~23.1), rising to 23.5-24.0 in the bottom fifth and ~24.5 in the last rows (rounded corner). Neighbour picture 0-8 is light and close to base, so outer is soft: ~10.5-11 at the top, 9.0-9.5 mid-height, ~10 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hedge texture runs to 428"},
+  "frame_note": ""
+}

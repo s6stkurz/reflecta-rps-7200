@@ -1,0 +1,26 @@
+{
+  "id": "gold200_01",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "picture (trees/bench) reaches column 0; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.05,
+    "lo": 425.8,
+    "hi": 426.6,
+    "outer": null,
+    "x_top": 426.0,
+    "x_bottom": 426.5,
+    "note": "2-column full-height strip (cols 426-427 ~76-78 in every band, dark in B, grey in A), sharp; col 426 is full base in b1-b3 and ~47% in b4 -> bottom leans right. Plateau reads only ~77, not ~97, so possibly the base's own level in this frame"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0922s_12",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 6.8,
+    "lo": 6.4,
+    "hi": 7.4,
+    "outer": null,
+    "x_top": 6.8,
+    "x_bottom": 7.6,
+    "note": "base cols 0-5/6 (R/G 2.28, B/G 0.54). Sharp edge; the picture beside it is light foliage near base value in the upper bands so contrast is modest there. Slight tilt: ~6.7-6.8 in the upper half, ~7.1 lower, ~7.8 in the bottom band"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "door, railing and pavement run to column 428; bright pavement in the lower bands is not full height"
+  },
+  "frame_note": ""
+}

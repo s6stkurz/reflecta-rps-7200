@@ -1,0 +1,26 @@
+{
+  "id": "b0922s_06",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 8.0,
+    "lo": 7.7,
+    "hi": 8.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols 0-7 (raw 65-66/28-29/15-16, R/G 2.3, B/G 0.55). Edge is a sharp vertical line at 8.0 but only visible in the top ~100 rows, where the night sky is denser than base; below that the unexposed night scene is at base density and the boundary cannot be seen."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night sky reaches column 427 in the top ~35 rows with no vertical boundary; lower rows are base-density scene"
+  },
+  "frame_note": "Night flash portrait: most of the frame is at base density; edges only readable in the sky."
+}

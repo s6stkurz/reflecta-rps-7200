@@ -1,0 +1,26 @@
+{
+  "id": "gold200_03",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage, sky and building run to col 0; no black plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark foliage runs to col 427, textured, no sharp vertical line"
+  },
+  "frame_note": ""
+}

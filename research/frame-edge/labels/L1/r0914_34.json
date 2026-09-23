@@ -1,0 +1,26 @@
+{
+  "id": "r0914_34",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tan strip 0-18..24 (dark blue in B) is scene: its boundary is stepped/not straight, reads only ~68 vs picture ~50, and the figure's body band runs through it to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.55,
+    "lo": 425.8,
+    "hi": 426.8,
+    "outer": null,
+    "x_top": 426.7,
+    "x_bottom": 425.8,
+    "note": "1.5-col sliver: col 427 = 104 in all bands, col 426 ~32-52% base in b1-b3 but ~97% in b4 (col 425 b4 22%) -> leans ~0.9 col, bottom further left; dark full-height line in B"
+  },
+  "frame_note": ""
+}

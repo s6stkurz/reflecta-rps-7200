@@ -1,0 +1,26 @@
+{
+  "id": "strip3_03",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 6.9,
+    "lo": 6.5,
+    "hi": 7.2,
+    "outer": null,
+    "x_top": 7.0,
+    "x_bottom": 6.1,
+    "note": "clean sharp edge; base 0-5 ~90; col 6 base in b1/b2, 76 in b3, 39 in b4 -> slight tilt, edge moves left going down"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/roof run to 428; table flat ~24"
+  },
+  "frame_note": ""
+}

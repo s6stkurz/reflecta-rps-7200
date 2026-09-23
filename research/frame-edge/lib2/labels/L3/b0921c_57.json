@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_57", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 65.0, "lo": 64.7, "hi": 65.5,
+            "outer": 45.5, "x_top": null, "x_bottom": null,
+            "note": "sharp straight full-height line at 65.0 where the street scene starts; the line cuts straight through building, highlight streaks and car. Cols 45-64 are clean, uniform, base ratio (R/G 2.2, B/G 0.55), ~95% of base transmission at the same x on this roll (x-falloff makes it read only 81-84). Cols 0-44 are the same density but carry dense specks (sky-through-leaves): the neighbour frame is an almost unexposed foliage shot (seen whole in b0921c_58/59, where it reads at base level). Picture beside the line is also dark, so contrast is low in the lower bands; x taken from the top band and the visible line. OUTER is uncertain (+-2): placed where the neighbour's specks stop, since its background is itself at base density"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "buildings/railings run to col 427, no plateau"},
+  "frame_note": "hard: base on the left is not visibly brighter than the dark scene; decided from the straight full-height line at 65 and the neighbour-frame context in b0921c_58/59"
+}

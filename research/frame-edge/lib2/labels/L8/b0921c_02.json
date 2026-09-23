@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_02", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 58.0, "lo": 57.6, "hi": 58.5,
+            "outer": 40.7, "x_top": 57.7, "x_bottom": 58.4,
+            "note": "deep gap: base cols 41-57 (R/G 2.2, B/G 0.55, full height, straight); this frame (cols 58-427, 370 cols) is on the right of it; neighbour picture cols 0-40 (outer ~40.7). Frame edge is sharp against a dense dark region."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/tablecloth run off the right border"},
+  "frame_note": "gap lies at cols 41-57, inside the left crop"
+}

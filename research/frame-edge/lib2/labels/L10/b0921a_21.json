@@ -1,0 +1,26 @@
+{
+  "id": "b0921a_21",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 16.8,
+    "lo": 16.3,
+    "hi": 17.3,
+    "outer": null,
+    "x_top": 16.4,
+    "x_bottom": 17.3,
+    "note": "clean sharp edge, slightly tilted: base 0-15 full height; top bands cross at ~16.4, bottom at ~17.2"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "road/cars run to column 427, no base"
+  },
+  "frame_note": ""
+}

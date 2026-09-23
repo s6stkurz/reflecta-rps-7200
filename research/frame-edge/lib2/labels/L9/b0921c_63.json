@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_63", "labeller": "L9", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "street scene (woman, cars) runs to column 0"},
+  "right": {"state": "edge", "x": 216.1, "lo": 215.8, "hi": 216.5,
+            "outer": 237.8, "x_top": 216.4, "x_bottom": 215.9,
+            "note": "mid-frame gap: base 216-237 (95-98, R/G 2.23, B/G 0.55). Left part 0-215 (216 cols) is the frame, right part 238-427 (190 cols) is the neighbour: more than 10 columns apart, so no tie. Edge ~216.4 in the top quarter, 216.0 below. Outer ~237.1 in the top rows, 238.0 lower down"},
+  "frame_note": "gap in the middle of the scan, found in the 1:1 thumbnail; column 214 reads darker than its neighbours all the way down (sensor line, not an edge)"
+}

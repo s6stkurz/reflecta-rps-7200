@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_39", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 20.8, "lo": 20.4, "hi": 21.1,
+            "outer": null, "x_top": 19.6, "x_bottom": 20.9,
+            "note": "base cols 0-18 (~94, R/G 2.3 B/G 0.52). Edge leans: ~19.5 in the top eighth, ~20.0 upper quarter, ~20.7-21.0 from mid-height down (8-band read); clean line in view B"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trees/path to col 427; R/G 2.5-2.6, textured, not base"},
+  "frame_note": ""
+}

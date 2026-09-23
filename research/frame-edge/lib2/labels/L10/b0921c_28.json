@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_28",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey backdrop runs to column 0 (raw 31/14/8, far denser than base)"
+  },
+  "right": {
+    "state": "edge",
+    "x": 367.4,
+    "lo": 366.9,
+    "hi": 368.0,
+    "outer": 384.5,
+    "x_top": 367.1,
+    "x_bottom": 366.1,
+    "note": "base gap cols ~367-383 (raw 67-69/30/16, R/G 2.3, B/G 0.53). Frame edge not perfectly straight: ~367.1 in the top rows, ~367.9 in rows 35-140, ~367.0 in rows 170-225, ~366.1 at the bottom. Neighbour picture from ~383.1 (top rows) / ~384.2-385.0 lower down."
+  },
+  "frame_note": "Right-side gap at 367-383; this frame 367 cols on the left, neighbour 43 cols on the right."
+}

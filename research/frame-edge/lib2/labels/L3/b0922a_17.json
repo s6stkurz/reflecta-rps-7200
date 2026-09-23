@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_17", "labeller": "L3", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/figure texture runs to col 0; top band varies 32-54 across cols 0-16, no plateau"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage and figure run to col 427, no plateau"},
+  "frame_note": "no gap anywhere across the thumbnail; the thin vertical lines near cols ~213 and ~260 are scan lines, not base"
+}

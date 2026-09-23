@@ -1,0 +1,26 @@
+{
+  "id": "r0914_21",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate: cols 0-63 neutral white, 98-99 in every band, brighter/greyer than base; the strip's leading end and the picture start lie outside the table, roughly col 95-100 by the thumbnail (thin light line there in B)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dense wall/pictures (3-5) reach 428; no plateau"
+  },
+  "frame_note": "reference frame for no_film"
+}

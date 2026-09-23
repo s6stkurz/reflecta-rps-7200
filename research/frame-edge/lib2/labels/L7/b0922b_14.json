@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_14", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 60.0, "lo": 59.7, "hi": 60.5,
+            "outer": 39.4, "x_top": 59.8, "x_bottom": 60.7,
+            "note": "black gap cols 40-58 (likeness 95-98, R/G 2.25, B/G 0.52), sharp against the bright sky/building at 60. Col 59 reads 82/83/96/96 and col 60 24/12/40/78: top ~59.8, bottom band ~60.7. Neighbour picture 0-38 is a dark scene at 80-91, close to base, so the outer boundary is soft: ~39.0-39.4 in bands 2-3, ~39.7 in band 4, unreadable in band 1."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky/garden run to col 427, likeness ~30"},
+  "frame_note": "whole thumbnail checked: no other gap; frame is the right part (368 cols vs 39)"
+}

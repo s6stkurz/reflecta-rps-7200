@@ -1,0 +1,26 @@
+{
+  "id": "r0909_10",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 0.7,
+    "lo": 0.3,
+    "hi": 1.2,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "partial sliver only: col 0 reads 69-75 uniformly in all bands (base on this roll ~97-100), col 1 slightly raised (46-60); dark full-height line at cols 0-1 in B. No true plateau, so edge placed by summing base fractions (~0.5 top, ~0.9 bottom). Could be picture_to_border if judged stricter"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees/dancers to col 427"
+  },
+  "frame_note": "left: thin partial sliver, borderline edge vs picture_to_border"
+}

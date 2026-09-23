@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_20", "labeller": "L8", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop and figure run to column 0"},
+  "right": {"state": "edge", "x": 231.5, "lo": 231.0, "hi": 232.1,
+            "outer": 248.8, "x_top": 232.0, "x_bottom": 231.1,
+            "note": "MID-FRAME gap: black base cols 232-247 (G~35, R/G 2.23, B/G 0.55, full height). This frame's picture (girl in hat) ends at ~231.5 (232.0 top, ~231.1 bottom). Neighbour (room/window) starts at outer ~248.8 (248.0 in the top band). A light vertical scan line at col ~214-215 inside the picture is not an edge."},
+  "frame_note": "two partial pictures: left 0-230 (~231 cols) vs right 249-427 (~179 cols); left is the frame"
+}

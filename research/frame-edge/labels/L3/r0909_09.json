@@ -1,0 +1,26 @@
+{
+  "id": "r0909_09",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 1.8,
+    "lo": 1.4,
+    "hi": 2.2,
+    "outer": null,
+    "x_top": 1.5,
+    "x_bottom": 2.1,
+    "note": "2-col sliver of base (~86 all bands, black full height in B). b1 col1=70 (~48% base), b3/b4 col1 base and col2 ~10% -> slight lean"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees/plaza to col 427; b1 dips to 9 at 419-427 is a dark tree canopy on the negative, not base"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_13",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark side wall to col 0 (~70-83), no step at the border; tone change near col 45-50 is the room corner, slanted"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall to col 427 (~85-91), no step; tone change near 397 is the room corner"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_08",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall texture to col 0, table flat ~40 (not base, max is elsewhere), no step"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "window and frame run to col 427; bright mullion at 415-423 is scene, not full height"
+  },
+  "frame_note": ""
+}

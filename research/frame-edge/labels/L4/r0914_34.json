@@ -1,0 +1,26 @@
+{
+  "id": "r0914_34",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "NOT base: cols 0-18 are a darker blue wall panel (~68, base reads 104 on the right), bounded by a stepped vertical line at 18-24 that belongs to the scene; picture to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.5,
+    "lo": 426.1,
+    "hi": 426.9,
+    "outer": null,
+    "x_top": 426.7,
+    "x_bottom": 425.85,
+    "note": "sliver: col 427 base (104 all bands), col 426 partial: base fraction b1 32%, b2 38%, b3 55%, b4 ~100% (+col 425 22%) -> leans, wider at bottom"
+  },
+  "frame_note": ""
+}

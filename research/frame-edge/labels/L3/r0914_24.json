@@ -1,0 +1,26 @@
+{
+  "id": "r0914_24",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-5 a darker-blue strip in B (~63) but far below base (~94 on the right); scene (wall shading), picture continues to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 412.3,
+    "lo": 411.8,
+    "hi": 412.7,
+    "outer": 427.0,
+    "x_top": 412.6,
+    "x_bottom": 411.7,
+    "note": "base 413-425 ~93 all bands. per band: b1 412.6, b2 412.5, b3 412.3, b4 411.7 (col 412 fully base, col 411 27%). Neighbour frame shows again at the far right: outer ~427.7 top, ~426.5 bottom. The lighter strip 397-411 is a wall corner in the scene"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0914_20",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "statue runs to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "lamps, plinth top and dark background run to col 427; dark areas (b1 ~84, b4 ~90) are scene, split by the lit plinth, no vertical line"
+  },
+  "frame_note": ""
+}

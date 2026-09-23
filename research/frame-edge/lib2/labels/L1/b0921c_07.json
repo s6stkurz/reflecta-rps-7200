@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_07", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 77.1, "lo": 76.8, "hi": 77.6,
+            "outer": 60.1, "x_top": 76.9, "x_bottom": 77.5,
+            "note": "internal gap deeper than the crop: base cols 60-76 (~96, R/G 2.2 B/G 0.53), frame picture from col 77 (drops to ~11). Slight lean, col 77 half base in bottom band only. Neighbour picture cols 0-59"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/table scene to col 427, max ~42"},
+  "frame_note": "gap inside the frame at 60-77; frame is the right part (350 cols vs 60)"
+}

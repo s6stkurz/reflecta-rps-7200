@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_08", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 62.6, "lo": 62.2, "hi": 63.1,
+            "outer": 43.0, "x_top": 62.0, "x_bottom": 63.0,
+            "note": "base cols 43-61 (likeness 94-96, R/G 2.25, B/G 0.54); neighbour picture 0-42 (43 cols) vs this frame 62-427. Col 62 reads 16/90/94/95 by band: sharp at 62.0 against the dense sky at the top, ~63.0 against the grass at the bottom. Outer ~43.0 from bands 1-2; in bands 3-4 the neighbour's dark scene climbs to base level (88-93) so the outer boundary there is soft."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427, likeness ~26"},
+  "frame_note": "whole thumbnail checked: no other gap; gap sits in the left crop"
+}

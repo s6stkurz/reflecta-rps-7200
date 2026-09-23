@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_12",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 43.5,
+    "lo": 42.9,
+    "hi": 44.2,
+    "outer": 22.5,
+    "x_top": 43.0,
+    "x_bottom": 44.0,
+    "note": "base cols ~22-42 (flat, G std ~1.3, R/G 2.25, B/G 0.56; reads ~80 because brighter picture elsewhere, dark slate in view B). The forest beside it is dark foliage at nearly base value (bands 2-6 read 76-83), so the edge is seen mostly as the start of texture: G std steps 1.3 -> 4.6 between cols 42 and 43. ~43.0 in the upper bands, ~44.0 in the lower ones; mid-height has almost no contrast. Neighbour (tree bark) ends ~23.7 at top, ~22.0 lower"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "house, foliage and figures run to column 428"
+  },
+  "frame_note": "same scene as b0922a_18"
+}

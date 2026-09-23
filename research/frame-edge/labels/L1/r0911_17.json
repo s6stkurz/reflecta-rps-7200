@@ -1,0 +1,26 @@
+{
+  "id": "r0911_17",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 14.5,
+    "lo": 13.9,
+    "hi": 16.5,
+    "outer": 9.0,
+    "x_top": 16.4,
+    "x_bottom": 14.0,
+    "note": "narrow base gap (96-97 in all bands at cols 10-13) between a neighbour sliver (gold, cols ~1-8) and this frame's grey wall; tilted: inner edge ~16.4 in b1 (soft, 2-col ramp at the top), ~14.7 b2, ~14.0 b3/b4; outer edge ~10 at top, ~8.5 lower"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall darkening to col 427 (74-80), smooth, no step"
+  },
+  "frame_note": "left: neighbour picture beyond a ~5-col gap; col 0 also reads 87 (dark line in B) - treated as part of the neighbour sliver"
+}

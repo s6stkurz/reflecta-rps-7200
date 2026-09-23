@@ -1,0 +1,938 @@
+{
+ "about": "library 2/300dpi (225 entries, 2026-09-20..22), one C-41 strip throughout. Film/not-film decided by eye from lib2/crops/triage/*.png: all 225 are the negative strip, nothing excluded. Same position = rps7200.uniformity.register(a/median, b/median, max_shift=120) conf>100 at dx=dy=0 over all pairs (union); kind=dup points at the lowest cid of its position, which may sit in another roll. A shift of even one column keeps its own film frame. Every roll is split=test: fresh data no detector has seen.",
+ "excluded": {},
+ "rolls": [
+  {
+   "name": "b0920",
+   "split": "test",
+   "film_type": "c41",
+   "note": "2026-09-20 evening: first Windows scan (uint16) and GUI roll prescans 2026-09-21-01..05",
+   "frames": [
+    {
+     "cid": "c000"
+    },
+    {
+     "cid": "c001",
+     "kind": "dup",
+     "same_as": "c000"
+    },
+    {
+     "cid": "c002"
+    },
+    {
+     "cid": "c003"
+    },
+    {
+     "cid": "c004"
+    },
+    {
+     "cid": "c005"
+    }
+   ]
+  },
+  {
+   "name": "b0921a",
+   "split": "test",
+   "film_type": "c41",
+   "note": "2026-09-21 01:23 debug burst: each position scanned twice",
+   "frames": [
+    {
+     "cid": "c006"
+    },
+    {
+     "cid": "c007",
+     "kind": "dup",
+     "same_as": "c006"
+    },
+    {
+     "cid": "c008"
+    },
+    {
+     "cid": "c009",
+     "kind": "dup",
+     "same_as": "c008"
+    },
+    {
+     "cid": "c010"
+    },
+    {
+     "cid": "c011",
+     "kind": "dup",
+     "same_as": "c010"
+    },
+    {
+     "cid": "c012"
+    },
+    {
+     "cid": "c013",
+     "kind": "dup",
+     "same_as": "c012"
+    },
+    {
+     "cid": "c014"
+    },
+    {
+     "cid": "c015",
+     "kind": "dup",
+     "same_as": "c014"
+    },
+    {
+     "cid": "c016"
+    },
+    {
+     "cid": "c017",
+     "kind": "dup",
+     "same_as": "c016"
+    },
+    {
+     "cid": "c018"
+    },
+    {
+     "cid": "c019",
+     "kind": "dup",
+     "same_as": "c018"
+    },
+    {
+     "cid": "c020"
+    },
+    {
+     "cid": "c021",
+     "kind": "dup",
+     "same_as": "c020"
+    },
+    {
+     "cid": "c022"
+    },
+    {
+     "cid": "c023",
+     "kind": "dup",
+     "same_as": "c022"
+    },
+    {
+     "cid": "c024"
+    },
+    {
+     "cid": "c025",
+     "kind": "dup",
+     "same_as": "c024"
+    },
+    {
+     "cid": "c026"
+    },
+    {
+     "cid": "c027",
+     "kind": "dup",
+     "same_as": "c026"
+    },
+    {
+     "cid": "c028"
+    },
+    {
+     "cid": "c029",
+     "kind": "dup",
+     "same_as": "c028"
+    },
+    {
+     "cid": "c030"
+    },
+    {
+     "cid": "c031",
+     "kind": "dup",
+     "same_as": "c030"
+    },
+    {
+     "cid": "c032"
+    },
+    {
+     "cid": "c033",
+     "kind": "dup",
+     "same_as": "c032"
+    },
+    {
+     "cid": "c034"
+    },
+    {
+     "cid": "c035",
+     "kind": "dup",
+     "same_as": "c034"
+    },
+    {
+     "cid": "c036"
+    },
+    {
+     "cid": "c037",
+     "kind": "dup",
+     "same_as": "c036"
+    }
+   ]
+  },
+  {
+   "name": "b0921b",
+   "split": "test",
+   "film_type": "c41",
+   "note": "2026-09-21 09:38-10:15: strip end, empty gate at the left on most (no_film); c084 uint16 'after walk B'",
+   "frames": [
+    {
+     "cid": "c038",
+     "kind": "dup",
+     "same_as": "c036"
+    },
+    {
+     "cid": "c039",
+     "kind": "dup",
+     "same_as": "c036"
+    },
+    {
+     "cid": "c040"
+    },
+    {
+     "cid": "c041"
+    },
+    {
+     "cid": "c042"
+    },
+    {
+     "cid": "c043"
+    },
+    {
+     "cid": "c044"
+    },
+    {
+     "cid": "c045"
+    },
+    {
+     "cid": "c046"
+    },
+    {
+     "cid": "c047"
+    },
+    {
+     "cid": "c048",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c049",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c050",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c051",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c052",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c053",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c054",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c055",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c056",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c057",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c058",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c059",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c060",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c061",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c062",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c063",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c064",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c065",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c066",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c067",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c068",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c069",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c070",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c071",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c072",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c073",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c074",
+     "kind": "dup",
+     "same_as": "c047"
+    },
+    {
+     "cid": "c075"
+    },
+    {
+     "cid": "c076"
+    },
+    {
+     "cid": "c077"
+    },
+    {
+     "cid": "c078"
+    },
+    {
+     "cid": "c079"
+    },
+    {
+     "cid": "c080"
+    },
+    {
+     "cid": "c081"
+    },
+    {
+     "cid": "c082"
+    },
+    {
+     "cid": "c083",
+     "kind": "dup",
+     "same_as": "c082"
+    },
+    {
+     "cid": "c084",
+     "kind": "dup",
+     "same_as": "c082"
+    },
+    {
+     "cid": "c085"
+    },
+    {
+     "cid": "c086"
+    },
+    {
+     "cid": "c087",
+     "kind": "dup",
+     "same_as": "c085"
+    },
+    {
+     "cid": "c088"
+    },
+    {
+     "cid": "c089"
+    },
+    {
+     "cid": "c090",
+     "kind": "dup",
+     "same_as": "c077"
+    },
+    {
+     "cid": "c091"
+    }
+   ]
+  },
+  {
+   "name": "b0921c",
+   "split": "test",
+   "film_type": "c41",
+   "note": "2026-09-21 21:32-22:00 debug walks: the frame stepped across the aperture, gaps at every position",
+   "frames": [
+    {
+     "cid": "c092"
+    },
+    {
+     "cid": "c093"
+    },
+    {
+     "cid": "c094"
+    },
+    {
+     "cid": "c095"
+    },
+    {
+     "cid": "c096"
+    },
+    {
+     "cid": "c097"
+    },
+    {
+     "cid": "c098"
+    },
+    {
+     "cid": "c099"
+    },
+    {
+     "cid": "c100"
+    },
+    {
+     "cid": "c101"
+    },
+    {
+     "cid": "c102"
+    },
+    {
+     "cid": "c103"
+    },
+    {
+     "cid": "c104"
+    },
+    {
+     "cid": "c105"
+    },
+    {
+     "cid": "c106",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 102, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c107",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 107, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c108",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 122, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c109",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 206, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c110",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 224, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c111",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 240, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c112",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 256, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c113",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 273, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c114",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 291, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c115",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 307, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c116",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 324, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c117"
+    },
+    {
+     "cid": "c118"
+    },
+    {
+     "cid": "c119"
+    },
+    {
+     "cid": "c120"
+    },
+    {
+     "cid": "c121"
+    },
+    {
+     "cid": "c122"
+    },
+    {
+     "cid": "c123"
+    },
+    {
+     "cid": "c124"
+    },
+    {
+     "cid": "c125"
+    },
+    {
+     "cid": "c126"
+    },
+    {
+     "cid": "c127"
+    },
+    {
+     "cid": "c128"
+    },
+    {
+     "cid": "c129"
+    },
+    {
+     "cid": "c130",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 107, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c131",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 125, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c132",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 141, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c133",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 158, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c134",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 177, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c135",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 193, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c136",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 210, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c137",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 228, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c138",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 313, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c139"
+    },
+    {
+     "cid": "c140"
+    },
+    {
+     "cid": "c141",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 219, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c142"
+    },
+    {
+     "cid": "c143"
+    },
+    {
+     "cid": "c144",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 300, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c145"
+    },
+    {
+     "cid": "c146"
+    },
+    {
+     "cid": "c147",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 197, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c148"
+    },
+    {
+     "cid": "c149"
+    },
+    {
+     "cid": "c150",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 249, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c151"
+    },
+    {
+     "cid": "c152"
+    },
+    {
+     "cid": "c153",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: named as not good"
+    },
+    {
+     "cid": "c154",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: named as not good"
+    },
+    {
+     "cid": "c155"
+    },
+    {
+     "cid": "c156"
+    },
+    {
+     "cid": "c157"
+    },
+    {
+     "cid": "c158",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: named as not good"
+    },
+    {
+     "cid": "c159",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: unexposed strip in the middle (gap centre 312, >= 100 columns from both borders)"
+    },
+    {
+     "cid": "c160"
+    },
+    {
+     "cid": "c161"
+    }
+   ]
+  },
+  {
+   "name": "b0922a",
+   "split": "test",
+   "film_type": "c41",
+   "note": "2026-09-22 11:42-12:57 debug: one frame held and nudged, gap at the edges",
+   "frames": [
+    {
+     "cid": "c162"
+    },
+    {
+     "cid": "c163"
+    },
+    {
+     "cid": "c164"
+    },
+    {
+     "cid": "c165"
+    },
+    {
+     "cid": "c166",
+     "kind": "dup",
+     "same_as": "c165"
+    },
+    {
+     "cid": "c167",
+     "kind": "dup",
+     "same_as": "c165"
+    },
+    {
+     "cid": "c168",
+     "kind": "dup",
+     "same_as": "c165"
+    },
+    {
+     "cid": "c169",
+     "kind": "dup",
+     "same_as": "c165"
+    },
+    {
+     "cid": "c170",
+     "kind": "dup",
+     "same_as": "c165"
+    },
+    {
+     "cid": "c171"
+    },
+    {
+     "cid": "c172",
+     "kind": "dup",
+     "same_as": "c171"
+    },
+    {
+     "cid": "c173"
+    },
+    {
+     "cid": "c174"
+    },
+    {
+     "cid": "c175"
+    },
+    {
+     "cid": "c176"
+    },
+    {
+     "cid": "c177"
+    },
+    {
+     "cid": "c178"
+    },
+    {
+     "cid": "c179"
+    },
+    {
+     "cid": "c180",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c181",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c182",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c183",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c184",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c185",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c186",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c187",
+     "kind": "unsuitable",
+     "same_as": "c186",
+     "note": "dup of b0922a_25, which is excluded"
+    },
+    {
+     "cid": "c188",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    },
+    {
+     "cid": "c189",
+     "kind": "dup",
+     "same_as": "c175"
+    },
+    {
+     "cid": "c190",
+     "kind": "unsuitable",
+     "note": "Stefan 2026-09-23: b0922a page 2 is not a suitable test"
+    }
+   ]
+  },
+  {
+   "name": "b0922b",
+   "split": "test",
+   "film_type": "c41",
+   "note": "2026-09-22 14:47-15:37 GUI prescans and roll 2026-09-22-01..15",
+   "frames": [
+    {
+     "cid": "c191"
+    },
+    {
+     "cid": "c192",
+     "kind": "dup",
+     "same_as": "c191"
+    },
+    {
+     "cid": "c193"
+    },
+    {
+     "cid": "c194",
+     "kind": "dup",
+     "same_as": "c127"
+    },
+    {
+     "cid": "c195"
+    },
+    {
+     "cid": "c196"
+    },
+    {
+     "cid": "c197"
+    },
+    {
+     "cid": "c198"
+    },
+    {
+     "cid": "c199"
+    },
+    {
+     "cid": "c200"
+    },
+    {
+     "cid": "c201"
+    },
+    {
+     "cid": "c202"
+    },
+    {
+     "cid": "c203"
+    },
+    {
+     "cid": "c204"
+    },
+    {
+     "cid": "c205"
+    },
+    {
+     "cid": "c206",
+     "kind": "dup",
+     "same_as": "c171"
+    },
+    {
+     "cid": "c207"
+    },
+    {
+     "cid": "c208"
+    },
+    {
+     "cid": "c209"
+    }
+   ]
+  },
+  {
+   "name": "b0922s",
+   "split": "test",
+   "film_type": "c41",
+   "note": "2026-09-22 15:56 roll aligned-strip-01..15",
+   "frames": [
+    {
+     "cid": "c210",
+     "kind": "dup",
+     "same_as": "c209"
+    },
+    {
+     "cid": "c211"
+    },
+    {
+     "cid": "c212"
+    },
+    {
+     "cid": "c213"
+    },
+    {
+     "cid": "c214"
+    },
+    {
+     "cid": "c215"
+    },
+    {
+     "cid": "c216"
+    },
+    {
+     "cid": "c217"
+    },
+    {
+     "cid": "c218"
+    },
+    {
+     "cid": "c219"
+    },
+    {
+     "cid": "c220"
+    },
+    {
+     "cid": "c221"
+    },
+    {
+     "cid": "c222"
+    },
+    {
+     "cid": "c223"
+    },
+    {
+     "cid": "c224",
+     "kind": "dup",
+     "same_as": "c176"
+    }
+   ]
+  }
+ ]
+}

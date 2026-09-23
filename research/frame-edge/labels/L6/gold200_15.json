@@ -1,0 +1,26 @@
+{
+  "id": "gold200_15",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop and trousers run to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.0,
+    "lo": 422.7,
+    "hi": 423.3,
+    "outer": null,
+    "x_top": 423.0,
+    "x_bottom": 422.2,
+    "note": "5-col strip 423-427 uniform 79-81 in all bands, sharp straight full-height line; col 422 is 0% in b1-b3 but ~72% in b4 -> bottom rows start ~422.2; strip is dark slate in B rather than pure black (base only ~80 on this frame, as on hwcheck_01)"
+  },
+  "frame_note": "diagonal line at 370-380 is a backdrop fold"
+}

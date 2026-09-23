@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_29", "labeller": "L11", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop runs to column 0 at ~46 on the table, well below base"},
+  "right": {"state": "edge", "x": 384.6, "lo": 384.0, "hi": 385.1,
+            "outer": 401.7, "x_top": 385.0, "x_bottom": 384.0,
+            "note": "gap inside the frame: base columns 385-400 (R/G 2.23, B/G 0.53), sharp. This frame's picture ends at ~385.0 in the upper half, ~384.0 at the bottom (column 384 is picture in bands 1-2, ~70-100% base in bands 3-4). Neighbour's picture starts at ~401.0 at the very top, ~402.0 mid-height, ~401.7 at the bottom"},
+  "frame_note": "two partial pictures: this frame 0-384 (~385 cols), neighbour 402-427 (~26 cols)"
+}

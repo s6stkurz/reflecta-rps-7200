@@ -1,0 +1,26 @@
+{
+  "id": "r0911_24",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "out-of-focus bright foreground object covers left third, runs to col 0 (table ~0-10)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night sky + lit crowd; crowd reaches 428 in bottom band, no vertical boundary"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_44",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate cols 0-~14 (~178 neutral in all channels); the cut film end is slanted, ~15.5 at top to ~12 at the bottom rows. Base (R/G 2.28, B/G 0.55, G 29) lies BETWEEN gate and picture, cols ~16-36. Base-to-picture boundary is tilted: ~36.1 at top, 37.0 at rows 60-100, ~37.5 at the bottom (mid-height ~37.3)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees/path run to 428, R/G 2.5 not base"
+  },
+  "frame_note": "end-of-strip frame; the gate washes view B out"
+}

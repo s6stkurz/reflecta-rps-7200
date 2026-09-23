@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_45", "labeller": "L3", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hair/door scene runs to col 0, no plateau"},
+  "right": {"state": "edge", "x": 199.0, "lo": 198.7, "hi": 199.6,
+            "outer": 220.4, "x_top": 199.6, "x_bottom": 198.8,
+            "note": "gap deeper than the crop: base cols 199-219 (R/G 2.21, B/G 0.55; a faint bluish line at 214-215 inside it). Left picture (dark door) ends sharply at ~199.6 at top, ~198.8 at bottom. Neighbour picture (grey wall) starts at ~220.1 at top, ~220.75 at bottom; wall ~74 against base 97, clear"},
+  "frame_note": "TIE RULE applied: left picture 0-199.0 (~199 cols) vs right picture 220.4-428 (~208 cols), within 10 columns, so the LEFT part is taken as the frame and the gap goes on the right side"
+}

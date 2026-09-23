@@ -1,0 +1,26 @@
+{
+  "id": "r0914_05",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall (dense) runs to col 0, values 14-20, no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.8,
+    "lo": 418.5,
+    "hi": 419.1,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.5,
+    "note": "clean sharp edge, base 419-427 at ~98; col 418 partial per band b1 9%, b2 13%, b3 20%, b4 53% -> slight tilt, bottom half-col further left"
+  },
+  "frame_note": ""
+}

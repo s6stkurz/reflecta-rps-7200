@@ -1,0 +1,19 @@
+{
+ "id": "r0911_16",
+ "labeller": "R1",
+ "view": "A+B+table",
+ "left": {
+  "state": "edge",
+  "x": 0.2,
+  "lo": 0.0,
+  "hi": 0.6,
+  "outer": null,
+  "x_top": null,
+  "x_bottom": null,
+  "note": "third look: column 0 brighter than column 1 in every band; r0911_27 (same position) agrees"
+ },
+ "right": {
+  "state": null
+ },
+ "frame_note": "third look by the orchestrator on a labeller disagreement"
+}

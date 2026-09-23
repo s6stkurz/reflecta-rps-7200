@@ -1,0 +1,26 @@
+{
+  "id": "gold200_15",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop and legs run to col 0, no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.0,
+    "lo": 422.4,
+    "hi": 423.3,
+    "outer": null,
+    "x_top": 423.0,
+    "x_bottom": 422.2,
+    "note": "5-col base plateau ~80 in all bands vs backdrop ~61; col 422 base only in bottom band (b4=75) so edge leans left at the bottom"
+  },
+  "frame_note": ""
+}

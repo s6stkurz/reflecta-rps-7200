@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_11",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 61.2,
+    "lo": 60.8,
+    "hi": 61.7,
+    "outer": 39.2,
+    "x_top": 61.0,
+    "x_bottom": 61.9,
+    "note": "base gap ~39-60 (raw 66-67/29-30/15-17, R/G 2.25, B/G 0.53), clean. Frame edge ~61.0 top, ~61.2 mid, ~61.9 at the bottom (slight tilt; bottom picture pale so lower contrast). Neighbour edge ~40.2 top rows, 39.0 through the middle, ~39.8 bottom rows."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "figures/skirt run to column 427"
+  },
+  "frame_note": "Left gap at 39-60; neighbour 39 cols, this frame ~367 cols."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_03", "labeller": "L3", "view": "B",
+  "left":  {"state": "edge", "x": 62.15, "lo": 61.9, "hi": 62.8,
+            "outer": 45.1, "x_top": 62.0, "x_bottom": 63.2,
+            "note": "black base cols 46-61 (R/G 2.2, B/G 0.54) against this frame's dark room (~5-20); clean. Edge 62.0 over the top half, curving to ~62.35 at 60-70% height and ~63.2 in the bottom tenth. Neighbour picture cols 0-44; outer ~45.95 in the top quarter, 45.0 lower down (bottom tenth ~45.4)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/table scene to col 427, no plateau"},
+  "frame_note": "gap at cols ~45-62, just inside the left crop; frame is the right part (62-427) vs neighbour 0-45"
+}

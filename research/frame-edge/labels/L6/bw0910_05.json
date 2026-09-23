@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_05",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 2.0,
+    "lo": 1.0,
+    "hi": 3.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|thin soft sliver: night sky is as clear as base so edge only visible where picture is dense; wall block and wall line both start at col 2 (bottom rows ~3), lamp line at row ~110 starts at col 1; b4 cols 0,1 = 64,57 vs wall 35, sky/base ~78 -> 50% at ~2.0; possibly tilted 1->3 top-to-bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall ends at col ~387 but beyond it b4 ~60 (ground), not base; dark sky to border"
+  },
+  "frame_note": "B&W night scene: sky near base-clear everywhere, edges only visible in dense bottom band"
+}

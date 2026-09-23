@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_22",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "figure and backdrop run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 264.3,
+    "lo": 263.8,
+    "hi": 264.9,
+    "outer": 281.2,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "gap deeper than the crop: base cols ~264-280 (R/G 2.24, B/G 0.53), neighbour picture from ~281 to 428. Edge sharp but wobbles by band: ~264.2 top, 264.8-264.9 upper-mid, ~263.9 at the bottom. Outer ~280.2 in the top band, 281.0-281.8 below"
+  },
+  "frame_note": "interior gap at cols ~264-280; the frame is the left part (264 picture columns vs 147). Thin vertical scratch-like line near col 213 inside the picture, not base"
+}

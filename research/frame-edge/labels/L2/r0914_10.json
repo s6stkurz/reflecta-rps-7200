@@ -1,0 +1,26 @@
+{
+  "id": "r0914_10",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall runs to col 0 in b1/b4; dark clothing in b2/b3 is near base level (93) but bounded by a slanted scene edge, not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 422.0,
+    "lo": 421.7,
+    "hi": 422.3,
+    "outer": null,
+    "x_top": 422.4,
+    "x_bottom": 421.5,
+    "note": "clean sharp edge; base 422-427 ~96; crossing 422.34 (b1), 422.0 (b2,b3), 421.61 (b4): slight tilt, base starts further left at the bottom"
+  },
+  "frame_note": ""
+}

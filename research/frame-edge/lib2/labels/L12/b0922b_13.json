@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_13",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 60.9,
+    "lo": 60.6,
+    "hi": 61.5,
+    "outer": 40.2,
+    "x_top": 60.8,
+    "x_bottom": 62.2,
+    "note": "base cols 41-60 (G 30, R/G 2.25, B/G 0.55), neighbour picture 0-40. Inner edge: rows 0-120 low contrast (foliage near base level), 60.8 at rows 120-160, ~61.3 at rows 160-220, ~62.3 at rows 260-280. Outer edge ~41.0-41.4 at top, 40.0-40.1 at rows 100-160, ~40.5 at the bottom rows"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building/flowers run to 428"
+  },
+  "frame_note": "frame = right part (~367 cols) vs neighbour ~41"
+}

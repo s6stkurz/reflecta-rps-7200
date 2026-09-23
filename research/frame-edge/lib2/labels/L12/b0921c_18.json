@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_18",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 214.6,
+    "lo": 214.1,
+    "hi": 215.0,
+    "outer": 197.7,
+    "x_top": 214.1,
+    "x_bottom": 214.8,
+    "note": "interior gap: base cols 198-213 (R/G 2.2, B/G 0.55), neighbour picture 0-197 on the left. Inner edge: col 214 ~0% base in rows 0-40, ~60-90% below (G says 214.85, R says 214.65). Outer edge ~198.1 at top, ~197.4 at the bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair/plants run to 428"
+  },
+  "frame_note": "two parts: left ~197.5 picture cols, right ~213.5; difference ~16 > 10 so the right part is the frame"
+}

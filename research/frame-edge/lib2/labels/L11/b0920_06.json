@@ -1,0 +1,10 @@
+{
+  "id": "b0920_06", "labeller": "L11", "view": "B",
+  "left":  {"state": "unreadable", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "flash shot: the grass falls off into darkness toward the left and columns 0-~35 are featureless at base's value and ratio (raw ~[64,28,15], R/G 2.28, B/G 0.54, texture equal to base elsewhere). There is no line anywhere: grain texture and value change smoothly from ~35 to ~110, with no step even at the band level. Base is probably present somewhere in 0-35, but its boundary with the unexposed grass cannot be placed"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grass and a dark object run to column 427"},
+  "frame_note": "hard: left side is scene black fading into what may be base, with no boundary"
+}

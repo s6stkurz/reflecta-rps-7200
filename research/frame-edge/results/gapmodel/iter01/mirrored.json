@@ -1,0 +1,5627 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "strip6_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.967,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 3% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 75% of rows, no straight edge; right run 425-428: edge not straight (0.00 rows, on 0.00); right run 418-424: run inside the frame without a straight far side"
+   },
+   "debug": {
+    "level": 95.9,
+    "theta": 0.05,
+    "sigma": 0.00489,
+    "notes": [
+     "border_fb 0.03 0.75"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "right run 425-428: edge not straight (0.00 rows, on 0.00)",
+     "right run 418-424: run inside the frame without a straight far side"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 425,
+       "e": 428,
+       "x": 425.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 418,
+       "e": 424,
+       "x": 417.03,
+       "outer": null,
+       "step": 0.82,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "strip6_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.938,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 6% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 416.309,
+    "lo": 415.959,
+    "hi": 416.659,
+    "conf": 0.33,
+    "outer": null,
+    "x_top": 416.879,
+    "x_bottom": 415.738,
+    "note": "run 417-428, 28% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 94.0,
+    "theta": 0.05,
+    "sigma": 0.00998,
+    "notes": [
+     "border_fb 0.06 0.98"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 417,
+       "e": 428,
+       "x": 416.31,
+       "outer": null,
+       "step": 0.28,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "strip6_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 62% of rows, no straight edge; right run 425-428: edge not straight (0.00 rows, on 0.00); right run 419-424: run inside the frame without a straight far side"
+   },
+   "debug": {
+    "level": 95.2,
+    "theta": 0.05,
+    "sigma": 0.00985,
+    "notes": [
+     "border_fb 0.00 0.62"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "right run 425-428: edge not straight (0.00 rows, on 0.00)",
+     "right run 419-424: run inside the frame without a straight far side"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 425,
+       "e": 428,
+       "x": 425.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 419,
+       "e": 424,
+       "x": 417.9,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "strip3_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.736,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 26% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.527,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 47% of rows"
+   },
+   "debug": {
+    "level": 88.4,
+    "theta": 0.05,
+    "sigma": 0.01061,
+    "notes": [
+     "border_fb 0.26 0.47"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "strip3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.938,
+    "lo": 425.588,
+    "hi": 426.288,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.441,
+    "x_bottom": 425.436,
+    "note": "run 427-428, 100% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 92.9,
+    "theta": 0.05,
+    "sigma": 0.00505,
+    "notes": [
+     "border_fb 0.00 1.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 427,
+       "e": 428,
+       "x": 425.94,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "strip3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.971,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 3% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.165,
+    "lo": 420.815,
+    "hi": 421.515,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 420.632,
+    "x_bottom": 421.699,
+    "note": "run 422-428, 100% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 93.0,
+    "theta": 0.05,
+    "sigma": 0.01008,
+    "notes": [
+     "border_fb 0.03 1.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 422,
+       "e": 428,
+       "x": 421.17,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0909_01": {
+   "left": {
+    "state": "edge",
+    "x": 12.415,
+    "lo": 12.065,
+    "hi": 12.765,
+    "conf": 0.774,
+    "outer": null,
+    "x_top": 11.107,
+    "x_bottom": 13.724,
+    "note": "run 0-11, 64% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 115.0,
+    "theta": 0.05,
+    "sigma": 0.00815,
+    "notes": [
+     "border_fb 0.93 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 11,
+       "x": 12.42,
+       "outer": null,
+       "step": 0.64,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0909_04": {
+   "left": {
+    "state": "edge",
+    "x": 9.56,
+    "lo": 9.21,
+    "hi": 9.91,
+    "conf": 0.77,
+    "outer": null,
+    "x_top": 8.677,
+    "x_bottom": 10.442,
+    "note": "run 0-8, 64% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 114.4,
+    "theta": 0.05,
+    "sigma": 0.0082,
+    "notes": [
+     "border_fb 0.95 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 8,
+       "x": 9.56,
+       "outer": null,
+       "step": 0.64,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0909_05": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 52% of rows, no straight edge"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 50% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 92.9,
+    "theta": 0.05,
+    "sigma": 0.01009,
+    "notes": [
+     "border_fb 0.52 0.50"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0909_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.96,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 4% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.979,
+    "lo": 421.629,
+    "hi": 422.329,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 422.705,
+    "x_bottom": 421.253,
+    "note": "run 423-428, 97% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 113.2,
+    "theta": 0.05,
+    "sigma": 0.00828,
+    "notes": [
+     "border_fb 0.04 0.99"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 423,
+       "e": 428,
+       "x": 421.98,
+       "outer": null,
+       "step": 0.97,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0909_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.986,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 1% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.516,
+    "lo": 423.166,
+    "hi": 423.866,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 424.161,
+    "x_bottom": 422.872,
+    "note": "run 424-428, 100% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 115.19999999999999,
+    "theta": 0.05,
+    "sigma": 0.00814,
+    "notes": [
+     "border_fb 0.01 0.98"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 424,
+       "e": 428,
+       "x": 423.52,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0909_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 64% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 115.0,
+    "theta": 0.05,
+    "sigma": 0.01223,
+    "notes": [
+     "border_fb 0.00 0.64"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0909_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.964,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 4% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.074,
+    "lo": 425.724,
+    "hi": 426.424,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.482,
+    "x_bottom": 425.666,
+    "note": "run 427-428, 89% rows, 99% on the line"
+   },
+   "debug": {
+    "level": 95.5,
+    "theta": 0.05,
+    "sigma": 0.00982,
+    "notes": [
+     "border_fb 0.04 0.98"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 427,
+       "e": 428,
+       "x": 426.07,
+       "outer": null,
+       "step": 0.89,
+       "on": 0.99
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0909_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.855,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 14% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 88% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 96.4,
+    "theta": 0.05,
+    "sigma": 0.00973,
+    "notes": [
+     "border_fb 0.14 0.88"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0909_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.936,
+    "lo": 422.586,
+    "hi": 423.286,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 423.144,
+    "x_bottom": 422.728,
+    "note": "run 424-428, 100% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 97.4,
+    "theta": 0.05,
+    "sigma": 0.00963,
+    "notes": [
+     "border_fb 0.00 0.93"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 424,
+       "e": 428,
+       "x": 422.94,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0909_13": {
+   "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "the empty gate is in view on this side"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows right run 283-289: edge not straight (0.02 rows, on 0.60); right run 281-282: far side not straight (0.03 rows, on 1.00); edge not straight (0.00 rows, on 1.00)"
+   },
+   "debug": {
+    "level": 88.8,
+    "theta": 0.05,
+    "sigma": 0.01056,
+    "notes": [
+     "gate at left, 278 columns",
+     "border_fb 0.84 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "right run 283-289: edge not straight (0.02 rows, on 0.60)",
+     "right run 281-282: far side not straight (0.03 rows, on 1.00); edge not straight (0.00 rows, on 1.00)"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 283,
+       "e": 289,
+       "x": 280.28,
+       "outer": 289.1964087412633,
+       "step": 0.02,
+       "on": 0.6
+      },
+      {
+       "s": 281,
+       "e": 282,
+       "x": 281.2,
+       "outer": null,
+       "step": 0.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "stage3_01": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 69% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.804,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 20% of rows"
+   },
+   "debug": {
+    "level": 60.4,
+    "theta": 0.0815,
+    "sigma": 0.02329,
+    "notes": [
+     "border_fb 0.69 0.20"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "stage3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.043,
+    "lo": 425.693,
+    "hi": 426.393,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.24,
+    "x_bottom": 425.846,
+    "note": "run 427-428, 100% rows, 96% on the line"
+   },
+   "debug": {
+    "level": 86.85,
+    "theta": 0.05,
+    "sigma": 0.0108,
+    "notes": [
+     "border_fb 0.00 1.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 427,
+       "e": 428,
+       "x": 426.04,
+       "outer": null,
+       "step": 1.0,
+       "on": 0.96
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "stage3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.873,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 13% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.957,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 4% of rows"
+   },
+   "debug": {
+    "level": 41.900000000000006,
+    "theta": 0.1567,
+    "sigma": 0.04476,
+    "notes": [
+     "border_fb 0.13 0.04"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.554,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 45% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 62% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 60.9,
+    "theta": 0.0539,
+    "sigma": 0.0154,
+    "notes": [
+     "border_fb 0.45 0.62"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.58,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 42% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 58% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 60.849999999999994,
+    "theta": 0.0539,
+    "sigma": 0.01541,
+    "notes": [
+     "border_fb 0.42 0.58"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_05": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 57% of rows, no straight edge"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 64% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 61.0,
+    "theta": 0.0807,
+    "sigma": 0.02306,
+    "notes": [
+     "border_fb 0.57 0.64"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.942,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 6% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 76% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 59.2,
+    "theta": 0.1109,
+    "sigma": 0.03168,
+    "notes": [
+     "border_fb 0.06 0.76"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.775,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 22% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.525,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 47% of rows"
+   },
+   "debug": {
+    "level": 37.1,
+    "theta": 0.0885,
+    "sigma": 0.02527,
+    "notes": [
+     "border_fb 0.22 0.47"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.743,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 26% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.978,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 2% of rows"
+   },
+   "debug": {
+    "level": 36.599999999999994,
+    "theta": 0.1345,
+    "sigma": 0.03843,
+    "notes": [
+     "border_fb 0.26 0.02"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 79% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 15470.8,
+    "theta": 0.1042,
+    "sigma": 0.02976,
+    "notes": [
+     "border_fb 0.00 0.79"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "bw0910_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 79% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 15551.45,
+    "theta": 0.1033,
+    "sigma": 0.02951,
+    "notes": [
+     "border_fb 0.00 0.79"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows left run 199-200: edge not straight (0.08 rows, on 1.00); left run 201-215: edge not straight (0.08 rows, on 1.00)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows right run 221-227: far side not straight (0.12 rows, on 0.58); edge not straight (0.08 rows, on 0.91); right run 218-219: far side not straight (0.08 rows, on 1.00); edge not straight (0.09 rows, on 0"
+   },
+   "debug": {
+    "level": 125.2,
+    "theta": 0.05,
+    "sigma": 0.00749,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 199-200: edge not straight (0.08 rows, on 1.00)",
+     "left run 201-215: edge not straight (0.08 rows, on 1.00)",
+     "right run 221-227: far side not straight (0.12 rows, on 0.58); edge not straight (0.08 rows, on 0.91)",
+     "right run 218-219: far side not straight (0.08 rows, on 1.00); edge not straight (0.09 rows, on 0.88)",
+     "right run 213-215: far side not straight (0.08 rows, on 1.00); edge not straight (0.08 rows, on 1.00)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 199,
+       "e": 200,
+       "x": 198.22,
+       "outer": 196.99590636547157,
+       "step": 0.08,
+       "on": 1.0
+      },
+      {
+       "s": 201,
+       "e": 215,
+       "x": 209.64,
+       "outer": 198.0,
+       "step": 0.08,
+       "on": 1.0
+      }
+     ],
+     "right": [
+      {
+       "s": 221,
+       "e": 227,
+       "x": 225.82,
+       "outer": null,
+       "step": 0.08,
+       "on": 0.91
+      },
+      {
+       "s": 218,
+       "e": 219,
+       "x": 219.76,
+       "outer": null,
+       "step": 0.09,
+       "on": 0.88
+      },
+      {
+       "s": 213,
+       "e": 215,
+       "x": 215.93,
+       "outer": null,
+       "step": 0.08,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 123.2,
+    "theta": 0.05,
+    "sigma": 0.01142,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows left run 94-95: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00); left run 96-98: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00);"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows right run 280-282: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00); right run 278-279: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0"
+   },
+   "debug": {
+    "level": 118.6,
+    "theta": 0.05,
+    "sigma": 0.00791,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 94-95: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "left run 96-98: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "left run 99-100: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "left run 102-124: far side not straight (0.00 rows, on 0.00); edge not straight (0.10 rows, on 1.00)",
+     "right run 280-282: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "right run 278-279: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 94,
+       "e": 95,
+       "x": 95.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 96,
+       "e": 98,
+       "x": 98.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 99,
+       "e": 100,
+       "x": 100.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 102,
+       "e": 124,
+       "x": 125.64,
+       "outer": null,
+       "step": 0.1,
+       "on": 1.0
+      }
+     ],
+     "right": [
+      {
+       "s": 280,
+       "e": 282,
+       "x": 280.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 278,
+       "e": 279,
+       "x": 278.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_04": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 83% of rows, no straight edge; left run 0-7: edge not straight (0.00 rows, on 0.00); left run 10-11: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00); left run 12-13: far side not straight (0.00 ro"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 97% of rows, no straight edge; right run 355-428: edge not straight (0.24 rows, on 0.97); right run 346-348: run inside the frame without a straight far side; right run 231-236: far side not straight (0.16 rows, on 0.50); edge not"
+   },
+   "debug": {
+    "level": 112.0,
+    "theta": 0.05,
+    "sigma": 0.00837,
+    "notes": [
+     "border_fb 0.83 0.97"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 0-7: edge not straight (0.00 rows, on 0.00)",
+     "left run 10-11: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "left run 12-13: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "left run 206-215: edge not straight (0.08 rows, on 0.96)",
+     "right run 355-428: edge not straight (0.24 rows, on 0.97)",
+     "right run 346-348: run inside the frame without a straight far side",
+     "right run 231-236: far side not straight (0.16 rows, on 0.50); edge not straight (0.08 rows, on 0.86)",
+     "right run 226-230: far side not straight (0.07 rows, on 1.00); edge not straight (0.08 rows, on 0.91)",
+     "right run 218-225: far side not straight (0.08 rows, on 1.00); edge not straight (0.08 rows, on 1.00)",
+     "right run 213-217: far side not straight (0.08 rows, on 0.96); edge not straight (0.08 rows, on 1.00)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 7,
+       "x": 7.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 10,
+       "e": 11,
+       "x": 11.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 12,
+       "e": 13,
+       "x": 13.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 206,
+       "e": 215,
+       "x": 210.0,
+       "outer": 203.99552343402058,
+       "step": 0.08,
+       "on": 0.96
+      }
+     ],
+     "right": [
+      {
+       "s": 355,
+       "e": 428,
+       "x": 354.12,
+       "outer": null,
+       "step": 0.24,
+       "on": 0.97
+      },
+      {
+       "s": 346,
+       "e": 348,
+       "x": 344.4,
+       "outer": null,
+       "step": 0.56,
+       "on": 0.99
+      },
+      {
+       "s": 231,
+       "e": 236,
+       "x": 235.81,
+       "outer": null,
+       "step": 0.08,
+       "on": 0.86
+      },
+      {
+       "s": 226,
+       "e": 230,
+       "x": 230.94,
+       "outer": null,
+       "step": 0.08,
+       "on": 0.91
+      },
+      {
+       "s": 218,
+       "e": 225,
+       "x": 222.91,
+       "outer": null,
+       "step": 0.08,
+       "on": 1.0
+      },
+      {
+       "s": 213,
+       "e": 217,
+       "x": 217.96,
+       "outer": null,
+       "step": 0.08,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_05": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 83% of rows, no straight edge; left run 0-36: edge not straight (0.00 rows, on 0.00)"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 82% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 111.6,
+    "theta": 0.05,
+    "sigma": 0.0084,
+    "notes": [
+     "border_fb 0.83 0.82"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 0-36: edge not straight (0.00 rows, on 0.00)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 36,
+       "x": 36.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_06": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 84% of rows, no straight edge; left run 0-133: edge not straight (0.22 rows, on 0.95)"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 100% of rows, no straight edge; right run 419-428: edge not straight (0.16 rows, on 1.00); right run 327-329: edge not straight (0.06 rows, on 0.83); right run 304-315: far side not straight (0.08 rows, on 0.48); edge not straight ("
+   },
+   "debug": {
+    "level": 112.0,
+    "theta": 0.05,
+    "sigma": 0.00837,
+    "notes": [
+     "border_fb 0.84 1.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 0-133: edge not straight (0.22 rows, on 0.95)",
+     "right run 419-428: edge not straight (0.16 rows, on 1.00)",
+     "right run 327-329: edge not straight (0.06 rows, on 0.83)",
+     "right run 304-315: far side not straight (0.08 rows, on 0.48); edge not straight (0.03 rows, on 1.00)",
+     "right run 302-303: far side not straight (0.04 rows, on 1.00); edge not straight (0.02 rows, on 1.00)",
+     "right run 299-300: far side not straight (0.04 rows, on 1.00); edge not straight (0.00 rows, on 0.00)",
+     "right run 291-295: far side not straight (0.01 rows, on 0.75); edge not straight (0.00 rows, on 0.00)",
+     "right run 281-290: far side not straight (0.00 rows, on 0.00); edge not straight (0.18 rows, on 0.96)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 133,
+       "x": 135.91,
+       "outer": null,
+       "step": 0.22,
+       "on": 0.95
+      }
+     ],
+     "right": [
+      {
+       "s": 419,
+       "e": 428,
+       "x": 418.66,
+       "outer": null,
+       "step": 0.16,
+       "on": 1.0
+      },
+      {
+       "s": 327,
+       "e": 329,
+       "x": 325.14,
+       "outer": 330.7942084942085,
+       "step": 0.06,
+       "on": 0.83
+      },
+      {
+       "s": 304,
+       "e": 315,
+       "x": 309.0,
+       "outer": null,
+       "step": 0.03,
+       "on": 1.0
+      },
+      {
+       "s": 302,
+       "e": 303,
+       "x": 300.66,
+       "outer": null,
+       "step": 0.02,
+       "on": 1.0
+      },
+      {
+       "s": 299,
+       "e": 300,
+       "x": 299.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 291,
+       "e": 295,
+       "x": 291.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 281,
+       "e": 290,
+       "x": 279.96,
+       "outer": null,
+       "step": 0.18,
+       "on": 0.96
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.78,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 22% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 97% of rows, no straight edge; right run 426-428: edge not straight (0.10 rows, on 1.00)"
+   },
+   "debug": {
+    "level": 110.6,
+    "theta": 0.05,
+    "sigma": 0.00848,
+    "notes": [
+     "border_fb 0.22 0.97"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "right run 426-428: edge not straight (0.10 rows, on 1.00)"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 426,
+       "e": 428,
+       "x": 426.32,
+       "outer": null,
+       "step": 0.1,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.812,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 19% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 85% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 104.6,
+    "theta": 0.05,
+    "sigma": 0.00896,
+    "notes": [
+     "border_fb 0.19 0.85"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.79,
+    "lo": 425.44,
+    "hi": 426.14,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 425.422,
+    "x_bottom": 426.159,
+    "note": "run 427-428, 99% rows, 99% on the line"
+   },
+   "debug": {
+    "level": 110.8,
+    "theta": 0.05,
+    "sigma": 0.00846,
+    "notes": [
+     "border_fb 0.00 1.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 427,
+       "e": 428,
+       "x": 425.79,
+       "outer": null,
+       "step": 0.99,
+       "on": 0.99
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.273,
+    "lo": 421.923,
+    "hi": 422.623,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 421.859,
+    "x_bottom": 422.687,
+    "note": "run 423-428, 100% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 110.8,
+    "theta": 0.05,
+    "sigma": 0.00846,
+    "notes": [
+     "border_fb 0.00 1.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 423,
+       "e": 428,
+       "x": 422.27,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.69,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 31% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 92% of rows, no straight edge; right run 427-428: edge not straight (0.00 rows, on 0.00); right run 425-428: edge not straight (0.00 rows, on 0.00)"
+   },
+   "debug": {
+    "level": 94.4,
+    "theta": 0.0521,
+    "sigma": 0.0149,
+    "notes": [
+     "border_fb 0.31 0.92"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "right run 427-428: edge not straight (0.00 rows, on 0.00)",
+     "right run 425-428: edge not straight (0.00 rows, on 0.00)"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 427,
+       "e": 428,
+       "x": 427.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 425,
+       "e": 428,
+       "x": 425.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_12": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 87% of rows, no straight edge; left run 0-12: edge not straight (0.01 rows, on 1.00)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 106.4,
+    "theta": 0.05,
+    "sigma": 0.00881,
+    "notes": [
+     "border_fb 0.87 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 0-12: edge not straight (0.01 rows, on 1.00)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 12,
+       "x": 7.85,
+       "outer": null,
+       "step": 0.01,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_13": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 85% of rows, no straight edge; left run 0-29: edge not straight (0.00 rows, on 0.00)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.996,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 106.2,
+    "theta": 0.05,
+    "sigma": 0.00883,
+    "notes": [
+     "border_fb 0.85 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 0-29: edge not straight (0.00 rows, on 0.00)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 29,
+       "x": 29.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_14": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.841,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 16% of rows"
+   },
+   "debug": {
+    "level": 106.2,
+    "theta": 0.05,
+    "sigma": 0.00883,
+    "notes": [
+     "border_fb 0.00 0.16"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 109.8,
+    "theta": 0.05,
+    "sigma": 0.00854,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_16": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.899,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 10% of rows"
+   },
+   "debug": {
+    "level": 106.4,
+    "theta": 0.05,
+    "sigma": 0.00881,
+    "notes": [
+     "border_fb 0.00 0.10"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.942,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 6% of rows right run 415-416: full gap 4.7 too narrow"
+   },
+   "debug": {
+    "level": 111.6,
+    "theta": 0.05,
+    "sigma": 0.0084,
+    "notes": [
+     "border_fb 0.00 0.06"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "right run 415-416: full gap 4.7 too narrow"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 415,
+       "e": 416,
+       "x": 413.42,
+       "outer": 418.1538850776096,
+       "step": 0.9,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_18": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.516,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 48% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 52.4,
+    "theta": 0.05,
+    "sigma": 0.00895,
+    "notes": [
+     "border_fb 0.48 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.094,
+    "lo": 422.744,
+    "hi": 423.444,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 423.228,
+    "x_bottom": 422.96,
+    "note": "run 425-428, 100% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 113.0,
+    "theta": 0.05,
+    "sigma": 0.0083,
+    "notes": [
+     "border_fb 0.00 0.98"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 425,
+       "e": 428,
+       "x": 423.09,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_20": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 55% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.592,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 41% of rows"
+   },
+   "debug": {
+    "level": 79.6,
+    "theta": 0.0618,
+    "sigma": 0.01767,
+    "notes": [
+     "border_fb 0.55 0.41"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_21": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 73% of rows, no straight edge; left run 43-46: far side not straight (0.11 rows, on 0.58); edge not straight (0.01 rows, on 1.00); left run 47-59: far side not straight (0.05 rows, on 0.87); edge not straight (0.08 rows, on 0.35)"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 76% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 108.4,
+    "theta": 0.05,
+    "sigma": 0.00865,
+    "notes": [
+     "border_fb 0.73 0.76"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 43-46: far side not straight (0.11 rows, on 0.58); edge not straight (0.01 rows, on 1.00)",
+     "left run 47-59: far side not straight (0.05 rows, on 0.87); edge not straight (0.08 rows, on 0.35)",
+     "left run 60-61: far side not straight (0.02 rows, on 1.00); edge not straight (0.11 rows, on 0.39)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 43,
+       "e": 46,
+       "x": 42.0,
+       "outer": null,
+       "step": 0.01,
+       "on": 1.0
+      },
+      {
+       "s": 47,
+       "e": 59,
+       "x": 58.59,
+       "outer": null,
+       "step": 0.08,
+       "on": 0.35
+      },
+      {
+       "s": 60,
+       "e": 61,
+       "x": 61.4,
+       "outer": null,
+       "step": 0.11,
+       "on": 0.39
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_22": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 86% of rows, no straight edge; left run 0-120: edge not straight (0.00 rows, on 0.00); left run 126-128: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00); left run 131-150: far side not straight (0"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 87% of rows, no straight edge; right run 425-428: edge not straight (0.00 rows, on 0.00); right run 421-424: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00); right run 408-420: far side not straig"
+   },
+   "debug": {
+    "level": 113.6,
+    "theta": 0.05,
+    "sigma": 0.00825,
+    "notes": [
+     "border_fb 0.86 0.87"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 0-120: edge not straight (0.00 rows, on 0.00)",
+     "left run 126-128: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "left run 131-150: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "left run 151-157: far side not straight (0.00 rows, on 0.00); edge not straight (0.12 rows, on 1.00)",
+     "left run 160-161: far side not straight (0.11 rows, on 1.00); edge not straight (0.17 rows, on 0.88)",
+     "right run 425-428: edge not straight (0.00 rows, on 0.00)",
+     "right run 421-424: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "right run 408-420: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "right run 403-407: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "right run 254-402: far side not straight (0.00 rows, on 0.00); edge not straight (0.01 rows, on 1.00)",
+     "right run 248-252: far side not straight (0.02 rows, on 1.00); edge not straight (0.10 rows, on 0.72)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 120,
+       "x": 120.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 126,
+       "e": 128,
+       "x": 128.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 131,
+       "e": 150,
+       "x": 150.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 151,
+       "e": 157,
+       "x": 156.95,
+       "outer": null,
+       "step": 0.12,
+       "on": 1.0
+      },
+      {
+       "s": 160,
+       "e": 161,
+       "x": 161.13,
+       "outer": null,
+       "step": 0.17,
+       "on": 0.88
+      }
+     ],
+     "right": [
+      {
+       "s": 425,
+       "e": 428,
+       "x": 425.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 421,
+       "e": 424,
+       "x": 421.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 408,
+       "e": 420,
+       "x": 408.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 403,
+       "e": 407,
+       "x": 403.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 254,
+       "e": 402,
+       "x": 258.82,
+       "outer": null,
+       "step": 0.01,
+       "on": 1.0
+      },
+      {
+       "s": 248,
+       "e": 252,
+       "x": 247.63,
+       "outer": null,
+       "step": 0.1,
+       "on": 0.72
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_23": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 62% of rows, no straight edge; left run 55-58: far side not straight (0.01 rows, on 1.00); edge not straight (0.01 rows, on 1.00); left run 59-60: far side not straight (0.00 rows, on 0.00); edge not straight (0.03 rows, on 0.78)"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 97% of rows, no straight edge; right run 415-428: edge not straight (0.00 rows, on 0.00); right run 359-414: far side not straight (0.00 rows, on 0.00); edge not straight (0.02 rows, on 1.00); right run 328-358: far side not straig"
+   },
+   "debug": {
+    "level": 113.0,
+    "theta": 0.05,
+    "sigma": 0.0083,
+    "notes": [
+     "border_fb 0.62 0.97"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 55-58: far side not straight (0.01 rows, on 1.00); edge not straight (0.01 rows, on 1.00)",
+     "left run 59-60: far side not straight (0.00 rows, on 0.00); edge not straight (0.03 rows, on 0.78)",
+     "left run 62-63: far side not straight (0.01 rows, on 0.75); edge not straight (0.07 rows, on 0.68)",
+     "left run 119-120: far side not straight (0.08 rows, on 0.62); edge not straight (0.00 rows, on 1.00)",
+     "left run 121-124: far side not straight (0.05 rows, on 0.60); edge not straight (0.06 rows, on 0.50)",
+     "left run 139-140: far side not straight (0.12 rows, on 0.84); edge not straight (0.08 rows, on 1.00)",
+     "left run 141-142: far side not straight (0.09 rows, on 1.00); edge not straight (0.08 rows, on 1.00)",
+     "left run 165-169: far side not straight (0.17 rows, on 0.54); edge not straight (0.05 rows, on 0.85)",
+     "right run 415-428: edge not straight (0.00 rows, on 0.00)",
+     "right run 359-414: far side not straight (0.00 rows, on 0.00); edge not straight (0.02 rows, on 1.00)",
+     "right run 328-358: far side not straight (0.02 rows, on 0.60); edge not straight (0.09 rows, on 0.54)",
+     "right run 278-280: far side not straight (0.06 rows, on 0.53); edge not straight (0.03 rows, on 0.00)",
+     "right run 276-277: far side not straight (0.07 rows, on 0.68); edge not straight (0.00 rows, on 0.00)",
+     "right run 250-275: far side not straight (0.05 rows, on 0.47); edge not straight (0.05 rows, on 0.73)",
+     "right run 248-249: far side not straight (0.02 rows, on 1.00); edge not straight (0.08 rows, on 0.62)",
+     "right run 245-246: far side not straight (0.06 rows, on 0.81); edge not straight (0.11 rows, on 0.57)",
+     "right run 234-237: far side not straight (0.08 rows, on 0.70); edge not straight (0.05 rows, on 0.50)",
+     "right run 232-233: far side not straight (0.05 rows, on 0.60); edge not straight (0.03 rows, on 1.00)",
+     "right run 228-229: far side not straight (0.05 rows, on 0.54); edge not straight (0.00 rows, on 1.00)",
+     "right run 225-226: far side not straight (0.03 rows, on 0.88); edge not straight (0.04 rows, on 0.82)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 55,
+       "e": 58,
+       "x": 58.11,
+       "outer": null,
+       "step": 0.01,
+       "on": 1.0
+      },
+      {
+       "s": 59,
+       "e": 60,
+       "x": 61.83,
+       "outer": null,
+       "step": 0.03,
+       "on": 0.78
+      },
+      {
+       "s": 62,
+       "e": 63,
+       "x": 64.09,
+       "outer": null,
+       "step": 0.07,
+       "on": 0.68
+      },
+      {
+       "s": 119,
+       "e": 120,
+       "x": 118.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 1.0
+      },
+      {
+       "s": 121,
+       "e": 124,
+       "x": 121.62,
+       "outer": null,
+       "step": 0.06,
+       "on": 0.5
+      },
+      {
+       "s": 139,
+       "e": 140,
+       "x": 138.01,
+       "outer": null,
+       "step": 0.08,
+       "on": 1.0
+      },
+      {
+       "s": 141,
+       "e": 142,
+       "x": 140.0,
+       "outer": null,
+       "step": 0.08,
+       "on": 1.0
+      },
+      {
+       "s": 165,
+       "e": 169,
+       "x": 165.53,
+       "outer": null,
+       "step": 0.05,
+       "on": 0.85
+      }
+     ],
+     "right": [
+      {
+       "s": 415,
+       "e": 428,
+       "x": 415.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 359,
+       "e": 414,
+       "x": 360.67,
+       "outer": null,
+       "step": 0.02,
+       "on": 1.0
+      },
+      {
+       "s": 328,
+       "e": 358,
+       "x": 327.03,
+       "outer": null,
+       "step": 0.09,
+       "on": 0.54
+      },
+      {
+       "s": 278,
+       "e": 280,
+       "x": 278.53,
+       "outer": null,
+       "step": 0.03,
+       "on": 0.0
+      },
+      {
+       "s": 276,
+       "e": 277,
+       "x": 276.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 250,
+       "e": 275,
+       "x": 250.02,
+       "outer": null,
+       "step": 0.05,
+       "on": 0.73
+      },
+      {
+       "s": 248,
+       "e": 249,
+       "x": 246.59,
+       "outer": null,
+       "step": 0.08,
+       "on": 0.62
+      },
+      {
+       "s": 245,
+       "e": 246,
+       "x": 245.17,
+       "outer": null,
+       "step": 0.11,
+       "on": 0.57
+      },
+      {
+       "s": 234,
+       "e": 237,
+       "x": 236.7,
+       "outer": null,
+       "step": 0.05,
+       "on": 0.5
+      },
+      {
+       "s": 232,
+       "e": 233,
+       "x": 232.85,
+       "outer": null,
+       "step": 0.03,
+       "on": 1.0
+      },
+      {
+       "s": 228,
+       "e": 229,
+       "x": 227.03,
+       "outer": null,
+       "step": 0.0,
+       "on": 1.0
+      },
+      {
+       "s": 225,
+       "e": 226,
+       "x": 222.97,
+       "outer": null,
+       "step": 0.04,
+       "on": 0.82
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_24": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 71% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 108.2,
+    "theta": 0.05,
+    "sigma": 0.00867,
+    "notes": [
+     "border_fb 0.71 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows left run 205-215: far side not straight (0.77 rows, on 0.54); edge not straight (0.09 rows, on 0.88)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows right run 227-228: far side not straight (0.08 rows, on 1.00); edge not straight (0.08 rows, on 1.00); right run 224-225: far side not straight (0.08 rows, on 1.00); edge not straight (0.09 rows, on 1"
+   },
+   "debug": {
+    "level": 128.0,
+    "theta": 0.05,
+    "sigma": 0.00733,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [
+     "left run 205-215: far side not straight (0.77 rows, on 0.54); edge not straight (0.09 rows, on 0.88)",
+     "right run 227-228: far side not straight (0.08 rows, on 1.00); edge not straight (0.08 rows, on 1.00)",
+     "right run 224-225: far side not straight (0.08 rows, on 1.00); edge not straight (0.09 rows, on 1.00)",
+     "right run 220-223: far side not straight (0.08 rows, on 1.00); edge not straight (0.09 rows, on 1.00)",
+     "right run 218-219: far side not straight (0.09 rows, on 1.00); edge not straight (0.09 rows, on 1.00)",
+     "right run 213-215: far side not straight (0.09 rows, on 0.88); edge not straight (0.08 rows, on 1.00)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 205,
+       "e": 215,
+       "x": 210.04,
+       "outer": null,
+       "step": 0.09,
+       "on": 0.88
+      }
+     ],
+     "right": [
+      {
+       "s": 227,
+       "e": 228,
+       "x": 228.98,
+       "outer": null,
+       "step": 0.08,
+       "on": 1.0
+      },
+      {
+       "s": 224,
+       "e": 225,
+       "x": 225.87,
+       "outer": null,
+       "step": 0.09,
+       "on": 1.0
+      },
+      {
+       "s": 220,
+       "e": 223,
+       "x": 223.63,
+       "outer": null,
+       "step": 0.09,
+       "on": 1.0
+      },
+      {
+       "s": 218,
+       "e": 219,
+       "x": 219.83,
+       "outer": null,
+       "step": 0.09,
+       "on": 1.0
+      },
+      {
+       "s": 213,
+       "e": 215,
+       "x": 215.94,
+       "outer": null,
+       "step": 0.08,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0911_26": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.682,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 32% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 65% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 82.6,
+    "theta": 0.05,
+    "sigma": 0.01135,
+    "notes": [
+     "border_fb 0.32 0.65"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_27": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 103.6,
+    "theta": 0.05,
+    "sigma": 0.00905,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.736,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 26% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 56.2,
+    "theta": 0.05,
+    "sigma": 0.00834,
+    "notes": [
+     "border_fb 0.26 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0911_29": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 53% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 108.6,
+    "theta": 0.05,
+    "sigma": 0.00863,
+    "notes": [
+     "border_fb 0.53 0.00"
+    ],
+    "gap": 16.0,
+    "gap_tol": 8.0,
+    "gap_widths": [],
+    "frame_width": 439.3,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_01": {
+   "left": {
+    "state": "edge",
+    "x": 15.353,
+    "lo": 15.003,
+    "hi": 15.703,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 14.935,
+    "x_bottom": 15.771,
+    "note": "run 0-15, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 110.4,
+    "theta": 0.05,
+    "sigma": 0.00849,
+    "notes": [
+     "border_fb 0.93 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 15,
+       "x": 15.35,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_05": {
+   "left": {
+    "state": "edge",
+    "x": 9.193,
+    "lo": 8.843,
+    "hi": 9.543,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.79,
+    "x_bottom": 9.596,
+    "note": "run 0-8, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 113.2,
+    "theta": 0.05,
+    "sigma": 0.00828,
+    "notes": [
+     "border_fb 0.92 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 8,
+       "x": 9.19,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_06": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 87% of rows, no straight edge; left run 0-2: edge not straight (0.01 rows, on 1.00); left run 3-8: run inside the frame without a straight far side"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 112.9,
+    "theta": 0.05,
+    "sigma": 0.00831,
+    "notes": [
+     "border_fb 0.87 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [
+     "left run 0-2: edge not straight (0.01 rows, on 1.00)",
+     "left run 3-8: run inside the frame without a straight far side"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 2,
+       "x": 4.0,
+       "outer": null,
+       "step": 0.01,
+       "on": 1.0
+      },
+      {
+       "s": 3,
+       "e": 8,
+       "x": 8.28,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_07": {
+   "left": {
+    "state": "edge",
+    "x": 4.361,
+    "lo": 4.011,
+    "hi": 4.711,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.916,
+    "x_bottom": 4.806,
+    "note": "run 0-4, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 114.5,
+    "theta": 0.05,
+    "sigma": 0.00819,
+    "notes": [
+     "border_fb 0.90 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 4,
+       "x": 4.36,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.685,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 32% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 74% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 98.2,
+    "theta": 0.05,
+    "sigma": 0.00955,
+    "notes": [
+     "border_fb 0.32 0.74"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_09": {
+   "left": {
+    "state": "edge",
+    "x": 8.308,
+    "lo": 7.958,
+    "hi": 8.658,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 7.872,
+    "x_bottom": 8.743,
+    "note": "run 0-7, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 114.3,
+    "theta": 0.05,
+    "sigma": 0.0082,
+    "notes": [
+     "border_fb 0.89 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 7,
+       "x": 8.31,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_10": {
+   "left": {
+    "state": "edge",
+    "x": 6.044,
+    "lo": 5.694,
+    "hi": 6.394,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 5.581,
+    "x_bottom": 6.507,
+    "note": "run 0-5, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.667,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 33% of rows"
+   },
+   "debug": {
+    "level": 112.6,
+    "theta": 0.05,
+    "sigma": 0.00833,
+    "notes": [
+     "border_fb 0.91 0.33"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 5,
+       "x": 6.04,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_11": {
+   "left": {
+    "state": "edge",
+    "x": 7.504,
+    "lo": 7.154,
+    "hi": 7.854,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 7.173,
+    "x_bottom": 7.834,
+    "note": "run 0-7, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.707,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 29% of rows"
+   },
+   "debug": {
+    "level": 112.6,
+    "theta": 0.05,
+    "sigma": 0.00833,
+    "notes": [
+     "border_fb 0.89 0.29"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 7,
+       "x": 7.5,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_12": {
+   "left": {
+    "state": "edge",
+    "x": 12.549,
+    "lo": 12.199,
+    "hi": 12.899,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 12.141,
+    "x_bottom": 12.957,
+    "note": "run 0-12, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 113.55,
+    "theta": 0.05,
+    "sigma": 0.00826,
+    "notes": [
+     "border_fb 0.88 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 12,
+       "x": 12.55,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_13": {
+   "left": {
+    "state": "edge",
+    "x": 9.5,
+    "lo": 9.15,
+    "hi": 9.85,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.981,
+    "x_bottom": 10.018,
+    "note": "run 0-9, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 114.8,
+    "theta": 0.05,
+    "sigma": 0.00817,
+    "notes": [
+     "border_fb 0.89 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 9,
+       "x": 9.5,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_14": {
+   "left": {
+    "state": "edge",
+    "x": 7.168,
+    "lo": 6.818,
+    "hi": 7.518,
+    "conf": 0.878,
+    "outer": null,
+    "x_top": 6.797,
+    "x_bottom": 7.539,
+    "note": "run 0-7, 73% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.899,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 10% of rows"
+   },
+   "debug": {
+    "level": 113.6,
+    "theta": 0.05,
+    "sigma": 0.00825,
+    "notes": [
+     "border_fb 0.91 0.10"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 7,
+       "x": 7.17,
+       "outer": null,
+       "step": 0.73,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 8% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 111.55,
+    "theta": 0.05,
+    "sigma": 0.01261,
+    "notes": [
+     "border_fb 0.08 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_16": {
+   "left": {
+    "state": "edge",
+    "x": 10.44,
+    "lo": 10.09,
+    "hi": 10.79,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 9.798,
+    "x_bottom": 11.082,
+    "note": "run 0-9, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 115.0,
+    "theta": 0.05,
+    "sigma": 0.00815,
+    "notes": [
+     "border_fb 0.89 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 9,
+       "x": 10.44,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_17": {
+   "left": {
+    "state": "edge",
+    "x": 9.581,
+    "lo": 9.231,
+    "hi": 9.931,
+    "conf": 0.857,
+    "outer": null,
+    "x_top": 8.962,
+    "x_bottom": 10.201,
+    "note": "run 0-9, 71% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.888,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 11% of rows"
+   },
+   "debug": {
+    "level": 113.6,
+    "theta": 0.05,
+    "sigma": 0.00825,
+    "notes": [
+     "border_fb 0.90 0.11"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 9,
+       "x": 9.58,
+       "outer": null,
+       "step": 0.71,
+       "on": 1.0
+      }
+     ],
+     "right": [
+      {
+       "s": 369,
+       "e": 379,
+       "x": 366.78,
+       "outer": 380.8016860923171,
+       "step": 0.58,
+       "on": 0.96
+      }
+     ]
+    },
+    "joint": "right run 366.8 dropped: F=439 leaves no room"
+   }
+  },
+  "r0914_18": {
+   "left": {
+    "state": "edge",
+    "x": 5.498,
+    "lo": 5.148,
+    "hi": 5.848,
+    "conf": 0.565,
+    "outer": null,
+    "x_top": 4.595,
+    "x_bottom": 6.401,
+    "note": "run 0-4, 47% rows, 99% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.938,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 6% of rows"
+   },
+   "debug": {
+    "level": 114.4,
+    "theta": 0.05,
+    "sigma": 0.01229,
+    "notes": [
+     "border_fb 0.86 0.06"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [
+     "left run 191-197: edge not straight (0.15 rows, on 0.81)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 4,
+       "x": 5.5,
+       "outer": null,
+       "step": 0.47,
+       "on": 0.99
+      },
+      {
+       "s": 191,
+       "e": 197,
+       "x": 197.71,
+       "outer": 189.88429752066116,
+       "step": 0.15,
+       "on": 0.81
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_19": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 52% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.859,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 14% of rows right run 358-359: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00); right run 324-345: run inside the frame without a straight far side; right run 248-260: edge not"
+   },
+   "debug": {
+    "level": 114.0,
+    "theta": 0.05,
+    "sigma": 0.00823,
+    "notes": [
+     "border_fb 0.52 0.14"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [
+     "right run 358-359: far side not straight (0.00 rows, on 0.00); edge not straight (0.00 rows, on 0.00)",
+     "right run 324-345: run inside the frame without a straight far side",
+     "right run 248-260: edge not straight (0.57 rows, on 0.58)"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 358,
+       "e": 359,
+       "x": 358.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      },
+      {
+       "s": 324,
+       "e": 345,
+       "x": 323.26,
+       "outer": null,
+       "step": 0.32,
+       "on": 0.99
+      },
+      {
+       "s": 248,
+       "e": 260,
+       "x": 246.3,
+       "outer": 261.76293244400404,
+       "step": 0.57,
+       "on": 0.58
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0914_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.993,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 1% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 324.763,
+    "lo": 324.413,
+    "hi": 325.113,
+    "conf": 0.87,
+    "outer": 342.549,
+    "x_top": 324.242,
+    "x_bottom": 325.284,
+    "note": "run 325-342, 77% rows, 94% on the line"
+   },
+   "debug": {
+    "level": 116.30000000000001,
+    "theta": 0.05,
+    "sigma": 0.00806,
+    "notes": [
+     "border_fb 0.01 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 325,
+       "e": 342,
+       "x": 324.76,
+       "outer": 342.5493396965437,
+       "step": 0.77,
+       "on": 0.94
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0914_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "the empty gate is in view on this side"
+   },
+   "debug": {
+    "level": 116.8,
+    "theta": 0.05,
+    "sigma": 0.00803,
+    "notes": [
+     "gate at right, 97 columns",
+     "border_fb 0.00 0.80"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [
+     "right run 326-328: run inside the frame without a straight far side"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 326,
+       "e": 328,
+       "x": 325.21,
+       "outer": null,
+       "step": 1.0,
+       "on": 0.96
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "r0914_23": {
+   "left": {
+    "state": "edge",
+    "x": 18.278,
+    "lo": 17.928,
+    "hi": 18.628,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 17.971,
+    "x_bottom": 18.585,
+    "note": "run 0-18, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 112.64999999999999,
+    "theta": 0.05,
+    "sigma": 0.00832,
+    "notes": [
+     "border_fb 0.89 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 18,
+       "x": 18.28,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_24": {
+   "left": {
+    "state": "edge",
+    "x": 15.886,
+    "lo": 15.536,
+    "hi": 16.236,
+    "conf": 1.0,
+    "outer": 1.167,
+    "x_top": 15.317,
+    "x_bottom": 16.454,
+    "note": "run 2-15, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 114.8,
+    "theta": 0.05,
+    "sigma": 0.00817,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     14.719,
+     17.786
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 2,
+       "e": 15,
+       "x": 15.89,
+       "outer": 1.1668088898004245,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_25": {
+   "left": {
+    "state": "edge",
+    "x": 13.107,
+    "lo": 12.757,
+    "hi": 13.457,
+    "conf": 0.896,
+    "outer": null,
+    "x_top": 12.726,
+    "x_bottom": 13.489,
+    "note": "run 0-13, 75% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.949,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 5% of rows"
+   },
+   "debug": {
+    "level": 113.2,
+    "theta": 0.05,
+    "sigma": 0.00828,
+    "notes": [
+     "border_fb 0.88 0.05"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 13,
+       "x": 13.11,
+       "outer": null,
+       "step": 0.75,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_27": {
+   "left": {
+    "state": "edge",
+    "x": 4.172,
+    "lo": 3.822,
+    "hi": 4.522,
+    "conf": 0.713,
+    "outer": null,
+    "x_top": 3.743,
+    "x_bottom": 4.602,
+    "note": "run 0-4, 62% rows, 96% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-like border, but the other side's gap places the frame past it"
+   },
+   "debug": {
+    "level": 111.2,
+    "theta": 0.05,
+    "sigma": 0.00843,
+    "notes": [
+     "border_fb 0.94 0.56"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 4,
+       "x": 4.17,
+       "outer": null,
+       "step": 0.62,
+       "on": 0.96
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_28": {
+   "left": {
+    "state": "edge",
+    "x": 16.231,
+    "lo": 15.881,
+    "hi": 16.581,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 15.531,
+    "x_bottom": 16.932,
+    "note": "run 0-15, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 113.25,
+    "theta": 0.05,
+    "sigma": 0.00828,
+    "notes": [
+     "border_fb 0.85 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 15,
+       "x": 16.23,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.732,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 27% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 57% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 135890.59999999998,
+    "theta": 0.05,
+    "sigma": 0.01071,
+    "notes": [
+     "border_fb 0.27 0.57"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_31": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 75% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 151494.7,
+    "theta": 0.05,
+    "sigma": 0.00889,
+    "notes": [
+     "border_fb 0.75 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_33": {
+   "left": {
+    "state": "edge",
+    "x": 4.265,
+    "lo": 3.915,
+    "hi": 4.615,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.974,
+    "x_bottom": 4.556,
+    "note": "run 0-4, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 112.85,
+    "theta": 0.05,
+    "sigma": 0.00831,
+    "notes": [
+     "border_fb 0.90 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 4,
+       "x": 4.27,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "r0914_34": {
+   "left": {
+    "state": "edge",
+    "x": 1.704,
+    "lo": 1.354,
+    "hi": 2.054,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 1.176,
+    "x_bottom": 2.231,
+    "note": "run 0-1, 100% rows, 100% on the line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 116.4,
+    "theta": 0.05,
+    "sigma": 0.00806,
+    "notes": [
+     "border_fb 0.91 0.00"
+    ],
+    "gap": 16.25,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     17.786,
+     14.719
+    ],
+    "frame_width": 439.05,
+    "rejected": [],
+    "candidates": {
+     "left": [
+      {
+       "s": 0,
+       "e": 1,
+       "x": 1.7,
+       "outer": null,
+       "step": 1.0,
+       "on": 1.0
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_01": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 88% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 16600.8,
+    "theta": 0.0611,
+    "sigma": 0.01745,
+    "notes": [
+     "border_fb 0.88 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_03": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 73% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 16574.6,
+    "theta": 0.0635,
+    "sigma": 0.01813,
+    "notes": [
+     "border_fb 0.73 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_07": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 72% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.747,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 25% of rows"
+   },
+   "debug": {
+    "level": 16513.0,
+    "theta": 0.0587,
+    "sigma": 0.01677,
+    "notes": [
+     "border_fb 0.72 0.25"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_08": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 75% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.686,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 31% of rows"
+   },
+   "debug": {
+    "level": 116570.0,
+    "theta": 0.0584,
+    "sigma": 0.01668,
+    "notes": [
+     "border_fb 0.75 0.31"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_10": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 60% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.798,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 20% of rows"
+   },
+   "debug": {
+    "level": 27439.0,
+    "theta": 0.05,
+    "sigma": 0.00857,
+    "notes": [
+     "border_fb 0.60 0.20"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.968,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 3% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 21116.4,
+    "theta": 0.05,
+    "sigma": 0.00975,
+    "notes": [
+     "border_fb 0.03 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_22": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 22399.8,
+    "theta": 0.05,
+    "sigma": 0.00789,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.906,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 9% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.722,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 28% of rows"
+   },
+   "debug": {
+    "level": 9531.2,
+    "theta": 0.0632,
+    "sigma": 0.01805,
+    "notes": [
+     "border_fb 0.09 0.28"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.187,
+    "lo": 424.837,
+    "hi": 425.537,
+    "conf": 0.658,
+    "outer": null,
+    "x_top": 424.653,
+    "x_bottom": 425.721,
+    "note": "run 426-428, 55% rows, 100% on the line"
+   },
+   "debug": {
+    "level": 28165.0,
+    "theta": 0.05,
+    "sigma": 0.00921,
+    "notes": [
+     "border_fb 0.00 1.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 426,
+       "e": 428,
+       "x": 425.19,
+       "outer": null,
+       "step": 0.55,
+       "on": 1.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "x0920_37": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 16638.199999999997,
+    "theta": 0.05,
+    "sigma": 0.00838,
+    "notes": [
+     "border_fb 0.00 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_40": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 91% of rows, no straight edge; right run 427-428: edge not straight (0.00 rows, on 0.00)"
+   },
+   "debug": {
+    "level": 23836.5,
+    "theta": 0.05,
+    "sigma": 0.01101,
+    "notes": [
+     "border_fb 0.00 0.91"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [
+     "right run 427-428: edge not straight (0.00 rows, on 0.00)"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 427,
+       "e": 428,
+       "x": 427.0,
+       "outer": null,
+       "step": 0.0,
+       "on": 0.0
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "x0920_43": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 66% of rows, no straight edge"
+   },
+   "debug": {
+    "level": 20501.6,
+    "theta": 0.05,
+    "sigma": 0.01083,
+    "notes": [
+     "border_fb 0.00 0.66"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_46": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 88% of rows, no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 28509.6,
+    "theta": 0.05,
+    "sigma": 0.00955,
+    "notes": [
+     "border_fb 0.88 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_55": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 95% of rows, no straight edge; right run 407-428: border run 21.7 wider than G=13.9+4"
+   },
+   "debug": {
+    "level": 24510.4,
+    "theta": 0.05,
+    "sigma": 0.01076,
+    "notes": [
+     "border_fb 0.00 0.95"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [
+     "right run 407-428: border run 21.7 wider than G=13.9+4"
+    ],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 407,
+       "e": 428,
+       "x": 406.29,
+       "outer": null,
+       "step": 0.38,
+       "on": 0.88
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "x0920_58": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.585,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 42% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 27273.1,
+    "theta": 0.05,
+    "sigma": 0.01142,
+    "notes": [
+     "border_fb 0.42 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_61": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.538,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 46% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.912,
+    "lo": 422.562,
+    "hi": 423.262,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 422.551,
+    "x_bottom": 423.273,
+    "note": "run 423-428, 97% rows, 99% on the line"
+   },
+   "debug": {
+    "level": 27996.8,
+    "theta": 0.05,
+    "sigma": 0.00967,
+    "notes": [
+     "border_fb 0.46 0.99"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 423,
+       "e": 428,
+       "x": 422.91,
+       "outer": null,
+       "step": 0.97,
+       "on": 0.99
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "x0920_64": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.989,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 1% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 0% of rows"
+   },
+   "debug": {
+    "level": 22440.6,
+    "theta": 0.05,
+    "sigma": 0.01301,
+    "notes": [
+     "border_fb 0.01 0.00"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": []
+    },
+    "joint": ""
+   }
+  },
+  "x0920_73": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.856,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 14% of rows"
+   },
+   "right": {
+    "state": "edge",
+    "x": 357.816,
+    "lo": 357.466,
+    "hi": 358.166,
+    "conf": 0.645,
+    "outer": 371.721,
+    "x_top": 357.229,
+    "x_bottom": 358.403,
+    "note": "run 360-370, 58% rows, 92% on the line"
+   },
+   "debug": {
+    "level": 28167.2,
+    "theta": 0.05,
+    "sigma": 0.0088,
+    "notes": [
+     "border_fb 0.14 0.09"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [],
+    "candidates": {
+     "left": [],
+     "right": [
+      {
+       "s": 360,
+       "e": 370,
+       "x": 357.82,
+       "outer": 371.7210845319928,
+       "step": 0.58,
+       "on": 0.92
+      }
+     ]
+    },
+    "joint": ""
+   }
+  },
+  "x0920_76": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.625,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 38% of rows left run 181-188: edge not straight (0.15 rows, on 0.86)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.928,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border column base-like in 7% of rows"
+   },
+   "debug": {
+    "level": 28410.9,
+    "theta": 0.05,
+    "sigma": 0.00927,
+    "notes": [
+     "border_fb 0.38 0.07"
+    ],
+    "gap": 13.9,
+    "gap_tol": 4.0,
+    "gap_widths": [
+     13.905
+    ],
+    "frame_width": 441.4,
+    "rejected": [
+     "left run 181-188: edge not straight (0.15 rows, on 0.86)"
+    ],
+    "candidates": {
+     "left": [
+      {
+       "s": 181,
+       "e": 188,
+       "x": 187.97,
+       "outer": 178.79453930135202,
+       "step": 0.15,
+       "on": 0.86
+      }
+     ],
+     "right": []
+    },
+    "joint": ""
+   }
+  }
+ }
+}

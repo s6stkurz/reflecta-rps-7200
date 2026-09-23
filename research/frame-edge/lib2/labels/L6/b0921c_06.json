@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_06", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 73.85, "lo": 73.4, "hi": 74.2,
+            "outer": 56.4, "x_top": 73.5, "x_bottom": 74.25,
+            "note": "gap inside the frame (deeper than the crop): base cols 57-72 (~96, R/G 2.20, B/G 0.53), full height, black in B. This frame's picture starts in col 73 near the top (~73.4-73.7 over rows 10-140), at 74.0 over rows 150-250, a little into col 74 below that; bottom ~25 rows base through col 74 (corner). Neighbour 0-55; its boundary ~56.3 top, ~56.0 mid, ~56.9 bottom -- both boundaries lean the same way, about +0.8 col top to bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "table/dress picture to col 427; no plateau"},
+  "frame_note": "gap at cols 57-72; right part 74-427 (~354 cols) is the frame, left part 0-55 (~56 cols) the neighbour"
+}

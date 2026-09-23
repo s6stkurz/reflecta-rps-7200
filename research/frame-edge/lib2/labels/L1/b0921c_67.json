@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_67", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 212.4, "lo": 211.7, "hi": 212.9,
+            "outer": 193.7, "x_top": 211.8, "x_bottom": 212.7,
+            "note": "internal gap: base cols 194-211 (~97, R/G 2.2 B/G 0.55). Frame edge leans and is soft in the lower half (picture beside it is light, col 212 40-77% base there); top band col 211 already mixed. Neighbour boundary also leans: ~194.2 top, ~193.2 lower half"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/railing to col 427"},
+  "frame_note": "gap inside the frame at 194-212; frame is the right part (~216 cols vs ~194, difference >10)"
+}

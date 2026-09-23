@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_53",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/face/hair run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 292.5,
+    "lo": 291.8,
+    "hi": 293.2,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "interior gap in a night scene. The frame (woman, left part, ~292 cols) ends where its dusk sky ends: a straight vertical line at ~292.5 in rows 0-28 only (sky G ~29 vs base ~32, col 292 13-80% base). Below the sky the picture is unexposed night and reads as base, so the edge cannot be followed down. Right of it everything is base-coloured (R/G 2.25, B/G 0.53) until the neighbour (girl on grass, cf. b0920_06/b0922b_06) fades in; its own edge is not visible (flash falloff), so no outer given - a hint of it at ~314. The full-height R step at 306/307 is a sensor/shading step (also in clean base on b0921c_47), not the film."
+  },
+  "frame_note": "dark scene on both sides of the gap; right edge placed from the top 10% (sky) alone"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0922s_08",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 7.2,
+    "lo": 6.8,
+    "hi": 7.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-6 featureless (row std 1.0-1.5), G 29-30, R/G 2.2-2.28, B/G 0.53: base. Col 7 carries picture texture (std 4.2; a dark mark fills it at rows 15-29). Lower half the picture is thin, nearly base level, so the line is set by the upper rows"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base plateau: in the top rows G ramps 22 -> 28 over cols 422-427 along a diagonal roof line (scene, not a vertical edge); below row 75 the thin picture reads ~28 right to 427 with no step. Soft top-right corner is the only doubt"
+  },
+  "frame_note": "thin street scene; lower half near base level"
+}

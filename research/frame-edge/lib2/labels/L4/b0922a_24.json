@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_24",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 54.0,
+    "lo": 53.6,
+    "hi": 54.6,
+    "outer": 33.6,
+    "x_top": 53.7,
+    "x_bottom": 54.6,
+    "note": "base cols ~34-53 (flat ~86, R/G 2.21, B/G 0.55). Edge sharp at the top (bright sky beside it) at ~53.65, drifting right going down: ~54.0 at mid-height, ~54.4 lower, ~55.0 in the bottom band where dark foliage is near base value. Neighbour ends ~34.8 at top, ~33.0 lower; its lower half is at base value, so outer is soft there"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky and garden foliage run to column 428"
+  },
+  "frame_note": "gap at cols ~34-53; the frame is the right part (374 picture columns vs 34)"
+}

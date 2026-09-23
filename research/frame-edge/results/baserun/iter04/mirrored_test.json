@@ -1,0 +1,1961 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "gold200_01": {
+   "left": {
+    "state": "edge",
+    "x": 1.9488642217148533,
+    "lo": 1.4488642217148533,
+    "hi": 2.448864221714853,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 2.2569926530053843,
+    "x_bottom": 1.6407357904243223,
+    "note": "band, 100% of rows agree"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border not uniform in 42% of rows"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     77.0,
+     34.0,
+     18.0
+    ],
+    "top_noise": 0.0198,
+    "left": {
+     "ref": [
+      60.0,
+      27.12,
+      14.0
+     ],
+     "ref_col": 1,
+     "plaus": 0.785,
+     "colour": 0.02,
+     "tau": 0.0594,
+     "rows": 9,
+     "sig_pix": 0.0295,
+     "zero": 0.3,
+     "long": 0.0,
+     "x": 1.949,
+     "slope": -0.021,
+     "support": 1.0,
+     "short": 0.0,
+     "longer": 0.0,
+     "x_top": 2.257,
+     "x_bottom": 1.641,
+     "spread": 0.313,
+     "n_support": 30,
+     "first": true,
+     "runs_q": [
+      0.0,
+      2.0,
+      2.0
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      51.0,
+      21.75,
+      11.75
+     ],
+     "ref_col": 3,
+     "plaus": 0.655,
+     "colour": 0.023,
+     "tau": 0.0591,
+     "rows": 14,
+     "sig_pix": 0.0364,
+     "zero": 0.421,
+     "long": 0.263,
+     "x": 1.856,
+     "slope": 0.242,
+     "support": 0.526,
+     "short": 0.0,
+     "longer": 0.474,
+     "x_top": -0.439,
+     "x_bottom": 4.151,
+     "spread": 0.656,
+     "n_support": 10,
+     "first": true,
+     "runs_q": [
+      0.0,
+      7.0,
+      75.4
+     ],
+     "band_ok": false
+    }
+   }
+  },
+  "gold200_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.25 of p99.5)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.65 of p99.5)"
+   },
+   "debug": {
+    "gate": {
+     "right": {
+      "run": 85,
+      "ratio": [
+       1.0,
+       0.97,
+       0.91
+      ],
+      "neutral": 0.16
+     }
+    },
+    "p995": [
+     71.0,
+     29.0,
+     16.0
+    ],
+    "top_noise": 0.0293,
+    "left": {
+     "ref": [
+      19.38,
+      5.25,
+      1.0
+     ],
+     "ref_col": 1,
+     "plaus": 0.251,
+     "colour": 0.21,
+     "tau": 0.0599,
+     "rows": 15,
+     "sig_pix": 0.0386,
+     "zero": 0.111,
+     "long": 0.611,
+     "x": 23.932,
+     "slope": 0.354,
+     "support": 0.222,
+     "short": 0.056,
+     "longer": 0.722,
+     "x_top": 20.744,
+     "x_bottom": 27.12,
+     "spread": 0.918,
+     "n_support": 4,
+     "runs_q": [
+      16.1,
+      64.5,
+      115.0
+     ],
+     "band_ok": false
+    },
+    "right": {
+     "ref": [
+      47.12,
+      18.88,
+      9.12
+     ],
+     "ref_col": 0,
+     "plaus": 0.647,
+     "colour": 0.093,
+     "tau": 0.0592,
+     "rows": 17,
+     "sig_pix": 0.0403,
+     "zero": 0.267,
+     "long": 0.0,
+     "x": 0.78,
+     "slope": 0.069,
+     "support": 0.267,
+     "short": 0.0,
+     "longer": 0.733,
+     "x_top": 0.259,
+     "x_bottom": 1.301,
+     "spread": 0.76,
+     "n_support": 4,
+     "runs_q": [
+      0.0,
+      10.0,
+      25.6
+     ],
+     "band_ok": false
+    }
+   }
+  },
+  "gold200_03": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.63 of p99.5)"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     76.0,
+     34.0,
+     20.0
+    ],
+    "top_noise": 0.0196,
+    "left": {
+     "ref": [
+      56.0,
+      24.38,
+      13.88
+     ],
+     "ref_col": 3,
+     "plaus": 0.721,
+     "colour": 0.043,
+     "tau": 0.0588,
+     "rows": 12,
+     "sig_pix": 0.0335,
+     "zero": 0.227,
+     "long": 0.273,
+     "x": 0.289,
+     "slope": 0.002,
+     "support": 0.227,
+     "short": 0.0,
+     "longer": 0.773,
+     "x_top": 0.269,
+     "x_bottom": 0.308,
+     "spread": 0.108,
+     "n_support": 5,
+     "runs_q": [
+      0.0,
+      15.5,
+      65.3
+     ]
+    },
+    "right": {
+     "ref": [
+      48.25,
+      21.25,
+      12.5
+     ],
+     "ref_col": 0,
+     "plaus": 0.63,
+     "colour": 0.01,
+     "tau": 0.0589,
+     "rows": 13,
+     "sig_pix": 0.035,
+     "zero": 0.8,
+     "long": 0.0,
+     "x": 0.363,
+     "slope": -0.012,
+     "support": 0.8,
+     "short": 0.0,
+     "longer": 0.2,
+     "x_top": 0.481,
+     "x_bottom": 0.244,
+     "spread": 0.243,
+     "n_support": 16,
+     "runs_q": [
+      0.0,
+      0.0,
+      18.6
+     ]
+    },
+    "roll": {
+     "bands": 2
+    }
+   }
+  },
+  "gold200_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.49 of p99.5)"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     76.0,
+     33.0,
+     18.0
+    ],
+    "top_noise": 0.0193,
+    "left": {
+     "ref": [
+      40.75,
+      15.62,
+      6.62
+     ],
+     "ref_col": 2,
+     "plaus": 0.487,
+     "colour": 0.168,
+     "tau": 0.0613,
+     "rows": 24,
+     "sig_pix": 0.0508,
+     "zero": 0.909,
+     "long": 0.0,
+     "x": 0.112,
+     "slope": 0.008,
+     "support": 0.909,
+     "short": 0.0,
+     "longer": 0.091,
+     "x_top": 0.066,
+     "x_bottom": 0.158,
+     "spread": 0.177,
+     "n_support": 10,
+     "runs_q": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "ref": [
+      51.25,
+      21.62,
+      11.5
+     ],
+     "ref_col": 1,
+     "plaus": 0.664,
+     "colour": 0.035,
+     "tau": 0.0588,
+     "rows": 12,
+     "sig_pix": 0.0335,
+     "zero": 0.227,
+     "long": 0.318,
+     "x": 0.342,
+     "slope": 0.031,
+     "support": 0.273,
+     "short": 0.0,
+     "longer": 0.727,
+     "x_top": 0.007,
+     "x_bottom": 0.678,
+     "spread": 0.43,
+     "n_support": 6,
+     "runs_q": [
+      0.0,
+      12.0,
+      70.6
+     ]
+    },
+    "roll": {
+     "bands": 2
+    }
+   }
+  },
+  "gold200_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.38 of p99.5)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border not uniform in 100% of rows"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     62.0,
+     28.0,
+     15.0
+    ],
+    "top_noise": 0.0259,
+    "left": {
+     "ref": [
+      27.12,
+      8.62,
+      3.75
+     ],
+     "ref_col": 2,
+     "plaus": 0.384,
+     "colour": 0.188,
+     "tau": 0.059,
+     "rows": 13,
+     "sig_pix": 0.035,
+     "zero": 0.8,
+     "long": 0.1,
+     "x": 0.159,
+     "slope": 0.005,
+     "support": 0.8,
+     "short": 0.0,
+     "longer": 0.2,
+     "x_top": 0.109,
+     "x_bottom": 0.209,
+     "spread": 0.187,
+     "n_support": 16,
+     "runs_q": [
+      0.0,
+      0.0,
+      25.5
+     ]
+    },
+    "right": {
+     "ref": [
+      43.88,
+      18.88,
+      11.0
+     ],
+     "ref_col": 2,
+     "plaus": 0.705,
+     "colour": 0.059,
+     "tau": 0.06,
+     "rows": 21,
+     "sig_pix": 0.0458,
+     "zero": 1.0,
+     "long": 0.0,
+     "x": 0.085,
+     "slope": 0.012,
+     "support": 1.0,
+     "short": 0.0,
+     "longer": 0.0,
+     "x_top": 0.013,
+     "x_bottom": 0.157,
+     "spread": 0.1,
+     "n_support": 12,
+     "runs_q": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "gold200_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border not uniform in 47% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.43 of p99.5)"
+   },
+   "debug": {
+    "gate": {
+     "left": {
+      "run": 143,
+      "ratio": [
+       0.96,
+       0.99,
+       1.1
+      ],
+      "neutral": 0.2
+     }
+    },
+    "p995": [
+     74.0,
+     32.0,
+     18.0
+    ],
+    "top_noise": 0.0246,
+    "left": {
+     "ref": [
+      55.25,
+      21.88,
+      12.75
+     ],
+     "ref_col": 3,
+     "plaus": 0.723,
+     "colour": 0.063,
+     "tau": 0.0592,
+     "rows": 18,
+     "sig_pix": 0.0414,
+     "zero": 0.467,
+     "long": 0.133,
+     "x": 0.378,
+     "slope": -0.049,
+     "support": 0.533,
+     "short": 0.0,
+     "longer": 0.467,
+     "x_top": 0.742,
+     "x_bottom": 0.014,
+     "spread": 0.414,
+     "n_support": 8,
+     "runs_q": [
+      0.0,
+      2.0,
+      40.0
+     ]
+    },
+    "right": {
+     "ref": [
+      34.62,
+      12.75,
+      4.88
+     ],
+     "ref_col": 1,
+     "plaus": 0.427,
+     "colour": 0.197,
+     "tau": 0.0594,
+     "rows": 16,
+     "sig_pix": 0.0393,
+     "zero": 0.875,
+     "long": 0.0,
+     "x": 0.261,
+     "slope": 0.056,
+     "support": 0.875,
+     "short": 0.0,
+     "longer": 0.125,
+     "x_top": -0.185,
+     "x_bottom": 0.708,
+     "spread": 0.37,
+     "n_support": 14,
+     "runs_q": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    }
+   }
+  },
+  "gold200_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.50 of p99.5)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.61 of p99.5)"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     71.0,
+     32.0,
+     17.0
+    ],
+    "top_noise": 0.023,
+    "left": {
+     "ref": [
+      37.5,
+      14.62,
+      8.5
+     ],
+     "ref_col": 1,
+     "plaus": 0.503,
+     "colour": 0.071,
+     "tau": 0.0592,
+     "rows": 20,
+     "sig_pix": 0.0437,
+     "zero": 0.846,
+     "long": 0.0,
+     "x": 2.037,
+     "slope": 0.28,
+     "support": 0.538,
+     "short": 0.077,
+     "longer": 0.385,
+     "x_top": 0.214,
+     "x_bottom": 3.86,
+     "spread": 0.0,
+     "n_support": 7,
+     "first": true,
+     "runs_q": [
+      0.0,
+      0.0,
+      4.8
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      45.25,
+      18.88,
+      10.0
+     ],
+     "ref_col": 1,
+     "plaus": 0.613,
+     "colour": 0.049,
+     "tau": 0.0593,
+     "rows": 19,
+     "sig_pix": 0.0427,
+     "zero": 0.714,
+     "long": 0.071,
+     "x": 0.251,
+     "slope": -0.043,
+     "support": 0.786,
+     "short": 0.0,
+     "longer": 0.214,
+     "x_top": 0.554,
+     "x_bottom": -0.052,
+     "spread": 0.296,
+     "n_support": 11,
+     "runs_q": [
+      0.0,
+      0.0,
+      11.9
+     ]
+    }
+   }
+  },
+  "gold200_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9090909090909091,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "under 1 column of base (0.85)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.36 of p99.5)"
+   },
+   "debug": {
+    "gate": {
+     "left": {
+      "run": 75,
+      "ratio": [
+       1.08,
+       1.17,
+       1.22
+      ],
+      "neutral": 0.2
+     }
+    },
+    "p995": [
+     70.0,
+     30.0,
+     16.0
+    ],
+    "top_noise": 0.0276,
+    "left": {
+     "ref": [
+      51.38,
+      19.75,
+      10.5
+     ],
+     "ref_col": 0,
+     "plaus": 0.699,
+     "colour": 0.078,
+     "tau": 0.0608,
+     "rows": 24,
+     "sig_pix": 0.0502,
+     "zero": 0.545,
+     "long": 0.091,
+     "x": 0.85,
+     "slope": -0.13,
+     "support": 0.636,
+     "short": 0.0,
+     "longer": 0.364,
+     "x_top": 1.566,
+     "x_bottom": 0.133,
+     "spread": 0.642,
+     "n_support": 7,
+     "first": true,
+     "runs_q": [
+      0.0,
+      0.0,
+      14.0
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      28.0,
+      10.75,
+      3.38
+     ],
+     "ref_col": 1,
+     "plaus": 0.359,
+     "colour": 0.189,
+     "tau": 0.0594,
+     "rows": 15,
+     "sig_pix": 0.0381,
+     "zero": 0.722,
+     "long": 0.056,
+     "x": 0.352,
+     "slope": -0.023,
+     "support": 0.722,
+     "short": 0.0,
+     "longer": 0.278,
+     "x_top": 0.559,
+     "x_bottom": 0.145,
+     "spread": 0.395,
+     "n_support": 13,
+     "runs_q": [
+      0.0,
+      0.0,
+      10.0
+     ]
+    }
+   }
+  },
+  "gold200_09": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     77.0,
+     35.0,
+     20.0
+    ],
+    "top_noise": 0.0175,
+    "left": {
+     "ref": [
+      58.88,
+      26.5,
+      14.5
+     ],
+     "ref_col": 3,
+     "plaus": 0.756,
+     "colour": 0.04,
+     "tau": 0.0564,
+     "rows": 8,
+     "sig_pix": 0.0254,
+     "zero": 0.061,
+     "long": 0.636,
+     "x": 1.07,
+     "slope": 0.11,
+     "support": 0.091,
+     "short": 0.0,
+     "longer": 0.909,
+     "x_top": -0.739,
+     "x_bottom": 2.879,
+     "spread": 0.582,
+     "n_support": 3,
+     "runs_q": [
+      10.2,
+      49.0,
+      112.8
+     ],
+     "band_ok": false
+    },
+    "right": {
+     "ref": [
+      53.0,
+      23.88,
+      13.5
+     ],
+     "ref_col": 2,
+     "plaus": 0.685,
+     "colour": 0.013,
+     "tau": 0.0545,
+     "rows": 8,
+     "sig_pix": 0.0238,
+     "zero": 0.182,
+     "long": 0.364,
+     "x": 1.553,
+     "slope": 0.062,
+     "support": 0.212,
+     "short": 0.03,
+     "longer": 0.758,
+     "x_top": 0.525,
+     "x_bottom": 2.581,
+     "spread": 0.96,
+     "n_support": 7,
+     "runs_q": [
+      0.0,
+      13.0,
+      117.0
+     ],
+     "band_ok": false
+    },
+    "roll": {
+     "bands": 2
+    }
+   }
+  },
+  "gold200_10": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     76.0,
+     34.0,
+     19.0
+    ],
+    "top_noise": 0.0188,
+    "left": {
+     "ref": [
+      57.88,
+      26.0,
+      13.38
+     ],
+     "ref_col": 1,
+     "plaus": 0.754,
+     "colour": 0.061,
+     "tau": 0.0588,
+     "rows": 8,
+     "sig_pix": 0.0273,
+     "zero": 0.212,
+     "long": 0.242,
+     "x": 5.934,
+     "slope": -0.09,
+     "support": 0.424,
+     "short": 0.0,
+     "longer": 0.576,
+     "x_top": 7.417,
+     "x_bottom": 4.45,
+     "spread": 0.585,
+     "n_support": 14,
+     "runs_q": [
+      0.0,
+      15.0,
+      72.8
+     ],
+     "band_ok": false
+    },
+    "right": {
+     "ref": [
+      52.0,
+      23.25,
+      12.5
+     ],
+     "ref_col": 3,
+     "plaus": 0.68,
+     "colour": 0.026,
+     "tau": 0.0583,
+     "rows": 9,
+     "sig_pix": 0.0285,
+     "zero": 0.333,
+     "long": 0.3,
+     "x": 1.494,
+     "slope": -0.157,
+     "support": 0.533,
+     "short": 0.0,
+     "longer": 0.467,
+     "x_top": 3.842,
+     "x_bottom": -0.854,
+     "spread": 0.33,
+     "n_support": 16,
+     "first": true,
+     "runs_q": [
+      0.0,
+      3.5,
+      114.1
+     ],
+     "band_ok": false
+    },
+    "roll": {
+     "bands": 2
+    }
+   }
+  },
+  "gold200_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border not uniform in 45% of rows"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border not uniform in 63% of rows"
+   },
+   "debug": {
+    "gate": {
+     "left": {
+      "run": 193,
+      "ratio": [
+       1.0,
+       0.96,
+       0.85
+      ],
+      "neutral": 0.22
+     },
+     "right": {
+      "run": 46,
+      "ratio": [
+       0.94,
+       0.96,
+       1.0
+      ],
+      "neutral": 0.24
+     }
+    },
+    "p995": [
+     71.0,
+     32.0,
+     18.0
+    ],
+    "top_noise": 0.0211,
+    "left": {
+     "ref": [
+      51.0,
+      22.75,
+      11.5
+     ],
+     "ref_col": 1,
+     "plaus": 0.704,
+     "colour": 0.079,
+     "tau": 0.0594,
+     "rows": 8,
+     "sig_pix": 0.0278,
+     "zero": 0.455,
+     "long": 0.455,
+     "x": 0.322,
+     "slope": 0.016,
+     "support": 0.455,
+     "short": 0.0,
+     "longer": 0.545,
+     "x_top": 0.059,
+     "x_bottom": 0.586,
+     "spread": 0.305,
+     "n_support": 15,
+     "runs_q": [
+      0.0,
+      11.0,
+      120.0
+     ]
+    },
+    "right": {
+     "ref": [
+      48.75,
+      21.88,
+      12.38
+     ],
+     "ref_col": 1,
+     "plaus": 0.686,
+     "colour": 0.004,
+     "tau": 0.0594,
+     "rows": 10,
+     "sig_pix": 0.0311,
+     "zero": 0.63,
+     "long": 0.333,
+     "x": 0.272,
+     "slope": 0.017,
+     "support": 0.63,
+     "short": 0.0,
+     "longer": 0.37,
+     "x_top": 0.036,
+     "x_bottom": 0.508,
+     "spread": 0.161,
+     "n_support": 17,
+     "runs_q": [
+      0.0,
+      0.0,
+      53.4
+     ]
+    }
+   }
+  },
+  "gold200_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border not uniform in 36% of rows"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     76.0,
+     35.0,
+     20.0
+    ],
+    "top_noise": 0.0171,
+    "left": {
+     "ref": [
+      58.62,
+      26.0,
+      14.25
+     ],
+     "ref_col": 3,
+     "plaus": 0.755,
+     "colour": 0.059,
+     "tau": 0.0494,
+     "rows": 8,
+     "sig_pix": 0.0197,
+     "zero": 0.364,
+     "long": 0.606,
+     "x": 0.024,
+     "slope": 0.001,
+     "support": 0.364,
+     "short": 0.0,
+     "longer": 0.636,
+     "x_top": -0.0,
+     "x_bottom": 0.049,
+     "spread": 0.02,
+     "n_support": 12,
+     "runs_q": [
+      0.0,
+      120.0,
+      120.0
+     ]
+    },
+    "right": {
+     "ref": [
+      53.25,
+      24.12,
+      13.62
+     ],
+     "ref_col": 2,
+     "plaus": 0.695,
+     "colour": 0.019,
+     "tau": 0.0498,
+     "rows": 8,
+     "sig_pix": 0.0201,
+     "zero": 0.061,
+     "long": 0.667,
+     "x": 23.098,
+     "slope": 0.031,
+     "support": 0.091,
+     "short": 0.091,
+     "longer": 0.818,
+     "x_top": 22.594,
+     "x_bottom": 23.603,
+     "spread": 0.737,
+     "n_support": 3,
+     "runs_q": [
+      18.8,
+      99.0,
+      120.0
+     ],
+     "band_ok": false
+    },
+    "roll": {
+     "bands": 2
+    }
+   }
+  },
+  "gold200_13": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "flat, base-like and wider than any gap"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9090909090909091,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "under 1 column of base (0.75)"
+   },
+   "debug": {
+    "gate": {
+     "left": {
+      "run": 164,
+      "ratio": [
+       1.15,
+       1.08,
+       1.07
+      ],
+      "neutral": 0.25
+     }
+    },
+    "p995": [
+     72.0,
+     33.0,
+     19.0
+    ],
+    "top_noise": 0.021,
+    "left": {
+     "ref": [
+      58.38,
+      26.38,
+      14.38
+     ],
+     "ref_col": 3,
+     "plaus": 0.795,
+     "colour": 0.054,
+     "tau": 0.0585,
+     "rows": 10,
+     "sig_pix": 0.0302,
+     "zero": 0.0,
+     "long": 1.0,
+     "x": 87.196,
+     "slope": 0.499,
+     "support": 0.111,
+     "short": 0.074,
+     "longer": 0.815,
+     "x_top": 80.458,
+     "x_bottom": 93.933,
+     "spread": 0.288,
+     "n_support": 3,
+     "runs_q": [
+      83.6,
+      120.0,
+      120.0
+     ],
+     "band_ok": false,
+     "whole_base": 0.273
+    },
+    "right": {
+     "ref": [
+      40.75,
+      17.88,
+      10.62
+     ],
+     "ref_col": 2,
+     "plaus": 0.556,
+     "colour": 0.024,
+     "tau": 0.0713,
+     "rows": 24,
+     "sig_pix": 0.0649,
+     "zero": 0.545,
+     "long": 0.364,
+     "x": 0.752,
+     "slope": 0.248,
+     "support": 0.636,
+     "short": 0.0,
+     "longer": 0.364,
+     "x_top": -0.61,
+     "x_bottom": 2.115,
+     "spread": 0.562,
+     "n_support": 7,
+     "first": true,
+     "runs_q": [
+      0.0,
+      0.0,
+      117.0
+     ],
+     "band_ok": true
+    },
+    "roll": {
+     "bands": 2
+    }
+   }
+  },
+  "gold200_14": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree about the band"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.17 of p99.5)"
+   },
+   "debug": {
+    "gate": {
+     "left": {
+      "run": 156,
+      "ratio": [
+       1.23,
+       1.17,
+       1.13
+      ],
+      "neutral": 0.25
+     }
+    },
+    "p995": [
+     71.0,
+     33.0,
+     18.0
+    ],
+    "top_noise": 0.0201,
+    "left": {
+     "ref": [
+      59.0,
+      26.75,
+      14.5
+     ],
+     "ref_col": 3,
+     "plaus": 0.82,
+     "colour": 0.025,
+     "tau": 0.0569,
+     "rows": 8,
+     "sig_pix": 0.0258,
+     "zero": 0.0,
+     "long": 0.667,
+     "x": 4.027,
+     "slope": -0.07,
+     "support": 0.091,
+     "short": 0.0,
+     "longer": 0.909,
+     "x_top": 5.18,
+     "x_bottom": 2.875,
+     "spread": 0.088,
+     "n_support": 3,
+     "runs_q": [
+      8.4,
+      47.0,
+      120.0
+     ],
+     "band_ok": false
+    },
+    "right": {
+     "ref": [
+      13.12,
+      4.5,
+      1.75
+     ],
+     "ref_col": 2,
+     "plaus": 0.169,
+     "colour": 0.088,
+     "tau": 0.0594,
+     "rows": 18,
+     "sig_pix": 0.0417,
+     "zero": 0.4,
+     "long": 0.6,
+     "x": 0.137,
+     "slope": -0.003,
+     "support": 0.4,
+     "short": 0.0,
+     "longer": 0.6,
+     "x_top": 0.16,
+     "x_bottom": 0.114,
+     "spread": 0.06,
+     "n_support": 6,
+     "runs_q": [
+      0.0,
+      73.0,
+      98.6
+     ]
+    },
+    "roll": {
+     "bands": 2
+    }
+   }
+  },
+  "gold200_15": {
+   "left": {
+    "state": "edge",
+    "x": 5.212956081111579,
+    "lo": 4.712956081111579,
+    "hi": 5.712956081111579,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 4.764092713952551,
+    "x_bottom": 5.661819448270607,
+    "note": "band, 100% of rows agree"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.42 of p99.5)"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     70.0,
+     34.0,
+     19.0
+    ],
+    "top_noise": 0.0202,
+    "left": {
+     "ref": [
+      59.38,
+      27.25,
+      14.75
+     ],
+     "ref_col": 3,
+     "plaus": 0.826,
+     "colour": 0.072,
+     "tau": 0.0488,
+     "rows": 8,
+     "sig_pix": 0.0192,
+     "zero": 0.0,
+     "long": 0.0,
+     "x": 5.213,
+     "slope": 0.027,
+     "support": 1.0,
+     "short": 0.0,
+     "longer": 0.0,
+     "x_top": 4.764,
+     "x_bottom": 5.662,
+     "spread": 0.229,
+     "n_support": 33,
+     "first": true,
+     "runs_q": [
+      5.0,
+      5.0,
+      5.8
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      31.5,
+      13.62,
+      6.5
+     ],
+     "ref_col": 1,
+     "plaus": 0.423,
+     "colour": 0.108,
+     "tau": 0.0583,
+     "rows": 9,
+     "sig_pix": 0.0285,
+     "zero": 0.8,
+     "long": 0.167,
+     "x": 0.126,
+     "slope": 0.004,
+     "support": 0.767,
+     "short": 0.0,
+     "longer": 0.233,
+     "x_top": 0.069,
+     "x_bottom": 0.184,
+     "spread": 0.252,
+     "n_support": 23,
+     "runs_q": [
+      0.0,
+      0.0,
+      120.0
+     ]
+    }
+   }
+  },
+  "gold200_16": {
+   "left": {
+    "state": "edge",
+    "x": 2.7491825462085675,
+    "lo": 2.2491825462085675,
+    "hi": 3.2491825462085675,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.3199834185329724,
+    "x_bottom": 2.1783816738841626,
+    "note": "band, 100% of rows agree"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.41 of p99.5)"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     61.0,
+     28.0,
+     15.0
+    ],
+    "top_noise": 0.0294,
+    "left": {
+     "ref": [
+      60.0,
+      27.75,
+      14.38
+     ],
+     "ref_col": 1,
+     "plaus": 0.98,
+     "colour": 0.033,
+     "tau": 0.0593,
+     "rows": 8,
+     "sig_pix": 0.0277,
+     "zero": 0.0,
+     "long": 0.0,
+     "x": 2.749,
+     "slope": -0.035,
+     "support": 1.0,
+     "short": 0.0,
+     "longer": 0.0,
+     "x_top": 3.32,
+     "x_bottom": 2.178,
+     "spread": 0.291,
+     "n_support": 33,
+     "first": true,
+     "runs_q": [
+      2.0,
+      2.0,
+      3.0
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      25.75,
+      12.0,
+      5.38
+     ],
+     "ref_col": 3,
+     "plaus": 0.41,
+     "colour": 0.07,
+     "tau": 0.0594,
+     "rows": 13,
+     "sig_pix": 0.0354,
+     "zero": 0.7,
+     "long": 0.05,
+     "x": 0.368,
+     "slope": -0.015,
+     "support": 0.7,
+     "short": 0.0,
+     "longer": 0.3,
+     "x_top": 0.52,
+     "x_bottom": 0.217,
+     "spread": 0.497,
+     "n_support": 14,
+     "runs_q": [
+      0.0,
+      0.0,
+      21.2
+     ]
+    }
+   }
+  },
+  "gold200_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.40 of p99.5)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.64 of p99.5)"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     76.0,
+     35.0,
+     20.0
+    ],
+    "top_noise": 0.0185,
+    "left": {
+     "ref": [
+      32.62,
+      13.25,
+      6.0
+     ],
+     "ref_col": 0,
+     "plaus": 0.399,
+     "colour": 0.129,
+     "tau": 0.0594,
+     "rows": 11,
+     "sig_pix": 0.0326,
+     "zero": 0.792,
+     "long": 0.0,
+     "x": 0.125,
+     "slope": -0.012,
+     "support": 0.792,
+     "short": 0.0,
+     "longer": 0.208,
+     "x_top": 0.269,
+     "x_bottom": -0.018,
+     "spread": 0.157,
+     "n_support": 19,
+     "runs_q": [
+      0.0,
+      0.0,
+      5.0
+     ]
+    },
+    "right": {
+     "ref": [
+      49.38,
+      22.25,
+      12.38
+     ],
+     "ref_col": 3,
+     "plaus": 0.64,
+     "colour": 0.031,
+     "tau": 0.0564,
+     "rows": 8,
+     "sig_pix": 0.0254,
+     "zero": 0.091,
+     "long": 0.424,
+     "x": 1.584,
+     "slope": 0.093,
+     "support": 0.152,
+     "short": 0.0,
+     "longer": 0.848,
+     "x_top": 0.052,
+     "x_bottom": 3.117,
+     "spread": 0.578,
+     "n_support": 5,
+     "runs_q": [
+      1.2,
+      28.0,
+      72.2
+     ],
+     "band_ok": false
+    }
+   }
+  },
+  "hwcheck_01": {
+   "left": {
+    "state": "edge",
+    "x": 3.958085349899683,
+    "lo": 3.38889835853483,
+    "hi": 4.527272341264537,
+    "conf": 0.6666666666666666,
+    "outer": null,
+    "x_top": 4.585813302691506,
+    "x_bottom": 3.3303573971078593,
+    "note": "band, 67% of rows agree"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.37 of p99.5)"
+   },
+   "debug": {
+    "gate": {
+     "left": {
+      "run": 32,
+      "ratio": [
+       0.98,
+       0.96,
+       1.0
+      ],
+      "neutral": 0.21
+     }
+    },
+    "p995": [
+     76.0,
+     33.0,
+     18.0
+    ],
+    "top_noise": 0.0235,
+    "left": {
+     "ref": [
+      60.75,
+      26.88,
+      14.0
+     ],
+     "ref_col": 2,
+     "plaus": 0.8,
+     "colour": 0.037,
+     "tau": 0.06,
+     "rows": 11,
+     "sig_pix": 0.0331,
+     "zero": 0.0,
+     "long": 0.0,
+     "x": 3.958,
+     "slope": -0.052,
+     "support": 0.667,
+     "short": 0.0,
+     "longer": 0.333,
+     "x_top": 4.586,
+     "x_bottom": 3.33,
+     "spread": 0.538,
+     "n_support": 16,
+     "first": true,
+     "runs_q": [
+      3.0,
+      4.0,
+      22.7
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      31.62,
+      10.88,
+      4.25
+     ],
+     "ref_col": 0,
+     "plaus": 0.366,
+     "colour": 0.18,
+     "tau": 0.0592,
+     "rows": 16,
+     "sig_pix": 0.0391,
+     "zero": 1.0,
+     "long": 0.0,
+     "x": 0.165,
+     "slope": 0.023,
+     "support": 1.0,
+     "short": 0.0,
+     "longer": 0.0,
+     "x_top": -0.019,
+     "x_bottom": 0.349,
+     "spread": 0.24,
+     "n_support": 16,
+     "runs_q": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "hwcheck_02": {
+   "left": {
+    "state": "edge",
+    "x": 2.4447967590087867,
+    "lo": 1.9447967590087867,
+    "hi": 2.9447967590087867,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 2.9348775763834265,
+    "x_bottom": 1.9547159416341469,
+    "note": "band, 100% of rows agree"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8974358974358975,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border too dark for base (0.62 of p99.5)"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     74.0,
+     32.0,
+     17.0
+    ],
+    "top_noise": 0.0226,
+    "left": {
+     "ref": [
+      61.5,
+      26.88,
+      14.38
+     ],
+     "ref_col": 1,
+     "plaus": 0.837,
+     "colour": 0.015,
+     "tau": 0.0598,
+     "rows": 9,
+     "sig_pix": 0.0299,
+     "zero": 0.0,
+     "long": 0.0,
+     "x": 2.445,
+     "slope": -0.033,
+     "support": 1.0,
+     "short": 0.0,
+     "longer": 0.0,
+     "x_top": 2.935,
+     "x_bottom": 1.955,
+     "spread": 0.211,
+     "n_support": 30,
+     "first": true,
+     "runs_q": [
+      2.0,
+      2.0,
+      3.0
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      47.75,
+      19.0,
+      9.88
+     ],
+     "ref_col": 3,
+     "plaus": 0.616,
+     "colour": 0.064,
+     "tau": 0.0599,
+     "rows": 20,
+     "sig_pix": 0.0446,
+     "zero": 0.538,
+     "long": 0.0,
+     "x": 0.152,
+     "slope": 0.025,
+     "support": 0.538,
+     "short": 0.0,
+     "longer": 0.462,
+     "x_top": -0.01,
+     "x_bottom": 0.314,
+     "spread": 0.11,
+     "n_support": 7,
+     "runs_q": [
+      0.0,
+      0.0,
+      12.2
+     ]
+    }
+   }
+  },
+  "hwcheck_03": {
+   "left": {
+    "state": "edge",
+    "x": 3.736470374596011,
+    "lo": 3.236470374596011,
+    "hi": 4.236470374596011,
+    "conf": 0.9583333333333334,
+    "outer": null,
+    "x_top": 4.3990135773217265,
+    "x_bottom": 3.0739271718702956,
+    "note": "band, 96% of rows agree"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.8333333333333334,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "under 1 column of base (0.54)"
+   },
+   "debug": {
+    "gate": {},
+    "p995": [
+     72.0,
+     30.0,
+     16.0
+    ],
+    "top_noise": 0.0271,
+    "left": {
+     "ref": [
+      61.25,
+      26.88,
+      13.75
+     ],
+     "ref_col": 2,
+     "plaus": 0.865,
+     "colour": 0.045,
+     "tau": 0.0591,
+     "rows": 11,
+     "sig_pix": 0.0323,
+     "zero": 0.0,
+     "long": 0.0,
+     "x": 3.736,
+     "slope": -0.055,
+     "support": 0.958,
+     "short": 0.0,
+     "longer": 0.042,
+     "x_top": 4.399,
+     "x_bottom": 3.074,
+     "spread": 0.469,
+     "n_support": 23,
+     "first": true,
+     "runs_q": [
+      3.0,
+      3.0,
+      4.7
+     ],
+     "band_ok": true
+    },
+    "right": {
+     "ref": [
+      29.38,
+      11.25,
+      3.38
+     ],
+     "ref_col": 3,
+     "plaus": 0.37,
+     "colour": 0.197,
+     "tau": 0.0597,
+     "rows": 16,
+     "sig_pix": 0.0397,
+     "zero": 0.5,
+     "long": 0.25,
+     "x": 0.536,
+     "slope": -0.103,
+     "support": 0.562,
+     "short": 0.0,
+     "longer": 0.438,
+     "x_top": 1.362,
+     "x_bottom": -0.29,
+     "spread": 0.42,
+     "n_support": 9,
+     "first": true,
+     "runs_q": [
+      0.0,
+      0.5,
+      79.5
+     ],
+     "band_ok": true
+    }
+   }
+  }
+ }
+}

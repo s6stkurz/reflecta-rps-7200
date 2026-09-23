@@ -1,0 +1,26 @@
+{
+  "id": "b0921a_25",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 16.9,
+    "lo": 16.6,
+    "hi": 17.2,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols 0-15 (G 29-30, R/G 2.28, B/G 0.53), col 0 is still base (no neighbour, no gate). Edge 17.0 in rows 0-60 and 160-200, col 16 ~75-90% base in rows 80-160 (x ~16.8), and the bottom-corner rows 260-286 step out to 18.0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky and trees run to 428"
+  },
+  "frame_note": ""
+}

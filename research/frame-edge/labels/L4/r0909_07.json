@@ -1,0 +1,26 @@
+{
+  "id": "r0909_07",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 4.45,
+    "lo": 4.0,
+    "hi": 5.0,
+    "outer": null,
+    "x_top": 4.0,
+    "x_bottom": 5.0,
+    "note": "clean base plateau cols 0-3 (~99 all bands); col 4 base fraction b1 2%, b2 13%, b3 79%, b4 97% -> leans one column, wider at bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "shelf/plant picture reaches 428; no plateau"
+  },
+  "frame_note": ""
+}

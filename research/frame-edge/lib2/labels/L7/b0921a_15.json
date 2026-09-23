@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_15", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 19.0, "lo": 18.7, "hi": 19.6,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "black base cols 0-18 to the aperture (likeness 91-93, R/G 2.3, B/G 0.54), no neighbour. Only the top band steps (col 19 = 79); in bands 2-4 the dark street scene beside it reads 89-92, the same as base. A locally stretched positive shows one straight line at ~19.0 top to bottom, with scene detail cut there, so the edge is placed from that and band 1."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark facade reads ~89 in bands 2-4 but the top band is ~62 (lit wall) and a yellow line and pavement run to col 427: not full-height base"},
+  "frame_note": "hard-ish: dark scene on both sides is near base density; left edge placed from the top band and a local stretch"
+}

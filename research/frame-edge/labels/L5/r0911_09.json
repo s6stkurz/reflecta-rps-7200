@@ -1,0 +1,26 @@
+{
+  "id": "r0911_09",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 1.8,
+    "lo": 1.5,
+    "hi": 3.1,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "black base sliver, col 0 full (95). Against the painting (b2/b3, good contrast) the crossing is ~2.0 and ~1.6. In the top and bottom bands the dark wall (~70) is close to base and the crossing reads ~3.1 and ~2.3: wider at the ends (bowed, corners) and low contrast there"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and painting run to 428, no step or black band"
+  },
+  "frame_note": "left edge bowed; top/bottom bands low contrast against dark wall"
+}

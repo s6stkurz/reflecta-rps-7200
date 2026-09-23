@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_13", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 61.1, "lo": 60.6, "hi": 61.6,
+            "outer": 39.2, "x_top": 61.0, "x_bottom": 61.9,
+            "note": "gap inside the frame (visible in the crop, not at the border): base cols 41-60 (~95, R/G 2.23-2.31, B/G 0.53), full height, black in B. This frame's picture (bright hydrangeas, near base level in places) starts at ~61.0 in rows 0-110, ~61.0-61.5 around rows 160-210 and ~61.6-61.95 from row 250 down; a dense patch at rows 130-150 reaches halfway into col 60 (x~60.6 there). Neighbour 0-39 (sky/trees): boundary ~40.0-40.5 in rows 0-60, drifting to ~39.0 by rows 120-150; lower down the neighbour is near base level"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "house wall/flowers to col 427; no plateau"},
+  "frame_note": "gap at cols 41-60; right part 61-427 (~367 cols) is the frame, left part 0-39 (~40 cols) the neighbour"
+}

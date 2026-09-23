@@ -1,0 +1,26 @@
+{
+  "id": "stage3_03",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright tree/sky to col 0; table 1-9 throughout, no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "pavement to col 427. Col 427 alone turns base-like in the top and bottom ~10% of rows (rounded frame corners?), mid-height it is picture; no plateau, so edge is at/just beyond 428"
+  },
+  "frame_note": ""
+}

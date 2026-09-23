@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_54", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 103.9, "lo": 103.6, "hi": 104.2,
+            "outer": 84.6, "x_top": null, "x_bottom": null,
+            "note": "gap deeper than the crop: base cols 85-103 (~80-84, R/G 2.2-2.3, B/G 0.53-0.57, G std <1), full height; black in B only against the sky. Dusk scene: below row ~95 both this frame and the neighbour are at base density, featureless, so both boundaries are readable only in the top ~95 rows (dense sky). There col 103 is ~80-100% base, x~103.8-104.0. Neighbour boundary ~84.95 at rows 0-50, ~84.3-84.7 at rows 60-85, and faintly ~83.7-84.0 lower down; outer given near mid-height by interpolation"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "skyline, hair and face to col 427; no plateau"},
+  "frame_note": "gap at cols 85-103; right part 104-427 (~324 cols) is the frame, left part 0-84 (~85 cols) the neighbour. Same scene as b0922b_07"
+}

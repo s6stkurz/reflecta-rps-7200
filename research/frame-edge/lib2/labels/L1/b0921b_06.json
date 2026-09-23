@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_06", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 17.0, "lo": 16.8, "hi": 17.2,
+            "outer": 3.3, "x_top": null, "x_bottom": null,
+            "note": "base cols 3/4-16 (~96, R/G 2.3 B/G 0.53); col 17 drops to 14 in one step, clean vertical line. Neighbour sliver cols 0-2 (col 3 is neighbour in top band, ~80% base below)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage texture to col 427, max ~76"},
+  "frame_note": ""
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_66", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 105.5, "lo": 105.2, "hi": 105.8,
+            "outer": 87.0, "x_top": 105.05, "x_bottom": 106.0,
+            "note": "gap deeper than the crop: base cols 88-104 (~93-95, R/G 2.2-2.3, B/G 0.53-0.57), full height, black in B. This frame's picture starts in col 105: ~105.05 over rows 0-70, drifting to ~105.4 at rows 100-150 and ~106.0 from row 240 down -- a steady tilt. Neighbour 0-86 (house/hydrangeas): its boundary ~87.4-87.7 at the top, ~87.0 over rows 60-140; rows 150-240 the neighbour is near base level and the boundary is soft"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "tree/hair picture to col 427; no plateau"},
+  "frame_note": "gap at cols 88-104; right part 105-427 (~322 cols) is the frame, left part 0-86 (~87 cols) the neighbour"
+}

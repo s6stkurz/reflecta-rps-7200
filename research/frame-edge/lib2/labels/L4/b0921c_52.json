@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_52",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": 97.8,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a gap is present but the frame side of it cannot be placed. The neighbour (sky over a dark hill) ends on a straight line at ~97.8, visible only in the sky rows (texture also drops there: G std 1.5 -> 0.9). From col 98 on, everything is at base level and ratio (G ~30, R/G 2.2, B/G 0.55-0.57) out to ~col 200: the unlit grass of a night flash shot is as clear as base. Grass texture rises only gradually from ~col 140-175; no straight sharp boundary anywhere, even with a tight stretch. Vertical 1-col scratch lines at ~110, 116, 118, 135, 150-155, 215 are not edges"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grass runs to column 428"
+  },
+  "frame_note": "night flash shot (girl on grass); the gap starts at ~97.8 but the frame edge beyond it is invisible"
+}

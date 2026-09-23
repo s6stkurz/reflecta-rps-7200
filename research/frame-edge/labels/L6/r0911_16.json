@@ -1,0 +1,26 @@
+{
+  "id": "r0911_16",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 0.2,
+    "lo": 0.0,
+    "hi": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|sub-column sliver: col 0 visibly darker in B full height (b2-b4 only 11-16% base assuming base ~98 as on r0911_10), top rows darker and bulging to ~col 1 (b1 col0 76%, col1 14%) - same top-corner shape as r0911_10/19; could also be read as picture_to_border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "plain wall runs to col 427, smooth gradient, no line"
+  },
+  "frame_note": ""
+}

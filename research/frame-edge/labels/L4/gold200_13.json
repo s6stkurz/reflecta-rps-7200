@@ -1,0 +1,26 @@
+{
+  "id": "gold200_13",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grass/bag picture reaches column 0; no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "NOT base: grass fades gradually (flash falloff) into a featureless dark region from ~col 360 on, ~80 in all bands, no sharp line anywhere; a base strip would put the frame under 370 cols wide while the left has picture at col 0"
+  },
+  "frame_note": "hard: flash-falloff region is uniform and nearly base-like"
+}

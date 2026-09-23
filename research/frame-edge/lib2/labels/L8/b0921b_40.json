@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_40", "labeller": "L8", "view": "A",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate at cols 0-1 (G~175, neutral R/G 1.01), a sliver ~2.5 cols wide at the top narrowing to ~0.5 at the bottom. BASE lies between gate and picture: cols ~2-23 (R/G 2.3, B/G 0.55). Picture starts at x=24.0 (lo 23.0, hi 24.3); in the top band (sky) col 23 is already picture, so 23.0 there."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trees and path run off the right border"},
+  "frame_note": "gate + base + picture on the left; if the gate state is not wanted, the picture/base boundary is 24.0"
+}

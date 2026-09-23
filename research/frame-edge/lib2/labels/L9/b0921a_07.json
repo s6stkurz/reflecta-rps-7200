@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_07", "labeller": "L9", "view": "A",
+  "left":  {"state": "edge", "x": 25.0, "lo": 24.5, "hi": 25.6,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "uniform full-height base strip 0-24 (R/G 2.3, B/G 0.53, sd 1-2); adjacent scene is a dark wall almost equal to base in value, so edge placed from the bench rows (R 66 base -> 40 picture, col 24 13% picture, col 25 79%)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bright wall (dense negative) runs to 428, no base"},
+  "frame_note": "no interior gap seen in the thumbnail"
+}

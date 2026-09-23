@@ -1,0 +1,26 @@
+{
+  "id": "gold200_06",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "roof, window and white door run to col 0; no black strip in B, no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage to col 427, no black strip, no plateau"
+  },
+  "frame_note": ""
+}

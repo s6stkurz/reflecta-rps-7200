@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_39", "labeller": "L3", "view": "B",
+  "left":  {"state": "edge", "x": 117.85, "lo": 117.3, "hi": 118.3,
+            "outer": 96.3, "x_top": 117.25, "x_bottom": 118.5,
+            "note": "gap deeper than the crop: black base cols 97-116 (R/G 2.2, B/G 0.55). This frame's grey wall (~73) starts at ~117.25 at the top, ~117.75 at 40-50% height, 118.0 lower, ~118.7 in the bottom tenth -- tilted, bottom to the right. Neighbour picture cols 0-95 is an overexposed white wall (likeness 4-13, not gate: dense, R/G ~3); outer ~97.0 at top, 96.0-96.1 at 50-90% height, ~96.8 in the bottom tenth"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figure and wall run to col 427, no plateau"},
+  "frame_note": "internal gap at cols ~96-118; frame is the right part (118-427, ~310 cols) vs neighbour 0-96"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_65", "labeller": "L11", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "building, hedge and car wheel run to column 0"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "tree, house and road run to column 427"},
+  "frame_note": "no base anywhere: the only full-height brightish run (cols 235-257, min band 60-70) is the street/pole between the two figures, not base"
+}

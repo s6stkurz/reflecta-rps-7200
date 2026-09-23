@@ -1,0 +1,26 @@
+{
+  "id": "r0911_26",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "green wall reaches column 0, uniform ~61, no line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "green wall reaches 428, no line; faint diagonal scratch lower right"
+  },
+  "frame_note": ""
+}

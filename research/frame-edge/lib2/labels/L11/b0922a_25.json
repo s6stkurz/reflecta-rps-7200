@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_25", "labeller": "L11", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage and figures run to column 0"},
+  "right": {"state": "edge", "x": 227.7, "lo": 227.2, "hi": 228.1,
+            "outer": 247.8, "x_top": null, "x_bottom": null,
+            "note": "gap inside the frame: base columns 228-246 (R/G 2.23, B/G 0.54, raw ~[78,35,19]). The boundary is read in the upper half (~227.4-228.0 row by row); in the lower half this frame's picture is pale grass/clothing at base's level and no boundary shows. Neighbour's picture starts at ~247.0 in the top ~80 rows (dark trees) and ~248.0 below"},
+  "frame_note": "two partial pictures: this frame 0-227 (~228 cols), neighbour 248-427 (~180 cols); frame is the left one"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "x0920_76",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tiles run to column 0; black grout rows are horizontal and not full height"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "black grout between tiles reads ~89 at 408-427 in most bands (a near-base look-alike), but tiles reach 428 at rows ~110-150 (b2 58-70) and in the bottom rows at 408+, and the left boundary is a ragged tile outline, not a straight line: scene, not base"
+  },
+  "frame_note": "right side: wide black grout region is a base look-alike"
+}

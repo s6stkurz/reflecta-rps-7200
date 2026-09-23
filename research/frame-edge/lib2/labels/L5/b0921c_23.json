@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_23",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "figure/wall runs to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 283.0,
+    "lo": 282.3,
+    "hi": 283.6,
+    "outer": 299.9,
+    "x_top": 283.4,
+    "x_bottom": 282.3,
+    "note": "interior gap, base cols 284-298 (R/G 2.24, B/G 0.54). Frame = left part (0-283) vs neighbour 300-428. Edge sharp, slightly tilted: ~283.4 at top, ~282.3 at bottom. Neighbour starts ~299.1 at top, ~300.1 lower down."
+  },
+  "frame_note": "gap inside the frame at 283-300; frame = left part"
+}

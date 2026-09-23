@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_67", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 212.4, "lo": 212.0, "hi": 212.9,
+            "outer": 194.0, "x_top": 212.0, "x_bottom": 212.8,
+            "note": "gap in the middle, cols 194-211 (likeness 95-99, R/G 2.2, B/G 0.55), deeper than the crops. This frame starts at 212: col 212 reads 30/73/86/89 against picture ~27/50/60/62, so the top meets base at ~212.0 and the lower bands at ~212.5-212.8. Cols 212-214 show as a pale strip in the positive but are picture. Outer ~194.0-194.1 from bands 1-2; below, the neighbour's dark car (~85-91) is close to base, so the outer boundary there is soft."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hedge/railing/figure run to col 427, likeness ~40"},
+  "frame_note": "gap at 194-212 found on the 1:1 thumbnail. Left part 0-193 (194 cols) vs right part 212-427 (216 cols): 22 cols apart, not a tie; the right part is the frame."
+}

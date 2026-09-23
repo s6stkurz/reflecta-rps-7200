@@ -1,0 +1,26 @@
+{
+  "id": "x0920_10",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and figure run to col 0; bright (clear) patch at cols 0-13 in b3-b4 is a deep shadow with a curved boundary, not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.9,
+    "lo": 426.5,
+    "hi": 427.4,
+    "outer": null,
+    "x_top": 427.9,
+    "x_bottom": 426.6,
+    "note": "1-2 col base sliver: col 427 = 102 in b3-b4, 91 in b2, 21 in b1; col 426 b3 28%, b4 37% -> b4 426.6, b3 426.7, b2 427.05, b1 ~427.9; edge curves/tilts out of the crop at the top rows"
+  },
+  "frame_note": "col 412 full-height light line (~37) is a wall corner/scratch, not base"
+}

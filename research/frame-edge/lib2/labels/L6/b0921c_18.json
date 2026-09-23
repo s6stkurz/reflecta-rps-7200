@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_18", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 214.8, "lo": 214.4, "hi": 215.0,
+            "outer": 197.9, "x_top": 214.05, "x_bottom": 214.9,
+            "note": "gap in the middle of the scan: base cols 198-213 (~97, R/G 2.2, B/G 0.53-0.56), full height, black in B. This frame's picture begins in col 214: col 214 is picture over rows 0-35 (x~214.05) and ~85% base from row 70 down (x~214.85); bottom ~25 rows base into col 215 (corner). Neighbour (left part) boundary ~198.0-198.4 over rows 0-100, ~197.4-197.7 over rows 180-287"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "window/plant picture to col 427; no plateau"},
+  "frame_note": "gap at cols 198-213 in the middle. Left part 0-197 has ~197 picture columns, right part 214-427 ~213; they differ by ~16 (> 10), so the right part is the frame and the gap goes on its left side"
+}

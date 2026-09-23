@@ -1,0 +1,26 @@
+{
+  "id": "r0911_21",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night sky (~91) runs to column 0; in the bottom band the lit ground ramps smoothly 83->55 over cols 0-8, no sharp line, so no base"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night sky and lit crowd run to 428 (bottom band 55-60 at the border), no base line"
+  },
+  "frame_note": "night sky nearly base-clear; only the bottom band can show a base sliver and it shows none"
+}

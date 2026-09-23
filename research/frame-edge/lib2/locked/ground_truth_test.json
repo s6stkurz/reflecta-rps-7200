@@ -1,0 +1,3449 @@
+{
+ "about": "test split truth -- final scoring only",
+ "frames": {
+  "b0920_04": {
+   "split": "test",
+   "roll": "b0920",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 9.038461538461538,
+    "lo": 8.8,
+    "hi": 9.5,
+    "outer": null,
+    "x_top": 9.0,
+    "x_bottom": 9.95,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 9.038461538461538,
+      "lo": 8.8,
+      "hi": 9.5,
+      "outer": null,
+      "x_top": 9.0,
+      "x_bottom": 9.9,
+      "note": "clean white base cols 0-8 (R/G 2.28, B/G 0.55) against grey wall ~72; vertical at 9.0 over top 80%, bends to ~9.9 in the bottom tenth",
+      "labeller": "L3",
+      "x_eye": 9.0,
+      "x_snap": 9.038461538461538
+     },
+     {
+      "state": "edge",
+      "x": 9.038461538461538,
+      "lo": 8.8,
+      "hi": 9.4,
+      "outer": null,
+      "x_top": 9.0,
+      "x_bottom": 10.0,
+      "note": "clean: base 0-8 (93-96, R/G 2.25, B/G 0.55), grey backdrop from col 9 (~72). Edge at 9.0 from the top to row ~235, then steps to 10.0 over the bottom ~40 rows (corner)",
+      "labeller": "L9",
+      "x_eye": 9.0,
+      "x_snap": 9.038461538461538
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "scene (wall, trousers) runs to col 427; no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trousers and backdrop run to 428; the bright b2 readings at 424-427 are dark trousers, not full height",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921a_05": {
+   "split": "test",
+   "roll": "b0921a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 25.833333333333332,
+    "lo": 25.3,
+    "hi": 26.2,
+    "outer": 4.4,
+    "x_top": 25.5,
+    "x_bottom": 26.4,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 25.833333333333332,
+      "lo": 25.4,
+      "hi": 26.1,
+      "outer": 4.3,
+      "x_top": 25.5,
+      "x_bottom": 26.4,
+      "note": "black base cols 5-24 (R/G 2.3, B/G 0.54). Studio backdrop beside it is fairly pale on the negative (~70 vs base 95) but the step is clean; edge 25.5 at top, ~26.0 lower, ~26.4 in the bottom rows. Neighbour's bright backdrop cols 0-3; outer 5.4 at top, 4.0-4.3 over the middle, ~4.5 at the bottom",
+      "labeller": "L2",
+      "x_eye": 25.7,
+      "x_snap": 25.833333333333332
+     },
+     {
+      "state": "edge",
+      "x": 25.833333333333332,
+      "lo": 25.3,
+      "hi": 26.2,
+      "outer": 4.5,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base plateau cols 5-24 (R/G 2.3, B/G 0.53); picture beside it is a light grey backdrop (likeness ~72) so contrast is modest but the boundary is straight and full height. Neighbour picture sliver cols 0-3 (dense, outer ~4.5, slightly wobbly 4-5).",
+      "labeller": "L8",
+      "x_eye": 25.7,
+      "x_snap": 25.833333333333332
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop/trousers run to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trousers and backdrop run off the right border; no plateau",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921a_17": {
+   "split": "test",
+   "roll": "b0921a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 18.35,
+    "lo": 17.3,
+    "hi": 20.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 18.7,
+      "lo": 17.5,
+      "hi": 20.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "scene is dark foliage at base density everywhere (whole frame reads R/G 2.3, B/G 0.55), so the boundary is nearly invisible. Cols 0-17 are featureless (row std ~1) and col 18 is ~1.5 counts darker in all six row bands; texture starts at 18-20. Neighbour frames b0921a_15/_19 of the same roll show a clean gap to ~19.0, consistent. Wide interval for that reason",
+      "labeller": "L2",
+      "x_eye": 18.7,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 18.0,
+      "lo": 17.3,
+      "hi": 19.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "LOW CONFIDENCE. Very underexposed forest: the dark foliage reads the same as base (~90, G~29, R/G 2.3, B/G 0.55), so there is no plateau step. Cols 0-17 are featureless over the full height (at most 1-3 dense pixels per band); from col 18 the scene's bright leaf specks appear at once in the middle/lower bands (counts 0-1 -> 4-8 per band), consistent with a straight frame edge at ~18.0. Top bands only show detail from ~21, so the edge could be up to ~19.5.",
+      "labeller": "L8",
+      "x_eye": 18.0,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky through leaves runs to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "leaf highlights run right up to col 427",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921a_19": {
+   "split": "test",
+   "roll": "b0921a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 19.1,
+    "lo": 18.6,
+    "hi": 19.6,
+    "outer": null,
+    "x_top": 18.9,
+    "x_bottom": 19.8,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 19.1,
+      "lo": 18.8,
+      "hi": 19.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base cols 0-18 (~95, R/G 2.31 B/G 0.55); col 19 already at picture level in most bands; bright foliage beside the edge softens it slightly, bottom tenth leans to ~19.6",
+      "labeller": "L3",
+      "x_eye": 19.1,
+      "x_snap": 19.1
+     },
+     {
+      "state": "edge",
+      "x": 19.1,
+      "lo": 18.6,
+      "hi": 19.3,
+      "outer": null,
+      "x_top": 18.9,
+      "x_bottom": 19.8,
+      "note": "clean straight edge: base 0-17 (95, R/G 2.33, B/G 0.55), col 18 ~90-95% base, foliage from col 19. Edge ~18.9 over most of the height, moving to ~19.5-20.0 in the bottom band",
+      "labeller": "L9",
+      "x_eye": 18.9,
+      "x_snap": 19.1
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark scene (people, bag) to col 427, likeness ~35; the vertical step near col 369 is scene, partial height",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "jeans/path run to 428",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921a_29": {
+   "split": "test",
+   "roll": "b0921a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 16.95,
+    "lo": 16.4,
+    "hi": 17.7,
+    "outer": null,
+    "x_top": 16.5,
+    "x_bottom": 17.3,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 17.0,
+      "lo": 16.4,
+      "hi": 17.7,
+      "outer": null,
+      "x_top": 16.5,
+      "x_bottom": 17.3,
+      "note": "featureless black cols 0-15 at base ratio (R/G 2.3, B/G 0.53; a few dust specks). Foliage texture starts on one straight line at ~17 in the top and bottom bands (16.5 at the very top). The middle rows are dark foliage at base density, so the boundary there is inferred from the line above and below; wider interval for that",
+      "labeller": "L2",
+      "x_eye": 17.0,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 16.9,
+      "lo": 16.4,
+      "hi": 17.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-16 featureless, full height, R/G 2.3 B/G 0.53; branches stop on a straight vertical line at col 17 in top and bottom bands. Scene is very thin (underexposed forest) so the middle bands barely differ from base; boundary placed from the textured bands.",
+      "labeller": "L8",
+      "x_eye": 16.9,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building/foliage/figure run to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hair/shoulder and foliage run off the right border",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921a_31": {
+   "split": "test",
+   "roll": "b0921a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 16.02,
+    "lo": 15.7,
+    "hi": 16.4,
+    "outer": 2.0,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 16.02,
+      "lo": 15.8,
+      "hi": 16.4,
+      "outer": 2.0,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "black base cols 3-15 (R/G 2.23-2.31, B/G 0.53) against dense sky at ~13: very sharp at 16.0; only the bottom tenth leans to ~16.6. Neighbour sliver cols 0-1 is pale (66-85), outer soft: ~3.1 in the top fifth, ~1.7-2.0 mid and lower, ~2.6 in the bottom tenth",
+      "labeller": "L3",
+      "x_eye": 16.0,
+      "x_snap": 16.02
+     },
+     {
+      "state": "edge",
+      "x": 16.02,
+      "lo": 15.7,
+      "hi": 16.3,
+      "outer": 2.0,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean: base 2-15 at 94-96 (R/G 2.3, B/G 0.53), col 16 is picture (13); neighbour picture sliver in cols 0-1 (76-80, R/G 2.5), outer ~2.0; slight rounding at the bottom corner",
+      "labeller": "L9",
+      "x_eye": 16.0,
+      "x_snap": 16.02
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge leaves run to col 427, likeness 50-80, textured, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "flower bed texture runs to 428, no plateau",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_03": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 7.038461538461538,
+    "lo": 6.7,
+    "hi": 7.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 7.038461538461538,
+      "lo": 6.7,
+      "hi": 7.3,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean: base cols 0-6 (raw 68-73/30-32/16, R/G 2.28, B/G 0.52), dark sky from col 7; bottom-most rows the base reaches ~8 (rounded frame corner)",
+      "labeller": "L10",
+      "x_eye": 7.0,
+      "x_snap": 7.038461538461538
+     },
+     {
+      "state": "edge",
+      "x": 7.038461538461538,
+      "lo": 6.7,
+      "hi": 7.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean: base cols 0-6 (R/G 2.3, B/G 0.53) against bright sky. Vertical at 7.0-7.1 over most of the height; bends to ~7.9 in the bottom band only (corner)",
+      "labeller": "L4",
+      "x_eye": 7.0,
+      "x_snap": 7.038461538461538
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to column 427, ratio R/G 2.7 is picture",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge runs to column 428",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_04": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 10.142857142857142,
+    "lo": 10.0,
+    "hi": 11.2,
+    "outer": null,
+    "x_top": 10.4,
+    "x_bottom": 11.2,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 10.142857142857142,
+      "lo": 10.0,
+      "hi": 11.2,
+      "outer": null,
+      "x_top": 10.4,
+      "x_bottom": 11.2,
+      "note": "clean sharp edge against a dark picture; base 0-9 (ratio R/G 2.3, B/G 0.52). Edge is slightly bowed: column 10 is ~45% base at the top, ~5% mid-height, fully base near the bottom where column 11 is ~18% base",
+      "labeller": "L11",
+      "x_eye": 10.2,
+      "x_snap": 10.142857142857142
+     },
+     {
+      "state": "edge",
+      "x": 10.142857142857142,
+      "lo": 10.0,
+      "hi": 10.7,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean base 0-9 (R/G 2.29, B/G 0.52; not the empty gate, col 0 reads 68/30/15). Sharp edge, col 10 ~5-40% base over most of the height (x 10.0-10.4); the bottom ~15 rows curve out to ~11 (rounded frame corner).",
+      "labeller": "L5",
+      "x_eye": 10.2,
+      "x_snap": 10.142857142857142
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to column 427; bottom band brightens in patches but no uniform plateau",
+      "labeller": "L11",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge leaves run to 427",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_05": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 13.956521739130435,
+    "lo": 13.35,
+    "hi": 14.2,
+    "outer": 0.2,
+    "x_top": 13.95,
+    "x_bottom": 14.05,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 13.956521739130435,
+      "lo": 13.4,
+      "hi": 14.2,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base 0-12 (R/G 2.3, B/G 0.53), dense sky from 14. Edge slightly bowed: ~14.0 at top, ~13.4 around rows 100-140, ~14.0 again, and the bottom-corner rows 260-286 reach 14.6-15.0 (corner rounding)",
+      "labeller": "L12",
+      "x_eye": 13.8,
+      "x_snap": 13.956521739130435
+     },
+     {
+      "state": "edge",
+      "x": 13.956521739130435,
+      "lo": 13.35,
+      "hi": 14.05,
+      "outer": 0.2,
+      "x_top": 13.95,
+      "x_bottom": 14.05,
+      "note": "base cols 1-12 (~95, R/G 2.3), black in B; picture (dense sky) from col 14. Edge is bowed rather than tilted: col 13 is ~97% base at rows 0-40 and 200-250 (x~14.0) but only ~40-50% base around rows 100-150 (x~13.5). Bottom ~25 rows base into col 14 (corner). Col 0 is 10-20% darker in all channels over rows 0-60 and 260-287 only: faint neighbour sliver, outer ~0.2, low confidence (absent at mid-height, consistent with the same bow)",
+      "labeller": "L6",
+      "x_eye": 13.6,
+      "x_snap": 13.956521739130435
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to 428",
+      "labeller": "L12",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage to col 427, likeness ~68, R/G 2.7; no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_06": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 17.01,
+    "lo": 16.7,
+    "hi": 17.4,
+    "outer": 3.3,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 17.01,
+      "lo": 16.8,
+      "hi": 17.2,
+      "outer": 3.3,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base cols 3/4-16 (~96, R/G 2.3 B/G 0.53); col 17 drops to 14 in one step, clean vertical line. Neighbour sliver cols 0-2 (col 3 is neighbour in top band, ~80% base below)",
+      "labeller": "L1",
+      "x_eye": 17.0,
+      "x_snap": 17.01
+     },
+     {
+      "state": "edge",
+      "x": 17.01,
+      "lo": 16.7,
+      "hi": 17.4,
+      "outer": 3.3,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "black gap cols 3/4-16 (likeness 95-98, R/G 2.3, B/G 0.53), sharp against bright sky at 17 (col 17 reads 14/12/13/22). Neighbour picture sliver at cols 0-2 (R/G 2.5, textured). Outer ~3.1 in the lower bands, ~4.0 in the top band where the neighbour is pale.",
+      "labeller": "L7",
+      "x_eye": 17.0,
+      "x_snap": 17.01
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage texture to col 427, max ~76",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to col 427, likeness ~70, textured",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_07": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 20.06382978723404,
+    "lo": 19.7,
+    "hi": 20.4,
+    "outer": 6.199999999999999,
+    "x_top": 20.0,
+    "x_bottom": 20.9,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 20.06382978723404,
+      "lo": 19.7,
+      "hi": 20.4,
+      "outer": 6.3,
+      "x_top": 20.0,
+      "x_bottom": 20.9,
+      "note": "clean base plateau cols 7-19 (R/G 2.3, B/G 0.52), sharp edge at 20.0 over most of the height, bottom ~15 rows bend out to ~21. Neighbour picture cols 0-5; outer boundary ~6.0 mid-height, ~7.0 at top and bottom band (neighbour picture there is pale, near base)",
+      "labeller": "L2",
+      "x_eye": 20.0,
+      "x_snap": 20.06382978723404
+     },
+     {
+      "state": "edge",
+      "x": 20.06382978723404,
+      "lo": 19.7,
+      "hi": 20.4,
+      "outer": 6.1,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "black base strip cols 7-19 (R/G 2.3, B/G 0.52, ~95), clean straight edge against the bright sky at 20.0 (bottom band ~20.2). Neighbour picture (dark trees with a blue patch) cols 0-5, outer ~6.1 (top band ~7.0).",
+      "labeller": "L8",
+      "x_eye": 20.0,
+      "x_snap": 20.06382978723404
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge leaves run to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge runs off the right border",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_08": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 23.097826086956523,
+    "lo": 22.9,
+    "hi": 23.8,
+    "outer": 9.55,
+    "x_top": 23.15,
+    "x_bottom": 24.15,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 23.097826086956523,
+      "lo": 23.0,
+      "hi": 23.8,
+      "outer": 9.5,
+      "x_top": 23.3,
+      "x_bottom": 24.0,
+      "note": "base cols 10-22 (R/G 2.30 B/G 0.53) against this frame's dark wall at ~13 -- sharp; edge 23.1-23.3 over most of the height, bottom tenth at ~24.0. Neighbour picture cols 0-8 is bright (~80) so outer is soft: ~9.0 mid-height, ~10.3 in the top tenth, ~9.8 at the bottom",
+      "labeller": "L3",
+      "x_eye": 23.2,
+      "x_snap": 23.097826086956523
+     },
+     {
+      "state": "edge",
+      "x": 23.097826086956523,
+      "lo": 22.9,
+      "hi": 23.5,
+      "outer": 9.6,
+      "x_top": 23.0,
+      "x_bottom": 24.3,
+      "note": "sharp edge: base 10-22 (93-99, R/G 2.3, B/G 0.53; col 22 slightly brighter), dense sky from col 23/24. Col 23 is 0-30% base over most of the height (x ~23.1), rising to 23.5-24.0 in the bottom fifth and ~24.5 in the last rows (rounded corner). Neighbour picture 0-8 is light and close to base, so outer is soft: ~10.5-11 at the top, 9.0-9.5 mid-height, ~10 at the bottom",
+      "labeller": "L9",
+      "x_eye": 23.1,
+      "x_snap": 23.097826086956523
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge texture runs to col 427, likeness 60-70, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge texture runs to 428",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_09": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 26.979166666666668,
+    "lo": 26.5,
+    "hi": 27.5,
+    "outer": 13.149999999999999,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 26.979166666666668,
+      "lo": 26.5,
+      "hi": 27.3,
+      "outer": 13.1,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean: base gap ~13-26 (raw 69-71/29-31/15-16, R/G 2.3, B/G 0.52), bright sky starts at 26.9 in almost every band (26.7 at mid-height); only the bottom ~30 rows reach ~27.7 (rounded corner). Neighbour edge ~14.0 in the top rows, ~12.6-13.0 lower down, low contrast (neighbour pale).",
+      "labeller": "L10",
+      "x_eye": 26.9,
+      "x_snap": 26.979166666666668
+     },
+     {
+      "state": "edge",
+      "x": 26.979166666666668,
+      "lo": 26.5,
+      "hi": 27.5,
+      "outer": 13.2,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base gap cols ~13-26 (R/G 2.3, B/G 0.53); neighbour picture sliver cols 0-12 beyond it. Frame edge sharp; slight bulge of base into col 27 at the very bottom. Outer boundary soft because the neighbour sliver is a thin (bright-in-A) area close to base value",
+      "labeller": "L4",
+      "x_eye": 26.9,
+      "x_snap": 26.979166666666668
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge leaves run to column 427",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hedge runs to column 428",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921b_52": {
+   "split": "test",
+   "roll": "b0921b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 17.256944444444443,
+    "lo": 17.0,
+    "hi": 18.7,
+    "outer": 3.5,
+    "x_top": 17.9,
+    "x_bottom": 18.7,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 17.256944444444443,
+      "lo": 17.0,
+      "hi": 18.7,
+      "outer": 3.4,
+      "x_top": 17.9,
+      "x_bottom": 18.7,
+      "note": "base columns 4-16 (R/G 2.20, B/G 0.53) between a neighbour sliver 0-3 (R/G 2.5, picture) and this frame. The frame edge is sharp but bowed, not straight: column 17 is ~87% base at the very top, ~5% at mid-height, and fully base at the bottom where column 18 is ~67% base; x_top/x_bottom give the ends, x the mid-height value. Same frame and same bow as b0921b_04. Neighbour boundary ~3.0 mid-lower, ~3.8-4.0 elsewhere, low contrast (neighbour picture reads 60-90)",
+      "labeller": "L11",
+      "x_eye": 17.1,
+      "x_snap": 17.256944444444443
+     },
+     {
+      "state": "edge",
+      "x": 17.256944444444443,
+      "lo": 17.0,
+      "hi": 17.8,
+      "outer": 3.6,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sharp base/picture edge (base 4-16, R/G 2.24 B/G 0.53; picture beside it is very dense sky). Col 17 is 8-47% base in bands 1-3 and ~75% in band 4. Neighbour picture sliver at cols 0-3; its boundary is soft, ~3.0-3.6 in the lower bands and ~4.5 at the top.",
+      "labeller": "L5",
+      "x_eye": 17.4,
+      "x_snap": 17.256944444444443
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to column 427",
+      "labeller": "L11",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to 427",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_26": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop/hat run to column 0",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey backdrop (G~12 vs base ~31) runs to column 0; no plateau",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 333.78645833333337,
+    "lo": 333.0,
+    "hi": 334.1,
+    "outer": 350.85,
+    "x_top": 334.0,
+    "x_bottom": 333.05,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 333.78645833333337,
+      "lo": 333.2,
+      "hi": 334.1,
+      "outer": 350.9,
+      "x_top": 334.0,
+      "x_bottom": 333.0,
+      "note": "interior gap deeper than the crop: black base cols 334-349 (R/G 2.22, B/G 0.54). This frame's backdrop ends ~334.0 in the upper half (333.5 in the top rows), ~333.3 at 5/8 height, 333.0 in the bottom quarter. Neighbour (window/plant) starts ~349.5 at the top, ~351.0 mid, ~350.7 at bottom",
+      "labeller": "L2",
+      "x_eye": 333.7,
+      "x_snap": 333.78645833333337
+     },
+     {
+      "state": "edge",
+      "x": 333.78645833333337,
+      "lo": 333.0,
+      "hi": 334.1,
+      "outer": 350.8,
+      "x_top": 334.0,
+      "x_bottom": 333.1,
+      "note": "DEEP gap beyond the crop: base cols ~334-349 (R/G 2.2, B/G 0.53, full height). This frame is left of it (~334 cols); neighbour picture cols 351-427 (~77 cols). Outer: 350.0 in top band, ~351.0 elsewhere.",
+      "labeller": "L8",
+      "x_eye": 333.5,
+      "x_snap": 333.78645833333337
+     }
+    ]
+   }
+  },
+  "b0921c_27": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall/hat scene runs to col 0, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey backdrop runs to column 0, no plateau (35, not base)",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 349.94735221674875,
+    "lo": 349.0,
+    "hi": 350.7,
+    "outer": 367.20000000000005,
+    "x_top": 350.20000000000005,
+    "x_bottom": 349.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 349.94735221674875,
+      "lo": 349.5,
+      "hi": 350.6,
+      "outer": 367.3,
+      "x_top": 350.3,
+      "x_bottom": 349.0,
+      "note": "black base cols 351-365 (R/G 2.23-2.27, B/G 0.53). Picture edge ~350.5 at 10-40% height, ~350.0 at mid-height, 349.0 in the bottom fifth (tilted, bottom to the left); top tenth ~349.85. Neighbour picture from ~366.0 in the top tenth, 366.4 next, then 367.0-367.6 below",
+      "labeller": "L3",
+      "x_eye": 350.0,
+      "x_snap": 349.94735221674875
+     },
+     {
+      "state": "edge",
+      "x": 349.94735221674875,
+      "lo": 349.0,
+      "hi": 350.7,
+      "outer": 367.1,
+      "x_top": 350.1,
+      "x_bottom": 349.0,
+      "note": "interior gap: base 350-366 (89-92, R/G 2.25, B/G 0.53). Frame is the left part (0-349) vs neighbour 367-427. Edge ~350.0 at the top and mid-height, 350.3-350.7 in rows 53-113, drifting to 349.0 over the bottom quarter. Outer ~366.0 in the top rows, 367.0-367.6 below",
+      "labeller": "L9",
+      "x_eye": 350.0,
+      "x_snap": 349.94735221674875
+     }
+    ]
+   }
+  },
+  "b0921c_28": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey backdrop runs to column 0 (raw 31/14/8, far denser than base)",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop runs to column 0; no plateau (values ~35-55, grey backdrop)",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 367.07738095238096,
+    "lo": 366.6,
+    "hi": 368.0,
+    "outer": 384.4,
+    "x_top": 367.45000000000005,
+    "x_bottom": 366.20000000000005,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 367.07738095238096,
+      "lo": 366.9,
+      "hi": 368.0,
+      "outer": 384.5,
+      "x_top": 367.1,
+      "x_bottom": 366.1,
+      "note": "base gap cols ~367-383 (raw 67-69/30/16, R/G 2.3, B/G 0.53). Frame edge not perfectly straight: ~367.1 in the top rows, ~367.9 in rows 35-140, ~367.0 in rows 170-225, ~366.1 at the bottom. Neighbour picture from ~383.1 (top rows) / ~384.2-385.0 lower down.",
+      "labeller": "L10",
+      "x_eye": 367.4,
+      "x_snap": 367.07738095238096
+     },
+     {
+      "state": "edge",
+      "x": 367.07738095238096,
+      "lo": 366.6,
+      "hi": 368.0,
+      "outer": 384.3,
+      "x_top": 367.8,
+      "x_bottom": 366.3,
+      "note": "base cols ~367-383 (R/G 2.3, B/G 0.53); neighbour picture from ~384. Edge sharp but tilted: ~367.8-367.9 in bands 2-4, ~367.0 at mid-low, 366.8 then 366.1 in the bottom band; the top band alone reads ~367.1. Outer ~384.0-384.9 (top band 383.1)",
+      "labeller": "L4",
+      "x_eye": 367.4,
+      "x_snap": 367.07738095238096
+     }
+    ]
+   }
+  },
+  "b0921c_29": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop runs to column 0 at ~46 on the table, well below base",
+      "labeller": "L11",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey backdrop runs to column 0",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 384.8831407563025,
+    "lo": 384.0,
+    "hi": 385.2,
+    "outer": 401.85,
+    "x_top": 384.9,
+    "x_bottom": 384.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 384.8831407563025,
+      "lo": 384.0,
+      "hi": 385.1,
+      "outer": 401.7,
+      "x_top": 385.0,
+      "x_bottom": 384.0,
+      "note": "gap inside the frame: base columns 385-400 (R/G 2.23, B/G 0.53), sharp. This frame's picture ends at ~385.0 in the upper half, ~384.0 at the bottom (column 384 is picture in bands 1-2, ~70-100% base in bands 3-4). Neighbour's picture starts at ~401.0 at the very top, ~402.0 mid-height, ~401.7 at the bottom",
+      "labeller": "L11",
+      "x_eye": 384.6,
+      "x_snap": 384.8831407563025
+     },
+     {
+      "state": "edge",
+      "x": 384.8831407563025,
+      "lo": 384.0,
+      "hi": 385.2,
+      "outer": 402.0,
+      "x_top": 384.8,
+      "x_bottom": 384.0,
+      "note": "base 385-400 (R/G 2.26, B/G 0.53). Edge sharp: 385.0 across the upper and middle bands, moving in to ~384.5 at row ~190 and 384.0 in the bottom quarter (the table shows the same: band 4 col 384 is base). Neighbour on the far right starts at ~402.0 over mid-height, curving in to ~400.5 at the top and ~401.5 at the bottom (rounded corners).",
+      "labeller": "L5",
+      "x_eye": 385.0,
+      "x_snap": 384.8831407563025
+     }
+    ]
+   }
+  },
+  "b0921c_30": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey backdrop runs to 0 (R/G 2.1, B/G 0.59, G 17 vs base 29: picture)",
+      "labeller": "L12",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop cloth (with a diagonal fold) to col 0: likeness ~47, R/G 2.1, well below base (~87); no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 402.1467803030303,
+    "lo": 402.0,
+    "hi": 403.3,
+    "outer": 420.0,
+    "x_top": 403.25,
+    "x_bottom": 401.15,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 402.1467803030303,
+      "lo": 402.0,
+      "hi": 403.3,
+      "outer": 419.2,
+      "x_top": 403.5,
+      "x_bottom": 401.1,
+      "note": "base cols 403-417 (R/G 2.25, B/G 0.54), neighbour picture from ~419. Inner edge steps: ~403.5 at rows 30-40, 403.0 rows 40-150, 402.0 rows 180-240, ~401.2 at the bottom; rows 150-180 picture is base-coloured so hidden. Outer edge irregular: 418.0 in rows 0-40, 419-420 mid, ~419.2 at the bottom",
+      "labeller": "L12",
+      "x_eye": 402.7,
+      "x_snap": 402.1467803030303
+     },
+     {
+      "state": "edge",
+      "x": 402.1467803030303,
+      "lo": 402.0,
+      "hi": 403.0,
+      "outer": 420.8,
+      "x_top": 403.0,
+      "x_bottom": 401.2,
+      "note": "base cols 403-417 (~86, R/G 2.2-2.3, B/G 0.52-0.55; dark slate in B), full height. Edge not straight: ~403.0 over rows 50-140, ~402.0 over rows 180-230, ~401.2-401.7 at rows 240-287; top ~30 rows ~401.9-402.5 (corner). x_top from the straight part below the corner. Neighbour (dense, likeness ~5): its boundary ~419.1 at the top rows, ~420.9 over rows 110-210, ~420.2 near the bottom",
+      "labeller": "L6",
+      "x_eye": 402.6,
+      "x_snap": 402.1467803030303
+     }
+    ]
+   }
+  },
+  "b0921c_31": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "uniform wall/backdrop ~52 to col 0, B/G 0.61 not base, well below base's 80",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey backdrop with a diagonal fold runs to col 0 (counts 39/18/11 against base 60/26/14): picture",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.95,
+    "lo": 418.0,
+    "hi": 419.4,
+    "outer": null,
+    "x_top": 419.2,
+    "x_bottom": 418.05,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 418.95,
+      "lo": 418.0,
+      "hi": 419.4,
+      "outer": null,
+      "x_top": 419.2,
+      "x_bottom": 418.0,
+      "note": "base cols 419-427 read ~80 (not the frame's brightest), R/G 2.26-2.31 B/G 0.52-0.54; slate in view B. Edge leans: col 418 is base in bottom band only, col 419 ~65% base in band 2",
+      "labeller": "L1",
+      "x_eye": 418.9,
+      "x_snap": 418.95
+     },
+     {
+      "state": "edge",
+      "x": 418.95,
+      "lo": 418.6,
+      "hi": 419.4,
+      "outer": null,
+      "x_top": 419.2,
+      "x_bottom": 418.1,
+      "note": "base cols 419-427 to the aperture (likeness ~80, not the top of the table; R/G 2.3, B/G 0.53), no neighbour. Tilted: col 418 reads 56/29/48/82 and col 419 80/63/81/81, so the top meets base at ~419.1-419.3 and the bottom band at ~418.0.",
+      "labeller": "L7",
+      "x_eye": 419.0,
+      "x_snap": 418.95
+     }
+    ]
+   }
+  },
+  "b0921c_32": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 0.25,
+    "lo": 0.0,
+    "hi": 0.7,
+    "outer": null,
+    "x_top": 0.45,
+    "x_bottom": 1.45,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 0.2,
+      "lo": 0.0,
+      "hi": 0.6,
+      "outer": null,
+      "x_top": 0.8,
+      "x_bottom": 2.0,
+      "note": "curved base sliver at column 0: base here reads only ~(55,25,14) (R/G 2.2, B/G 0.56), backdrop picture ~(41,20,12). Col 0 is ~90% base in the top rows, ~10-25% at mid-height, fully base below row ~200; cols 0-1 both base in the bottom ~25 rows. Rounded-corner shape; mid-height value is the least certain",
+      "labeller": "L2",
+      "x_eye": 0.2,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 0.3,
+      "lo": 0.1,
+      "hi": 0.7,
+      "outer": null,
+      "x_top": 0.1,
+      "x_bottom": 0.9,
+      "note": "sub-column sliver of base, tilted: col 0 is lighter than the backdrop on the negative (R 55 vs 41 at the bottom, base ~67), i.e. about half base in the lower bands, near nil at the top; at the very bottom col 1 is also partly base. Mixed fraction per band: ~0.1 top, ~0.2 mid, ~0.9 bottom. Visible in view B as a thin dark-green line along col 0-1 at the bottom.",
+      "labeller": "L8",
+      "x_eye": 0.3,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop and trousers run to 427, no brightening at the border",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trousers and backdrop run off the right border",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_33": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 18.0,
+    "lo": 17.8,
+    "hi": 18.5,
+    "outer": null,
+    "x_top": 18.0,
+    "x_bottom": 19.2,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 18.0,
+      "lo": 17.8,
+      "hi": 18.5,
+      "outer": null,
+      "x_top": 18.0,
+      "x_bottom": 18.9,
+      "note": "base cols 0-17 reads only 75-80 (picture elsewhere is brighter) but ratio is base's: R/G 2.15-2.24, B/G 0.55; uniform full height. Edge vertical at 18.0 over the top ~70%, bending to ~18.9 in the bottom fifth",
+      "labeller": "L3",
+      "x_eye": 18.0,
+      "x_snap": 18.0
+     },
+     {
+      "state": "edge",
+      "x": 18.0,
+      "lo": 17.8,
+      "hi": 18.4,
+      "outer": null,
+      "x_top": 18.0,
+      "x_bottom": 19.5,
+      "note": "base 0-17: featureless, full height, R/G 2.2, B/G 0.55, but only 75-80 on the table (raw R 56-59, rising slightly towards the edge) so it shows dark slate in view B. Sharp straight step to the backdrop at 18.0 over the top two thirds; drifts to 18.4-18.8 around rows 210-245 and 19.0-19.8 in the last rows (corner)",
+      "labeller": "L9",
+      "x_eye": 18.0,
+      "x_snap": 18.0
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall/trousers run to col 427, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trousers and backdrop run to 428",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_34": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 34.476136363636364,
+    "lo": 33.9,
+    "hi": 35.0,
+    "outer": 13.2,
+    "x_top": 34.1,
+    "x_bottom": 35.6,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 34.476136363636364,
+      "lo": 33.9,
+      "hi": 34.8,
+      "outer": 13.1,
+      "x_top": 34.1,
+      "x_bottom": 35.6,
+      "note": "base cols ~13-33 (raw 58-61/27-28/15-16, R/G 2.15-2.2, B/G 0.56; only ~80 on the table because picture highlights are brighter; shows dark slate in view B). Frame edge against the grey backdrop is sharp: ~34.1 in the upper half, ~34.5-34.8 lower, 35.0 near the bottom and ~35.8 in the bottom rows (corner). Neighbour (very dense) edge ~14.1 top, ~13.0 through the middle, ~13.7 bottom.",
+      "labeller": "L10",
+      "x_eye": 34.3,
+      "x_snap": 34.476136363636364
+     },
+     {
+      "state": "edge",
+      "x": 34.476136363636364,
+      "lo": 34.0,
+      "hi": 35.0,
+      "outer": 13.3,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base cols ~14-33 reads only ~80 (brighter picture elsewhere) but R/G 2.2, B/G 0.56, flat full height; neighbour sliver cols 0-12 is dense picture. Frame edge sharp, ~34.1-34.2 over the upper half, drifting to ~34.8-35.0 lower and ~35.7 in the bottom band (step near the bottom). Grey backdrop beside it (~60) has a ratio close to base but is clearly darker and is picture. Outer ~14.1 at top, ~13.0 lower",
+      "labeller": "L4",
+      "x_eye": 34.3,
+      "x_snap": 34.476136363636364
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trousers/backdrop run to column 427",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop and legs run to column 428",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_35": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 50.986111111111114,
+    "lo": 50.8,
+    "hi": 52.0,
+    "outer": 29.700000000000003,
+    "x_top": 51.0,
+    "x_bottom": 51.8,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 50.986111111111114,
+      "lo": 50.9,
+      "hi": 51.7,
+      "outer": 29.8,
+      "x_top": 51.0,
+      "x_bottom": 51.7,
+      "note": "gap inside the frame: base columns 31-50 (reads ~84 on the table, raw ~[62,28,16], R/G 2.2, B/G 0.55). This frame's grey backdrop (~64) starts at 51.0 over most of the height; in the bottom band column 51 is ~65% base, so the edge leans to ~51.7 at the bottom. Neighbour's picture (dark on the negative) ends ~30.5 at the top, ~29.1-29.8 lower down",
+      "labeller": "L11",
+      "x_eye": 51.1,
+      "x_snap": 50.986111111111114
+     },
+     {
+      "state": "edge",
+      "x": 50.986111111111114,
+      "lo": 50.8,
+      "hi": 52.0,
+      "outer": 29.6,
+      "x_top": 51.0,
+      "x_bottom": 51.9,
+      "note": "base cols 30-50 reads only ~84 on the table (R/G 2.22, B/G 0.56 -> base); the grey backdrop beside it reads ~65, R/G 2.05. Edge sharp at 51.0 over most of the height, bending out to ~52 in the lowest ~40 rows. Neighbour (dense, reads ~5) ends at ~30.7 top, ~29.1 mid, ~29.9 bottom - slightly curved.",
+      "labeller": "L5",
+      "x_eye": 51.1,
+      "x_snap": 50.986111111111114
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figure and backdrop run to column 427",
+      "labeller": "L11",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop/trousers run to 427",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_36": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 69.06666666666666,
+    "lo": 68.8,
+    "hi": 69.6,
+    "outer": 47.85,
+    "x_top": 69.0,
+    "x_bottom": 69.95,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 69.06666666666666,
+      "lo": 68.9,
+      "hi": 69.6,
+      "outer": 47.6,
+      "x_top": 69.0,
+      "x_bottom": 70.0,
+      "note": "interior gap: base cols 48-68 (G 29, R/G 2.22, B/G 0.55), neighbour picture 0-47 (dense, white in B). Inner edge 69.0-69.1 in rows 0-180, then col 69 goes 30% -> 90% base over rows 180-260, 70.1 at rows 260+. Backdrop beside it is only ~25% below base (G 22-25 vs 29) but the line is straight. Outer edge ~48.8 in rows 0-60, 47.6-47.9 through the middle, ~48.0 at the bottom",
+      "labeller": "L12",
+      "x_eye": 69.1,
+      "x_snap": 69.06666666666666
+     },
+     {
+      "state": "edge",
+      "x": 69.06666666666666,
+      "lo": 68.8,
+      "hi": 69.6,
+      "outer": 48.1,
+      "x_top": 69.0,
+      "x_bottom": 69.9,
+      "note": "gap inside the frame (deeper than the crop): base cols 49-68 (~89, R/G 2.21, B/G 0.55), full height. Picture beside it is pale backdrop (~67, R/G 2.1, B/G 0.57) so contrast is modest but the boundary is straight and sharp; col 69 is picture above row ~180 and becomes base toward the bottom. Neighbour 0-47 is dense uniform picture (likeness ~5, R/G 3.0-3.4, not base, not gate); its boundary ~48.9 at top, ~47.6 lower",
+      "labeller": "L6",
+      "x_eye": 69.1,
+      "x_snap": 69.06666666666666
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop/trousers run to 428",
+      "labeller": "L12",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture to col 427, likeness ~28",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_37": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 84.4375,
+    "lo": 84.1,
+    "hi": 85.0,
+    "outer": 63.150000000000006,
+    "x_top": 84.15,
+    "x_bottom": 85.15,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 84.4375,
+      "lo": 84.2,
+      "hi": 84.9,
+      "outer": 63.1,
+      "x_top": 84.1,
+      "x_bottom": 85.3,
+      "note": "internal gap just past the crop: base cols 64-83 (~90, R/G 2.2 B/G 0.53). Frame picture beside it is a light backdrop (~66-74), so contrast is modest; edge leans ~84.1 top to ~85.4 bottom (8-band read). Left of the gap (0-62) is uniformly dense exposed film (white in B), treated as the neighbour; its edge ~64.0 top, ~62.9 lower",
+      "labeller": "L1",
+      "x_eye": 84.5,
+      "x_snap": 84.4375
+     },
+     {
+      "state": "edge",
+      "x": 84.4375,
+      "lo": 84.1,
+      "hi": 85.0,
+      "outer": 63.2,
+      "x_top": 84.2,
+      "x_bottom": 85.0,
+      "note": "interior gap cols 63-83 (likeness ~90, R/G 2.2, B/G 0.53), deeper than the crop. Neighbour 0-62 is dense picture (R/G 3.0). This frame starts on a pale grey wall at likeness ~68 (counts 49/23/13 vs base 65/30/16), so contrast is low; col 84 reads 75/74/85/91 by band. Outer ~63.9 at top, 63.0 in the lower half.",
+      "labeller": "L7",
+      "x_eye": 84.5,
+      "x_snap": 84.4375
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop and trousers to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall/shadow runs to col 427, likeness ~25",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_38": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 100.93055555555556,
+    "lo": 100.4,
+    "hi": 101.3,
+    "outer": 79.45,
+    "x_top": 100.5,
+    "x_bottom": 101.9,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 100.93055555555556,
+      "lo": 100.5,
+      "hi": 101.3,
+      "outer": 79.4,
+      "x_top": 100.5,
+      "x_bottom": 101.9,
+      "note": "interior gap deeper than the crop: black base cols 80-99 (R/G 2.2, B/G 0.55). Neighbour cols 0-79 is a dense, blown-out picture (darkest on the negative, white in B), not the gate. This frame's backdrop starts ~100.5 at the top, ~101.0 over the lower half, ~101.9 in the bottom rows. Outer ~80.4 at the top, ~79.0-79.6 mid, ~79.8 at the bottom",
+      "labeller": "L2",
+      "x_eye": 100.9,
+      "x_snap": 100.93055555555556
+     },
+     {
+      "state": "edge",
+      "x": 100.93055555555556,
+      "lo": 100.4,
+      "hi": 101.2,
+      "outer": 79.5,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "DEEP gap beyond the crop: base cols 80-100 (R/G 2.2, B/G 0.55, G~30, full height). This frame (cols 101-427, ~327 cols; grey backdrop at likeness ~71, G~24) lies right of it. Cols 0-78 are a very dense, featureless region (G 4-6, R/G ~3, B/G 0.25): not base, not gate -- read as the neighbour's picture (overexposed/white), outer ~79.5 (80.2 at top, 79.2 at bottom).",
+      "labeller": "L8",
+      "x_eye": 100.8,
+      "x_snap": 100.93055555555556
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop/figure run to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figure and backdrop run off the right border",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_58": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "unreadable",
+    "resolved_by": "R1",
+    "labels": [
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "Gap starts at the neighbour edge ~131.5 (outer boundary: ~132.6 in the top rows, ~131.3 lower), but its far side cannot be seen: this frame's dark foliage is at base density and base ratio (raw 66-72/29-32/16-18, R/G 2.2, B/G 0.56) all the way from 133 to past 200, no step anywhere. The first picture features (sky specks through leaves) appear at cols 151-153 (rows ~97-99 and ~160-167), so the edge is at or before ~151; with this roll's usual 17-21 col gap it would sit ~148-152, but nothing visible marks it.",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 150.0,
+      "lo": 148.8,
+      "hi": 152.2,
+      "outer": 131.8,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "gap deeper than the crop. Neighbour (jeans) ends sharply at ~131.8 (132.5 top, 131.5 bottom). Base plateau cols 133-148 is flat (G std ~1). The frame is very dark foliage whose shadows are at base density (same value and ratio), so the base/picture boundary has almost no contrast: a faint full-height denser band starts at ~149 and the first picture specks appear at col 151-152. Placed at 150 with a wide interval",
+      "labeller": "L4",
+      "x_eye": 150.0,
+      "x_snap": null
+     },
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": 131.7,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "third look: no straight full-height base/picture boundary is visible. The neighbour ends sharply at ~131.7 (col 131 is ~25-40% base), then base 133-150 at R/G 2.2, B/G 0.56. The frame's dark foliage is at base density and ratio, with no step anywhere from 133 to past 200. The faint full-height denser band at ~150-157 that L4 used is a fixed sensor stripe, not film: the same dip (-1.4 to -4.2% against columns 6 away) sits at sensor cols 150-157 in all 70 frames of roll b0921c, and b0921c_58 matches the roll median to within 0.8%. For the same reason b0921c_59's faint outer at 259.2 (predicting 152.2) is the roll-wide stripe at sensor cols 258-262 (-5 to -10% in every frame), so it is void. b0922b_10 is from another session and has no stripe there: aligned, the film is flat in every channel from 133 to 199, and its 61.8 (predicting 150.8) marks where specks begin, not a boundary anyone saw. The only film-bound cue is sparse specks (the same rows 92-95 and 155-158 in both frames) whose left tips fall at cols 151-153 and ramp over about 4 columns, not a hard clip. So the edge is at or before ~151, probably 148-152 given the usual gap, but nothing visible marks it. Carried by: the roll-wide sensor-stripe check plus the flat b0922b_10 profile.",
+      "labeller": "R1",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage and sky run to column 427",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage with sky specks runs to column 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0921c_60": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/bookcase run to col 0",
+      "labeller": "L12",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tree/bookcase picture to col 0; no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 346.975,
+    "lo": 346.6,
+    "hi": 347.5,
+    "outer": null,
+    "x_top": 347.6,
+    "x_bottom": 346.3,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 346.975,
+      "lo": 346.7,
+      "hi": 347.4,
+      "outer": null,
+      "x_top": 347.6,
+      "x_bottom": 346.3,
+      "note": "interior edge deeper than the crop: base from 347 all the way to 427 (G 30-31 near the edge falling to 25-26 at 427, R/G 2.25, B/G 0.54; bright specks in B are dust on the base). Edge tilted: col 347 ~30-45% base in rows 20-100, ~85% in rows 100-140, base below; col 346 partial in rows 180-280. Top-corner rows 0-20 at ~346.8",
+      "labeller": "L12",
+      "x_eye": 347.0,
+      "x_snap": 346.975
+     },
+     {
+      "state": "edge",
+      "x": 346.975,
+      "lo": 346.6,
+      "hi": 347.5,
+      "outer": null,
+      "x_top": 347.6,
+      "x_bottom": 346.3,
+      "note": "wide base cols 348-427 (98 falling to 80 toward the right, R/G 2.2-2.3, B/G 0.55, dust specks), no neighbour picture visible. Edge ~347.6 over rows 40-108, 347.0 over rows 143-212, ~346.3 over the bottom 70 rows; top ~35 rows at ~347.0 (corner). x_top from the straight part below the corner",
+      "labeller": "L6",
+      "x_eye": 347.0,
+      "x_snap": 346.975
+     }
+    ]
+   }
+  },
+  "b0921c_61": {
+   "split": "test",
+   "roll": "b0921c",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 20.954166666666666,
+    "lo": 20.4,
+    "hi": 21.3,
+    "outer": null,
+    "x_top": 20.55,
+    "x_bottom": 21.5,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 20.954166666666666,
+      "lo": 20.4,
+      "hi": 21.1,
+      "outer": null,
+      "x_top": 20.5,
+      "x_bottom": 21.5,
+      "note": "base cols 0-19 (82-90 with a slight ramp, raw 54-58/25-26/14-15, R/G 2.2 B/G 0.56), dark brown rather than black in B. Col 20 ~50% base in the upper half; edge leans to ~21.0 lower and ~21.6 in the bottom eighth (low contrast there, picture ~80)",
+      "labeller": "L1",
+      "x_eye": 20.7,
+      "x_snap": 20.954166666666666
+     },
+     {
+      "state": "edge",
+      "x": 20.954166666666666,
+      "lo": 20.4,
+      "hi": 21.3,
+      "outer": null,
+      "x_top": 20.6,
+      "x_bottom": 21.5,
+      "note": "base cols 0-19 to the aperture (likeness 82-89 with a gentle ramp, R/G 2.2, B/G 0.56), no neighbour. Picture next to it is bright foliage (~70-80), so contrast is modest. Col 20 reads 80/80/86/88, col 21 84 in the bottom band: bottom sits ~0.9 col further right.",
+      "labeller": "L7",
+      "x_eye": 20.8,
+      "x_snap": 20.954166666666666
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "jeans/pavement scene to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture to col 427, likeness ~32",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_01": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 3.4000000000000004,
+    "lo": 2.8,
+    "hi": 4.2,
+    "outer": null,
+    "x_top": 3.3,
+    "x_bottom": 4.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 3.6,
+      "lo": 3.1,
+      "hi": 4.2,
+      "outer": null,
+      "x_top": 3.3,
+      "x_bottom": 4.0,
+      "note": "sliver of base at columns 0-2 (R/G 2.26, B/G 0.56, featureless). The dark foliage beside it has base's value (~70), so the edge shows only where bright leaves meet it: a straight vertical at ~3.3 in the top ~50 rows, and a step at 4.0 around rows 220-250. The same frame as b0922a_13 shifted ~23 columns left, and its edge shows the same shape there (26.3 at the top, 27 at rows 220-250), which supports reading this as the frame edge",
+      "labeller": "L11",
+      "x_eye": 3.6,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 3.2,
+      "lo": 2.8,
+      "hi": 3.8,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "3-column base sliver: cols 0-2 featureless (sdG 1.2 vs 4-6 in picture), R/G 2.23, B/G 0.55. Picture is a thin forest negative that reads almost as bright as base (table 70 vs 71), so the edge is placed from where foliage features are cut off in a straight line at ~3 (clearest in the top band, col 3 ~27% base).",
+      "labeller": "L5",
+      "x_eye": 3.2,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figure and foliage run to column 427",
+      "labeller": "L11",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "scene runs to 427",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_02": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 19.45,
+    "lo": 19.0,
+    "hi": 20.1,
+    "outer": null,
+    "x_top": 19.0,
+    "x_bottom": 20.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 19.4,
+      "lo": 19.0,
+      "hi": 20.1,
+      "outer": null,
+      "x_top": 19.0,
+      "x_bottom": 20.0,
+      "note": "cols 0-18 featureless (row std 1.1-1.5 vs picture 4-6), R/G 2.2, B/G 0.55, G 25-27 (dimmer than base elsewhere on this walk, with a 25->27 ramp over cols 0-9 that stays at the aperture in b0922a_14). Confirmed as the inter-frame gap by b0922a_04 (same film shifted 34 cols), where it shows as a dark strip with a different neighbour picture to its left. Edge where texture starts: 19.0 in rows 10-60, ~20.0 in rows 220-260; rows 60-220 picture shadows equal base, no contrast",
+      "labeller": "L12",
+      "x_eye": 19.4,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 19.5,
+      "lo": 19.0,
+      "hi": 20.1,
+      "outer": null,
+      "x_top": 19.0,
+      "x_bottom": 20.0,
+      "note": "base cols 0-18: featureless (G std ~1.3, same as base elsewhere), R/G 2.19-2.28, B/G 0.52-0.56, but only ~71-76 on the table -- the brightest picture reads 84, and view B shows it dark slate. Boundary readable only where the picture has texture: col 19 is picture in rows 0-60 (x=19.0), col 19 base and col 20 picture in rows 210-250 (x=20.0). Rows ~70-200 the adjacent picture is deep scene shadow at base density, no contrast at all",
+      "labeller": "L6",
+      "x_eye": 19.5,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figures/foliage run to 428",
+      "labeller": "L12",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "textured foliage/figure to col 427; no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_03": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 36.5,
+    "lo": 35.8,
+    "hi": 37.4,
+    "outer": 15.3,
+    "x_top": 36.5,
+    "x_bottom": 37.1,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 36.2,
+      "lo": 35.8,
+      "hi": 37.0,
+      "outer": 15.2,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "gap from ~15-16 (base 77-81, raw 60-64/27-28/15, R/G 2.2 B/G 0.55), dark brown in B. Frame edge is sharp only in the top band (col 36 drops to 47, col 35 base); below that the dark foliage has base's level AND ratio in the median, so the line rests on the top band and on texture in view B starting at 36-37. Neighbour (tree bark) edge ~16-16.7 in the upper third, ~15.0 below",
+      "labeller": "L1",
+      "x_eye": 36.2,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 36.8,
+      "lo": 36.3,
+      "hi": 37.4,
+      "outer": 15.4,
+      "x_top": 36.5,
+      "x_bottom": 37.1,
+      "note": "base cols 16-35 (likeness 76-80, R/G 2.2, B/G 0.55); neighbour picture 0-14. The frame opens on dark foliage almost at base density: bands 2-3 show no step at all (78-81 flat), band 1 steps at col 36 (70) and band 4 at ~37. A locally stretched positive shows a straight line at ~36.3-37 with foliage detail to the right only. Outer ~15.0-15.4 in bands 2-4, ~16.6 in the top band.",
+      "labeller": "L7",
+      "x_eye": 36.8,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/building/figure to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture to col 427, likeness ~66, textured",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_04": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 54.260504201680675,
+    "lo": 53.6,
+    "hi": 54.8,
+    "outer": 33.1,
+    "x_top": 53.7,
+    "x_bottom": 54.3,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 54.260504201680675,
+      "lo": 53.6,
+      "hi": 54.5,
+      "outer": 33.0,
+      "x_top": 53.7,
+      "x_bottom": 54.3,
+      "note": "base cols 34-53 reads only ~82 on the table (dark slate in B) but is base by ratio (R/G 2.24, B/G 0.55) and is featureless (row std ~1.3). The forest beside it is at base density in most rows, so the edge is placed where texture starts: row std jumps at col 54, and in the top band col 53 is ~75% base (53.7). Straight line on the zoomed view. Neighbour's patterned surface ends ~33.8 at the top, ~33.0 below, ~32.4 near 5/8 height",
+      "labeller": "L2",
+      "x_eye": 54.0,
+      "x_snap": 54.260504201680675
+     },
+     {
+      "state": "edge",
+      "x": 54.260504201680675,
+      "lo": 53.7,
+      "hi": 54.8,
+      "outer": 33.2,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base cols 34-53 (G~29, R/G 2.22, B/G 0.55, full height) reads only ~81 on the table because the thin forest scene has brighter pixels. This frame's picture starts at ~54.0: sharp in the top and bottom bands (foliage); the middle bands are dark scene within 1-3 points of base, boundary there taken from the straight line visible in view B. Neighbour picture (bark texture) cols 0-32, outer ~33.2 (34.0 in the top band).",
+      "labeller": "L8",
+      "x_eye": 54.1,
+      "x_snap": 54.260504201680675
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "house/figure/foliage run to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "girl and foliage run off the right border",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_10": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 59.55952380952381,
+    "lo": 58.7,
+    "hi": 59.6,
+    "outer": 38.25,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 59.55952380952381,
+      "lo": 58.7,
+      "hi": 59.6,
+      "outer": 38.1,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base cols 40-58 reads only 81-84 (R/G 2.2, B/G 0.55); the dark woods beside it read almost the same (79-84) below the top fifth, so the step is only numeric in the top two bands (col 59 at picture level there). In view B the line at 59 is straight and full height: foliage highlights start at 59-60 at every height. Neighbour (stone wall) edge is tilted: ~39.7 in the top tenth, ~39.0 at 20-30%, 38.0 from mid-height down, ~38.5 in the bottom tenth",
+      "labeller": "L3",
+      "x_eye": 59.0,
+      "x_snap": 59.55952380952381
+     },
+     {
+      "state": "edge",
+      "x": 59.55952380952381,
+      "lo": 58.7,
+      "hi": 59.6,
+      "outer": 38.4,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base 39-58 (81-84, R/G 2.2, B/G 0.54, sd 1-2). The frame's picture beside it is a very thin dark-woods area whose median equals base (64/28/16), so the edge is set by where texture starts (sd 2 -> 8 at col 59, straight and full height in a tight stretch) and by the top band (83 -> 71 -> 65). Neighbour picture 0-37; outer tilts ~39.5 at the top to ~38.1 at the bottom, ~38.4 mid-height",
+      "labeller": "L9",
+      "x_eye": 59.1,
+      "x_snap": 59.55952380952381
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figures, foliage and building run to col 427, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "faces/foliage run to 428",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_12": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 43.792735042735046,
+    "lo": 42.8,
+    "hi": 44.3,
+    "outer": 22.55,
+    "x_top": 43.0,
+    "x_bottom": 44.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 43.792735042735046,
+      "lo": 42.8,
+      "hi": 44.3,
+      "outer": 22.6,
+      "x_top": 43.0,
+      "x_bottom": 44.0,
+      "note": "base gap ~22-43 (raw 62-64/28-29/15-16, R/G 2.2, B/G 0.55; reads ~80 on the table, picture highlights brighter). This frame's edge is visible only where the picture is dense: top rows (sharp at 43.0) and rows ~205-240 (44.0); in the middle rows the adjacent forest shadow is at base density and the edge cannot be seen. Neighbour edge ~23.5 at top, ~22.0 in the lower half.",
+      "labeller": "L10",
+      "x_eye": 43.5,
+      "x_snap": 43.792735042735046
+     },
+     {
+      "state": "edge",
+      "x": 43.792735042735046,
+      "lo": 42.9,
+      "hi": 44.2,
+      "outer": 22.5,
+      "x_top": 43.0,
+      "x_bottom": 44.0,
+      "note": "base cols ~22-42 (flat, G std ~1.3, R/G 2.25, B/G 0.56; reads ~80 because brighter picture elsewhere, dark slate in view B). The forest beside it is dark foliage at nearly base value (bands 2-6 read 76-83), so the edge is seen mostly as the start of texture: G std steps 1.3 -> 4.6 between cols 42 and 43. ~43.0 in the upper bands, ~44.0 in the lower ones; mid-height has almost no contrast. Neighbour (tree bark) ends ~23.7 at top, ~22.0 lower",
+      "labeller": "L4",
+      "x_eye": 43.5,
+      "x_snap": 43.792735042735046
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figures run to column 427",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "house, foliage and figures run to column 428",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_13": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 26.763157894736842,
+    "lo": 25.9,
+    "hi": 27.2,
+    "outer": 5.35,
+    "x_top": 26.2,
+    "x_bottom": 27.1,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 26.763157894736842,
+      "lo": 25.9,
+      "hi": 27.2,
+      "outer": 5.5,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "featureless full-height strip 7-26 (R/G 2.2, B/G 0.56, raw ~[60,27,15]) between a neighbour sliver 0-4 (R/G 2.55, B/G 0.47, picture) and this frame. The frame's dark forest has base's value and ratio, so the base-to-picture boundary is seen only where leaves meet it: a sharp straight vertical at ~26.3 in the top ~50 rows, and a weaker step at 27 around rows 220-250. Neighbour boundary ~6.8 in the top 50 rows, ~5.0 below",
+      "labeller": "L11",
+      "x_eye": 26.3,
+      "x_snap": 26.763157894736842
+     },
+     {
+      "state": "edge",
+      "x": 26.763157894736842,
+      "lo": 26.1,
+      "hi": 27.2,
+      "outer": 5.2,
+      "x_top": 26.2,
+      "x_bottom": 27.1,
+      "note": "base cols ~6-25: featureless (sdG 1.0-1.5 against 4-6 in the picture), R/G 2.21, B/G 0.55, though it brightens slightly toward the frame (R 58 -> 62). Thin forest negative beside it is nearly base-bright, so contrast is good only in the top band (foliage) and the bottom quarter; top ~26.2, bottom ~27.1, and the texture onset is at col 26. Neighbour sliver at 0-4 (R/G 2.5, textured): its boundary is ~5.0-5.2 over mid-height, curving out to ~6.3-6.7 at the top and ~5.7 at the bottom (rounded corner).",
+      "labeller": "L5",
+      "x_eye": 26.5,
+      "x_snap": 26.763157894736842
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trees, building and figure run to column 427",
+      "labeller": "L11",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building/girls run to 427",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_14": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 9.55,
+    "lo": 9.0,
+    "hi": 10.3,
+    "outer": null,
+    "x_top": 9.1,
+    "x_bottom": 10.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 9.6,
+      "lo": 9.0,
+      "hi": 10.3,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-8 featureless (row std ~1, noise only; picture 2.5-10), R/G 2.2, B/G 0.55, G 25-27: base at this roll level (b0922a_02 cols 0-11 read the same 57/26/14). Picture shadow next to it is nearly the same value, so the edge is placed by where texture starts: col 9 partial, col 10 picture; consistent in the textured rows 0-60 and 220-260",
+      "labeller": "L12",
+      "x_eye": 9.6,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 9.5,
+      "lo": 9.0,
+      "hi": 10.1,
+      "outer": null,
+      "x_top": 9.1,
+      "x_bottom": 10.0,
+      "note": "base cols 0-8: featureless (G std ~1), R/G 2.15-2.28, B/G 0.54-0.56, but only ~71-74 on the table and dark slate in B, because the brightest picture reads 84. Readable only where the adjacent picture has texture: col 9 is picture over rows ~10-40 (x~9.0-9.5), col 9 base and col 10 textured over rows ~180-250 (x=10.0). Rows ~60-170 the adjacent picture is deep shadow at base density with no contrast",
+      "labeller": "L6",
+      "x_eye": 9.5,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage texture runs to 428",
+      "labeller": "L12",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "textured foliage/figure to col 427; no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_15": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 5.05,
+    "lo": 4.6,
+    "hi": 5.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 5.0,
+      "lo": 4.7,
+      "hi": 5.5,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-4 featureless and uniform 69-72 in all 8 bands, R/G 2.24 B/G 0.56 = base; not the brightest (thin dark scene reads the same ~70), identified by uniformity and by every highlight stopping at col 5 in view B. Clear only in the top band (col 5 drops to 42)",
+      "labeller": "L1",
+      "x_eye": 5.0,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 5.1,
+      "lo": 4.6,
+      "hi": 5.7,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "narrow base sliver cols 0-4 (counts 56/25/14, R/G 2.24, B/G 0.56, uniform in all bands at likeness ~71; not the top of the table because the lit foliage reads ~80). The dark foliage beside it has the same median counts, so only the top band steps (col 5 = 57 vs 71). A locally stretched positive shows a straight full-height line at ~5.0 with featureless noise to the left and foliage texture to the right.",
+      "labeller": "L7",
+      "x_eye": 5.1,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/figure to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/figure run to col 427; bands differ (59/41/70/73), R/G 2.4",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_16": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage texture (dark branches in the top band) runs to column 0; no featureless column anywhere",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage and a person run to column 0; col 0 reads like col 1 in every band, so no sub-column sliver",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/building run to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage and the third person run off col 427; no plateau",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_17": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/figure texture runs to col 0; top band varies 32-54 across cols 0-16, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark foliage runs to column 0 with texture in every column (full-height sd 12-18 against base's 1-2)",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage and figure run to col 427, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/path run to 428 (sd 15-17), no plateau",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922a_18": {
+   "split": "test",
+   "roll": "b0922a",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to column 0 (raw 53-55/24/13, denser than base; leaf highlights at cols 0-5 in the top rows)",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage texture (dark specks) in cols 0-5; no flat plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.93543956043953,
+    "lo": 418.3,
+    "hi": 419.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 418.93543956043953,
+      "lo": 418.3,
+      "hi": 419.2,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base cols ~419-427 (raw 61-63/27/14, R/G 2.3, B/G 0.52), uniform in all bands, only ~76 on the table. Boundary sharp and vertical in the top half (418.4-419.0); in the lower half the dark forest floor is at or above base on the table and the edge cannot be seen. No neighbour visible beyond it.",
+      "labeller": "L10",
+      "x_eye": 418.8,
+      "x_snap": 418.93543956043953
+     },
+     {
+      "state": "edge",
+      "x": 418.93543956043953,
+      "lo": 418.6,
+      "hi": 419.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base sliver cols ~419-427 (flat, G std ~1, R/G 2.26, B/G 0.52; reads ~76 because brighter picture elsewhere). Edge clear in the upper half (~418.9-419.0); lower half the forest shadow is near base value so the line is faint there",
+      "labeller": "L4",
+      "x_eye": 419.1,
+      "x_snap": 418.93543956043953
+     }
+    ]
+   }
+  },
+  "b0922b_10": {
+   "split": "test",
+   "roll": "b0922b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 61.75,
+    "lo": 58.0,
+    "hi": 62.9,
+    "outer": 42.150000000000006,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 61.5,
+      "lo": 58.0,
+      "hi": 62.5,
+      "outer": 42.1,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "HARD. Base begins at the neighbour's edge (outer ~43.35 in the top fifth, 42.0 from mid-height down, ~42.7 in the bottom tenth; the neighbour, jeans on a pale floor, is clear). But this frame is an almost unexposed foliage shot whose background is itself at base density and ratio (91-93 vs 92-95, R/G 2.23, B/G 0.53), so no straight line marks where base ends. Cols 44-61 are clean; the sky-through-leaf specks begin at 62 (count of dark pixels jumps from 0-3 to 5-21 per column from 62). x is put just before the first specks. hi is firm (62.5); lo 58 rests on the usual 16-21-column gap width on this strip, not on anything visible",
+      "labeller": "L3",
+      "x_eye": 61.5,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 62.0,
+      "lo": 61.4,
+      "hi": 62.9,
+      "outer": 42.2,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "HARD. The frame is a very dark forest (thin negative) whose level and ratio equal base (67/30/16 on both sides), so no step in level exists. Base 43/44-61 is featureless (sd 1-2); the forest's bright sky specks all stop at a common line: in rows 97-99, 161 and 222 a speck starts at col 62 with col 61 at full base (e.g. row 98: 92 -> 42). Edge placed there. Neighbour 0-41; outer ~43.5 in the top quarter, ~42.0 mid-height, ~42.5 at the bottom",
+      "labeller": "L9",
+      "x_eye": 62.0,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage specks run to col 427; background at base level throughout, no edge",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "forest specks continue to 427; no featureless strip",
+      "labeller": "L9",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922b_11": {
+   "split": "test",
+   "roll": "b0922b",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 61.214285714285715,
+    "lo": 60.8,
+    "hi": 61.9,
+    "outer": 39.3,
+    "x_top": 61.0,
+    "x_bottom": 61.849999999999994,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 61.214285714285715,
+      "lo": 60.8,
+      "hi": 61.7,
+      "outer": 39.2,
+      "x_top": 61.0,
+      "x_bottom": 61.9,
+      "note": "base gap ~39-60 (raw 66-67/29-30/15-17, R/G 2.25, B/G 0.53), clean. Frame edge ~61.0 top, ~61.2 mid, ~61.9 at the bottom (slight tilt; bottom picture pale so lower contrast). Neighbour edge ~40.2 top rows, 39.0 through the middle, ~39.8 bottom rows.",
+      "labeller": "L10",
+      "x_eye": 61.2,
+      "x_snap": 61.214285714285715
+     },
+     {
+      "state": "edge",
+      "x": 61.214285714285715,
+      "lo": 60.8,
+      "hi": 61.9,
+      "outer": 39.4,
+      "x_top": 61.0,
+      "x_bottom": 61.8,
+      "note": "base cols ~39/40-60 (flat, G std ~1.1, R/G 2.23, B/G 0.53). Edge sharp: ~61.0-61.2 over the upper half, ~61.5-61.6 lower, ~61.9 in the bottom band; the dark trees beside it (~70-80) are near base in the lower bands. Outer (dark street neighbour, near base value in bands 1-3) ~40.2 at top, 39.0 lower",
+      "labeller": "L4",
+      "x_eye": 61.2,
+      "x_snap": 61.214285714285715
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figures/skirt run to column 427",
+      "labeller": "L10",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figure (jeans, hair) and bookcase run to column 428",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922s_03": {
+   "split": "test",
+   "roll": "b0922s",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 15.020833333333334,
+    "lo": 14.7,
+    "hi": 15.5,
+    "outer": null,
+    "x_top": 14.850000000000001,
+    "x_bottom": 15.7,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 15.020833333333334,
+      "lo": 14.7,
+      "hi": 15.4,
+      "outer": null,
+      "x_top": 14.8,
+      "x_bottom": 15.8,
+      "note": "base cols 0-14 black in B (~95, raw 66/29/15, R/G 2.28 B/G 0.52-0.55); sharp line at 15.0 over most of the height, stepping out to ~15.9 in the bottom eighth",
+      "labeller": "L1",
+      "x_eye": 15.0,
+      "x_snap": 15.020833333333334
+     },
+     {
+      "state": "edge",
+      "x": 15.020833333333334,
+      "lo": 14.7,
+      "hi": 15.5,
+      "outer": null,
+      "x_top": 14.9,
+      "x_bottom": 15.6,
+      "note": "base cols 0-14 to the aperture (likeness ~96, R/G 2.25, B/G 0.54), no neighbour. Picture is a pale grey backdrop at ~72, straight clean step. Col 15 reads 77/71/71/88: only the bottom band carries extra base, ~0.6 col.",
+      "labeller": "L7",
+      "x_eye": 15.0,
+      "x_snap": 15.020833333333334
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop and trousers to col 427; B/G 0.40, not base",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop/trousers run to col 427, likeness ~43",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922s_09": {
+   "split": "test",
+   "roll": "b0922s",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 6.9,
+    "lo": 5.8,
+    "hi": 8.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "resolved_by": "R3",
+    "labels": [
+     {
+      "state": "edge",
+      "x": 7.2,
+      "lo": 6.5,
+      "hi": 8.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "LOW CONFIDENCE. Underexposed foliage reads exactly base level (sum ~110, R/G 2.3, same as base on b0922s_03), so no level step exists. Evidence is geometric only: cols 0-6 hold no sky patch in any row (<=2 dense px per col vs 7-18 from col 7 on) and three separate sky features all begin at col 7 on one vertical line",
+      "labeller": "L1",
+      "x_eye": 7.2,
+      "x_snap": null
+     },
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "the whole frame is a dark canopy at base density: median counts 66/28/16 (R/G 2.3, B/G 0.55, likeness ~90) in nearly every column, so density and ratio cannot separate base from shadow. Cols 0-6 are featureless (green sd 1.0-1.5, the same as real base on b0922s_03) and the first highlights start at col 7. But the two leaves reaching that far (rows ~93 and ~156) taper to 1-2 px tips at cols 7-8 rather than being cut, and a locally stretched positive shows no straight vertical line. So this is either picture_to_border (unexposed shadow) or a ~7-col base sliver with x ~ 7.0; I cannot tell which.",
+      "labeller": "L7",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 6.6,
+      "lo": 5.8,
+      "hi": 7.3,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "third look: EDGE, placed by the geometry of the frame. No visible line: the foliage background reads exactly at base in level, colour and noise, and its faint texture is no more repeatable across the three scans (s_09, b0922b_10, b0921a_17) in cols 7-23 than in 0-6. Only the sky highlights are film. Two measurements that do not use this side at all settled it. (1) FRAME WIDTH. This picture's RIGHT edge is a real, straight cut in b0922b_09's left sliver: many specks end on one vertical line at ~41.0, then certain base (42-61), then the next picture at 62.1. Registered into s_09 (k=400.6) that edge is at ~441.6. Six clean frames of this walk, each with its left edge in s_n and its right edge from the b-walk sliver registered into s_n, give a gate width W = 435.0-436.2 (mean 435.5), so the left edge is at ~6.1 +-0.7. For picture_to_border, W would have to be >=441.6, six columns wider than every other frame. (2) GAP. The neighbour's right edge in b0922b_10 is at 42.4, and five gaps on this roll measure 18.5-21.8, which puts the picture start at 5.9-9.2 here. (3) HIGHLIGHTS: the row-98 sky patch is already at ~75% of full density at col 7, and col 6 is at base in every row, so hi is 7.3. The leaves 'tapering' at cols 7-8 are compatible with a cut. L1's cols 0-6 are right, but the gate may be up to a column left of where the first speck sits. The row-222 speck at col 7 is a single one-channel pixel, like the noise hits in cols 0-5, so I don't count it.",
+      "labeller": "R3",
+      "x_eye": 6.6,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky patches through the foliage reach col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "leaf highlights run to col 427 in many rows (25-35 dark-green pixels per column across 412-427); the picture reaches the border even though the median is at base density",
+      "labeller": "L7",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "b0922s_10": {
+   "split": "test",
+   "roll": "b0922s",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 7.0,
+    "lo": 6.5,
+    "hi": 7.5,
+    "outer": null,
+    "x_top": 6.7,
+    "x_bottom": 7.6,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 7.0,
+      "lo": 6.5,
+      "hi": 7.2,
+      "outer": null,
+      "x_top": 6.7,
+      "x_bottom": 7.8,
+      "note": "clean featureless base cols 0-5 (R/G 2.3, B/G 0.55, row std ~1). Edge ~6.7 over the top half, ~6.9-7.0 lower, bottom ~15 rows bend out to ~7.8. Adjacent foliage is pale in A (~75-88 vs base 97) so the step is moderate-contrast",
+      "labeller": "L2",
+      "x_eye": 6.8,
+      "x_snap": 7.0
+     },
+     {
+      "state": "edge",
+      "x": 7.0,
+      "lo": 6.6,
+      "hi": 7.5,
+      "outer": null,
+      "x_top": 6.7,
+      "x_bottom": 7.4,
+      "note": "black base strip cols 0-5 (R/G 2.3, B/G 0.56, ~97, full height); straight edge against the tree foliage, slight lean (6.7 top, 7.4 bottom). Foliage beside it is fairly dark (72-84) but clearly below base.",
+      "labeller": "L8",
+      "x_eye": 7.0,
+      "x_snap": 7.0
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trousers/bench run to 427",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "jeans, bench and pavement run off the right border",
+      "labeller": "L8",
+      "x_eye": null
+     }
+    ]
+   }
+  }
+ },
+ "frame_width": {
+  "b0921a": 438.29,
+  "b0921c": 438.25,
+  "b0922b": 435.77,
+  "_all": 438.06,
+  "_measured": {
+   "b0921a": [
+    439.8,
+    438.3,
+    435.9
+   ],
+   "b0921c": [
+    438.3,
+    438.1,
+    438.3,
+    438.6,
+    438.4,
+    438.1,
+    438.3,
+    438.3,
+    438.4,
+    438.3,
+    438.5,
+    438.4,
+    438.4,
+    438.6,
+    429.5,
+    430.3,
+    436.1,
+    436.2,
+    435.3,
+    433.1,
+    436.9,
+    434.6
+   ],
+   "b0922b": [
+    440.4,
+    438.3,
+    429.6,
+    433.4,
+    435.8,
+    436.3,
+    434.8,
+    436.7,
+    433.8,
+    434.7,
+    434.9,
+    440.3,
+    439.9
+   ]
+  },
+  "_evidence": {
+   "b0921a": [
+    "b0921a_01 left gap 15.5 -> 439.8",
+    "b0921a_03 left gap 17.0 -> 438.3",
+    "b0921a_13 left gap 19.4 -> 435.9"
+   ],
+   "b0921c": [
+    "b0921c_01 left gap 17.0 -> 438.3",
+    "b0921c_02 left gap 17.2 -> 438.1",
+    "b0921c_03 left gap 17.0 -> 438.3",
+    "b0921c_04 left gap 16.7 -> 438.6",
+    "b0921c_05 left gap 16.9 -> 438.4",
+    "b0921c_06 left gap 17.2 -> 438.1",
+    "b0921c_07 left gap 17.0 -> 438.3",
+    "b0921c_08 left gap 17.0 -> 438.3",
+    "b0921c_09 left gap 16.9 -> 438.4",
+    "b0921c_10 left gap 17.0 -> 438.3",
+    "b0921c_11 left gap 16.8 -> 438.5",
+    "b0921c_12 left gap 16.9 -> 438.4",
+    "b0921c_13 left gap 16.9 -> 438.4",
+    "b0921c_14 left gap 16.7 -> 438.6",
+    "b0921c_49 left gap 25.8 -> 429.5",
+    "b0921c_51 right gap 25.0 -> 430.3",
+    "b0921c_54 left gap 19.2 -> 436.1",
+    "b0921c_55 right gap 19.1 -> 436.2",
+    "b0921c_57 left gap 20.1 -> 435.3",
+    "b0921c_64 right gap 22.2 -> 433.1",
+    "b0921c_66 left gap 18.4 -> 436.9",
+    "b0921c_70 left gap 20.7 -> 434.6"
+   ],
+   "b0922b": [
+    "b0922b_01 left gap 14.9 -> 440.4",
+    "b0922b_03 left gap 17.0 -> 438.3",
+    "b0922b_05 left gap 25.8 -> 429.6",
+    "b0922b_06 left gap 21.9 -> 433.4",
+    "b0922b_07 left gap 19.5 -> 435.8",
+    "b0922b_08 left gap 19.0 -> 436.3",
+    "b0922b_09 left gap 20.6 -> 434.8",
+    "b0922b_12 left gap 18.6 -> 436.7",
+    "b0922b_13 left gap 21.5 -> 433.8",
+    "b0922b_14 left gap 20.6 -> 434.7",
+    "b0922b_15 left gap 20.4 -> 434.9",
+    "b0922b_17 left gap 15.0 -> 440.3",
+    "b0922b_18 left gap 15.4 -> 439.9"
+   ]
+  }
+ },
+ "pair_check": {
+  "n": 100,
+  "mae": 0.286,
+  "max": 0.86,
+  "bad": []
+ }
+}

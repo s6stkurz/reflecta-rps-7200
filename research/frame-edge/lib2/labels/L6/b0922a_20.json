@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_20", "labeller": "L6", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "textured foliage to col 0; no plateau"},
+  "right": {"state": "edge", "x": 393.6, "lo": 393.1, "hi": 394.1,
+            "outer": 414.9, "x_top": null, "x_bottom": null,
+            "note": "base cols 394-412 (~83, R/G 2.2-2.3, B/G 0.50-0.55, G std <1). Boundary readable only in rows 0-140 where the picture has texture: col 393 ~30-80% base there. Below row ~150 the adjacent picture is at base density and featureless, so no contrast. Neighbour (tree trunk) from ~413.0 at the top rows 0-20, ~414.2 at rows 50-80, 415.0 from row 90 down"},
+  "frame_note": "left part 0-393 is the frame, right sliver 414-427 the neighbour"
+}

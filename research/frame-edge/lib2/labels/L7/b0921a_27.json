@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_27", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 16.8, "lo": 16.3, "hi": 17.3,
+            "outer": null, "x_top": 16.1, "x_bottom": 17.4,
+            "note": "base cols 0-15 to the aperture (R/G 2.3, B/G 0.54), no neighbour. Edge tilted: col 16 reads 26/66/94/94 by band, col 17 62/77 in the lower bands where the picture is bright, so the top meets picture ~16.1 and the bottom ~17.4."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bright foliage (likeness ~80) runs to col 427 but is textured and R/G 2.56, not base"},
+  "frame_note": "whole thumbnail checked: no interior gap"
+}

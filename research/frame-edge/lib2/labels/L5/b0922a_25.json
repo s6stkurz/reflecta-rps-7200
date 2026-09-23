@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_25",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "forest/trees run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 227.2,
+    "lo": 226.8,
+    "hi": 228.8,
+    "outer": 248.0,
+    "x_top": 228.7,
+    "x_bottom": 227.0,
+    "note": "interior gap, base cols 229-246 (G ~35, R/G 2.24, B/G 0.54). Frame = left part (forest with the girls, 0-227) vs neighbour (garden, 248-428, ~180 cols). The forest beside the gap is almost base-bright, so the edge is measurable only in the upper ~60% of the height: ~228.7 in the top band, 228.0, 227.6, 227.3, then ~227.1 at rows 143-178; below that there is no contrast (x_bottom 227.0 is the last measured value, not the bottom row). Neighbour starts sharply at 248.0 from mid-height down, ~247.0-247.2 in the top two bands."
+  },
+  "frame_note": "gap inside the frame at 227-248; frame = left part; lower-half edge unmeasurable"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_25", "labeller": "L6", "view": "A",
+  "left":  {"state": "edge", "x": 17.0, "lo": 16.7, "hi": 17.4,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "base cols 0-15 (~96, R/G 2.27, B/G 0.53); col 16 ~90-96% base, col 17 picture over rows 5-255. Bottom ~30 rows (258-287) show base through col 17 (x~18.0) -- a local step, likely the frame corner, not a tilt"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky/tree picture to col 427, likeness ~30"},
+  "frame_note": "no internal gap in the thumbnail"
+}

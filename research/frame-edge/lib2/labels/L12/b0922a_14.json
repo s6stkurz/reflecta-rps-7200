@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_14",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 9.6,
+    "lo": 9.0,
+    "hi": 10.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-8 featureless (row std ~1, noise only; picture 2.5-10), R/G 2.2, B/G 0.55, G 25-27: base at this roll level (b0922a_02 cols 0-11 read the same 57/26/14). Picture shadow next to it is nearly the same value, so the edge is placed by where texture starts: col 9 partial, col 10 picture; consistent in the textured rows 0-60 and 220-260"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage texture runs to 428"
+  },
+  "frame_note": "thin, shadowy forest frame; the shadows beside the base strip read within a few percent of base, so contrast at the left edge is low"
+}

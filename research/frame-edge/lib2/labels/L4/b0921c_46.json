@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_46",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "girl / wall scene runs to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 217.0,
+    "lo": 216.7,
+    "hi": 217.7,
+    "outer": 238.3,
+    "x_top": 217.4,
+    "x_bottom": 216.9,
+    "note": "gap deeper than the crop: base cols ~217-237 (R/G 2.24, B/G 0.54), neighbour (grey backdrop, ~70, ratio near base but darker and textured) from ~238. Edge sharp, slight tilt ~217.4 top to ~216.9 bottom. Outer is softer (low contrast backdrop): ~237.5 top to ~238.8 bottom"
+  },
+  "frame_note": "interior gap at cols ~217-237; the frame is the left part (217 picture columns vs 190 on the right, difference 27, above the tie margin)"
+}

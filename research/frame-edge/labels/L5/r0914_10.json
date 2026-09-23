@@ -1,0 +1,26 @@
+{
+  "id": "r0914_10",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall (b1/b4 ~71-77) and a near-base-bright dark garment (b2/b3 ~93) run to column 0: not full height, not base"
+  },
+  "right": {
+    "state": "edge",
+    "x": 422.0,
+    "lo": 421.6,
+    "hi": 422.4,
+    "outer": null,
+    "x_top": 422.3,
+    "x_bottom": 421.6,
+    "note": "clean base from 422 (~96) against wall ~60. Col 422 only 66% base in top band, col 421 40% base in bottom band: slight tilt"
+  },
+  "frame_note": ""
+}

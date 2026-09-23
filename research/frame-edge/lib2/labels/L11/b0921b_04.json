@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_04", "labeller": "L11", "view": "A",
+  "left":  {"state": "edge", "x": 10.2, "lo": 10.0, "hi": 11.2,
+            "outer": null, "x_top": 10.4, "x_bottom": 11.2,
+            "note": "clean sharp edge against a dark picture; base 0-9 (ratio R/G 2.3, B/G 0.52). Edge is slightly bowed: column 10 is ~45% base at the top, ~5% mid-height, fully base near the bottom where column 11 is ~18% base"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage runs to column 427; bottom band brightens in patches but no uniform plateau"},
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_25",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark navy wall to col 0, smooth 67-75, no line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall to col 427, smooth 69-80, no line"
+  },
+  "frame_note": "same scene as r0911_01/04"
+}

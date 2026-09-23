@@ -1,0 +1,39 @@
+# library 2 frames taken out of the test, 2026-09-23, on Stefan's call
+b0921c_15: Stefan 2026-09-23: unexposed strip in the middle (gap centre 102, >= 100 columns from both borders)
+b0921c_16: Stefan 2026-09-23: unexposed strip in the middle (gap centre 107, >= 100 columns from both borders)
+b0921c_17: Stefan 2026-09-23: unexposed strip in the middle (gap centre 122, >= 100 columns from both borders)
+b0921c_18: Stefan 2026-09-23: unexposed strip in the middle (gap centre 206, >= 100 columns from both borders)
+b0921c_19: Stefan 2026-09-23: unexposed strip in the middle (gap centre 224, >= 100 columns from both borders)
+b0921c_20: Stefan 2026-09-23: unexposed strip in the middle (gap centre 240, >= 100 columns from both borders)
+b0921c_21: Stefan 2026-09-23: unexposed strip in the middle (gap centre 256, >= 100 columns from both borders)
+b0921c_22: Stefan 2026-09-23: unexposed strip in the middle (gap centre 273, >= 100 columns from both borders)
+b0921c_23: Stefan 2026-09-23: unexposed strip in the middle (gap centre 291, >= 100 columns from both borders)
+b0921c_24: Stefan 2026-09-23: unexposed strip in the middle (gap centre 307, >= 100 columns from both borders)
+b0921c_25: Stefan 2026-09-23: unexposed strip in the middle (gap centre 324, >= 100 columns from both borders)
+b0921c_39: Stefan 2026-09-23: unexposed strip in the middle (gap centre 107, >= 100 columns from both borders)
+b0921c_40: Stefan 2026-09-23: unexposed strip in the middle (gap centre 125, >= 100 columns from both borders)
+b0921c_41: Stefan 2026-09-23: unexposed strip in the middle (gap centre 141, >= 100 columns from both borders)
+b0921c_42: Stefan 2026-09-23: unexposed strip in the middle (gap centre 158, >= 100 columns from both borders)
+b0921c_43: Stefan 2026-09-23: unexposed strip in the middle (gap centre 177, >= 100 columns from both borders)
+b0921c_44: Stefan 2026-09-23: unexposed strip in the middle (gap centre 193, >= 100 columns from both borders)
+b0921c_45: Stefan 2026-09-23: unexposed strip in the middle (gap centre 210, >= 100 columns from both borders)
+b0921c_46: Stefan 2026-09-23: unexposed strip in the middle (gap centre 228, >= 100 columns from both borders)
+b0921c_47: Stefan 2026-09-23: unexposed strip in the middle (gap centre 313, >= 100 columns from both borders)
+b0921c_50: Stefan 2026-09-23: unexposed strip in the middle (gap centre 219, >= 100 columns from both borders)
+b0921c_53: Stefan 2026-09-23: unexposed strip in the middle (gap centre 300, >= 100 columns from both borders)
+b0921c_56: Stefan 2026-09-23: unexposed strip in the middle (gap centre 197, >= 100 columns from both borders)
+b0921c_59: Stefan 2026-09-23: unexposed strip in the middle (gap centre 249, >= 100 columns from both borders)
+b0921c_62: Stefan 2026-09-23: named as not good
+b0921c_63: Stefan 2026-09-23: named as not good
+b0921c_67: Stefan 2026-09-23: named as not good
+b0921c_68: Stefan 2026-09-23: unexposed strip in the middle (gap centre 312, >= 100 columns from both borders)
+b0922a_19: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_20: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_21: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_22: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_23: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_24: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_25: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_26: dup of b0922a_25, which is excluded
+b0922a_27: Stefan 2026-09-23: b0922a page 2 is not a suitable test
+b0922a_29: Stefan 2026-09-23: b0922a page 2 is not a suitable test

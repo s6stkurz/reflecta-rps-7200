@@ -1,0 +1,26 @@
+{
+  "id": "r0914_11",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall (b1,b4 ~45-60) and dark trousers (b2,b3 ~90, clear on negative) run to col 0; not full height, no line"
+  },
+  "right": {
+    "state": "edge",
+    "x": 420.6,
+    "lo": 420.2,
+    "hi": 420.9,
+    "outer": null,
+    "x_top": 420.7,
+    "x_bottom": 420.25,
+    "note": "clean sharp edge, base 421-427 at ~94; col 420 partial: b1-b2 ~32%, b3 45%, b4 73% (col 419 b4 slightly up) -> slight tilt, bottom further left"
+  },
+  "frame_note": ""
+}

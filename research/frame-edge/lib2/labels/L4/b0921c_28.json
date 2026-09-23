@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_28",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop runs to column 0; no plateau (values ~35-55, grey backdrop)"
+  },
+  "right": {
+    "state": "edge",
+    "x": 367.4,
+    "lo": 366.6,
+    "hi": 368.0,
+    "outer": 384.3,
+    "x_top": 367.8,
+    "x_bottom": 366.3,
+    "note": "base cols ~367-383 (R/G 2.3, B/G 0.53); neighbour picture from ~384. Edge sharp but tilted: ~367.8-367.9 in bands 2-4, ~367.0 at mid-low, 366.8 then 366.1 in the bottom band; the top band alone reads ~367.1. Outer ~384.0-384.9 (top band 383.1)"
+  },
+  "frame_note": "gap at cols ~367-383; the frame is the left part (367 picture columns vs 44)"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_17", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 62.3, "lo": 62.0, "hi": 62.9,
+            "outer": 47.2, "x_top": 62.1, "x_bottom": 62.9,
+            "note": "base cols 48-61 (R/G 2.23, B/G 0.53). Edge sits just inside the crop: ~62.1-62.2 against the dark wall in the top half, ~62.4-62.8 lower; in the bottom ~30% the picture beside it is a pale floor at 89-92 against base 95, so the crossing there is soft (col 62 reads base, col 63 floor). Neighbour picture cols 0-46; outer ~47.9 in the top fifth, 47.0 through the middle, ~47.7 in the bottom tenth"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "room scene to col 427; bright floor in the bottom band only, not full height"},
+  "frame_note": "gap at cols ~47-62; frame is the right part (62-427)"
+}

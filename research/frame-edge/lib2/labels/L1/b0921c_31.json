@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_31", "labeller": "L1", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "uniform wall/backdrop ~52 to col 0, B/G 0.61 not base, well below base's 80"},
+  "right": {"state": "edge", "x": 418.9, "lo": 418.0, "hi": 419.4,
+            "outer": null, "x_top": 419.2, "x_bottom": 418.0,
+            "note": "base cols 419-427 read ~80 (not the frame's brightest), R/G 2.26-2.31 B/G 0.52-0.54; slate in view B. Edge leans: col 418 is base in bottom band only, col 419 ~65% base in band 2"},
+  "frame_note": "thin vertical scratch line near col 215, not base"
+}

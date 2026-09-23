@@ -1,0 +1,26 @@
+{
+  "id": "x0920_40",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey wall to col 0; black trousers (b2/b3 ~95) reach col 0 only in the middle band, wall above and below, so not base"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey wall to col 427, flat 57-68, no line"
+  },
+  "frame_note": ""
+}

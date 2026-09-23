@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_13", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 19.5, "lo": 19.0, "hi": 20.0,
+            "outer": 0.2, "x_top": 19.0, "x_bottom": 19.95,
+            "note": "base cols 1-18 (~94, R/G 2.3), black in B. Against the dense sky (rows 10-85) col 19 is fully picture, x=19.0, sharp. Below row 90 the adjacent grass is close to base level; col 19 still reads ~80-100% base in rows 170-280 (x~19.9), so the edge sits about one column further right in the lower half. Col 0 is 10-25% darker in all channels over rows 0-60 only: a faint neighbour sliver (sky), outer ~0.2, low confidence"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky and grass to col 427; no plateau"},
+  "frame_note": "no internal gap in the thumbnail"
+}

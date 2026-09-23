@@ -1,0 +1,26 @@
+{
+  "id": "x0920_76",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tiles and grout run to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright grout (~90) at 410-427 is scene: tiles cut in at 419-427 (b2, ~35% height) and 408-427 (bottom), so no full-height plateau"
+  },
+  "frame_note": "tile mosaic; grout is near base level, same scene family as r0914_19"
+}

@@ -1,0 +1,2728 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "gold200_01": {
+   "left": {
+    "state": "edge",
+    "x": 2.057713326797527,
+    "lo": 1.6508732740389247,
+    "hi": 2.464553379556129,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 2.2253086162501003,
+    "x_bottom": 1.8901180373449535,
+    "note": "Z 169, step in 12/12 bands (0 flat), scatter 0.19"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 6.3), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     60.0,
+     27.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.04867764073385654,
+     0.07246376811594202,
+     0.09909615344316344
+    ],
+    "sig_pix": 0.03741619444768583,
+    "left": {
+     "U_border": [
+      0.54,
+      9.41,
+      9.83,
+      12.42
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0049,
+       "per_channel": [
+        0.938,
+        1.0,
+        1.0
+       ],
+       "run": 1,
+       "a_run": 0,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 169.35,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 20.88,
+       "uniform": 0.54,
+       "fit": [
+        2.057713326797527,
+        -0.33519057890514686,
+        0.1850523996612387
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+       ]
+      }
+     ],
+     "edge": {
+      "x": 2.058,
+      "slope": -0.335,
+      "scatter": 0.185
+     }
+    },
+    "right": {
+     "U_border": [
+      6.46,
+      6.27,
+      4.68,
+      5.45
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8417,
+       "per_channel": [
+        0.797,
+        0.815,
+        0.857
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       1,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 6.27,
+      "lvl": [
+       0.573,
+       0.623,
+       0.722,
+       0.722,
+       0.802,
+       0.812,
+       0.822,
+       0.822,
+       0.831,
+       0.852,
+       0.852,
+       0.871
+      ]
+     }
+    }
+   }
+  },
+  "gold200_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.85,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border's weakest channel at 0.10 of that channel's base: a dye, not a falloff"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.815273080429276,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 3.5), darker than base in 4/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     52.0,
+     20.0,
+     9.5
+    ],
+    "sig_rel": [
+     0.047759568380964325,
+     0.06308489131391405,
+     0.13299462833076045
+    ],
+    "sig_pix": 0.036607188519488215,
+    "left": {
+     "U_border": [
+      0.86,
+      0.96,
+      1.0,
+      0.77
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3181,
+       "per_channel": [
+        0.385,
+        0.25,
+        0.1
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       12,
+       12
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 0.86,
+      "lvl": [
+       0.307,
+       0.307,
+       0.318,
+       0.318,
+       0.318,
+       0.318,
+       0.318,
+       0.318,
+       0.318,
+       0.329,
+       0.335,
+       0.358
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      3.53,
+      4.99,
+      5.62,
+      5.33
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9329,
+       "per_channel": [
+        0.923,
+        0.95,
+        0.9
+       ],
+       "run": 1,
+       "a_run": 0,
+       "k": 2,
+       "tilt": -2.0,
+       "Z": 11.16,
+       "steps": 8,
+       "flat": 3,
+       "zmin": -2.17,
+       "uniform": 3.53,
+       "why": "weak step, base side structured"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       4,
+       4
+      ],
+      "U01": 3.53,
+      "lvl": [
+       0.839,
+       0.873,
+       0.89,
+       0.895,
+       0.911,
+       0.912,
+       0.926,
+       0.934,
+       0.94,
+       0.953,
+       0.954,
+       1.04
+      ]
+     }
+    }
+   }
+  },
+  "gold200_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 7.7), darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 5.6), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     29.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.06424071990014059,
+     0.08631159425834177,
+     0.07233828963545243
+    ],
+    "sig_pix": 0.04197202405675264,
+    "left": {
+     "U_border": [
+      8.27,
+      7.67,
+      4.87,
+      3.23
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8303,
+       "per_channel": [
+        0.824,
+        0.862,
+        0.824
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       2,
+       1
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 7.67,
+      "lvl": [
+       0.414,
+       0.494,
+       0.743,
+       0.8,
+       0.809,
+       0.81,
+       0.823,
+       0.83,
+       0.831,
+       0.844,
+       0.865,
+       0.872
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      5.98,
+      5.6,
+      6.95,
+      4.63
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7187,
+       "per_channel": [
+        0.735,
+        0.759,
+        0.765
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       4,
+       5
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 5.6,
+      "lvl": [
+       0.477,
+       0.545,
+       0.564,
+       0.586,
+       0.669,
+       0.702,
+       0.736,
+       0.749,
+       0.776,
+       0.789,
+       0.797,
+       0.802
+      ]
+     }
+    }
+   }
+  },
+  "gold200_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 10.0), darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 3.2), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     61.0,
+     25.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.040654311496711684,
+     0.07378505542816148,
+     0.09115520319321029
+    ],
+    "sig_pix": 0.033166596384970375,
+    "left": {
+     "U_border": [
+      10.0,
+      10.31,
+      10.49,
+      11.29
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6096,
+       "per_channel": [
+        0.645,
+        0.577,
+        0.5
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       6,
+       6
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 10.0,
+      "lvl": [
+       0.185,
+       0.196,
+       0.216,
+       0.235,
+       0.445,
+       0.544,
+       0.676,
+       0.773,
+       0.819,
+       0.822,
+       0.822,
+       0.856
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      3.16,
+      3.41,
+      3.03,
+      2.82
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8423,
+       "per_channel": [
+        0.823,
+        0.846,
+        0.857
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 3.16,
+      "lvl": [
+       0.765,
+       0.799,
+       0.818,
+       0.819,
+       0.821,
+       0.833,
+       0.84,
+       0.848,
+       0.854,
+       0.859,
+       0.887,
+       0.892
+      ]
+     }
+    }
+   }
+  },
+  "gold200_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 29.1), darker than base in 10/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 18.5), darker than base in 6/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     41.5,
+     16.0,
+     10.0
+    ],
+    "sig_rel": [
+     0.053172290552711464,
+     0.08874962836170934,
+     0.07349167432421883
+    ],
+    "sig_pix": 0.03875487882136721,
+    "left": {
+     "U_border": [
+      29.14,
+      29.59,
+      28.26,
+      27.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5063,
+       "per_channel": [
+        0.643,
+        0.514,
+        0.35
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       8,
+       8
+      ],
+      "soft": [
+       10,
+       10
+      ],
+      "U01": 29.14,
+      "lvl": [
+       0.267,
+       0.294,
+       0.347,
+       0.37,
+       0.437,
+       0.449,
+       0.497,
+       0.534,
+       0.743,
+       0.785,
+       1.181,
+       1.376
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      19.28,
+      18.49,
+      18.41,
+      18.69
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9874,
+       "per_channel": [
+        1.0,
+        1.0,
+        1.0
+       ],
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "hard": [
+       5,
+       5
+      ],
+      "soft": [
+       6,
+       6
+      ],
+      "U01": 18.49,
+      "lvl": [
+       0.355,
+       0.368,
+       0.409,
+       0.446,
+       0.497,
+       0.761,
+       1.182,
+       1.224,
+       1.228,
+       1.279,
+       1.288,
+       1.29
+      ]
+     }
+    }
+   }
+  },
+  "gold200_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.88932857945938,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 10.9), darker than base in 4/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 16.5), darker than base in 9/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     58.0,
+     23.0,
+     13.0
+    ],
+    "sig_rel": [
+     0.04812250773358192,
+     0.08200364523416497,
+     0.09845887253431267
+    ],
+    "sig_pix": 0.03824480445560344,
+    "left": {
+     "U_border": [
+      11.21,
+      10.93,
+      10.16,
+      10.02
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9884,
+       "per_channel": [
+        0.948,
+        0.957,
+        1.0
+       ],
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "hard": [
+       1,
+       1
+      ],
+      "soft": [
+       4,
+       4
+      ],
+      "U01": 10.93,
+      "lvl": [
+       0.379,
+       0.714,
+       0.856,
+       0.882,
+       0.978,
+       0.988,
+       0.989,
+       0.99,
+       1.01,
+       1.012,
+       1.017,
+       1.022
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      16.51,
+      16.82,
+      16.72,
+      15.21
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6954,
+       "per_channel": [
+        0.638,
+        0.609,
+        0.385
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       6,
+       6
+      ],
+      "soft": [
+       10,
+       9
+      ],
+      "U01": 16.51,
+      "lvl": [
+       0.309,
+       0.329,
+       0.338,
+       0.529,
+       0.531,
+       0.56,
+       0.796,
+       0.869,
+       0.87,
+       0.889,
+       0.911,
+       0.954
+      ]
+     }
+    }
+   }
+  },
+  "gold200_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 12.0), darker than base in 11/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 8.3), darker than base in 10/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     58.0,
+     24.0,
+     12.0
+    ],
+    "sig_rel": [
+     0.07060254893597472,
+     0.07851251288202339,
+     0.10247924365022427
+    ],
+    "sig_pix": 0.046723884013683555,
+    "left": {
+     "U_border": [
+      12.36,
+      12.02,
+      12.42,
+      11.35
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5833,
+       "per_channel": [
+        0.621,
+        0.583,
+        0.667
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       7,
+       7
+      ],
+      "soft": [
+       11,
+       11
+      ],
+      "U01": 12.02,
+      "lvl": [
+       0.349,
+       0.391,
+       0.406,
+       0.498,
+       0.573,
+       0.582,
+       0.584,
+       0.684,
+       0.721,
+       0.826,
+       0.866,
+       0.95
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      8.59,
+      8.35,
+      8.87,
+      7.46
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8447,
+       "per_channel": [
+        0.793,
+        0.792,
+        0.833
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       3,
+       3
+      ],
+      "soft": [
+       10,
+       10
+      ],
+      "U01": 8.35,
+      "lvl": [
+       0.52,
+       0.528,
+       0.557,
+       0.62,
+       0.739,
+       0.779,
+       0.813,
+       0.875,
+       0.88,
+       0.88,
+       0.915,
+       0.918
+      ]
+     }
+    }
+   }
+  },
+  "gold200_08": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border flat and darker than base in 4/12 bands: picture if the prescan is corrected, dimmed base if not"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 4.0), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     58.0,
+     23.0,
+     12.0
+    ],
+    "sig_rel": [
+     0.08555112485970119,
+     0.10933819364555329,
+     0.15371886547533642
+    ],
+    "sig_pix": 0.06170971541012747,
+    "left": {
+     "U_border": [
+      2.77,
+      2.34,
+      2.83,
+      3.24
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9026,
+       "per_channel": [
+        0.914,
+        0.913,
+        0.917
+       ],
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       4,
+       6
+      ],
+      "U01": 2.34,
+      "lvl": [
+       0.692,
+       0.85,
+       0.864,
+       0.868,
+       0.895,
+       0.896,
+       0.91,
+       0.91,
+       0.91,
+       0.932,
+       0.982,
+       1.013
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      3.98,
+      3.97,
+      4.03,
+      3.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4684,
+       "per_channel": [
+        0.483,
+        0.478,
+        0.25
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       12,
+       12
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 3.97,
+      "lvl": [
+       0.289,
+       0.303,
+       0.326,
+       0.439,
+       0.439,
+       0.461,
+       0.471,
+       0.471,
+       0.475,
+       0.48,
+       0.493,
+       0.507
+      ]
+     }
+    }
+   }
+  },
+  "gold200_09": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border flat and darker than base in 12/12 bands: picture if the prescan is corrected, dimmed base if not"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border flat and darker than base in 12/12 bands: picture if the prescan is corrected, dimmed base if not"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     74.0,
+     33.0,
+     18.0
+    ],
+    "sig_rel": [
+     0.041973221484107336,
+     0.05676445302903191,
+     0.06831949576681619
+    ],
+    "sig_pix": 0.030258485774572713,
+    "left": {
+     "U_border": [
+      0.85,
+      0.63,
+      0.83,
+      0.8
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8017,
+       "per_channel": [
+        0.797,
+        0.818,
+        0.833
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 0.63,
+      "lvl": [
+       0.782,
+       0.784,
+       0.784,
+       0.791,
+       0.791,
+       0.791,
+       0.795,
+       0.798,
+       0.799,
+       0.8,
+       0.802,
+       0.802
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      3.51,
+      2.18,
+      0.83,
+      0.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7276,
+       "per_channel": [
+        0.716,
+        0.727,
+        0.778
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       1,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 2.18,
+      "lvl": [
+       0.474,
+       0.698,
+       0.705,
+       0.712,
+       0.712,
+       0.712,
+       0.714,
+       0.714,
+       0.717,
+       0.721,
+       0.721,
+       0.723
+      ]
+     }
+    }
+   }
+  },
+  "gold200_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 3.9), darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 8.1), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.035583347778356915,
+     0.04032512137044942,
+     0.07685943273766821
+    ],
+    "sig_pix": 0.02520545068739709,
+    "left": {
+     "U_border": [
+      3.9,
+      5.4,
+      5.6,
+      5.26
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.835,
+       "per_channel": [
+        0.829,
+        0.839,
+        0.812
+       ],
+       "why": "below base"
+      },
+      {
+       "a": 95,
+       "plateau": 0.8088,
+       "per_channel": [
+        0.871,
+        0.806,
+        0.75
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 3.9,
+      "lvl": [
+       0.731,
+       0.75,
+       0.786,
+       0.806,
+       0.818,
+       0.825,
+       0.825,
+       0.825,
+       0.838,
+       0.839,
+       0.843,
+       0.852
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      8.11,
+      10.11,
+      10.98,
+      11.48
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7626,
+       "per_channel": [
+        0.743,
+        0.742,
+        0.75
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       4,
+       4
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 8.11,
+      "lvl": [
+       0.549,
+       0.575,
+       0.576,
+       0.587,
+       0.691,
+       0.711,
+       0.717,
+       0.731,
+       0.749,
+       0.757,
+       0.762,
+       0.763
+      ]
+     }
+    }
+   }
+  },
+  "gold200_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 46.4), darker than base in 4/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 40.5), darker than base in 6/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     52.0,
+     23.0,
+     13.0
+    ],
+    "sig_rel": [
+     0.023763580171486817,
+     0.026733715734841117,
+     0.047298112453949666
+    ],
+    "sig_pix": 0.0166273674461399,
+    "left": {
+     "U_border": [
+      46.36,
+      49.41,
+      47.28,
+      47.04
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9726,
+       "per_channel": [
+        0.935,
+        0.958,
+        0.923
+       ],
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "hard": [
+       3,
+       3
+      ],
+      "soft": [
+       4,
+       4
+      ],
+      "U01": 46.36,
+      "lvl": [
+       0.244,
+       0.263,
+       0.308,
+       0.798,
+       0.955,
+       0.964,
+       0.964,
+       0.981,
+       1.007,
+       1.009,
+       1.052,
+       1.071
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      41.93,
+      40.5,
+      42.61,
+      44.17
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9408,
+       "per_channel": [
+        0.897,
+        0.917,
+        0.923
+       ],
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "hard": [
+       3,
+       4
+      ],
+      "soft": [
+       7,
+       6
+      ],
+      "U01": 40.5,
+      "lvl": [
+       0.308,
+       0.334,
+       0.351,
+       0.808,
+       0.836,
+       0.902,
+       0.919,
+       0.953,
+       0.964,
+       1.009,
+       1.01,
+       1.01
+      ]
+     }
+    }
+   }
+  },
+  "gold200_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 28.2), darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 4.3), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     72.0,
+     32.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.017199734176722513,
+     0.03904463087538585,
+     0.03616914481772621
+    ],
+    "sig_pix": 0.014432741963245486,
+    "left": {
+     "U_border": [
+      28.23,
+      28.44,
+      28.8,
+      28.94
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.823,
+       "per_channel": [
+        0.806,
+        0.812,
+        0.8
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       4,
+       4
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 28.23,
+      "lvl": [
+       0.358,
+       0.429,
+       0.496,
+       0.587,
+       0.809,
+       0.81,
+       0.815,
+       0.815,
+       0.819,
+       0.819,
+       0.819,
+       0.825
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      4.27,
+      4.28,
+      4.44,
+      3.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7521,
+       "per_channel": [
+        0.736,
+        0.75,
+        0.8
+       ],
+       "why": "below base"
+      },
+      {
+       "a": 36,
+       "plateau": 0.8464,
+       "per_channel": [
+        0.833,
+        0.844,
+        0.857
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 4.27,
+      "lvl": [
+       0.649,
+       0.733,
+       0.734,
+       0.737,
+       0.742,
+       0.743,
+       0.743,
+       0.746,
+       0.747,
+       0.748,
+       0.748,
+       0.752
+      ]
+     }
+    }
+   }
+  },
+  "gold200_13": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border flat and darker than base in 12/12 bands: picture if the prescan is corrected, dimmed base if not"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 24.4), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     63.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02927978390006408,
+     0.043155797129170885,
+     0.039690040398925076
+    ],
+    "sig_pix": 0.02068049974584757,
+    "left": {
+     "U_border": [
+      1.19,
+      0.72,
+      1.15,
+      0.8
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9118,
+       "per_channel": [
+        0.906,
+        0.897,
+        0.875
+       ],
+       "run": 85,
+       "a_run": 0,
+       "k": 36,
+       "tilt": -1.0,
+       "Z": 5.21,
+       "steps": 3,
+       "flat": 9,
+       "zmin": -1.47,
+       "uniform": 1.13,
+       "why": "weak step, step in too few bands, wider than a gap"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 0.72,
+      "lvl": [
+       0.886,
+       0.894,
+       0.895,
+       0.903,
+       0.903,
+       0.903,
+       0.903,
+       0.903,
+       0.903,
+       0.911,
+       0.911,
+       0.911
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      24.44,
+      25.45,
+      24.06,
+      25.05
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6702,
+       "per_channel": [
+        0.633,
+        0.621,
+        0.688
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       5,
+       5
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 24.44,
+      "lvl": [
+       0.336,
+       0.361,
+       0.564,
+       0.574,
+       0.587,
+       0.63,
+       0.653,
+       0.662,
+       0.68,
+       0.75,
+       0.767,
+       0.791
+      ]
+     }
+    }
+   }
+  },
+  "gold200_14": {
+   "left": {
+    "state": "edge",
+    "x": 4.48761302259136,
+    "lo": 4.079155068557327,
+    "hi": 4.896070976625394,
+    "conf": 0.8641166666666666,
+    "outer": null,
+    "x_top": 5.426628968043062,
+    "x_bottom": 3.548597077139659,
+    "note": "Z 39, step in 10/12 bands (2 flat), scatter 0.16"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 2.6), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     63.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02963470333004335,
+     0.043155797129170885,
+     0.039690040398925076
+    ],
+    "sig_pix": 0.020804424523039614,
+    "left": {
+     "U_border": [
+      1.18,
+      0.64,
+      1.01,
+      0.99
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9268,
+       "per_channel": [
+        0.937,
+        0.931,
+        0.938
+       ],
+       "run": 5,
+       "a_run": 0,
+       "k": 4,
+       "tilt": -2.0,
+       "Z": 39.49,
+       "steps": 10,
+       "flat": 2,
+       "zmin": 2.85,
+       "uniform": 0.91,
+       "fit": [
+        4.48761302259136,
+        -1.8780318909034022,
+        0.16268693105104967
+       ],
+       "n_pts": 9,
+       "why": "ok",
+       "ks": [
+        5,
+        5,
+        5,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        3,
+        3,
+        3
+       ]
+      }
+     ],
+     "edge": {
+      "x": 4.488,
+      "slope": -1.878,
+      "scatter": 0.163
+     }
+    },
+    "right": {
+     "U_border": [
+      2.62,
+      2.94,
+      2.54,
+      2.98
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.172,
+       "per_channel": [
+        0.206,
+        0.172,
+        0.125
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       12,
+       12
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 2.62,
+      "lvl": [
+       0.151,
+       0.151,
+       0.151,
+       0.159,
+       0.167,
+       0.168,
+       0.168,
+       0.168,
+       0.176,
+       0.184,
+       0.192,
+       0.215
+      ]
+     }
+    }
+   }
+  },
+  "gold200_15": {
+   "left": {
+    "state": "edge",
+    "x": 5.142553510753396,
+    "lo": 4.711792685321926,
+    "hi": 5.5733143361848665,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 4.656673718539529,
+    "x_bottom": 5.628433302967264,
+    "note": "Z 179, step in 12/12 bands (0 flat), scatter 0.23"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 55.4), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     60.0,
+     27.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.023407908785137634,
+     0.025228645790680848,
+     0.04583011101693304
+    ],
+    "sig_pix": 0.016070027629447238,
+    "left": {
+     "U_border": [
+      1.43,
+      1.18,
+      1.48,
+      1.2
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.999,
+       "per_channel": [
+        0.983,
+        1.0,
+        1.0
+       ],
+       "run": 5,
+       "a_run": 0,
+       "k": 5,
+       "tilt": -1.0,
+       "Z": 178.53,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 39.02,
+       "uniform": 1.2,
+       "fit": [
+        5.142553510753396,
+        0.9717595844277357,
+        0.22648439328695139
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+       ]
+      }
+     ],
+     "edge": {
+      "x": 5.143,
+      "slope": 0.972,
+      "scatter": 0.226
+     }
+    },
+    "right": {
+     "U_border": [
+      55.74,
+      55.37,
+      51.44,
+      52.71
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.507,
+       "per_channel": [
+        0.517,
+        0.519,
+        0.467
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       7,
+       7
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 55.37,
+      "lvl": [
+       0.256,
+       0.279,
+       0.341,
+       0.411,
+       0.465,
+       0.495,
+       0.503,
+       0.705,
+       0.713,
+       0.86,
+       0.876,
+       0.876
+      ]
+     }
+    }
+   }
+  },
+  "gold200_16": {
+   "left": {
+    "state": "edge",
+    "x": 2.7409956441735,
+    "lo": 2.2692024902839836,
+    "hi": 3.2127887980630168,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 3.307791302301136,
+    "x_bottom": 2.1741999860458643,
+    "note": "Z 238, step in 12/12 bands (0 flat), scatter 0.30"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 4.7), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     60.0,
+     28.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.052200019581536014,
+     0.08216618978461461,
+     0.11620053996192366
+    ],
+    "sig_pix": 0.04119820605905516,
+    "left": {
+     "U_border": [
+      0.56,
+      0.41,
+      15.54,
+      11.93
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0007,
+       "per_channel": [
+        1.0,
+        1.0,
+        1.0
+       ],
+       "run": 2,
+       "a_run": 0,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 237.57,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 29.53,
+       "uniform": 0.56,
+       "fit": [
+        2.7409956441735,
+        -1.1335913162552713,
+        0.29755447092914183
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+       ]
+      }
+     ],
+     "edge": {
+      "x": 2.741,
+      "slope": -1.134,
+      "scatter": 0.298
+     }
+    },
+    "right": {
+     "U_border": [
+      4.67,
+      5.7,
+      6.08,
+      5.79
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4329,
+       "per_channel": [
+        0.433,
+        0.429,
+        0.357
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       11,
+       11
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 4.67,
+      "lvl": [
+       0.354,
+       0.363,
+       0.385,
+       0.405,
+       0.415,
+       0.432,
+       0.434,
+       0.439,
+       0.442,
+       0.447,
+       0.457,
+       0.637
+      ]
+     }
+    }
+   }
+  },
+  "gold200_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 33.2), darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 4.3), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     32.0,
+     18.0
+    ],
+    "sig_rel": [
+     0.02748280262529777,
+     0.038888138739126776,
+     0.034159747883408094
+    ],
+    "sig_pix": 0.018757403674836703,
+    "left": {
+     "U_border": [
+      33.33,
+      33.18,
+      32.35,
+      32.82
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4386,
+       "per_channel": [
+        0.471,
+        0.438,
+        0.333
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       8,
+       8
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 33.18,
+      "lvl": [
+       0.294,
+       0.294,
+       0.315,
+       0.318,
+       0.36,
+       0.421,
+       0.456,
+       0.504,
+       0.762,
+       0.786,
+       0.8,
+       0.807
+      ]
+     }
+    },
+    "right": {
+     "U_border": [
+      4.91,
+      4.26,
+      4.34,
+      4.9
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7101,
+       "per_channel": [
+        0.721,
+        0.688,
+        0.722
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       0,
+       0
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 4.26,
+      "lvl": [
+       0.624,
+       0.673,
+       0.683,
+       0.689,
+       0.689,
+       0.69,
+       0.692,
+       0.697,
+       0.697,
+       0.713,
+       0.728,
+       0.741
+      ]
+     }
+    }
+   }
+  },
+  "hwcheck_01": {
+   "left": {
+    "state": "edge",
+    "x": 3.2740582941997847,
+    "lo": 2.824295526909462,
+    "hi": 3.7238210614901073,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 4.1574247500056165,
+    "x_bottom": 2.3906918383939524,
+    "note": "Z 56, step in 12/12 bands (0 flat), scatter 0.25"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 15.5), darker than base in 11/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     61.0,
+     27.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.0409973919377806,
+     0.07525953433181139,
+     0.09487734358086626
+    ],
+    "sig_pix": 0.033660238799500336,
+    "left": {
+     "U_border": [
+      0.48,
+      0.83,
+      0.89,
+      15.34
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.999,
+       "per_channel": [
+        1.0,
+        1.0,
+        1.0
+       ],
+       "run": 3,
+       "a_run": 0,
+       "k": 3,
+       "tilt": -1.0,
+       "Z": 56.43,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 4.12,
+       "uniform": 0.65,
+       "fit": [
+        3.2740582941997847,
+        -1.7667329116116643,
+        0.2483534533336556
+       ],
+       "n_pts": 11,
+       "why": "ok",
+       "ks": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+       ]
+      }
+     ],
+     "edge": {
+      "x": 3.274,
+      "slope": -1.767,
+      "scatter": 0.248
+     }
+    },
+    "right": {
+     "U_border": [
+      15.56,
+      15.52,
+      16.14,
+      15.28
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6042,
+       "per_channel": [
+        0.557,
+        0.444,
+        0.286
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       6,
+       6
+      ],
+      "soft": [
+       11,
+       11
+      ],
+      "U01": 15.52,
+      "lvl": [
+       0.283,
+       0.313,
+       0.313,
+       0.324,
+       0.354,
+       0.466,
+       0.743,
+       0.776,
+       0.842,
+       0.859,
+       0.877,
+       0.919
+      ]
+     }
+    }
+   }
+  },
+  "hwcheck_02": {
+   "left": {
+    "state": "edge",
+    "x": 2.349067295818344,
+    "lo": 1.9694605862416679,
+    "hi": 2.72867400539502,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 2.7562721398403873,
+    "x_bottom": 1.9418624517963003,
+    "note": "Z 118, step in 12/12 bands (0 flat), scatter 0.14"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 6.2), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     62.0,
+     27.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.07177535683600102,
+     0.08454106280193235,
+     0.09487734358086626
+    ],
+    "sig_pix": 0.04739838416381087,
+    "left": {
+     "U_border": [
+      0.31,
+      0.68,
+      8.8,
+      11.44
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0,
+       "per_channel": [
+        1.0,
+        1.0,
+        1.0
+       ],
+       "run": 2,
+       "a_run": 0,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 118.42,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 9.6,
+       "uniform": 0.31,
+       "fit": [
+        2.349067295818344,
+        -0.814409688044087,
+        0.13788286561018254
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+       ]
+      }
+     ],
+     "edge": {
+      "x": 2.349,
+      "slope": -0.814,
+      "scatter": 0.138
+     }
+    },
+    "right": {
+     "U_border": [
+      6.16,
+      6.68,
+      5.09,
+      5.32
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7655,
+       "per_channel": [
+        0.774,
+        0.704,
+        0.643
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       4,
+       4
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 6.16,
+      "lvl": [
+       0.476,
+       0.501,
+       0.501,
+       0.568,
+       0.701,
+       0.736,
+       0.739,
+       0.758,
+       0.801,
+       0.805,
+       0.824,
+       0.85
+      ]
+     }
+    }
+   }
+  },
+  "hwcheck_03": {
+   "left": {
+    "state": "edge",
+    "x": 3.6609077905488383,
+    "lo": 3.2190976763635977,
+    "hi": 4.102717904734079,
+    "conf": 0.9465,
+    "outer": null,
+    "x_top": 4.2264282429990585,
+    "x_bottom": 3.0953873380986177,
+    "note": "Z 39, step in 12/12 bands (0 flat), scatter 0.25"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border structured along y (U 4.0), darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     61.0,
+     27.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.0819947838755612,
+     0.10091458316272339,
+     0.1423160153712994
+    ],
+    "sig_pix": 0.05809351656996146,
+    "left": {
+     "U_border": [
+      0.34,
+      0.2,
+      0.5,
+      1.1
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0025,
+       "per_channel": [
+        1.0,
+        1.0,
+        1.0
+       ],
+       "run": 3,
+       "a_run": 0,
+       "k": 3,
+       "tilt": -1.0,
+       "Z": 39.3,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 4.18,
+       "uniform": 0.27,
+       "fit": [
+        3.6609077905488383,
+        -1.131040904900441,
+        0.2456223227959804
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+       ]
+      }
+     ],
+     "edge": {
+      "x": 3.661,
+      "slope": -1.131,
+      "scatter": 0.246
+     }
+    },
+    "right": {
+     "U_border": [
+      4.0,
+      4.08,
+      4.16,
+      4.38
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4377,
+       "per_channel": [
+        0.475,
+        0.407,
+        0.214
+       ],
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "hard": [
+       12,
+       12
+      ],
+      "soft": [
+       12,
+       12
+      ],
+      "U01": 4.0,
+      "lvl": [
+       0.274,
+       0.283,
+       0.299,
+       0.405,
+       0.405,
+       0.421,
+       0.425,
+       0.445,
+       0.459,
+       0.462,
+       0.463,
+       0.467
+      ]
+     }
+    }
+   }
+  }
+ }
+}

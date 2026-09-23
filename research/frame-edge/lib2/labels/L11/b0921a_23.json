@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_23", "labeller": "L11", "view": "B",
+  "left":  {"state": "edge", "x": 18.3, "lo": 18.0, "hi": 18.9,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "base columns 0-17 (R/G 2.31, B/G 0.55), straight edge. Dark foliage beside it is close to base (~80-86 vs 93), so the crossing is best read where white hydrangeas meet it (rows 133-160): column 18 only ~13-35% base there, x ~18.1-18.35. Lower-contrast rows put column 18 at 50-85% base, hence the wider hi"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "house, railing and flowers run to column 427; the bright patch at 423-427 in band 3 is a dark object in the scene with a curved outline"},
+  "frame_note": ""
+}

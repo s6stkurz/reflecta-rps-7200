@@ -1,0 +1,26 @@
+{
+  "id": "r0914_27",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "TV-wall grid and floor run to col 0; b4 col 0 = 61 (floor, base ~94), so no full-height base; bright b1/b2 at col 0 is the grid"
+  },
+  "right": {
+    "state": "edge",
+    "x": 424.0,
+    "lo": 423.6,
+    "hi": 424.3,
+    "outer": null,
+    "x_top": 424.1,
+    "x_bottom": 423.3,
+    "note": "base 424-427 ~93-97 all bands; b3: col 423 = 22 picture, 424 base -> 424.0; b4: col 423 = 72 -> 423.4. In b1/b2 a scene bar at 420-423 reads 73-83, close to base, so top is less certain: slight tilt, base starts further left at the bottom"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,12 @@
+Fixed before any test-split score was seen with it, 2026-09-23 15:41 CEST.
+
+ensemble_v2 iter01 = ensemble.vote over changepoint_v2 (its final iter03 code), chroma (iter04),
+stepline (iter04), gapmodel_v2 (its final iter04 code) -- modules as on disk now -- plus one rule:
+a member's gap-with-the-neighbour-beyond stands alone unless another member places an edge
+elsewhere on that side. Chosen on main dev + library 2 dev2 only (vote_replay.py).
+
+chroma_v2 and stepline_v2 were stopped before finishing and are not used.
+
+Test splits scored once each with this: library 2 test2 (47 frames, 5 pictures, first look);
+main test gold200 + hwcheck (second look -- round 1 scored it with ensemble iter01; this is a
+regression check, not a fresh test).

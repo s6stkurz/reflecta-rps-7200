@@ -1,0 +1,19 @@
+{
+ "id": "bw0910_04",
+ "labeller": "R1",
+ "view": "A+B+table",
+ "left": {
+  "state": "edge",
+  "x": 7.0,
+  "lo": 5.8,
+  "hi": 7.8,
+  "outer": null,
+  "x_top": null,
+  "x_bottom": null,
+  "note": "third look: light streak, ledge and wall all stop on one vertical line at 6-7; pairs agree: bw0910_01 (3.5) +4 -> 7.5, and bw0910_05 (~1.6-2.0) is this -6"
+ },
+ "right": {
+  "state": null
+ },
+ "frame_note": "third look by the orchestrator on a labeller disagreement"
+}

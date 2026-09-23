@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_21", "labeller": "L9", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop and figure run to column 0"},
+  "right": {"state": "edge", "x": 247.9, "lo": 247.0, "hi": 248.2,
+            "outer": 264.9, "x_top": 248.0, "x_bottom": 247.0,
+            "note": "mid-frame gap: base 248-263 (92-97, R/G 2.2, B/G 0.55; cols 259-261 slightly darker, sensor lines). Left part 0-247 (248 cols) is the frame, right part 264-427 (164 cols) the neighbour. Edge 248.0 from row ~30 to ~180, then moves left to 247.0 over the bottom third. Outer 264.0 at the top, ~265.0 from mid-height down"},
+  "frame_note": "gap in the middle, found in the 1:1 thumbnail"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_18",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 84.9,
+    "lo": 84.5,
+    "hi": 85.4,
+    "outer": 69.6,
+    "x_top": 84.7,
+    "x_bottom": 85.2,
+    "note": "gap deeper than the crop: base cols ~70-84 (R/G 2.2, B/G 0.53). Edge sharp: ~84.75 over the upper half, 85.0-85.2 lower; in the bottom quarter the dark room is near base value and the line is faint. Outer ~70.3 at top to ~69.2 lower"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "window, wall and table run to column 428"
+  },
+  "frame_note": "interior gap at cols ~70-84; the frame is the right part (343 picture columns vs 69)"
+}

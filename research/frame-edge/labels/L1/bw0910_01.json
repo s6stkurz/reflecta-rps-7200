@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_01",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 3.5,
+    "lo": 3.0,
+    "hi": 4.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night sky reads same as base in b1-b3 (~79), so only b4 (col 2 = 63, col 3 = 46, col 4 = 36 -> ~3.4) and geometry place it: streak lines at ~38% height start at col 3, wall bands at 60% and bottom start at col 4; a straight vertical cut at ~3.5"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols ~389-427 are dark and read exactly like the left base sliver in all four bands (80/80/78/62), but the only visible vertical line is the end of the wall at ~389 in the bottom band (soft, 4-col ramp 387-391); top is night sky indistinguishable from base. With left edge at 3.5 a standard 425-col frame reaches the border, so judged dark scene. Could be base from ~389 if the frame is short"
+  },
+  "frame_note": "right side genuinely ambiguous: night-black scene = base in the numbers"
+}

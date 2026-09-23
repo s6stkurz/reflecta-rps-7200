@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_49", "labeller": "L3", "view": "A",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate cols 0-14 (~177 neutral, R/G 1.00); film edge tilted, ~15 at top to ~12 at bottom. BASE lies between gate and picture: cols 15-36 uniform (R/G 2.24-2.28, B/G 0.53); base/picture boundary at 36.0 in the top ~35% of rows and 37.0 below (a one-column step, not a gradual tilt), i.e. ~36.7 overall"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark park scene to col 427 (likeness 14-17, below base 19), textured, no plateau"},
+  "frame_note": "strip end: gate + 22 columns of base on the left; whole-frame stretch dominated by the gate"
+}

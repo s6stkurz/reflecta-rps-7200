@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_03", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 36.2, "lo": 35.8, "hi": 37.0,
+            "outer": 15.2, "x_top": null, "x_bottom": null,
+            "note": "gap from ~15-16 (base 77-81, raw 60-64/27-28/15, R/G 2.2 B/G 0.55), dark brown in B. Frame edge is sharp only in the top band (col 36 drops to 47, col 35 base); below that the dark foliage has base's level AND ratio in the median, so the line rests on the top band and on texture in view B starting at 36-37. Neighbour (tree bark) edge ~16-16.7 in the upper third, ~15.0 below"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/building/figure to col 427"},
+  "frame_note": "same forest scene as b0922a_15/_29: underexposed foliage at base density"
+}

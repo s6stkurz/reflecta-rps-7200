@@ -1,0 +1,1720 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "gold200_01": {
+   "left": {
+    "state": "edge",
+    "x": 1.967,
+    "lo": 1.61,
+    "hi": 2.323,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": 2.309,
+    "x_bottom": 1.624,
+    "note": "run [0,1) rows 266/268 rmse 0.43"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     60.0,
+     26.0,
+     14.0
+    ],
+    "ref_cols": [
+     0,
+     1
+    ],
+    "sig": [
+     0.0316,
+     0.0424,
+     0.0702
+    ],
+    "source": "a border sliver only",
+    "trust": 0.6,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.97,
+      0.74,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 1.9665162547402295,
+      "slope": -0.002491720868357606,
+      "n_in": 266,
+      "n_ok": 268,
+      "frac_in": 0.9925373134328358,
+      "rmse": 0.4285749352189208,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.05,
+      0.02,
+      0.02,
+      0.02,
+      0.02,
+      0.03,
+      0.05,
+      0.04
+     ],
+     "sliver": {
+      "kappa": -0.022426922157400636,
+      "frac": 0.3475177304964539,
+      "x": 0.0,
+      "a0": -0.030919254121037156,
+      "a1": -0.007086761143860413,
+      "n": 141,
+      "mad": 0.11269671237662054
+     }
+    }
+   }
+  },
+  "gold200_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.765,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.306,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 57 cols wide from the border: scene"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     50.0,
+     19.0,
+     9.0
+    ],
+    "ref_cols": [
+     415,
+     418
+    ],
+    "sig": [
+     0.0888,
+     0.1769,
+     0.3125
+    ],
+    "source": "second plateau in frame; ratios 2.63/0.47 off the C-41 base",
+    "trust": 0.765,
+    "fb": 0.85,
+    "gb": 0.7786956521739131,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "sliver": {
+      "kappa": 0.0,
+      "frac": 0.4528985507246377,
+      "x": 0.023885850235920367,
+      "a0": 0.013289444098259068,
+      "a1": 0.010596406137661298,
+      "n": 276,
+      "mad": 0.013289444098259068
+     }
+    },
+    "right": {
+     "f_head": [
+      0.96,
+      0.97,
+      0.95,
+      0.91,
+      0.97,
+      0.96,
+      0.95,
+      0.96,
+      0.97,
+      0.97,
+      0.99,
+      0.99
+     ],
+     "run": [
+      0,
+      57
+     ],
+     "at_level": true,
+     "sliver": null
+    }
+   }
+  },
+  "gold200_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.36,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "interior base-level run 84 cols wide: scene"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     28.0,
+     17.0
+    ],
+    "ref_cols": [
+     168,
+     173
+    ],
+    "sig": [
+     0.1144,
+     0.184,
+     0.0961
+    ],
+    "source": "second plateau in frame",
+    "trust": 0.9,
+    "fb": 0.7569565217391305,
+    "gb": 0.8076811594202898,
+    "left": {
+     "f_head": [
+      0.29,
+      0.38,
+      0.36,
+      0.42,
+      0.34,
+      0.26,
+      0.41,
+      0.44,
+      0.46,
+      0.56,
+      0.56,
+      0.58
+     ],
+     "run": [
+      37,
+      121
+     ],
+     "at_level": true,
+     "sliver": null
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.01,
+      0.03,
+      0.02,
+      0.09,
+      0.03,
+      0.09,
+      0.08,
+      0.13,
+      0.1,
+      0.19,
+      0.2
+     ],
+     "sliver": {
+      "kappa": -0.04754231492415355,
+      "frac": 0.5882352941176471,
+      "x": 0.2870793121655338,
+      "a0": 0.15919477692533457,
+      "a1": 0.12788453524019922,
+      "n": 68,
+      "mad": 0.16782986904330685
+     }
+    }
+   }
+  },
+  "gold200_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.79"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 79 cols wide from the border: scene"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     61.0,
+     25.0,
+     13.0
+    ],
+    "ref_cols": [
+     364,
+     367
+    ],
+    "sig": [
+     0.0884,
+     0.1726,
+     0.2163
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.7207246376811595,
+    "gb": 0.775072463768116,
+    "left": {
+     "f_head": [
+      0.2,
+      0.22,
+      0.22,
+      0.21,
+      0.19,
+      0.16,
+      0.2,
+      0.23,
+      0.26,
+      0.31,
+      0.3,
+      0.33
+     ],
+     "sliver": {
+      "kappa": -0.0017759315767151215,
+      "frac": 0.5447761194029851,
+      "x": 0.019355761968642332,
+      "a0": 0.011206585947538636,
+      "a1": 0.008149176021103694,
+      "n": 134,
+      "mad": 0.01890774983368094
+     }
+    },
+    "right": {
+     "f_head": [
+      0.6,
+      0.66,
+      0.64,
+      0.62,
+      0.66,
+      0.59,
+      0.66,
+      0.61,
+      0.65,
+      0.8,
+      0.79,
+      0.81
+     ],
+     "run": [
+      0,
+      79
+     ],
+     "at_level": true,
+     "sliver": null
+    }
+   }
+  },
+  "gold200_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.87"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.61"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     63.0,
+     28.0,
+     15.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.13,
+     0.2103,
+     0.5329
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.12,
+      0.13,
+      0.13,
+      0.13,
+      0.13,
+      0.11,
+      0.13,
+      0.14,
+      0.16,
+      0.15,
+      0.14,
+      0.17
+     ],
+     "sliver": {
+      "kappa": 4.163336342344337e-17,
+      "frac": 0.4297520661157025,
+      "x": 0.010409552900607681,
+      "a0": 0.006777690900985963,
+      "a1": 0.003631861999621717,
+      "n": 121,
+      "mad": 0.020070256342722668
+     }
+    },
+    "right": {
+     "f_head": [
+      0.39,
+      0.4,
+      0.41,
+      0.42,
+      0.41,
+      0.36,
+      0.3,
+      0.18,
+      0.14,
+      0.16,
+      0.15,
+      0.13
+     ],
+     "sliver": {
+      "kappa": -0.009976101377463978,
+      "frac": 0.29213483146067415,
+      "x": 0.0,
+      "a0": -0.009470053436594624,
+      "a1": -0.002196879792985593,
+      "n": 89,
+      "mad": 0.010698865561527954
+     }
+    }
+   }
+  },
+  "gold200_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.319,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run [0,24) with no straight edge: scene"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.637,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.55"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     56.0,
+     22.0,
+     12.0
+    ],
+    "ref_cols": [
+     6,
+     15
+    ],
+    "sig": [
+     0.1218,
+     0.2282,
+     0.2489
+    ],
+    "source": "brightest plateau only; ratios 2.55/0.55 off the C-41 base",
+    "trust": 0.6375,
+    "fb": 0.7424637681159421,
+    "gb": 0.7968115942028986,
+    "left": {
+     "f_head": [
+      0.84,
+      0.83,
+      0.82,
+      0.82,
+      0.81,
+      0.79,
+      0.79,
+      0.78,
+      0.8,
+      0.82,
+      0.84,
+      0.82
+     ],
+     "run": [
+      0,
+      24
+     ],
+     "at_level": true,
+     "cont_in": 0.587,
+     "fit": {
+      "x": 21.877038323904788,
+      "slope": 0.0019527856050398282,
+      "n_in": 11,
+      "n_ok": 20,
+      "frac_in": 0.55,
+      "rmse": 0.5110201153151158,
+      "yc": 137.5
+     },
+     "sliver": null
+    },
+    "right": {
+     "f_head": [
+      0.44,
+      0.45,
+      0.44,
+      0.45,
+      0.45,
+      0.45,
+      0.46,
+      0.45,
+      0.46,
+      0.46,
+      0.46,
+      0.46
+     ],
+     "sliver": {
+      "kappa": -0.00833495390933369,
+      "frac": 0.42424242424242425,
+      "x": 0.07070561648778567,
+      "a0": 0.03602595819368137,
+      "a1": 0.0346796582941043,
+      "n": 132,
+      "mad": 0.09394205499725677
+     }
+    }
+   }
+  },
+  "gold200_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.58"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.641,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.36"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     56.0,
+     23.0,
+     11.0
+    ],
+    "ref_cols": [
+     240,
+     253
+    ],
+    "sig": [
+     0.2198,
+     0.2889,
+     0.3095
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.7569565217391305,
+    "gb": 0.8076811594202898,
+    "left": {
+     "f_head": [
+      0.41,
+      0.43,
+      0.42,
+      0.39,
+      0.36,
+      0.35,
+      0.36,
+      0.38,
+      0.35,
+      0.37,
+      0.37,
+      0.35
+     ],
+     "sliver": null
+    },
+    "right": {
+     "f_head": [
+      0.63,
+      0.66,
+      0.64,
+      0.63,
+      0.67,
+      0.64,
+      0.64,
+      0.64,
+      0.62,
+      0.61,
+      0.62,
+      0.6
+     ],
+     "sliver": null
+    }
+   }
+  },
+  "gold200_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.319,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run [0,8) with no straight edge: scene"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.637,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     55.0,
+     21.0,
+     11.0
+    ],
+    "ref_cols": [
+     0,
+     69
+    ],
+    "sig": [
+     0.1454,
+     0.2266,
+     0.2919
+    ],
+    "source": "brightest plateau only; ratios 2.62/0.52 off the C-41 base",
+    "trust": 0.6375,
+    "fb": 0.7243478260869566,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.84,
+      0.82,
+      0.8,
+      0.79,
+      0.82,
+      0.78,
+      0.78,
+      0.79,
+      0.71,
+      0.75,
+      0.78,
+      0.74
+     ],
+     "run": [
+      0,
+      8
+     ],
+     "at_level": true,
+     "cont_in": 0.58,
+     "fit": {
+      "x": 6.737888851021878,
+      "slope": -0.019439071247762476,
+      "n_in": 8,
+      "n_ok": 28,
+      "frac_in": 0.2857142857142857,
+      "rmse": 0.6397655086524421,
+      "yc": 137.5
+     },
+     "sliver": null
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.01
+     ],
+     "sliver": null
+    }
+   }
+  },
+  "gold200_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": "none"
+   }
+  },
+  "gold200_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.88"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "ref_cols": [
+     190,
+     194
+    ],
+    "sig": [
+     0.0776,
+     0.0936,
+     0.1471
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.7352173913043479,
+    "gb": 0.8221739130434783,
+    "left": {
+     "f_head": [
+      0.07,
+      0.17,
+      0.14,
+      0.21,
+      0.16,
+      0.04,
+      0.13,
+      0.21,
+      0.19,
+      0.21,
+      0.26,
+      0.28
+     ],
+     "sliver": {
+      "kappa": -0.030176624350863594,
+      "frac": 0.391304347826087,
+      "x": 0.7950628877326168,
+      "a0": 0.3478323913900469,
+      "a1": 0.4472304963425699,
+      "n": 69,
+      "mad": 0.10713293025267318
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "sliver": {
+      "kappa": -0.01419466160295163,
+      "frac": 0.5806451612903226,
+      "x": 0.0,
+      "a0": -0.0012910771093189043,
+      "a1": -0.03366362412343978,
+      "n": 93,
+      "mad": 0.13523896749824216
+     }
+    }
+   }
+  },
+  "gold200_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.86"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.96"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     63.0,
+     28.0,
+     15.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0758,
+     0.1217,
+     0.1356
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.14,
+      0.13,
+      0.19,
+      0.16,
+      0.14,
+      0.1,
+      0.13,
+      0.17,
+      0.18,
+      0.22,
+      0.22,
+      0.3
+     ],
+     "sliver": {
+      "kappa": -0.011303089294608756,
+      "frac": 0.32941176470588235,
+      "x": 0.014335333243335776,
+      "a0": 0.005428787774995444,
+      "a1": 0.008906545468340332,
+      "n": 85,
+      "mad": 0.020323637615385037
+     }
+    },
+    "right": {
+     "f_head": [
+      0.01,
+      0.06,
+      0.05,
+      0.07,
+      0.12,
+      0.09,
+      0.16,
+      0.12,
+      0.2,
+      0.21,
+      0.26,
+      0.27
+     ],
+     "sliver": {
+      "kappa": -0.006910948561338925,
+      "frac": 0.36363636363636365,
+      "x": 0.005573945532820139,
+      "a0": -0.00023415798510427303,
+      "a1": 0.005573945532820139,
+      "n": 88,
+      "mad": 0.015167638746699349
+     }
+    }
+   }
+  },
+  "gold200_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": "none"
+   }
+  },
+  "gold200_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.36,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 86 cols wide from the border: scene"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     63.0,
+     28.0,
+     15.0
+    ],
+    "ref_cols": [
+     23,
+     40
+    ],
+    "sig": [
+     0.0297,
+     0.0401,
+     0.0697
+    ],
+    "source": "second plateau in frame",
+    "trust": 0.9,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.09,
+      0.15,
+      0.19,
+      0.21,
+      0.22,
+      0.11,
+      0.29,
+      0.53,
+      0.62,
+      0.75,
+      0.79,
+      0.93
+     ],
+     "run": [
+      0,
+      86
+     ],
+     "at_level": true,
+     "sliver": null
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "sliver": {
+      "kappa": -0.023517158772132514,
+      "frac": 0.42435424354243545,
+      "x": 0.0,
+      "a0": -0.06643667794133845,
+      "a1": -0.02256880291358021,
+      "n": 271,
+      "mad": 0.13848899939419398
+     }
+    }
+   }
+  },
+  "gold200_14": {
+   "left": {
+    "state": "edge",
+    "x": 36.892,
+    "lo": 36.29,
+    "hi": 37.494,
+    "conf": 0.664,
+    "outer": null,
+    "x_top": 37.264,
+    "x_bottom": 36.52,
+    "note": "run [0,37) rows 22/25 rmse 0.57"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     62.0,
+     28.0,
+     15.0
+    ],
+    "ref_cols": [
+     31,
+     36
+    ],
+    "sig": [
+     0.0805,
+     0.0734,
+     0.0987
+    ],
+    "source": "roll 2/11",
+    "trust": 1.0,
+    "fb": 0.7243478260869566,
+    "gb": 0.7786956521739131,
+    "left": {
+     "f_head": [
+      0.98,
+      0.99,
+      1.0,
+      0.99,
+      0.93,
+      0.77,
+      0.86,
+      0.86,
+      0.86,
+      0.84,
+      0.87,
+      0.87
+     ],
+     "run": [
+      0,
+      37
+     ],
+     "at_level": true,
+     "cont_in": 0.551,
+     "fit": {
+      "x": 36.8922868328653,
+      "slope": -0.0027067296375323426,
+      "n_in": 22,
+      "n_ok": 25,
+      "frac_in": 0.88,
+      "rmse": 0.5673359634426919,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "sliver": {
+      "kappa": -0.001776660872126504,
+      "frac": 0.34057971014492755,
+      "x": 0.0,
+      "a0": -0.0025709533561703354,
+      "a1": 0.0,
+      "n": 276,
+      "mad": 0.00995632169278302
+     }
+    }
+   }
+  },
+  "gold200_15": {
+   "left": {
+    "state": "edge",
+    "x": 5.185,
+    "lo": 4.844,
+    "hi": 5.527,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": 4.666,
+    "x_bottom": 5.705,
+    "note": "run [0,5) rows 271/272 rmse 0.33"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     59.0,
+     27.0,
+     15.0
+    ],
+    "ref_cols": [
+     0,
+     5
+    ],
+    "sig": [
+     0.0266,
+     0.0406,
+     0.0711
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.96,
+      0.99,
+      0.98,
+      0.99,
+      0.99,
+      0.13,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      5
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 5.185478086400272,
+      "slope": 0.003775302144334726,
+      "n_in": 271,
+      "n_ok": 272,
+      "frac_in": 0.9963235294117647,
+      "rmse": 0.3268261367992989,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.01,
+      0.01,
+      0.02,
+      0.04,
+      0.05,
+      0.07
+     ],
+     "sliver": {
+      "kappa": -0.01950439874259763,
+      "frac": 0.4052863436123348,
+      "x": 0.006875505487224754,
+      "a0": -0.006991366166752048,
+      "a1": 0.006875505487224754,
+      "n": 227,
+      "mad": 0.036769158855183684
+     }
+    }
+   }
+  },
+  "gold200_16": {
+   "left": {
+    "state": "edge",
+    "x": 2.81,
+    "lo": 2.468,
+    "hi": 3.153,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": 3.379,
+    "x_bottom": 2.242,
+    "note": "run [0,2) rows 266/266 rmse 0.35"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     60.0,
+     27.0,
+     14.0
+    ],
+    "ref_cols": [
+     0,
+     2
+    ],
+    "sig": [
+     0.026,
+     0.0401,
+     0.0691
+    ],
+    "source": "a border sliver only",
+    "trust": 0.6,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.96,
+      0.99,
+      0.35,
+      0.06,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      2
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 2.8101194761430905,
+      "slope": -0.004135413331437395,
+      "n_in": 266,
+      "n_ok": 266,
+      "frac_in": 1.0,
+      "rmse": 0.3461562483335654,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "sliver": {
+      "kappa": -0.0067380586757407185,
+      "frac": 0.4254545454545455,
+      "x": 0.0,
+      "a0": -0.010437654195914458,
+      "a1": -0.007753210258460756,
+      "n": 275,
+      "mad": 0.03521063217136013
+     }
+    }
+   }
+  },
+  "gold200_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": "none"
+   }
+  },
+  "hwcheck_01": {
+   "left": {
+    "state": "edge",
+    "x": 3.819,
+    "lo": 3.328,
+    "hi": 4.31,
+    "conf": 0.926,
+    "outer": null,
+    "x_top": 4.373,
+    "x_bottom": 3.265,
+    "note": "run [0,3) rows 138/169 rmse 0.58"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     61.0,
+     27.0,
+     14.0
+    ],
+    "ref_cols": [
+     0,
+     3
+    ],
+    "sig": [
+     0.0288,
+     0.0404,
+     0.0675
+    ],
+    "source": "roll 2/2",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.95,
+      0.97,
+      0.99,
+      0.72,
+      0.3,
+      0.28,
+      0.29,
+      0.32,
+      0.3,
+      0.26,
+      0.28,
+      0.3
+     ],
+     "run": [
+      0,
+      3
+     ],
+     "at_level": true,
+     "cont_in": 0.188,
+     "fit": {
+      "x": 3.8190572502280804,
+      "slope": -0.004026977009431064,
+      "n_in": 138,
+      "n_ok": 169,
+      "frac_in": 0.8165680473372781,
+      "rmse": 0.5814454245878532,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.01,
+      0.03,
+      0.03,
+      0.05,
+      0.05,
+      0.07,
+      0.09,
+      0.08,
+      0.09,
+      0.11,
+      0.12
+     ],
+     "sliver": {
+      "kappa": 0.016737398924965327,
+      "frac": 0.5454545454545454,
+      "x": 0.0,
+      "a0": -0.006380219504735877,
+      "a1": -0.009374452972526422,
+      "n": 209,
+      "mad": 0.043634917283208584
+     }
+    }
+   }
+  },
+  "hwcheck_02": {
+   "left": {
+    "state": "edge",
+    "x": 2.431,
+    "lo": 2.075,
+    "hi": 2.787,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 2.849,
+    "x_bottom": 2.013,
+    "note": "run [0,2) rows 255/259 rmse 0.38"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     61.0,
+     27.0,
+     14.0
+    ],
+    "ref_cols": [
+     0,
+     2
+    ],
+    "sig": [
+     0.0275,
+     0.04,
+     0.0682
+    ],
+    "source": "roll 2/2",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.96,
+      0.99,
+      0.21,
+      0.02,
+      0.01,
+      0.01,
+      0.03,
+      0.02,
+      0.02,
+      0.01,
+      0.01,
+      0.03
+     ],
+     "run": [
+      0,
+      2
+     ],
+     "at_level": true,
+     "cont_in": 0.011,
+     "fit": {
+      "x": 2.430960180986827,
+      "slope": -0.003041248587822726,
+      "n_in": 255,
+      "n_ok": 259,
+      "frac_in": 0.9845559845559846,
+      "rmse": 0.38213979065714254,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.01,
+      0.04,
+      0.03
+     ],
+     "sliver": {
+      "kappa": -0.01636295926879651,
+      "frac": 0.4388185654008439,
+      "x": 0.0,
+      "a0": -0.023259923203621698,
+      "a1": -0.022752563478360535,
+      "n": 237,
+      "mad": 0.10460149872763544
+     }
+    }
+   }
+  },
+  "hwcheck_03": {
+   "left": {
+    "state": "edge",
+    "x": 3.467,
+    "lo": 3.026,
+    "hi": 3.908,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.814,
+    "x_bottom": 3.12,
+    "note": "run [0,3) rows 206/230 rmse 0.64"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     61.0,
+     27.0,
+     14.0
+    ],
+    "ref_cols": [
+     0,
+     3
+    ],
+    "sig": [
+     0.0286,
+     0.0407,
+     0.0726
+    ],
+    "source": "roll 2/2",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.96,
+      0.97,
+      0.98,
+      0.32,
+      0.09,
+      0.07,
+      0.09,
+      0.09,
+      0.07,
+      0.04,
+      0.07,
+      0.08
+     ],
+     "run": [
+      0,
+      3
+     ],
+     "at_level": true,
+     "cont_in": 0.022,
+     "fit": {
+      "x": 3.4669948458513438,
+      "slope": -0.002525240212329096,
+      "n_in": 206,
+      "n_ok": 230,
+      "frac_in": 0.8956521739130435,
+      "rmse": 0.6378330825774824,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "sliver": {
+      "kappa": 0.00268076564372742,
+      "frac": 0.42391304347826086,
+      "x": 0.0,
+      "a0": -0.013162746315738261,
+      "a1": -0.013162746315738261,
+      "n": 276,
+      "mad": 0.027152376060598744
+     }
+    }
+   }
+  }
+ }
+}

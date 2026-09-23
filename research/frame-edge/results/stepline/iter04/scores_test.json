@@ -1,0 +1,140 @@
+{
+ "split": "test",
+ "side": {
+  "n": 40,
+  "correct": 37,
+  "accuracy": 0.925,
+  "false_base": 0,
+  "missed": 2,
+  "refused": 1,
+  "edge_n": 4,
+  "edge_mae_cols": 0.093,
+  "edge_p90_cols": 0.177,
+  "edge_max_cols": 0.227,
+  "edge_bias_cols": -0.078,
+  "edge_mae_units": 0.075,
+  "confusion": {
+   "edge": {
+    "edge": 4,
+    "picture_to_border": 2,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 1,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 0,
+    "picture_to_border": 33,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 20,
+  "ok": 17,
+  "bad": 2,
+  "refused": 1,
+  "sign_errors": 0,
+  "accuracy": 0.85,
+  "du_mae_units": 0.907,
+  "du_p90_units": 1.764
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.925,
+   "edge_mae_cols": 0.093,
+   "n": 40
+  }
+ },
+ "per_roll": {
+  "gold200": {
+   "accuracy": 0.971,
+   "edge_mae_cols": 0.049,
+   "n": 34
+  },
+  "hwcheck": {
+   "accuracy": 0.667,
+   "edge_mae_cols": 0.227,
+   "n": 6
+  }
+ },
+ "worst": [
+  "gold200_14 move none (+0.0 u) vs truth +8.8 u ->",
+  "hwcheck_01 move none (+0.0 u) vs truth +8.1 u ->",
+  "gold200_14 right missed 4.9 cols of base",
+  "hwcheck_01 right missed 4.0 cols of base"
+ ],
+ "label_free": {
+  "pairs": {
+   "n": 0,
+   "both_edge": 0,
+   "state_changes": 0,
+   "mae_cols": NaN,
+   "p90_cols": NaN,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 0,
+   "state_changes": 0,
+   "mae_cols": NaN,
+   "over_1": 0
+  },
+  "ladder": {
+   "left": {
+    "found": 6,
+    "of": 21,
+    "slope_cols": 7.282,
+    "resid_mad": 0.371,
+    "resid_max": 0.668
+   },
+   "right": {
+    "found": 6,
+    "of": 21,
+    "slope_cols": 7.141,
+    "resid_mad": 0.219,
+    "resid_max": 0.677
+   }
+  },
+  "mirror": {
+   "state_changes": 0,
+   "mae_cols": 0.0,
+   "over_0_5": 0
+  }
+ },
+ "seconds_per_frame": 0.054
+}

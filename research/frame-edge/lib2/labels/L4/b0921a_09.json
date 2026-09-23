@@ -1,0 +1,26 @@
+{
+  "id": "b0921a_09",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-~40 are exactly at base level and ratio (RGB ~66/29/15, R/G 2.3, B/G 0.54, flat, noise-only), but they blend gradually (sum 111 -> 107 over cols 40-70, texture rising slowly to ~col 100) into the unlit grass of a night flash shot. No straight sharp full-height boundary anywhere in cols 0-140, even with a tight stretch. Base is probably present at the far left but cannot be placed; could also be unexposed picture to the border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grass texture runs to column 428"
+  },
+  "frame_note": "night flash shot: the frame edges fall to base density"
+}

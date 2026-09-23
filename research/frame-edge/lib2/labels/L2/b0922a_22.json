@@ -1,0 +1,9 @@
+{
+  "id": "b0922a_22", "labeller": "L2", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "foliage/figure run to column 0"},
+  "right": {"state": "edge", "x": 339.2, "lo": 338.7, "hi": 339.8,
+            "outer": 359.5, "x_top": null, "x_bottom": null,
+            "note": "interior gap deeper than the crop: featureless base cols 340-357 (R/G 2.26, B/G 0.53, row std ~1). This frame's forest ends ~339.5 in the top quarter (col 339 still textured there) and ~339.0 at 3/8-5/8 height; in the bottom 3/8 the forest is at base density with no texture, so the edge there cannot be seen and is assumed to continue the line. Neighbour (bright garden) starts ~358.1 at the top, ~359.3-359.9 lower (outer at mid-height)"},
+  "frame_note": "gap at ~339-358; frame = left part (~339 cols) vs neighbour (~68 cols). Hairline sensor line near col 213-215 is not base"
+}

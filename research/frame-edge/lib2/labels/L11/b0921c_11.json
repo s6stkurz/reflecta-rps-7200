@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_11", "labeller": "L11", "view": "B",
+  "left":  {"state": "edge", "x": 90.5, "lo": 90.1, "hi": 91.1,
+            "outer": 73.4, "x_top": 90.1, "x_bottom": 91.0,
+            "note": "gap inside the frame: base columns 74-89 (R/G 2.23, B/G 0.54), clean and sharp. This frame's picture starts ~90.1 at the top, ~91.0 at the bottom (column 90 ~15% base in bands 1-2, ~85-100% in bands 3-4). Neighbour's picture ends ~73.9 at the top to ~73.0 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress and table run to column 427"},
+  "frame_note": "two partial pictures: neighbour 0-73 (~74 cols), this frame 90-427 (~338 cols)"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_50", "labeller": "L8", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "floor/bag picture runs to column 0"},
+  "right": {"state": "edge", "x": 207.0, "lo": 206.6, "hi": 207.5,
+            "outer": 232.0, "x_top": null, "x_bottom": null,
+            "note": "MID-FRAME gap: base cols 207-231 (G~33-34, R/G 2.2, B/G 0.55, full height). A thin vertical line at cols 214-215 (likeness 82, a scan artefact -- the same kind of line recurs at col ~260 inside the neighbour) sits inside the base. This frame's picture (floor scene) ends sharply at ~207.0. Neighbour (dim party room) starts at ~232.0: clear in the lower bands (bench), in the top bands the dark ceiling differs from base by only 2-3 points, so outer is less certain there."},
+  "frame_note": "two partial pictures: left 0-206 (207 cols) vs right 232-427 (196 cols); left is larger by 11 cols, so the left part is the frame (just outside the 10-col tie window; the tie rule would also pick left)"
+}

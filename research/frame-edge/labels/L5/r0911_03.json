@@ -1,0 +1,26 @@
+{
+  "id": "r0911_03",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark blue museum wall runs to column 0, smooth ramp 66-80, no step or line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall runs to 428, smooth ramp 82->69, no step or line"
+  },
+  "frame_note": "low contrast: dark wall close to base density; no base line visible"
+}

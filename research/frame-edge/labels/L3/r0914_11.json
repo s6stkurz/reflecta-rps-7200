@@ -1,0 +1,26 @@
+{
+  "id": "r0914_11",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall and legs/trousers to col 0; black trousers in the middle bands (~90) are not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 420.6,
+    "lo": 420.2,
+    "hi": 421.0,
+    "outer": null,
+    "x_top": 420.7,
+    "x_bottom": 420.2,
+    "note": "base 421-427 ~95 all bands vs wall ~29. col 420: b1 32%, b2 33%, b3 44%, b4 73% base -> 420.7/420.7/420.6/420.3. Clean, slight lean"
+  },
+  "frame_note": ""
+}

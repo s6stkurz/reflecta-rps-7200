@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_05", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 13.6, "lo": 13.35, "hi": 14.05,
+            "outer": 0.2, "x_top": 13.95, "x_bottom": 14.05,
+            "note": "base cols 1-12 (~95, R/G 2.3), black in B; picture (dense sky) from col 14. Edge is bowed rather than tilted: col 13 is ~97% base at rows 0-40 and 200-250 (x~14.0) but only ~40-50% base around rows 100-150 (x~13.5). Bottom ~25 rows base into col 14 (corner). Col 0 is 10-20% darker in all channels over rows 0-60 and 260-287 only: faint neighbour sliver, outer ~0.2, low confidence (absent at mid-height, consistent with the same bow)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage to col 427, likeness ~68, R/G 2.7; no plateau"},
+  "frame_note": "no internal gap in the thumbnail"
+}

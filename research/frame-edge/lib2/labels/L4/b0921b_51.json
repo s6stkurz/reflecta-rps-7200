@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_51",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "no_film",
+    "x": 25.0,
+    "lo": 24.2,
+    "hi": 25.4,
+    "outer": null,
+    "x_top": 24.2,
+    "x_bottom": 25.0,
+    "note": "empty gate (~175 neutral) at cols 0-3, its boundary curved/diagonal (film end): ~3.7 at top, ~0.5 at bottom. Base (R/G 2.3, B/G 0.55) lies BETWEEN gate and picture, cols ~4-24; the picture starts at x~25.0 (x given = base/picture boundary; top rows ~24.2, from mid-height down 25.0)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "path/grass texture to column 428; R/G 2.5, not base"
+  },
+  "frame_note": "strip end: gate on the left"
+}

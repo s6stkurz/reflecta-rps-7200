@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_62", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 129.3, "lo": 128.9, "hi": 130.0,
+            "outer": 107.4, "x_top": 129.0, "x_bottom": 129.8,
+            "note": "DEEP gap beyond the crop: base cols 108-128 (G~31, R/G 2.2, B/G 0.55, full height). This frame (cols 129-427, ~299 cols: trees, bookcase, two people) lies right of it; neighbour picture (street/car) cols 0-106, outer ~107.4 (top ~107.9). Inner edge leans slightly, bottom further right."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "people and bench run off the right border"},
+  "frame_note": "gap at cols 107-128 is invisible in the 64-col crops; found in the 1:1 thumbnail"
+}

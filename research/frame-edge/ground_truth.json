@@ -1,0 +1,6959 @@
+{
+ "about": {
+  "what": "Ground truth for the frame-edge study, merged from labels/*/ by merge_labels.py",
+  "state_agreement": 0.983,
+  "edge_position_mae_cols": 0.032,
+  "edge_position_p90_cols": 0.022,
+  "n_frames": 118,
+  "n_flags": 0
+ },
+ "frames": {
+  "strip6_01": {
+   "split": "dev",
+   "roll": "strip6",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 11.028571428571428,
+    "lo": 10.7,
+    "hi": 11.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 11.028571428571428,
+      "lo": 10.7,
+      "hi": 11.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-10 uniform ~80-84 all bands, sharp vertical line; top band cols 11-35 is hair (bluish on negative, also bright) so top quarter cannot confirm, but b2-b4 step 83->14 at col 11. Last few rows the step looks ~1 col further right",
+      "labeller": "L3",
+      "x_eye": 11.0,
+      "x_snap": 11.028571428571428
+     },
+     {
+      "state": "edge",
+      "x": 11.028571428571428,
+      "lo": 10.8,
+      "hi": 11.2,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|base cols 0-10 (~80-86, pinkish-white in A, dark slate in B), sharp straight full-height line at col 11 cutting both the hair (top) and the white wall; col 10 b2 86% base, col 11 b3 3%, b4 8% (bottom few rows ~11.5)",
+      "labeller": "L6",
+      "x_eye": 11.0,
+      "x_snap": 11.028571428571428
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hair of the person on the right runs to col 427, soft, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hair runs to col 427, textured, no line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "strip6_02": {
+   "split": "dev",
+   "roll": "strip6",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 11.775568181818182,
+    "lo": 10.9,
+    "hi": 12.1,
+    "outer": null,
+    "x_top": 11.0,
+    "x_bottom": 12.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 11.738636363636363,
+      "lo": 10.9,
+      "hi": 12.1,
+      "outer": null,
+      "x_top": 11.0,
+      "x_bottom": 12.0,
+      "note": "base cols 0-10 (76-82, all bands equal), sharp straight line clearly visible in both views; adjacent dark hair is nearly as base-like (b1/b2/b4 ~78), so table only separates in b3 (crossing ~11.7); x from the visible line, slight tilt",
+      "labeller": "L1",
+      "x_eye": 11.5,
+      "x_snap": 11.738636363636363
+     },
+     {
+      "state": "edge",
+      "x": 11.8125,
+      "lo": 10.9,
+      "hi": 11.7,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sharp vertical edge; pale picture beside base makes table contrast low (81 vs 78); top rows put it at 11.0, b3 partial col 11 suggests up to 11.6 (dark hair adjacent)",
+      "labeller": "L4",
+      "x_eye": 11.2,
+      "x_snap": 11.8125
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "face/hair to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "face/wall picture reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "strip6_03": {
+   "split": "dev",
+   "roll": "strip6",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 10.033783783783784,
+    "lo": 9.7,
+    "hi": 10.4,
+    "outer": null,
+    "x_top": 10.4,
+    "x_bottom": 9.9,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 10.033783783783784,
+      "lo": 9.7,
+      "hi": 10.3,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean sharp edge: base 0-9 (~75-79, uniform all bands), col 10 picture (~20); only b1 col 10 is ~23% base (top rows slightly wider)",
+      "labeller": "L2",
+      "x_eye": 10.0,
+      "x_snap": 10.033783783783784
+     },
+     {
+      "state": "edge",
+      "x": 10.033783783783784,
+      "lo": 9.8,
+      "hi": 10.4,
+      "outer": null,
+      "x_top": 10.4,
+      "x_bottom": 9.9,
+      "note": "clean sharp base 0-9 (~77), picture ~19 from col 10. col 10 partly base in top rows (b1=35), col 9 slightly dim at very bottom: slight tilt",
+      "labeller": "L5",
+      "x_eye": 10.0,
+      "x_snap": 10.033783783783784
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white curtain runs to 428; table flat ~21, faint vertical band ~378-380 is scene/sensor, not base",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark (white curtain) picture runs to 428, flat ~20, no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "strip3_01": {
+   "split": "dev",
+   "roll": "strip3",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky, horizon and sea run to col 0; horizon line crosses to the border, no black strip",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/sea gradient and horizon line run to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/horizon/sea to col 427, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "horizon and dark sky run to col 427",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "strip3_02": {
+   "split": "dev",
+   "roll": "strip3",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 2.0,
+    "lo": 1.7,
+    "hi": 2.6,
+    "outer": null,
+    "x_top": 1.775,
+    "x_bottom": 2.475,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 2.0,
+      "lo": 1.7,
+      "hi": 2.5,
+      "outer": null,
+      "x_top": 1.8,
+      "x_bottom": 2.45,
+      "note": "2-col base sliver (col 0 = 100 all bands); col 1 mostly base, col 2 half base only in bottom band -> slight tilt, wider at bottom",
+      "labeller": "L1",
+      "x_eye": 2.0,
+      "x_snap": 2.0
+     },
+     {
+      "state": "edge",
+      "x": 2.0,
+      "lo": 1.7,
+      "hi": 2.6,
+      "outer": null,
+      "x_top": 1.75,
+      "x_bottom": 2.5,
+      "note": "narrow sharp base strip; crossings b1 1.74, b2 1.84, b3 2.04, b4 ~2.5 -> leans, wider at bottom",
+      "labeller": "L4",
+      "x_eye": 1.95,
+      "x_snap": 2.0
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/sea/grass to col 427, flat ~15, no plateau",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/sea/grass picture reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "strip3_03": {
+   "split": "dev",
+   "roll": "strip3",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 6.963235294117647,
+    "lo": 6.2,
+    "hi": 7.2,
+    "outer": null,
+    "x_top": 7.0,
+    "x_bottom": 6.199999999999999,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 6.963235294117647,
+      "lo": 6.5,
+      "hi": 7.2,
+      "outer": null,
+      "x_top": 7.0,
+      "x_bottom": 6.1,
+      "note": "clean sharp edge; base 0-5 ~90; col 6 base in b1/b2, 76 in b3, 39 in b4 -> slight tilt, edge moves left going down",
+      "labeller": "L2",
+      "x_eye": 6.9,
+      "x_snap": 6.963235294117647
+     },
+     {
+      "state": "edge",
+      "x": 6.963235294117647,
+      "lo": 6.2,
+      "hi": 7.1,
+      "outer": null,
+      "x_top": 7.0,
+      "x_bottom": 6.3,
+      "note": "clean black base cols 0-5 (~90) with sharp line. Col 6 full base in b1/b2, 75% in b3, 31% in b4: edge tilts from ~7.0 at top to ~6.3 at bottom",
+      "labeller": "L5",
+      "x_eye": 6.9,
+      "x_snap": 6.963235294117647
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/roof run to 428; table flat ~24",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky, hedge and houses run to 428, no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_01": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/river to col 0; col 0 slightly odd around horizon but no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky, shoreline and river run to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 415.9714259796807,
+    "lo": 415.2,
+    "hi": 416.6,
+    "outer": null,
+    "x_top": 416.8,
+    "x_bottom": 415.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 415.9714259796807,
+      "lo": 415.4,
+      "hi": 416.6,
+      "outer": null,
+      "x_top": 416.8,
+      "x_bottom": 415.1,
+      "note": "base 417-427 ~95 all bands. b1: col 416=31 (23% base) -> 416.8; b2: clean step 415->416 -> 416.0; bottom half the scene is near base-bright on the negative, B view shows picture ending ~415 at bottom. Tilted.",
+      "labeller": "L3",
+      "x_eye": 416.0,
+      "x_snap": 415.9714259796807
+     },
+     {
+      "state": "edge",
+      "x": 415.9714259796807,
+      "lo": 415.2,
+      "hi": 416.2,
+      "outer": null,
+      "x_top": 416.8,
+      "x_bottom": 414.9,
+      "note": "base 417-427 ~95, black in B; tilted: b1 col416 24% -> 416.8, b2 416.0, b3 col415 85% -> 415.15, b4 ~415.0; lower half has dark pier/vegetation (b3/b4 80-90) beside base, low contrast there",
+      "labeller": "L6",
+      "x_eye": 415.7,
+      "x_snap": 415.9714259796807
+     }
+    ]
+   }
+  },
+  "r0909_04": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/river to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/water picture reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.9234693877551,
+    "lo": 418.0,
+    "hi": 419.2,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.25,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 418.9234693877551,
+      "lo": 418.0,
+      "hi": 419.2,
+      "outer": null,
+      "x_top": 419.0,
+      "x_bottom": 418.2,
+      "note": "base 96-98 from 419; top bands cross at ~419.0 (col 418 b1=11), b3 col 418 =94 i.e. ~85% base -> ~418.15; bottom band picture (dark pier) nearly base-like so bottom placement less sure",
+      "labeller": "L1",
+      "x_eye": 418.6,
+      "x_snap": 418.9234693877551
+     },
+     {
+      "state": "edge",
+      "x": 418.9234693877551,
+      "lo": 418.1,
+      "hi": 419.1,
+      "outer": null,
+      "x_top": 419.0,
+      "x_bottom": 418.3,
+      "note": "sharp at top (b1/b2 ~418.9-419.1 against dark sky); lower half pale pier picture gives low contrast, edge there ~418.1-418.3 -> slight tilt; faint diagonal scratch in base at bottom",
+      "labeller": "L4",
+      "x_eye": 418.7,
+      "x_snap": 418.9234693877551
+     }
+    ]
+   }
+  },
+  "r0909_05": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 0.75,
+    "lo": 0.0,
+    "hi": 1.1,
+    "outer": null,
+    "x_top": 0.1,
+    "x_bottom": 1.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 0.5,
+      "lo": 0.0,
+      "hi": 1.1,
+      "outer": null,
+      "x_top": 0.1,
+      "x_bottom": 1.0,
+      "note": "sub-column sliver: col 0 is base (98/100) in b3/b4, black in B from ~55% height down; above that col 0 is sky (31/42 vs picture 28/34). Looks like a ~1-col step mid-scan rather than a straight tilt; col 1 pure picture",
+      "labeller": "L2",
+      "x_eye": 0.5,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 1.0,
+      "lo": 0.0,
+      "hi": 1.0,
+      "outer": null,
+      "x_top": 0.1,
+      "x_bottom": 1.0,
+      "note": "one-column sliver: col 0 is base-bright (b3 98, b4 100; black in B) in the lower ~2/3, but picture-like in the top band (b1 31 vs 29). Read as a tilted gap edge just grazing column 0; col 1 shows no base. Could also be called picture_to_border",
+      "labeller": "L5",
+      "x_eye": 0.7,
+      "x_snap": 1.0
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "pier/grass run to 428; no plateau, no vertical boundary",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building/terrace runs to 428 in every band; all-rows column rises at 412+ only because the dark roofline shifts, not base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_06": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 6.017879948914432,
+    "lo": 5.4,
+    "hi": 6.5,
+    "outer": null,
+    "x_top": 5.45,
+    "x_bottom": 6.699999999999999,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 6.017879948914432,
+      "lo": 5.4,
+      "hi": 6.5,
+      "outer": null,
+      "x_top": 5.4,
+      "x_bottom": 6.8,
+      "note": "base 0-4 ~98 all bands, black in B. per band 50% crossing: b1 5.5, b2 5.7, b3 6.1, b4 6.7 -> edge leans right toward the bottom",
+      "labeller": "L3",
+      "x_eye": 5.9,
+      "x_snap": 6.017879948914432
+     },
+     {
+      "state": "edge",
+      "x": 6.017879948914432,
+      "lo": 5.6,
+      "hi": 6.4,
+      "outer": null,
+      "x_top": 5.5,
+      "x_bottom": 6.6,
+      "note": "clean base cols 0-4 (98); slight tilt: b1 crosses ~5.5, b4 ~6.6",
+      "labeller": "L6",
+      "x_eye": 6.0,
+      "x_snap": 6.017879948914432
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "stone wall and white wall to col 427, no black strip",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark door/wall (white in positive) and stones run to col 427; bright diagonal at bottom right is picture",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_07": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 4.365384615384615,
+    "lo": 3.9,
+    "hi": 5.1,
+    "outer": null,
+    "x_top": 4.0,
+    "x_bottom": 5.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 4.365384615384615,
+      "lo": 3.9,
+      "hi": 5.1,
+      "outer": null,
+      "x_top": 4.0,
+      "x_bottom": 5.0,
+      "note": "base 0-3 (98-100); col 4 is ~0% base at top, ~98% at bottom -> tilted edge, clean and sharp",
+      "labeller": "L1",
+      "x_eye": 4.45,
+      "x_snap": 4.365384615384615
+     },
+     {
+      "state": "edge",
+      "x": 4.365384615384615,
+      "lo": 4.0,
+      "hi": 5.0,
+      "outer": null,
+      "x_top": 4.0,
+      "x_bottom": 5.0,
+      "note": "clean base plateau cols 0-3 (~99 all bands); col 4 base fraction b1 2%, b2 13%, b3 79%, b4 97% -> leans one column, wider at bottom",
+      "labeller": "L4",
+      "x_eye": 4.45,
+      "x_snap": 4.365384615384615
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf/objects to col 427, no plateau",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf/plant picture reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_08": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 1.025,
+    "lo": 0.4,
+    "hi": 1.5,
+    "outer": null,
+    "x_top": 0.35,
+    "x_bottom": 1.5499999999999998,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 1.025,
+      "lo": 0.6,
+      "hi": 1.5,
+      "outer": null,
+      "x_top": 0.3,
+      "x_bottom": 1.7,
+      "note": "1-2 col base sliver; col 0 ~118 in b2-b4 (63 in b1), col 1 base-ish only in b4 (62) -> tilted, edge moves right going down. Black in B. Read as base (not no_film): mid-strip frame, roll shows 1-5 col left slivers elsewhere",
+      "labeller": "L2",
+      "x_eye": 1.0,
+      "x_snap": 1.025
+     },
+     {
+      "state": "edge",
+      "x": 1.025,
+      "lo": 0.4,
+      "hi": 1.4,
+      "outer": null,
+      "x_top": 0.4,
+      "x_bottom": 1.4,
+      "note": "one-column black sliver, sharp. Col 0 base (~118) in b2-b4 but only ~40% in b1; col 1 3% (b2) rising to 37% (b4): tilted edge from ~0.4 at top to ~1.4 at bottom",
+      "labeller": "L5",
+      "x_eye": 1.1,
+      "x_snap": 1.025
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor/cabinet run to 428; table flat ~23",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor and cabinet run to 428, no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_09": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 1.9736842105263157,
+    "lo": 1.3,
+    "hi": 2.2,
+    "outer": null,
+    "x_top": 1.45,
+    "x_bottom": 2.1,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 1.9736842105263157,
+      "lo": 1.4,
+      "hi": 2.2,
+      "outer": null,
+      "x_top": 1.5,
+      "x_bottom": 2.1,
+      "note": "2-col sliver of base (~86 all bands, black full height in B). b1 col1=70 (~48% base), b3/b4 col1 base and col2 ~10% -> slight lean",
+      "labeller": "L3",
+      "x_eye": 1.8,
+      "x_snap": 1.9736842105263157
+     },
+     {
+      "state": "edge",
+      "x": 1.9736842105263157,
+      "lo": 1.3,
+      "hi": 2.2,
+      "outer": null,
+      "x_top": 1.4,
+      "x_bottom": 2.1,
+      "note": "2-col dark sliver, straight full-height line; col 0 = 86 all bands (taken as base level), col 1: b1 45%, b2 53%, b3/b4 100% (col 2 b4 ~11%) -> slight tilt, bottom further right; base plateau too narrow to be sure of its true level",
+      "labeller": "L6",
+      "x_eye": 1.75,
+      "x_snap": 1.9736842105263157
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trees/plaza to col 427; b1 dips to 9 at 419-427 is a dark tree canopy on the negative, not base",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trees, crowd and pavement run to col 427",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_10": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 1.1785714285714286,
+    "lo": 0.3,
+    "hi": 1.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 1.1785714285714286,
+      "lo": 0.3,
+      "hi": 1.2,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "partial sliver only: col 0 reads 69-75 uniformly in all bands (base on this roll ~97-100), col 1 slightly raised (46-60); dark full-height line at cols 0-1 in B. No true plateau, so edge placed by summing base fractions (~0.5 top, ~0.9 bottom). Could be picture_to_border if judged stricter",
+      "labeller": "L1",
+      "x_eye": 0.7,
+      "x_snap": 1.1785714285714286
+     },
+     {
+      "state": "edge",
+      "x": 1.1785714285714286,
+      "lo": 0.5,
+      "hi": 1.3,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "one-column sliver: col 0 uniform full height (74 in all bands, bluish in A, dark brown in B) with sharp line; col 1 slightly elevated (53 vs 44). No full plateau so the true base level is unknown -> wide interval",
+      "labeller": "L4",
+      "x_eye": 1.0,
+      "x_snap": 1.1785714285714286
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trees/dancers to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trees/people picture reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_11": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 5.051515151515151,
+    "lo": 4.8,
+    "hi": 5.4,
+    "outer": null,
+    "x_top": 5.0,
+    "x_bottom": 5.3,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 5.051515151515151,
+      "lo": 4.8,
+      "hi": 5.4,
+      "outer": null,
+      "x_top": 5.0,
+      "x_bottom": 5.3,
+      "note": "clean: base 0-4 ~96, col 5 picture in b1-b3, ~24% base in b4 -> very slight tilt",
+      "labeller": "L2",
+      "x_eye": 5.1,
+      "x_snap": 5.051515151515151
+     },
+     {
+      "state": "edge",
+      "x": 5.051515151515151,
+      "lo": 4.9,
+      "hi": 5.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean: base cols 0-4 (~97), picture ~36 from col 6; col 5 slightly lifted in bottom band (52 vs 38) so marginally wider at bottom",
+      "labeller": "L5",
+      "x_eye": 5.1,
+      "x_snap": 5.051515151515151
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "flat wall runs to 428; table flat ~20",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "flat wall (~20) runs to 428, no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0909_13": {
+   "split": "dev",
+   "roll": "r0909",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense, faint picture (ironwork) runs to col 0; table 2-6, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "film picture (railing, dark orange negative) runs to col 0; table ~2 everywhere because the empty gate is the brightest thing",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "no_film",
+    "labels": [
+     {
+      "state": "no_film",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "empty gate: cols ~148-427 read 98 flat in every band (white/neutral in A, black in B). Film end is at roughly col 148 from the thumbnail (outside the 64-col crop, not measured); no base seen between picture and film end",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "no_film",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "empty gate from ~col 148 to 427: neutral white, 98 in all bands, brighter than any base",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "stage3_01": {
+   "split": "dev",
+   "roll": "stage3",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark board to col 0; col 0 raised only in bottom band (77), not full height",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "pale floor/tile picture reaches column 0; col 0 is base-like only in the bottom quarter (b4 77 vs 24, dark in B there) - a gate corner, not a full-height strip",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "pavement/railing to col 427, ~60 flat",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor with wrought-iron pattern reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "stage3_02": {
+   "split": "dev",
+   "roll": "stage3",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 1.9924242424242424,
+    "lo": 1.0,
+    "hi": 2.6,
+    "outer": null,
+    "x_top": 2.4,
+    "x_bottom": 2.5,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 1.9924242424242424,
+      "lo": 1.0,
+      "hi": 2.6,
+      "outer": null,
+      "x_top": 2.4,
+      "x_bottom": 2.5,
+      "note": "narrow base sliver; col 0 base all bands; col 1 = 95/42/67/95, col 2 = 52/26/29/70: edge ~2.4 in top and bottom quarters, ~1.3-1.6 in middle (bowed, not a straight tilt). Dark rails (in B) at top/bottom of picture abut the base and may inflate b1/b4",
+      "labeller": "L2",
+      "x_eye": 1.4,
+      "x_snap": 1.9924242424242424
+     },
+     {
+      "state": "edge",
+      "x": 1.9924242424242424,
+      "lo": 1.1,
+      "hi": 2.5,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "thin black sliver, base ~96. Not straight: ~2.4 in top band (col 1 full, col 2 36%), ~1.2-1.6 in the middle bands (col 1 23-57%), ~2.5 in bottom band (col 2 51%). Wider at both ends, like rounded gate corners or a curled strip; x is the mid-height value",
+      "labeller": "L5",
+      "x_eye": 1.4,
+      "x_snap": 1.9924242424242424
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wooden wall/rack runs to 428; vertical feature at ~373-375 is scene (rack post), not base; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wooden shelf (brown in B, 46-70) runs to 428, well below base (~96); the sharp step at 373-376 is the magazine edge, not base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "stage3_03": {
+   "split": "dev",
+   "roll": "stage3",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "bright tree/sky to col 0; table 1-9 throughout, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "snowy ground and branches run to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "pavement to col 427. Col 427 alone turns base-like in the top and bottom ~10% of rows (rounded frame corners?), mid-height it is picture; no plateau, so edge is at/just beyond 428",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "snow/pavement runs to col 427 over most of the height; col 427 is dark in B only in the top ~35 and bottom ~40 rows (rounded frame corners), so the edge lies just beyond 428 at mid-height; texture change at ~400 is scene",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_01": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 3.55,
+    "lo": 3.0,
+    "hi": 4.1,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 3.5,
+      "lo": 3.0,
+      "hi": 4.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky reads same as base in b1-b3 (~79), so only b4 (col 2 = 63, col 3 = 46, col 4 = 36 -> ~3.4) and geometry place it: streak lines at ~38% height start at col 3, wall bands at 60% and bottom start at col 4; a straight vertical cut at ~3.5",
+      "labeller": "L1",
+      "x_eye": 3.5,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 3.6,
+      "lo": 3.0,
+      "hi": 4.1,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night scene is as clear as base in b1-b3 (78-80 both), so the edge shows only where picture has features: tube at row ~110, wall band and box all start at col 3-4; b4 col 3 ~63% base",
+      "labeller": "L4",
+      "x_eye": 3.6,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols ~389-427 are dark and read exactly like the left base sliver in all four bands (80/80/78/62), but the only visible vertical line is the end of the wall at ~389 in the bottom band (soft, 4-col ramp 387-391); top is night sky indistinguishable from base. With left edge at 3.5 a standard 425-col frame reaches the border, so judged dark scene. Could be base from ~389 if the frame is short",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "NOT base: region 391-427 reads like the night-sky picture in every band; wall/rail ends at 388-391 with a 3-col ramp, no straight full-height line; with left base ending at 3.6 a 36mm frame runs past 428",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_04": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 6.95,
+    "lo": 5.8,
+    "hi": 7.8,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "resolved_by": "R1",
+    "labels": [
+     {
+      "state": "edge",
+      "x": 6.9,
+      "lo": 5.8,
+      "hi": 7.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "AMBIGUOUS: night-sky background reads the same as base in all bands (80/80/78/64 left of line vs 80/81/77/60 background on the right; roll base also dips in b4), so no level contrast. Edge placed where lamp (row ~40%, starts col 6), rail (~60%, col 7) and wall (b4 50% crossing ~7.1) are all cut on one near-vertical line; bw0910_01 shows the same cut at ~3. Could instead be a dark scene region -> picture_to_border",
+      "labeller": "L2",
+      "x_eye": 6.9,
+      "x_snap": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night background is almost base-clear (~80) everywhere. Bench ends sharply at col 7, but cols 0-6 in the bottom band read 64 = same ground tone as right of the bench at 394+, not base. No distinct plateau",
+      "labeller": "L5",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 7.0,
+      "lo": 5.8,
+      "hi": 7.8,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "third look: light streak, ledge and wall all stop on one vertical line at 6-7; pairs agree: bw0910_01 (3.5) +4 -> 7.5, and bw0910_05 (~1.6-2.0) is this -6",
+      "labeller": "R1",
+      "x_eye": 7.0,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night background and wall run to 428; no distinguishable plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night background and ground run to 428, bottom band ~61 matches ground, no brighter plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_05": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 1.8,
+    "lo": 1.0,
+    "hi": 3.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 1.6,
+      "lo": 1.0,
+      "hi": 2.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky is as clear as base, so only the bottom band and the horizontal light streaks show it: lit rails/wall start at col 2 and leave cols 0-1 dark in B; b4 col0=64, col1=57, col2=40 vs picture ~35, base ~78 -> ~1.3-1.8, soft. Top three bands give no boundary",
+      "labeller": "L3",
+      "x_eye": 1.6,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 2.0,
+      "lo": 1.0,
+      "hi": 3.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|thin soft sliver: night sky is as clear as base so edge only visible where picture is dense; wall block and wall line both start at col 2 (bottom rows ~3), lamp line at row ~110 starts at col 1; b4 cols 0,1 = 64,57 vs wall 35, sky/base ~78 -> 50% at ~2.0; possibly tilted 1->3 top-to-bottom",
+      "labeller": "L6",
+      "x_eye": 2.0,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark sky and ground to col 427; bottom band stays ~58-62 to the border (no rise), the vertical step at ~387 in the bottom band is the end of the lit wall",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall ends at col ~387 but beyond it b4 ~60 (ground), not base; dark sky to border",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_06": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 3.4330357142857144,
+    "lo": 3.1,
+    "hi": 4.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 3.428571428571429,
+      "lo": 3.1,
+      "hi": 4.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base 0-2 (b1 96-97, b4 ~72: base reads lower in bottom band on this roll); col 3 partial (~30% in b2/b3, ~70% in b4), col 4 still ~36% base in b1 -> edge ragged between 3.2 and 4.4",
+      "labeller": "L1",
+      "x_eye": 3.5,
+      "x_snap": 3.428571428571429
+     },
+     {
+      "state": "edge",
+      "x": 3.4375,
+      "lo": 3.1,
+      "hi": 3.8,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base plateau cols 0-2, sharp; crossings b2 3.3, b3 3.2 at mid-height, wider at the corners (b1 4.4, b4 3.75) - rounded gate corners rather than a tilt; base dimmer in b4 (~72)",
+      "labeller": "L4",
+      "x_eye": 3.3,
+      "x_snap": 3.4375
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "figure/wall to col 427; b3 col 427 = 63 only mid-height, not a plateau",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall/people picture reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_07": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 0.3,
+    "lo": 0.0,
+    "hi": 1.3,
+    "outer": null,
+    "x_top": 1.3,
+    "x_bottom": 0.4,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 0.3,
+      "lo": 0.0,
+      "hi": 1.0,
+      "outer": null,
+      "x_top": 1.3,
+      "x_bottom": 0.4,
+      "note": "thin sliver, irregular: col 0 is base in b1 (93) with col 1 ~27% base there (black in B top ~30% of height); in b2/b3/b4 col 0 only ~20-45% base. Not a straight line; possibly borderline picture_to_border below the top quarter",
+      "labeller": "L2",
+      "x_eye": 0.3,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 0.3,
+      "lo": 0.1,
+      "hi": 1.3,
+      "outer": null,
+      "x_top": 1.3,
+      "x_bottom": 0.4,
+      "note": "very thin sliver, not straight. Top band: col 0 full base (93), col 1 27%, so ~1.3. Middle bands: col 0 only ~20% (grey in B), so ~0.2. Bottom band ~0.4 (col 0 44%). Black in B only in the top third",
+      "labeller": "L5",
+      "x_eye": 0.3,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "gallery wall/person run to 428; drop in b3/b4 at 422+ is scene (dark artwork), not base",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and people (dark silhouette) run to 428, no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_08": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall texture to col 0, table flat ~40 (not base, max is elsewhere), no step",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall runs to col 0, no dark plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "window and frame run to col 427; bright mullion at 415-423 is scene, not full height",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "window frame, mullion and sill run to col 427",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_09": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 1.859320199484134,
+    "lo": 1.5,
+    "hi": 2.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 1.859320199484134,
+      "lo": 1.5,
+      "hi": 2.7,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "black strip 0-1/2, full height; per-band crossings b1 ~2.6, b2 ~1.8, b3 ~1.6, b4 ~2.0 (all ~1.75); slightly ragged, wider at very top",
+      "labeller": "L1",
+      "x_eye": 1.9,
+      "x_snap": 1.859320199484134
+     },
+     {
+      "state": "edge",
+      "x": 1.859320199484134,
+      "lo": 1.5,
+      "hi": 2.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "narrow sliver, sharp; band crossings b1 2.6, b2 1.8, b3 1.6, b4 2.0 (base dimmer in b4) - not a clean tilt",
+      "labeller": "L4",
+      "x_eye": 1.9,
+      "x_snap": 1.859320199484134
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "window frame/wall to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall and window frame (vertical bar at 419-420) reach 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "bw0910_11": {
+   "split": "dev",
+   "roll": "bw0910",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 5.158348047236155,
+    "lo": 4.8,
+    "hi": 5.9,
+    "outer": null,
+    "x_top": 6.0,
+    "x_bottom": 5.4,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 5.158348047236155,
+      "lo": 4.8,
+      "hi": 5.9,
+      "outer": null,
+      "x_top": 6.0,
+      "x_bottom": 5.4,
+      "note": "base 0-4; col 5 = 83/46/40/43 -> 50% crossing ~5.9 in b1, ~5.05 in b2/b3, ~5.3 in b4: edge bulges outward at the top quarter (same shape as other bw0910 frames), not a straight tilt",
+      "labeller": "L2",
+      "x_eye": 5.1,
+      "x_snap": 5.158348047236155
+     },
+     {
+      "state": "edge",
+      "x": 5.158348047236155,
+      "lo": 4.9,
+      "hi": 5.5,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base cols 0-4 (~91), wall ~39 from col 6. Col 5 mostly picture (b2/b3 ~5%) but ~85% base in top band and ~30% in bottom band: top ~40 rows base reaches ~6 (rounded gate corner), not a straight tilt",
+      "labeller": "L5",
+      "x_eye": 5.1,
+      "x_snap": 5.158348047236155
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "window frame/wall run to 428; dark bar at ~422-427 (b2 ~50) is the window mullion, has texture and differs across bands",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "window frame and wall run to 428; cols 422-427 are the window frame, no base plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_01": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark navy wall to col 0, smooth 68-75, no line (wall nearly base-clear, a sliver could hide but none visible)",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark gallery wall (clear on negative) runs to col 0 with a smooth gradient 68->77, no sharp vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall to col 427, smooth ~69-78, no line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "slanted doorway edge at 388-395 is scene (tilts 7 cols, blurred shadow); beyond it the same wall as above the door, gradient 78->69, faint horizontal line near bottom",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_02": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark museum wall is near-base on the negative (68-80, uniform across bands) but grades smoothly to col 0 with no step or line; blue wall in positive",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark blue wall (bluish in B, not black) reaches column 0, uniform ~68, no line",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "same dark wall right of the doorway (tilted, soft door edge ~375-381 is scene); smooth 81->71 falloff to col 427, no step",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall right of the doorway reaches 428, ~71, no line; faint diagonal scratch lower right",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_03": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark museum wall runs to col 0 (smooth 66-71, no sharp full-height line); painting frame edge at ~17 is scene, not full height",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark blue museum wall runs to column 0, smooth ramp 66-80, no step or line",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall runs to 428, smooth gradient 82->69 (denser toward border, so not base); small step at ~413 is scene, not a plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall runs to 428, smooth ramp 82->69, no step or line",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_04": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark navy wall to col 0, table flat 87-91 all bands with no step or line; wall is near base-bright so a sliver could hide, but none visible",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark navy gallery wall (flat ~89) runs to col 0 and continues past col 64 to the painting; no vertical line anywhere near the border",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall to col 427, flat 87-90, no step or line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "slanted doorway edge 381-389 is scene; beyond it the same dark navy wall as above the door, no vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_05": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark blue wall, near-base (86-90) but flat with no step to col 0; blue tint in B, not black",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark blue wall (clear in the negative, ~87) reaches column 0 with no line or step; not base",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "same dark wall right of doorway to col 427 (flare from doorway top reaches ~390); no step",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall right of doorway (~90) reaches 428, no line or step; faint diagonal scratch lower right",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_06": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 10.0,
+    "lo": 9.0,
+    "hi": 10.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "resolved_by": "S1",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark museum wall (near base level, ~90) runs to col 0; no sharp full-height line; painting starts at ~9 (scene)",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark museum wall (~90, near base) runs to column 0; no step or line in any band or in B. Painting frame edge at col 9 is scene, not full height",
+      "labeller": "L5",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 10.0,
+      "lo": 9.0,
+      "hi": 10.5,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "Stefan, 2026-09-23, on the ground-truth sheet: 'r0911_06 needs a bit on the left side, maybe L 10.0'. The table agrees: columns 0-8 flat at base level in all bands (R/G 2.28), a small step at 9 in band 3.",
+      "labeller": "S1",
+      "x_eye": 10.0,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall runs to 428, faint scene line at bottom right crosses 413-428; no boundary",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall ~90 flat to 428, no step, no line in B",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_07": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 2.35,
+    "lo": 1.0,
+    "hi": 3.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 2.0,
+      "lo": 1.0,
+      "hi": 2.9,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall is nearly base-clear, so weak: the lit floor at the bottom stops at col ~2.5 with cols 0-1 dark in B, and cols 0-1 read ~90 vs wall ~86 in b2-b4 (~half base). Sliver, soft, ambiguous",
+      "labeller": "L3",
+      "x_eye": 2.0,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 2.7,
+      "lo": 2.0,
+      "hi": 3.3,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|dark gallery wall is as clear as base, so edge only visible where the floor (bottom ~30 rows) is cut off: floor starts at col 2-3 with a base sliver at cols 0-1 (91/90 vs wall 86-88); upper rows unverifiable",
+      "labeller": "L6",
+      "x_eye": 2.7,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "framed picture and floor run to col 427, no black strip",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "painting and floor run to col 427; slanted painting frame at 373-378 is scene",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_08": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall + floor (b4 ~60) run to col 0, no step",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall (~90) and the floor wedge at the bottom (b4 ~60) both reach column 0; no line",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall to col 427, flat, no step",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and picture-frame shadows reach 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_09": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 2.0703125,
+    "lo": 1.4,
+    "hi": 3.2,
+    "outer": null,
+    "x_top": 3.2,
+    "x_bottom": 2.4,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 2.0703125,
+      "lo": 1.4,
+      "hi": 3.2,
+      "outer": null,
+      "x_top": 3.2,
+      "x_bottom": 2.4,
+      "note": "narrow base: col 0 = 95 all bands; 50% crossing per band ~3.1 (b1), 2.0 (b2), 1.6 (b3), 2.4 (b4). Edge bows: widest at top quarter, narrowest ~60% height; painting (dark) abuts base in b2/b3",
+      "labeller": "L2",
+      "x_eye": 1.8,
+      "x_snap": 2.0703125
+     },
+     {
+      "state": "edge",
+      "x": 2.0703125,
+      "lo": 1.5,
+      "hi": 3.1,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "black base sliver, col 0 full (95). Against the painting (b2/b3, good contrast) the crossing is ~2.0 and ~1.6. In the top and bottom bands the dark wall (~70) is close to base and the crossing reads ~3.1 and ~2.3: wider at the ends (bowed, corners) and low contrast there",
+      "labeller": "L5",
+      "x_eye": 1.8,
+      "x_snap": 2.0703125
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and second painting run to 428; no plateau (b1 ~80 vs base 95)",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and painting run to 428, no step or black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_10": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 5.625,
+    "lo": 5.2,
+    "hi": 6.4,
+    "outer": null,
+    "x_top": 6.2,
+    "x_bottom": 5.6,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 5.625,
+      "lo": 5.2,
+      "hi": 6.4,
+      "outer": null,
+      "x_top": 6.2,
+      "x_bottom": 5.6,
+      "note": "base 0-4 ~98 all bands. col 5: b2 55%, b3 43%, b4 48% base -> ~5.5; top band col 5 is base and col 6 34% -> ~6.3, so edge bows right at top",
+      "labeller": "L3",
+      "x_eye": 5.5,
+      "x_snap": 5.625
+     },
+     {
+      "state": "edge",
+      "x": 5.625,
+      "lo": 5.3,
+      "hi": 6.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|base cols 0-4 ~98; col 5 ~45-56% base in b2-b4 -> 5.5-5.6; top quarter bulges out (b1 col5 93%, col6 34% -> 6.3), same top-corner shape as r0911_19; not treated as tilt",
+      "labeller": "L6",
+      "x_eye": 5.6,
+      "x_snap": 5.625
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall brightens gradually toward the border (to ~73/86) but no plateau or line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall with smooth vignette gradient runs to col 427, no line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_11": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark green-grey wall, vignetted, to col 0; olive tint in B, no black strip, no step",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark green wall (pale in the negative) reaches column 0 with smooth vignetting-like gradient, no line; col 0 only 2-3 above its neighbours",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "same wall to col 427, no step",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall reaches 428; no line or plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_12": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark gallery wall runs to col 0; smooth values 71-76, no sharp line",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark side wall (brown in B) runs to column 0, smooth gradient 71-86, no step",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall darkens smoothly toward 428 (74->90 ramp, no step); faint scene line at bottom right crosses 412-428, so it is picture not base",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall runs to 428, smooth ramp to ~90, no step or line",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_13": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark side wall to col 0 (~70-83), no step at the border; tone change near col 45-50 is the room corner, slanted",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark side wall (brown in B, 73-80) runs to col 0; soft brown->purple shading at ~46-50 is the wall, not a frame line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall to col 427 (~85-91), no step; tone change near 397 is the room corner",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "AMBIGUOUS: fairly uniform zone 399-427 (86-91 all bands) after a soft 3-4 col step at ~396-399, but it is dark purple in B (not black), reads below the ~98-100 that base reaches on this roll (r0911_10/19), and matches the dark wall tone; scratches cross it; read as dark wall",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_14": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 0.2,
+    "lo": 0.0,
+    "hi": 0.6,
+    "outer": null,
+    "x_top": 0.7,
+    "x_bottom": 0.15,
+    "resolved_by": "R1",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "brown wall to col 0; col 0 only slightly raised (b1 92 at top corner, other bands +1..+5): no full-height plateau",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 0.2,
+      "lo": 0.0,
+      "hi": 0.5,
+      "outer": null,
+      "x_top": 0.7,
+      "x_bottom": 0.15,
+      "note": "sub-column sliver: only col 0 is lighter in A in every band (b1 ~74% base, b2 ~19%, b3 ~10%, b4 ~17%); dark in B at top, faint below; leans wider at top like r0911_20; alternative reading picture_to_border",
+      "labeller": "L4",
+      "x_eye": 0.2,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 0.2,
+      "lo": 0.0,
+      "hi": 0.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "third look: column 0 reads 5-15 above column 1 in every band -- a sub-column sliver",
+      "labeller": "R1",
+      "x_eye": 0.2,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and label card to col 427, flat ~57",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and label card reach 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_15": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "brown wall runs to col 0; smooth 62-78, no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "brown wall runs to column 0 (72-83), no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall runs to 428; bright slanted shape at 364-369 is the picture frame side (scene, not full height, not straight)",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall runs to 428. The black shape at 364-369 (reads ~100) is the picture frame shadow, only rows ~45-230 and tapered, not base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_16": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 0.2,
+    "lo": 0.0,
+    "hi": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "resolved_by": "R1",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "no plateau. col 0 is only ~15% base mid-height (44 vs wall 34) and turns base only in the top/bottom corners (b1 col0=86, cols 0-1 black at top in B). Borderline: if counted as a sliver the edge is ~0.15 mid, ~1.0 at the top corner",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 0.2,
+      "lo": 0.0,
+      "hi": 1.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|sub-column sliver: col 0 visibly darker in B full height (b2-b4 only 11-16% base assuming base ~98 as on r0911_10), top rows darker and bulging to ~col 1 (b1 col0 76%, col1 14%) - same top-corner shape as r0911_10/19; could also be read as picture_to_border",
+      "labeller": "L6",
+      "x_eye": 0.2,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 0.2,
+      "lo": 0.0,
+      "hi": 0.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "third look: column 0 brighter than column 1 in every band; r0911_27 (same position) agrees",
+      "labeller": "R1",
+      "x_eye": 0.2,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall to col 427, smooth 38->46, no step",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "plain wall runs to col 427, smooth gradient, no line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_17": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 14.149839743589745,
+    "lo": 13.9,
+    "hi": 16.5,
+    "outer": 8.75,
+    "x_top": 16.45,
+    "x_bottom": 14.025,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 14.149839743589745,
+      "lo": 13.9,
+      "hi": 16.5,
+      "outer": 9.0,
+      "x_top": 16.4,
+      "x_bottom": 14.0,
+      "note": "narrow base gap (96-97 in all bands at cols 10-13) between a neighbour sliver (gold, cols ~1-8) and this frame's grey wall; tilted: inner edge ~16.4 in b1 (soft, 2-col ramp at the top), ~14.7 b2, ~14.0 b3/b4; outer edge ~10 at top, ~8.5 lower",
+      "labeller": "L1",
+      "x_eye": 14.5,
+      "x_snap": 14.149839743589745
+     },
+     {
+      "state": "edge",
+      "x": 14.149839743589745,
+      "lo": 14.0,
+      "hi": 14.8,
+      "outer": 8.5,
+      "x_top": 16.5,
+      "x_bottom": 14.05,
+      "note": "base strip ~cols 9-14 reads 96-97 in all four bands; inner edge sharp: b1 16.5, b2 14.7, b3 14.15, b4 14.05 (top bends right, same lean as r0911_14/_20); outer (neighbour picture, gilt/beaded strip cols 1-7) is softer: b1 ~10.1, b2 8.5, b3 8.3, b4 8.4. Narrow gap (~6 cols); alternative reading is a scene shadow beside a picture-frame moulding",
+      "labeller": "L4",
+      "x_eye": 14.4,
+      "x_snap": 14.149839743589745
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall darkening to col 427 (74-80), smooth, no step",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall reaches 428 (73-78), no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_18": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall runs to col 0; table ~5-10",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark (white wall in B) runs to column 0, flat ~8, no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall runs to 428; dark diagonal line 410->427 is a wall corner (slanted, not base), grey wall beyond it",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "diagonal light line 411->426 top-to-bottom is a scene element (wall corner, black line in B), strongly tilted, only 66-80; region beyond reads ~32, far below base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_19": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 5.666666666666667,
+    "lo": 4.6,
+    "hi": 6.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 5.666666666666667,
+      "lo": 4.7,
+      "hi": 5.8,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base 0-2 ~100; soft 3-col ramp (cols 3-5 grey-brown in B) to wall ~13 at col 6. Area-weighted: b2 5.3, b3 5.2, b4 5.1. Top quarter bulges right (b1 ~6.3, grey wedge reaching col ~8 at the top rows, tapering) - looks like a rounded frame corner rather than a straight tilt",
+      "labeller": "L3",
+      "x_eye": 5.2,
+      "x_snap": 5.666666666666667
+     },
+     {
+      "state": "edge",
+      "x": 5.666666666666667,
+      "lo": 4.6,
+      "hi": 6.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|base cols 0-2 at 100, soft 3-col ramp (col3 ~90, col4 ~81, col5 ~65, col6 ~15 vs picture 14); 50% area ~5.3, midpoint crossing ~5.7; top ~quarter bulges to col 7-8 (curved light, b1 col6=70) - not treated as tilt",
+      "labeller": "L6",
+      "x_eye": 5.4,
+      "x_snap": 5.666666666666667
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall (dark on negative, ~7-10) to col 427, no step",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall (dense) runs to col 427, values 7-10, no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_20": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 0.45,
+    "lo": 0.0,
+    "hi": 1.0,
+    "outer": null,
+    "x_top": 0.8,
+    "x_bottom": 0.15,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 0.45,
+      "lo": 0.0,
+      "hi": 1.0,
+      "outer": null,
+      "x_top": 0.8,
+      "x_bottom": 0.15,
+      "note": "sub-column sliver: col 0 is a full-height dark line in B / pale in A, raised in every band over the white wall beside it (b1 71 vs 6, b3 37 vs 22, b4 23 vs 11) -> ~0.7 col of base at top, ~0.15 at bottom; no plateau, borderline picture_to_border",
+      "labeller": "L1",
+      "x_eye": 0.45,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 0.45,
+      "lo": 0.1,
+      "hi": 0.9,
+      "outer": null,
+      "x_top": 0.8,
+      "x_bottom": 0.15,
+      "note": "sub-column sliver: col 0 is a dark full-height stripe in B; base fraction of col 0 b1 ~71% (+col 1 10%), b2 ~74%, b3 ~20%, b4 ~14% -> edge leans, wider at top (same lean as r0911_14/_17)",
+      "labeller": "L4",
+      "x_eye": 0.45,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hair/ear/wall to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "hair/ear/wall picture reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_21": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky (near base level) runs to col 0; railing/crowd in bottom quarter reach col 0-2 with no vertical boundary (b4 smooth 83->61)",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky (~91) runs to column 0; in the bottom band the lit ground ramps smoothly 83->55 over cols 0-8, no sharp line, so no base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky and crowd run to 428; b4 shows picture to the border",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky and lit crowd run to 428 (bottom band 55-60 at the border), no base line",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_22": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "unreadable",
+    "labels": [
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night scene: the dark surround is as clear as base (flat 89-92 all bands, all 64 cols); no line or step anywhere, so base vs dark scene cannot be told apart",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "near-unexposed night scene: flat ~90 in all bands across cols 0-64 with no vertical line; base could be present but has zero contrast against the scene",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "unreadable",
+    "labels": [
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "same: flat 89-93 all bands to col 427, no line; a faint diagonal scratch at bottom right only",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "same: flat ~90-93 across 364-427, no line; faint scratch near bottom only",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_23": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "unreadable",
+    "labels": [
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night scene is as clear as base: cols 0-63 read 89-93 in all four bands, no vertical line visible in either view; the nearest picture detail is a faint light streak at cols >=30. A base sliver of a few columns could be hidden; cannot tell",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "unreadable",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "underexposed night scene reads ~90-92 in every band from col 0 to ~47, same as base would; no line or step anywhere; faint picture smear reaches ~col 31 at mid-height; cannot tell whether a sliver of base is hidden",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "lit building detail (b2 dips to 69-80) runs to col 427",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "church facade picture (b2 dips to 71-85) reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_24": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "out-of-focus bright foreground object covers left third, runs to col 0 (table ~0-10)",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "blown-out foreground object (dense, dark in A) runs to column 0",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky + lit crowd; crowd reaches 428 in bottom band, no vertical boundary",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "night sky (~92, near base) and crowd run to 428; no vertical line, bottom band varies with scene",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_25": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark navy wall to col 0, smooth 67-75, no line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark gallery wall runs to col 0, smooth gradient 67->76, no vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall to col 427, smooth 69-80, no line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "slanted doorway edge 381-388 is scene; beyond it the wall (gradient 81->69) with faint diagonal line near bottom, no sharp vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_26": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey-green wall to col 0, flat ~61",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "green wall reaches column 0, uniform ~61, no line",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall to col 427, flat ~56",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "green wall reaches 428, no line; faint diagonal scratch lower right",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_27": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 0.15000000000000002,
+    "lo": 0.0,
+    "hi": 0.6,
+    "outer": null,
+    "x_top": 0.575,
+    "x_bottom": 0.1,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 0.2,
+      "lo": 0.0,
+      "hi": 0.6,
+      "outer": null,
+      "x_top": 0.6,
+      "x_bottom": 0.1,
+      "note": "sub-column sliver: col 0 darker than wall full height in B, ~47% base in b1 (63 vs pic 35, base ~95 on roll), only ~6-10% in b2-b4; col 1 picture. Borderline vs picture_to_border",
+      "labeller": "L2",
+      "x_eye": 0.2,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 0.1,
+      "lo": 0.0,
+      "hi": 0.6,
+      "outer": null,
+      "x_top": 0.55,
+      "x_bottom": 0.1,
+      "note": "barely-there sliver: col 0 black in B only in the top ~quarter (b1 63 vs wall 35, ~47%, col 1 ~7%); below that col 0 is only ~6-10% base (dark grey). Tilted edge grazing the frame; could equally be called picture_to_border",
+      "labeller": "L5",
+      "x_eye": 0.1,
+      "x_snap": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "beige wall runs to 428; table flat ~33",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "beige wall runs to 428, flat 30-40, no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_28": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall (dark on negative, ~5) to col 0, no step",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white floor runs to col 0, flat, no line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "strongly slanted bright line 410->426 top to bottom (~60) and grey region beyond (~25) are a room corner in the scene, not base (not near-white, not vertical)",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark diagonal line from ~411 (top) to ~426 (bottom) is a scene edge (15-col slant); beyond it light grey wall (~25-28), not black; trousers cross to col 427",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0911_29": {
+   "split": "dev",
+   "roll": "r0911",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf wall/floor to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf post (cols 0-5, ~52) and TV wall picture reach column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark shelf (upper half) and bright floor (b3/b4 ~18-34) run to col 427; no full-height black",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf and step picture reach 428 (b3/b4 dark 18-35 to the border); col 426 a darker line, not a base boundary",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0914_01": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall runs to col 0; table flat ~16",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall (dark in A, ~16) runs to column 0, no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 412.8218984962406,
+    "lo": 412.3,
+    "hi": 413.0,
+    "outer": null,
+    "x_top": 412.9,
+    "x_bottom": 412.25,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 412.8218984962406,
+      "lo": 412.4,
+      "hi": 413.0,
+      "outer": null,
+      "x_top": 412.9,
+      "x_bottom": 412.2,
+      "note": "clean sharp edge; base 413-427 ~97 all bands; col 412 = 27/32/43/70 -> crossing 412.86/412.79/412.65/412.26 top to bottom: slight tilt, base starts further left at the bottom",
+      "labeller": "L2",
+      "x_eye": 412.7,
+      "x_snap": 412.8218984962406
+     },
+     {
+      "state": "edge",
+      "x": 412.8218984962406,
+      "lo": 412.3,
+      "hi": 413.0,
+      "outer": null,
+      "x_top": 412.9,
+      "x_bottom": 412.3,
+      "note": "clean sharp base from 413 (~96) against wall ~16. Col 412 partial and more base toward the bottom (b1 27 to b4 70): slight tilt",
+      "labeller": "L5",
+      "x_eye": 412.7,
+      "x_snap": 412.8218984962406
+     }
+    ]
+   }
+  },
+  "r0914_05": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall and picture frame to col 0, no black strip",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall (dense) runs to col 0, values 14-20, no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.9045753286148,
+    "lo": 418.4,
+    "hi": 419.2,
+    "outer": null,
+    "x_top": 419.05,
+    "x_bottom": 418.45,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 418.9045753286148,
+      "lo": 418.4,
+      "hi": 419.2,
+      "outer": null,
+      "x_top": 419.1,
+      "x_bottom": 418.4,
+      "note": "base 419-427 ~98 all bands, black in B. per band: b1 419.1, b2 418.9, b3 418.8, b4 418.5 (col 418 = 59, ~54% base). Clean, slight lean. Slanted thin line 404-410 is a wall corner in the scene",
+      "labeller": "L3",
+      "x_eye": 418.9,
+      "x_snap": 418.9045753286148
+     },
+     {
+      "state": "edge",
+      "x": 418.9045753286148,
+      "lo": 418.5,
+      "hi": 419.1,
+      "outer": null,
+      "x_top": 419.0,
+      "x_bottom": 418.5,
+      "note": "clean sharp edge, base 419-427 at ~98; col 418 partial per band b1 9%, b2 13%, b3 20%, b4 53% -> slight tilt, bottom half-col further left",
+      "labeller": "L6",
+      "x_eye": 418.8,
+      "x_snap": 418.9045753286148
+     }
+    ]
+   }
+  },
+  "r0914_06": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall (dense, ~7) to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense white wall (~7) reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 419.875,
+    "lo": 419.4,
+    "hi": 420.0,
+    "outer": null,
+    "x_top": 419.85,
+    "x_bottom": 419.5,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 419.875,
+      "lo": 419.5,
+      "hi": 420.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean sharp edge, base 97-100 from col 420; col 419 ~16-26% base (b4 43%)",
+      "labeller": "L1",
+      "x_eye": 419.75,
+      "x_snap": 419.875
+     },
+     {
+      "state": "edge",
+      "x": 419.875,
+      "lo": 419.4,
+      "hi": 420.0,
+      "outer": null,
+      "x_top": 419.85,
+      "x_bottom": 419.5,
+      "note": "clean sharp edge; col 419 base fraction b1 18%, b2 15%, b3 25%, b4 44% -> slight lean at bottom (as r0914_09)",
+      "labeller": "L4",
+      "x_eye": 419.8,
+      "x_snap": 419.875
+     }
+    ]
+   }
+  },
+  "r0914_07": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall/floor (dense in neg, ~10) runs to col 0",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall runs to column 0 (~11), no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.85869565217394,
+    "lo": 423.3,
+    "hi": 424.0,
+    "outer": null,
+    "x_top": 423.9,
+    "x_bottom": 423.20000000000005,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 423.85869565217394,
+      "lo": 423.3,
+      "hi": 424.0,
+      "outer": null,
+      "x_top": 423.9,
+      "x_bottom": 423.1,
+      "note": "clean sharp edge; base 424-427 ~99; col 423 = 23/28/44/76 -> crossing 423.88/423.81/423.63/423.24 top to bottom: slight tilt, base starts further left at the bottom",
+      "labeller": "L2",
+      "x_eye": 423.7,
+      "x_snap": 423.85869565217394
+     },
+     {
+      "state": "edge",
+      "x": 423.85869565217394,
+      "lo": 423.3,
+      "hi": 424.0,
+      "outer": null,
+      "x_top": 423.9,
+      "x_bottom": 423.3,
+      "note": "clean black base 424-427 (~99) against white wall ~12. Col 423 12% base at top rising to 72% at bottom: slight tilt",
+      "labeller": "L5",
+      "x_eye": 423.7,
+      "x_snap": 423.85869565217394
+     }
+    ]
+   }
+  },
+  "r0914_08": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark painting (bright on negative) and white wall above/below it run to col 0; wall strips top and bottom are dark on the negative, so no base",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark painting (clear on negative) runs to col 0 between white wall above and below; not full height",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.5,
+    "lo": 427.0,
+    "hi": 428.0,
+    "outer": null,
+    "x_top": 427.875,
+    "x_bottom": 426.9,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 427.5,
+      "lo": 427.0,
+      "hi": 428.0,
+      "outer": null,
+      "x_top": 427.9,
+      "x_bottom": 426.9,
+      "note": "one-column sliver, tilted: col 427 = 25/40/73/106 top->bottom vs wall ~10 (17/33/70/100% base), col 426 b4 =19 (~7%). Base only fully present in the bottom quarter",
+      "labeller": "L3",
+      "x_eye": 427.5,
+      "x_snap": null
+     },
+     {
+      "state": "edge",
+      "x": 427.5,
+      "lo": 427.0,
+      "hi": 427.9,
+      "outer": null,
+      "x_top": 427.85,
+      "x_bottom": 426.9,
+      "note": "sub-column sliver, tilted: col 427 base fraction b1 17%, b2 33%, b3 70%, b4 100% (col 426 b4 ~8%); base ~100, black in B at the bottom",
+      "labeller": "L6",
+      "x_eye": 427.5,
+      "x_snap": null
+     }
+    ]
+   }
+  },
+  "r0914_09": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall (dense, ~7) to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense white wall (dark in A, ~7) reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 419.8595803842265,
+    "lo": 419.2,
+    "hi": 420.0,
+    "outer": null,
+    "x_top": 419.9,
+    "x_bottom": 419.225,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 419.8595803842265,
+      "lo": 419.2,
+      "hi": 420.0,
+      "outer": null,
+      "x_top": 419.9,
+      "x_bottom": 419.25,
+      "note": "sharp black strip from 420 (base 96-100); col 419 ~13-27% base in b1-b3 but ~73% in b4 -> bottom of the edge sits ~0.6 col further left",
+      "labeller": "L1",
+      "x_eye": 419.75,
+      "x_snap": 419.8595803842265
+     },
+     {
+      "state": "edge",
+      "x": 419.8595803842265,
+      "lo": 419.2,
+      "hi": 420.0,
+      "outer": null,
+      "x_top": 419.9,
+      "x_bottom": 419.2,
+      "note": "clean sharp edge against dense wall; col 419 base fraction b1 13%, b2 16%, b3 27%, b4 73% -> lower rows lean left",
+      "labeller": "L4",
+      "x_eye": 419.75,
+      "x_snap": 419.8595803842265
+     }
+    ]
+   }
+  },
+  "r0914_10": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall runs to col 0 in b1/b4; dark clothing in b2/b3 is near base level (93) but bounded by a slanted scene edge, not full height",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall (b1/b4 ~71-77) and a near-base-bright dark garment (b2/b3 ~93) run to column 0: not full height, not base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.995,
+    "lo": 421.6,
+    "hi": 422.4,
+    "outer": null,
+    "x_top": 422.35,
+    "x_bottom": 421.55,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 421.995,
+      "lo": 421.7,
+      "hi": 422.3,
+      "outer": null,
+      "x_top": 422.4,
+      "x_bottom": 421.5,
+      "note": "clean sharp edge; base 422-427 ~96; crossing 422.34 (b1), 422.0 (b2,b3), 421.61 (b4): slight tilt, base starts further left at the bottom",
+      "labeller": "L2",
+      "x_eye": 422.0,
+      "x_snap": 421.995
+     },
+     {
+      "state": "edge",
+      "x": 421.995,
+      "lo": 421.6,
+      "hi": 422.4,
+      "outer": null,
+      "x_top": 422.3,
+      "x_bottom": 421.6,
+      "note": "clean base from 422 (~96) against wall ~60. Col 422 only 66% base in top band, col 421 40% base in bottom band: slight tilt",
+      "labeller": "L5",
+      "x_eye": 422.0,
+      "x_snap": 421.995
+     }
+    ]
+   }
+  },
+  "r0914_11": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall and legs/trousers to col 0; black trousers in the middle bands (~90) are not full height",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall (b1,b4 ~45-60) and dark trousers (b2,b3 ~90, clear on negative) run to col 0; not full height, no line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 420.63875,
+    "lo": 420.2,
+    "hi": 421.0,
+    "outer": null,
+    "x_top": 420.7,
+    "x_bottom": 420.225,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 420.63875,
+      "lo": 420.2,
+      "hi": 421.0,
+      "outer": null,
+      "x_top": 420.7,
+      "x_bottom": 420.2,
+      "note": "base 421-427 ~95 all bands vs wall ~29. col 420: b1 32%, b2 33%, b3 44%, b4 73% base -> 420.7/420.7/420.6/420.3. Clean, slight lean",
+      "labeller": "L3",
+      "x_eye": 420.6,
+      "x_snap": 420.63875
+     },
+     {
+      "state": "edge",
+      "x": 420.63875,
+      "lo": 420.2,
+      "hi": 420.9,
+      "outer": null,
+      "x_top": 420.7,
+      "x_bottom": 420.25,
+      "note": "clean sharp edge, base 421-427 at ~94; col 420 partial: b1-b2 ~32%, b3 45%, b4 73% (col 419 b4 slightly up) -> slight tilt, bottom further left",
+      "labeller": "L6",
+      "x_eye": 420.6,
+      "x_snap": 420.63875
+     }
+    ]
+   }
+  },
+  "r0914_12": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "ground/figures to col 0, ~36 flat",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor picture reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 415.7098387096774,
+    "lo": 415.1,
+    "hi": 415.8,
+    "outer": null,
+    "x_top": 415.6,
+    "x_bottom": 415.15,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 415.7098387096774,
+      "lo": 415.1,
+      "hi": 415.8,
+      "outer": null,
+      "x_top": 415.6,
+      "x_bottom": 415.15,
+      "note": "clean edge, base 94-98 from 416; col 415 ~40% base top, ~76% bottom (b4) -> slight lean",
+      "labeller": "L1",
+      "x_eye": 415.5,
+      "x_snap": 415.7098387096774
+     },
+     {
+      "state": "edge",
+      "x": 415.7098387096774,
+      "lo": 415.1,
+      "hi": 415.8,
+      "outer": null,
+      "x_top": 415.6,
+      "x_bottom": 415.15,
+      "note": "clean sharp edge, 12-col base plateau to 428; col 415 base fraction b1 38%, b2 42%, b3 55%, b4 76% -> slight lean at bottom",
+      "labeller": "L4",
+      "x_eye": 415.5,
+      "x_snap": 415.7098387096774
+     }
+    ]
+   }
+  },
+  "r0914_13": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "light strip 0-12 (~62) is a scene wall section, far below base (~94), boundary slanted 17->11; picture runs to col 0",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "darker blue backdrop band at cols 0-12 (~62) is scene, well below base (~94) and blue not black in B",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.1380952380952,
+    "lo": 418.2,
+    "hi": 419.1,
+    "outer": null,
+    "x_top": 419.05,
+    "x_bottom": 418.175,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 418.1380952380952,
+      "lo": 418.2,
+      "hi": 419.0,
+      "outer": null,
+      "x_top": 419.1,
+      "x_bottom": 418.1,
+      "note": "base 419-427 ~94 all bands; col 418 = 42/48/57/71 (slightly soft, 1-col transition) -> crossing ~419.0/418.66/418.51/418.25 top to bottom: tilt, base starts further left at the bottom",
+      "labeller": "L2",
+      "x_eye": 418.6,
+      "x_snap": 418.1380952380952
+     },
+     {
+      "state": "edge",
+      "x": 418.1380952380952,
+      "lo": 418.2,
+      "hi": 419.1,
+      "outer": null,
+      "x_top": 419.0,
+      "x_bottom": 418.25,
+      "note": "black base 419-427 (~94). Col 418 is a dark-blue transition column (42 top to 71 bottom), so the crossing moves from ~419.0 at top to ~418.25 at bottom: slight tilt",
+      "labeller": "L5",
+      "x_eye": 418.7,
+      "x_snap": 418.1380952380952
+     }
+    ]
+   }
+  },
+  "r0914_14": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "TV wall and floor run to col 0; b4 col 0 = 50 same as floor, no base",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "TV shelving and floor run to col 0; no black plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 420.86944169960475,
+    "lo": 420.4,
+    "hi": 421.2,
+    "outer": null,
+    "x_top": 421.0,
+    "x_bottom": 420.5,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 420.86944169960475,
+      "lo": 420.4,
+      "hi": 421.2,
+      "outer": null,
+      "x_top": 421.0,
+      "x_bottom": 420.5,
+      "note": "base 421-427 ~95 all bands. b3 (dark bench, ~18) clean step at 421.0; b4 col 420 = 60 vs 34/95 -> ~43% base -> 420.6; top half the scene is bright wall so less certain",
+      "labeller": "L3",
+      "x_eye": 420.9,
+      "x_snap": 420.86944169960475
+     },
+     {
+      "state": "edge",
+      "x": 420.86944169960475,
+      "lo": 420.5,
+      "hi": 421.1,
+      "outer": null,
+      "x_top": 421.0,
+      "x_bottom": 420.5,
+      "note": "base 421-427 ~95 (black-olive in B), sharp straight line; b1-b3 col 420 ~0-4% -> 421.0, b4 col 420 43% -> 420.6 (bench end at bottom); dark shelving (b1/b2 80-90) next to the edge at the top lowers contrast there",
+      "labeller": "L6",
+      "x_eye": 420.9,
+      "x_snap": 420.86944169960475
+     }
+    ]
+   }
+  },
+  "r0914_15": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "blue shelf post at cols 0-3 (lighter in B, less base-like) and floor run to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf post (cols 0-3, ~64) and floor reach column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark shelf/bright floor to col 427; no full-height black",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf, step and floor picture reach 428 (b3 ~21 to the border); col 427 darker, not base",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0914_16": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark blue area outside the round mirror runs to col 0 (~60, far below base 97); curved scene boundary, no straight line",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall/shoulder run to column 0, no plateau (60-71)",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 417.80555555555554,
+    "lo": 417.2,
+    "hi": 418.1,
+    "outer": null,
+    "x_top": 418.05,
+    "x_bottom": 417.05,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 417.80555555555554,
+      "lo": 417.4,
+      "hi": 418.1,
+      "outer": null,
+      "x_top": 418.1,
+      "x_bottom": 416.8,
+      "note": "clean sharp edge; base 418-427 ~97; crossing ~418.0/417.8/417.7 (b1-b3), ~416.9 in b4 where the adjacent picture is the dark-blue mirror rim: tilt, base starts further left at the bottom",
+      "labeller": "L2",
+      "x_eye": 417.8,
+      "x_snap": 417.80555555555554
+     },
+     {
+      "state": "edge",
+      "x": 417.80555555555554,
+      "lo": 417.2,
+      "hi": 418.1,
+      "outer": null,
+      "x_top": 418.0,
+      "x_bottom": 417.3,
+      "note": "sharp base from 418 (~97). Col 417 is a thin yellow fringe (b1-b3 20-32, b4 90) running full height; in the bottom band the lit orange picture (48-61) makes col 417 nearly base, so the crossing is ~417.2 there and ~418.0 at top",
+      "labeller": "L5",
+      "x_eye": 417.8,
+      "x_snap": 417.80555555555554
+     }
+    ]
+   }
+  },
+  "r0914_17": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles run to col 0; vertical black band at ~47-60 is grout between tiles (tiles resume at ~61), not base",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles and grout run to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.3017857142857,
+    "lo": 418.0,
+    "hi": 419.1,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.0,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 418.3017857142857,
+      "lo": 418.0,
+      "hi": 419.1,
+      "outer": null,
+      "x_top": 419.0,
+      "x_bottom": 418.0,
+      "note": "cols 419-427 ~93 all bands, black full height with a straight line. Grout is nearly as dark (~84-90) and runs into it in b3, so boundary only readable against tiles: b1 419.0 (col 418 = picture), b2 418.5 (col 418 46%), b4 418.0 (col 418 fully base). Tilted ~1 col",
+      "labeller": "L3",
+      "x_eye": 418.5,
+      "x_snap": 418.3017857142857
+     },
+     {
+      "state": "edge",
+      "x": 418.3017857142857,
+      "lo": 418.0,
+      "hi": 419.0,
+      "outer": null,
+      "x_top": 419.0,
+      "x_bottom": 418.0,
+      "note": "base 419-427 at 92-94 all bands; four tiles/patches all cut off on one straight line: top tile at 419.0 (b1 col418=23), middle 418.5 (b2 col418=51 -> 46%), blue patch and bottom tile at 418.0; clear grout (84-91) sits next to base in places",
+      "labeller": "L6",
+      "x_eye": 418.5,
+      "x_snap": 418.3017857142857
+     }
+    ]
+   }
+  },
+  "r0914_18": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles cut at col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "mosaic tiles reach column 0 in every band; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.96153846153845,
+    "lo": 422.0,
+    "hi": 423.4,
+    "outer": null,
+    "x_top": 422.9,
+    "x_bottom": 422.1,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 422.96153846153845,
+      "lo": 422.3,
+      "hi": 423.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "base 423-427 reads 88-91, the same as the black wall between tiles, so no contrast in b3/b4; placed by three separate tiles (b1 top, b2 blue tile 409-422, bottom object) all cut by the same straight vertical at ~422.8-422.9 (b1/b2 crossings); the 3-col tile stub at 419-422 top only makes sense as a frame cut",
+      "labeller": "L1",
+      "x_eye": 422.85,
+      "x_snap": 422.96153846153845
+     },
+     {
+      "state": "edge",
+      "x": 422.96153846153845,
+      "lo": 422.0,
+      "hi": 423.2,
+      "outer": null,
+      "x_top": 422.9,
+      "x_bottom": 422.1,
+      "note": "black grout between tiles reads ~90 like the base, so the edge shows only where tiles touch it: three separate tiles (top, middle, bottom) all end in a straight vertical cut at 422-423 (b1 crossing ~422.9, b2 ~422.8, bottom tile ~422.0 by eye); cols 423-427 ~88-91 in all bands. Lean matches the other r0914 frames",
+      "labeller": "L4",
+      "x_eye": 422.8,
+      "x_snap": 422.96153846153845
+     }
+    ]
+   }
+  },
+  "r0914_19": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "flat wall (dark in positive) runs to col 0; uniform ~84-89 but below grout/base level and no sharp line anywhere in 0-64",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark textured wall (~84-88) runs to column 0 with no line; it is 75+ columns wide with specks, scene not base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles and grout run to 428 (tile in b2 reaches the border, another tile at 425-427 mid-height)",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark grid between tiles reaches ~89 in b1/b3 but a tile runs to 428 in b2 (29) and the bottom band has tile content: not full height, not base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0914_20": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 103.29545454545455,
+    "lo": 102.8,
+    "hi": 103.8,
+    "outer": 85.5,
+    "x_top": null,
+    "x_bottom": null,
+    "resolved_by": "R1",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sculpture runs to col 0, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "statue runs to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 103.29545454545455,
+      "lo": 102.8,
+      "hi": 103.8,
+      "outer": 85.5,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "third look, raised by the changepoint and gapmodel detectors: columns 85.5-103.3 are full-height base at r0914's level (69,31,16), straight on both sides, between the neighbour's statue (0-85) and this frame's lamps. Outside the labellers' 64-column crop, so both missed it.",
+      "labeller": "R1",
+      "x_eye": 103.3,
+      "x_snap": 103.29545454545455
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark wall (near-white on negative, ~84-90) with the pedestal edge line crossing to col 427; no vertical line or step",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "lamps, plinth top and dark background run to col 427; dark areas (b1 ~84, b4 ~90) are scene, split by the lit plinth, no vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0914_21": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "no_film",
+    "labels": [
+     {
+      "state": "no_film",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "empty gate: cols 0-63 a flat 98 in all bands, featureless, black in B / white-neutral in A; the film (and picture) starts beyond the panel at roughly col 95 per the thumbnail, not measurable from the table",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "no_film",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "empty gate: cols 0-63 neutral white, 98-99 in every band, brighter/greyer than base; the strip's leading end and the picture start lie outside the table, roughly col 95-100 by the thumbnail (thin light line there in B)",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "gallery wall/pictures to col 427, all bands 3-5, no base",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense wall/pictures (3-5) reach 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0914_23": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor/people run to col 0; table flat ~36",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor/wall run to column 0 (~36), no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 409.9038187855788,
+    "lo": 409.5,
+    "hi": 410.1,
+    "outer": null,
+    "x_top": 409.9,
+    "x_bottom": 409.5,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 409.9038187855788,
+      "lo": 409.5,
+      "hi": 410.1,
+      "outer": null,
+      "x_top": 409.9,
+      "x_bottom": 409.4,
+      "note": "clean sharp edge; base 410-427 ~95 all bands; col 409 = 38/32/36/57 -> crossing ~409.8 in b1-b3, ~409.55 in b4: very slight tilt at the bottom",
+      "labeller": "L2",
+      "x_eye": 409.8,
+      "x_snap": 409.9038187855788
+     },
+     {
+      "state": "edge",
+      "x": 409.9038187855788,
+      "lo": 409.5,
+      "hi": 410.1,
+      "outer": null,
+      "x_top": 409.9,
+      "x_bottom": 409.6,
+      "note": "clean sharp base from 410 (~95) against dark panel ~20; col 409 partial (~20% base), a bit more at the bottom (b4 57)",
+      "labeller": "L5",
+      "x_eye": 409.8,
+      "x_snap": 409.9038187855788
+     }
+    ]
+   }
+  },
+  "r0914_24": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-5 a darker-blue strip in B (~63) but far below base (~94 on the right); scene (wall shading), picture continues to col 0",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "lighter orange strip at cols 0-5 (top to ~9) reads only ~63 vs base 93 on the right and is orange, not base colour; picture (background) with a soft step, not base",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 411.8964285714286,
+    "lo": 411.8,
+    "hi": 412.7,
+    "outer": 427.05,
+    "x_top": 412.625,
+    "x_bottom": 411.7,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 411.8964285714286,
+      "lo": 411.8,
+      "hi": 412.7,
+      "outer": 427.0,
+      "x_top": 412.6,
+      "x_bottom": 411.7,
+      "note": "base 413-425 ~93 all bands. per band: b1 412.6, b2 412.5, b3 412.3, b4 411.7 (col 412 fully base, col 411 27%). Neighbour frame shows again at the far right: outer ~427.7 top, ~426.5 bottom. The lighter strip 397-411 is a wall corner in the scene",
+      "labeller": "L3",
+      "x_eye": 412.3,
+      "x_snap": 411.8964285714286
+     },
+     {
+      "state": "edge",
+      "x": 411.8964285714286,
+      "lo": 411.8,
+      "hi": 412.7,
+      "outer": 427.1,
+      "x_top": 412.65,
+      "x_bottom": 411.7,
+      "note": "clean sharp edge, base 413-425 at ~93; col 412 b1 38%, b2 54%, b3 75%, b4 100% (col 411 b4 27%) -> tilt ~1 col, bottom further left; neighbour picture sliver at 426-427 (dark olive), outer ~427.7 top to ~426.5 bottom",
+      "labeller": "L6",
+      "x_eye": 412.3,
+      "x_snap": 411.8964285714286
+     }
+    ]
+   }
+  },
+  "r0914_25": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "TV shelf/floor to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "TV shelves/floor reach column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 414.96875,
+    "lo": 414.6,
+    "hi": 415.3,
+    "outer": null,
+    "x_top": 415.125,
+    "x_bottom": 414.7,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 414.96875,
+      "lo": 414.6,
+      "hi": 415.3,
+      "outer": null,
+      "x_top": 415.15,
+      "x_bottom": 414.7,
+      "note": "base 92-97 from 415 (col 415 full in b2-b4, ~83% in b1); col 414 ~34% base only in b4 -> slight lean, bottom further left",
+      "labeller": "L1",
+      "x_eye": 414.95,
+      "x_snap": 414.96875
+     },
+     {
+      "state": "edge",
+      "x": 414.96875,
+      "lo": 414.7,
+      "hi": 415.3,
+      "outer": null,
+      "x_top": 415.1,
+      "x_bottom": 414.7,
+      "note": "sharp edge, base plateau 415-427 (~93 all bands); b3 against the pale step gives 415.0, b4 col 414 ~34% base -> 414.7 at bottom; upper bands lower contrast (dark shelf in positive)",
+      "labeller": "L4",
+      "x_eye": 415.0,
+      "x_snap": 414.96875
+     }
+    ]
+   }
+  },
+  "r0914_27": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "TV-wall grid and floor run to col 0; b4 col 0 = 61 (floor, base ~94), so no full-height base; bright b1/b2 at col 0 is the grid",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark shelf (~90) at top and blue floor (~61) at bottom run to column 0; col 0 in b4 equals the floor, so no base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.9642857142857,
+    "lo": 423.3,
+    "hi": 424.3,
+    "outer": null,
+    "x_top": 424.05,
+    "x_bottom": 423.35,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 423.9642857142857,
+      "lo": 423.6,
+      "hi": 424.3,
+      "outer": null,
+      "x_top": 424.1,
+      "x_bottom": 423.3,
+      "note": "base 424-427 ~93-97 all bands; b3: col 423 = 22 picture, 424 base -> 424.0; b4: col 423 = 72 -> 423.4. In b1/b2 a scene bar at 420-423 reads 73-83, close to base, so top is less certain: slight tilt, base starts further left at the bottom",
+      "labeller": "L2",
+      "x_eye": 424.0,
+      "x_snap": 423.9642857142857
+     },
+     {
+      "state": "edge",
+      "x": 423.9642857142857,
+      "lo": 423.3,
+      "hi": 424.1,
+      "outer": null,
+      "x_top": 424.0,
+      "x_bottom": 423.4,
+      "note": "black base 424-427 (~93) with a straight line. Top bands low contrast against the dark shelf (~90) and a lighter post at 421-423; crossing ~424.0 there and against the bright stairs (b3). Bottom band ~423.4",
+      "labeller": "L5",
+      "x_eye": 423.9,
+      "x_snap": 423.9642857142857
+     }
+    ]
+   }
+  },
+  "r0914_28": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "scene (wall, arm) to col 0, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "room reflected in mirror runs to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 411.90697674418607,
+    "lo": 411.6,
+    "hi": 412.4,
+    "outer": null,
+    "x_top": 412.32500000000005,
+    "x_bottom": 411.3,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 411.90697674418607,
+      "lo": 411.6,
+      "hi": 412.4,
+      "outer": null,
+      "x_top": 412.3,
+      "x_bottom": 411.3,
+      "note": "base 413-427 ~95 all bands. per band: b1 ~412.3, b2 ~412.1, b3 ~411.9, b4 ~411.3 (col 411 = 82 vs bright-orange picture ~55). Clean, slightly tilted",
+      "labeller": "L3",
+      "x_eye": 412.0,
+      "x_snap": 411.90697674418607
+     },
+     {
+      "state": "edge",
+      "x": 411.90697674418607,
+      "lo": 411.6,
+      "hi": 412.4,
+      "outer": null,
+      "x_top": 412.35,
+      "x_bottom": 411.3,
+      "note": "base 413-427 ~95, sharp straight line; col 412 b1 61%, b2 82%, b3/b4 100%; col 411 ~8-12% in b1-b3, ~66-71% in b4 -> tilt ~1 col, bottom further left; b4 has dark-blue mirror rim (clear-ish, ~50) beside the edge",
+      "labeller": "L6",
+      "x_eye": 412.0,
+      "x_snap": 411.90697674418607
+     }
+    ]
+   }
+  },
+  "r0914_29": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark shelf/TVs/floor to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "pale shelf/TV-wall picture and floor reach column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor (b3/b4 ~25-46) to col 427; col 427 dark only in the lowest rows (b4 69), not full height",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor/step picture reaches 428 in b3 (23-25 to the border); col 427 lighter only in the bottom quarter (b4 69 vs 45) - possibly a gate corner, not full-height base",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "r0914_31": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "no base: cols 0-5 are a DENSE strip (cream in B, navy in A; table 5-70, varies by band) with a straight vertical boundary at ~5.5-6 -- looks like an overlapping/abutting exposure (neighbour frame or light leak), not base; picture continues to col 0",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark arc outside the round mirror (white wall in B) and the mirror image run to column 0; nothing near base level (~108)",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.8839120172934,
+    "lo": 425.8,
+    "hi": 427.1,
+    "outer": null,
+    "x_top": 426.9,
+    "x_bottom": 425.75,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 426.8839120172934,
+      "lo": 426.5,
+      "hi": 427.0,
+      "outer": null,
+      "x_top": 426.9,
+      "x_bottom": 425.5,
+      "note": "thin base sliver: col 427 = 106-110 all bands (brighter than frame max; white-cyan in A like base elsewhere on roll, so read as base not no_film); col 426 = 26/25/31/109 -> crossing ~426.85 in b1-b3, ~425.6 in b4: tilt, base starts further left at the bottom",
+      "labeller": "L2",
+      "x_eye": 426.8,
+      "x_snap": 426.8839120172934
+     },
+     {
+      "state": "edge",
+      "x": 426.8839120172934,
+      "lo": 425.8,
+      "hi": 427.1,
+      "outer": null,
+      "x_top": 426.9,
+      "x_bottom": 426.0,
+      "note": "thin sliver: col 427 is base (~108) in all bands, col 426 ~15% base in b1-b3 but full in b4. Bottom band edge ~425.7-426 where bright orange picture meets it, so bottom less certain",
+      "labeller": "L5",
+      "x_eye": 426.8,
+      "x_snap": 426.8839120172934
+     }
+    ]
+   }
+  },
+  "r0914_33": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor to col 0; dark object in the top-left corner (b1 ~60-67 at cols 0-6) is scene, not full height",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor/figures run to col 0; bright curved patch top-left (b1 ~60-66) is picture",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.9013888888889,
+    "lo": 423.4,
+    "hi": 424.1,
+    "outer": null,
+    "x_top": 423.8,
+    "x_bottom": 423.6,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 423.9013888888889,
+      "lo": 423.4,
+      "hi": 424.1,
+      "outer": null,
+      "x_top": 423.8,
+      "x_bottom": 423.6,
+      "note": "base 424-427 ~100 all bands vs picture ~21-27. col 423: b1 23%, b2 18%, b3 22%, b4 44% base. Clean",
+      "labeller": "L3",
+      "x_eye": 423.8,
+      "x_snap": 423.9013888888889
+     },
+     {
+      "state": "edge",
+      "x": 423.9013888888889,
+      "lo": 423.4,
+      "hi": 424.0,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|clean sharp edge, base 424-427 at ~100; col 423 ~22% base in b1-b3, 44% in b4 (bottom rows slightly further left)",
+      "labeller": "L6",
+      "x_eye": 423.75,
+      "x_snap": 423.9013888888889
+     }
+    ]
+   }
+  },
+  "r0914_34": {
+   "split": "dev",
+   "roll": "r0914",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tan strip 0-18..24 (dark blue in B) is scene: its boundary is stepped/not straight, reads only ~68 vs picture ~50, and the figure's body band runs through it to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "NOT base: cols 0-18 are a darker blue wall panel (~68, base reads 104 on the right), bounded by a stepped vertical line at 18-24 that belongs to the scene; picture to column 0",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.4128787878788,
+    "lo": 425.8,
+    "hi": 426.9,
+    "outer": null,
+    "x_top": 426.7,
+    "x_bottom": 425.82500000000005,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 426.4128787878788,
+      "lo": 425.8,
+      "hi": 426.8,
+      "outer": null,
+      "x_top": 426.7,
+      "x_bottom": 425.8,
+      "note": "1.5-col sliver: col 427 = 104 in all bands, col 426 ~32-52% base in b1-b3 but ~97% in b4 (col 425 b4 22%) -> leans ~0.9 col, bottom further left; dark full-height line in B",
+      "labeller": "L1",
+      "x_eye": 426.55,
+      "x_snap": 426.4128787878788
+     },
+     {
+      "state": "edge",
+      "x": 426.4128787878788,
+      "lo": 426.1,
+      "hi": 426.9,
+      "outer": null,
+      "x_top": 426.7,
+      "x_bottom": 425.85,
+      "note": "sliver: col 427 base (104 all bands), col 426 partial: base fraction b1 32%, b2 38%, b3 55%, b4 ~100% (+col 425 22%) -> leans, wider at bottom",
+      "labeller": "L4",
+      "x_eye": 426.5,
+      "x_snap": 426.4128787878788
+     }
+    ]
+   }
+  },
+  "x0920_10": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and man run to col 0; black patch at bottom-left (b4 ~92) is dark clothing with a curved boundary and wall below it, not full height",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall and figure run to col 0; bright (clear) patch at cols 0-13 in b3-b4 is a deep shadow with a curved boundary, not full height",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.85981257491557,
+    "lo": 426.5,
+    "hi": 427.5,
+    "outer": null,
+    "x_top": 427.9,
+    "x_bottom": 426.6,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 426.85981257491557,
+      "lo": 426.5,
+      "hi": 427.5,
+      "outer": null,
+      "x_top": 427.9,
+      "x_bottom": 426.6,
+      "note": "1-2 col sliver, tilted: col 427 = 21/91/102/102 and col 426 = 15/17/36/46 vs wall ~12, base ~100; black in B only from ~1/4 height down. The grey full-height line at col 412 is a wall seam in the scene (37-46), not base",
+      "labeller": "L3",
+      "x_eye": 426.9,
+      "x_snap": 426.85981257491557
+     },
+     {
+      "state": "edge",
+      "x": 426.85981257491557,
+      "lo": 426.5,
+      "hi": 427.4,
+      "outer": null,
+      "x_top": 427.9,
+      "x_bottom": 426.6,
+      "note": "1-2 col base sliver: col 427 = 102 in b3-b4, 91 in b2, 21 in b1; col 426 b3 28%, b4 37% -> b4 426.6, b3 426.7, b2 427.05, b1 ~427.9; edge curves/tilts out of the crop at the top rows",
+      "labeller": "L6",
+      "x_eye": 426.9,
+      "x_snap": 426.85981257491557
+     }
+    ]
+   }
+  },
+  "x0920_19": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-8 form a straight-edged lighter strip (~30 vs wall ~18) but far below base level (the clearest scene area in this frame reads ~100): a wall surface/corner in the scene, not base",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "NOT base: cols 0-8 are a beige wall strip (~30, base would be ~100; beige not black in B) with a vertical scene line at 9; picture to column 0",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall to col 427; curved light line 411-419 is a scene edge; col 427 only slightly raised (b4 36, bottom corner)",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall reaches 428; the slanted dark line 419->412 is a scene edge (wall corner), too tilted for a gap; col 427 slightly lighter only at the bottom corner, no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_22": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall (dense in neg, ~10) runs to col 0; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall runs to column 0 (~10), no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall runs to 428; flat ~10, no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall runs to 428 (~10), no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_25": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall (dark on negative, ~9-20) to col 0, no bright plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall and floor run to col 0; values ~12, no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall to col 427; vertical tone change at ~397.5 is a wall corner in the scene (dark both sides, not base)",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall and floor run to col 427; wall corner at ~397-398 is scene",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_28": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 2.848186816613312,
+    "lo": 2.5,
+    "hi": 3.2,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 2.848186816613312,
+      "lo": 2.5,
+      "hi": 3.1,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "black full-height strip cols 0-1 (99-100), col 2 ~60-75% base (b1 ~100%) -> crossing ~2.6-3.1 per band; dark painting next to it is ~85-90 in b1-b3, so contrast is modest there",
+      "labeller": "L1",
+      "x_eye": 2.75,
+      "x_snap": 2.848186816613312
+     },
+     {
+      "state": "edge",
+      "x": 2.848186816613312,
+      "lo": 2.5,
+      "hi": 3.2,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "narrow base plateau cols 0-1 (99-100 all bands), col 2 partial; crossings b1 ~3.0, b2 2.7, b3 2.8, b4 2.7; pale painting beside it lowers contrast in the middle bands",
+      "labeller": "L4",
+      "x_eye": 2.8,
+      "x_snap": 2.848186816613312
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall to col 427 (~10)",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense white wall (~10) reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_37": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall runs to col 0; flat ~11",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white gallery wall (dark in A, ~10) runs to column 0; no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "white wall with caption runs to 428; flat ~12",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall runs to 428 (~12), no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_40": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall to col 0; black trousers (b2/b3 ~95) reach col 0 only in the middle band, wall above and below, so not base",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall (b1/b4 gradient 80->65) and dark trousers (b2/b3 ~95, clear on negative) run to col 0; trousers not full height",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall to col 427, flat 57-68, no line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "uniform grey wall ~60 runs to col 427, no vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_43": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor + figure's legs cut at col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall and black skirt (b2/b3 ~92, a scene object, not full height) reach column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey floor/wall to col 427, flat ~28",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grey wall reaches 428 (~28), no line or plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_46": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor/people run to col 0; bright b1 at 0-8 is a scene shape (top-left), not full height",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "floor runs to column 0 (~36); the dark patch in the top band at cols 0-8 is scene (a shoe/shadow), not full height",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.3644736842105,
+    "lo": 425.7,
+    "hi": 426.5,
+    "outer": null,
+    "x_top": 426.1,
+    "x_bottom": 425.7,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 426.3644736842105,
+      "lo": 425.7,
+      "hi": 426.5,
+      "outer": null,
+      "x_top": 426.1,
+      "x_bottom": 425.7,
+      "note": "thin base sliver: col 427 = 113 all bands, col 426 = 93/72/83/113, col 425 = 39/28/29/54, picture ~25. Crossing per band 426.1/426.4/426.3/425.7; slightly ragged, base widest at bottom",
+      "labeller": "L2",
+      "x_eye": 426.1,
+      "x_snap": 426.3644736842105
+     },
+     {
+      "state": "edge",
+      "x": 426.3644736842105,
+      "lo": 425.8,
+      "hi": 426.5,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "thin black sliver: col 427 base (~113) in all bands, col 426 partial (72-113), col 425 a brownish fringe. Per-band crossings 426.1/426.4/426.2/425.8, no consistent tilt",
+      "labeller": "L5",
+      "x_eye": 426.2,
+      "x_snap": 426.3644736842105
+     }
+    ]
+   }
+  },
+  "x0920_55": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-21 a lighter uniform strip (~68-72) but the arm continues faintly through it to col 0, its boundary steps from ~27 at top to ~21 at bottom (not parallel to the right one), and it is well below the frame max (arm =100); scene (floor/wall), not base",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "darker blue strip at cols 0-21 is a wall plane, not base: mid-blue in B (~66-72, not black), its boundary slants ~26 (top) to ~21 (bottom) and is soft, and the dark hair line crosses it to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 414-427 are a uniform full-height strip with a sharp vertical boundary at ~413.8, BUT it reads only ~30-33 (denser than the 70 strip on the left and the 100 arm); base cannot be denser than picture, so treated as scene. Hard case",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "strip 414-427 reads only ~30 (mid blue in B, not black); soft boundary with a dark corner line at 413-414 - a wall/door edge, not base",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_58": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "blue shelf post and floor to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf post (cols 0-2, ~53) and floor reach column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark shelf + bright floor to col 427, no full-height black",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "shelf/step/floor reach 428 (b3 ~19 to the border); col 423 a darker line in the picture, not base",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_61": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "edge",
+    "x": 4.951289803787208,
+    "lo": 4.7,
+    "hi": 5.6,
+    "outer": null,
+    "x_top": 5.5,
+    "x_bottom": 4.9,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 4.951289803787208,
+      "lo": 4.7,
+      "hi": 5.6,
+      "outer": null,
+      "x_top": 5.5,
+      "x_bottom": 4.9,
+      "note": "base 0-3 ~93 uniform all bands, black in B with a straight full-height boundary; col 4 base-ish (94/94/88/90), col 5 = 79/58/65/60 vs picture ~60-65. Crossing 5.5 (b1), 5.0 (b2), 4.8-4.9 (b3/b4). Dark TV-wall grid next to it is near base level in places, so the top is a little less certain",
+      "labeller": "L2",
+      "x_eye": 5.0,
+      "x_snap": 4.951289803787208
+     },
+     {
+      "state": "edge",
+      "x": 4.951289803787208,
+      "lo": 4.8,
+      "hi": 5.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "clean base cols 0-4 (~93, all bands) against brown post ~60. Col 5 about half base in the top band only (b1 79), picture elsewhere",
+      "labeller": "L5",
+      "x_eye": 5.0,
+      "x_snap": 4.951289803787208
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "platform/floor runs to 428 in b3/b4 (25/45), no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "light shelf/wall (b1/b2 ~88) and dark stairs (b3/b4) run to 428: not uniform top to bottom, no base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_64": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 0-7 are bright cream in B (DENSE in A, 4-16), i.e. the lit wall outside the round mirror, not base (base would be black in B); its boundary follows the mirror rim. Picture runs to col 0",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense (dark on negative) curved mirror surround at cols 0-8 is picture; no clear plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "mirror reflection to col 427; bottom band rises (to 55) where the dark mirror rim curves in, no vertical line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense wall and curved mirror rim run to col 427; values 10-14, no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_73": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles cut at col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles reach column 0; the full-height dark vertical strip at cols ~57-64 is grout between tile columns (tiles continue on both sides), not base",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles cut at col 427; the white grid between tiles is scene, not full height",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles and grout reach 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "x0920_76": {
+   "split": "dev",
+   "roll": "x0920",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles and grout run to col 0",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tiles run to column 0; black grout rows are horizontal and not full height",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "bright grout (~90) at 410-427 is scene: tiles cut in at 419-427 (b2, ~35% height) and 408-427 (bottom), so no full-height plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "black grout between tiles reads ~89 at 408-427 in most bands (a near-base look-alike), but tiles reach 428 at rows ~110-150 (b2 58-70) and in the bottom rows at 408+, and the left boundary is a ragged tile outline, not a straight line: scene, not base",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  }
+ },
+ "flags": [],
+ "frame_width": {
+  "_all": 440.15,
+  "_measured": {
+   "r0911": [
+    449.9
+   ],
+   "r0914": [
+    437.5,
+    440.1
+   ]
+  },
+  "_evidence": {
+   "r0911": [
+    "r0911_17 left gap 5.4 -> 449.9"
+   ],
+   "r0914": [
+    "r0914_20 left gap 17.8 -> 437.5",
+    "r0914_24 right gap 15.2 -> 440.1"
+   ]
+  }
+ },
+ "pair_check": {
+  "n": 20,
+  "mae": 0.479,
+  "max": 1.27,
+  "bad": []
+ },
+ "anchors_check": {
+  "summary": {
+   "n": 32,
+   "state_match": 23,
+   "edge_mae": 0.175,
+   "edge_max": 0.4
+  },
+  "rows": [
+   {
+    "id": "r0909_09",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.19
+   },
+   {
+    "id": "r0909_09",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0909_10",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": -0.05
+   },
+   {
+    "id": "r0909_10",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0909_11",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.06
+   },
+   {
+    "id": "r0909_11",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_01",
+    "side": "left",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_01",
+    "side": "right",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_02",
+    "side": "left",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_02",
+    "side": "right",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_03",
+    "side": "left",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_03",
+    "side": "right",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_25",
+    "side": "left",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_25",
+    "side": "right",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_26",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_26",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_27",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "edge"
+   },
+   {
+    "id": "r0911_27",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_28",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "r0911_28",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "strip3_01",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "strip3_01",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "strip3_02",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.22
+   },
+   {
+    "id": "strip3_02",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "strip3_03",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.27
+   },
+   {
+    "id": "strip3_03",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "strip6_01",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.11
+   },
+   {
+    "id": "strip6_01",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "strip6_02",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.4
+   },
+   {
+    "id": "strip6_02",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "strip6_03",
+    "side": "left",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.1
+   },
+   {
+    "id": "strip6_03",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   }
+  ]
+ }
+}

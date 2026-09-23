@@ -1,0 +1,26 @@
+{
+  "id": "b0920_05",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 8.8,
+    "lo": 8.2,
+    "hi": 9.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols 0-7 (raw 65-66/29/15-16, R/G 2.25, B/G 0.54), uniform full height. The dark bar scene beside it is barely denser than base (raw 63-64/28/15), so the boundary is low-contrast through most rows; it is sharp only where picture features touch it: bench in the bottom rows starts at 9.1, a streak near row 210 at ~9. Col 8 reads slightly below base in rows 100-240 (~8.3-8.5 there)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols ~335-427 are an extremely dense region (raw 13-16/3-5/0, flash-burned wall, white in view B) with a ragged left outline; no base and no gate, runs to column 427"
+  },
+  "frame_note": ""
+}

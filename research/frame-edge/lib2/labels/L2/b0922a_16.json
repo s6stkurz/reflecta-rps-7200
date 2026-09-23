@@ -1,0 +1,8 @@
+{
+  "id": "b0922a_16", "labeller": "L2", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "foliage texture (dark branches in the top band) runs to column 0; no featureless column anywhere"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "foliage/building run to 427"},
+  "frame_note": "underexposed forest scene sits close to base value everywhere (R/G 2.3-2.5) but every column is textured (row std >= 4), so no base strip. Blue hairlines near cols 215 and 260 are sensor lines"
+}

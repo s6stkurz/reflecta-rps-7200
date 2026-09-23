@@ -1,0 +1,10 @@
+{
+  "id": "b0920_04", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 9.0, "lo": 8.8, "hi": 9.5,
+            "outer": null, "x_top": 9.0, "x_bottom": 9.9,
+            "note": "clean white base cols 0-8 (R/G 2.28, B/G 0.55) against grey wall ~72; vertical at 9.0 over top 80%, bends to ~9.9 in the bottom tenth"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "scene (wall, trousers) runs to col 427; no plateau"},
+  "frame_note": "no gap inside the frame"
+}

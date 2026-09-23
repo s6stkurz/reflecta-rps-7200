@@ -1,0 +1,26 @@
+{
+  "id": "x0920_55",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "darker blue strip at cols 0-21 is a wall plane, not base: mid-blue in B (~66-72, not black), its boundary slants ~26 (top) to ~21 (bottom) and is soft, and the dark hair line crosses it to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "strip 414-427 reads only ~30 (mid blue in B, not black); soft boundary with a dark corner line at 413-414 - a wall/door edge, not base"
+  },
+  "frame_note": "both border strips are scene planes, not base"
+}

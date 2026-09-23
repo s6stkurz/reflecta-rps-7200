@@ -1,0 +1,26 @@
+{
+  "id": "x0920_58",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "blue shelf post and floor to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark shelf + bright floor to col 427, no full-height black"
+  },
+  "frame_note": ""
+}

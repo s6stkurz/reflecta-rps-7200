@@ -1,0 +1,26 @@
+{
+  "id": "r0914_29",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "pale shelf/TV-wall picture and floor reach column 0; no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor/step picture reaches 428 in b3 (23-25 to the border); col 427 lighter only in the bottom quarter (b4 69 vs 45) - possibly a gate corner, not full-height base"
+  },
+  "frame_note": ""
+}

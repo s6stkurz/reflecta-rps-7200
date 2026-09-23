@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_08", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 7.1, "lo": 6.9, "hi": 7.6,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "base cols 0-6 (~93, R/G 2.23-2.28, B/G 0.52-0.55, G std ~1), black in B. Where the picture has strong features (bright spot at rows 20-30, white line at row ~70) col 7 is fully picture, x=7.0; elsewhere col 7 reads 30-70% base only because the adjacent dusk street is itself close to base level. Below row ~150 contrast is a few points only, so the boundary rests on the upper half"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "building and street picture to col 427: the top rows at col 427 read ~75 (picture), and the horizontal features (yellow line at row ~155, band at row ~190) run to ~425-427. Lower part is featureless at ~85-91, near base level, but B/G ~0.50 vs base 0.55 and there is no straight full-height boundary, so no sliver. Low contrast"},
+  "frame_note": "dusk street scene: much of the picture sits near base density; no internal gap in the thumbnail"
+}

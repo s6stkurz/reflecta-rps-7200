@@ -1,0 +1,26 @@
+{
+  "id": "x0920_03",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 19.45,
+    "lo": 19.1,
+    "hi": 19.8,
+    "outer": 0.2,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|POLARITY INVERTED: the gap at cols 1-18 is OPAQUE (black in A, white in B, table ~1) not clear, yet it is uniform, featureless, full height, with straight sharp boundaries - the inter-frame gap of what looks like reversal/positive film; x from the gap fraction (col 18 ~93%, col 19 ~45%, col 20 ~6%; b1 19.8 .. b4 19.2); col 0 is a neighbour-picture sliver mostly in the top half (outer ~0.6 top, ~0 bottom)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky, houses and trees run to col 427; no gap (neither clear nor opaque plateau)"
+  },
+  "frame_note": "view A looks like a natural positive (dark person, light snow) and B like a negative, although film=c41: this frame (or strip) appears to be slide/positive film or mislabelled polarity - please review before using as negative ground truth"
+}

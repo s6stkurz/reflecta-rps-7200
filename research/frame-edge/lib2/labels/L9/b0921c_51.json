@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_51", "labeller": "L9", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grass texture runs to column 0"},
+  "right": {"state": "edge", "x": 355.6, "lo": 355.0, "hi": 356.1,
+            "outer": 380.4, "x_top": 356.0, "x_bottom": 355.0,
+            "note": "interior gap: base 356-379 (85-87, R/G 2.25, B/G 0.53). Frame is the left part (0-355) vs neighbour 380-427. Edge tilts: 356.0 in rows 30-125, ~355.4 in rows 160-200, 355.0 below row 210 (top rows unreadable: picture there matches base in value). Outer: neighbour is a dark wall nearly equal to base; placed from its bench rows (col 380 ~57% picture) ~380.4"},
+  "frame_note": "gap at 355-380 on the right, found in the 1:1 thumbnail"
+}

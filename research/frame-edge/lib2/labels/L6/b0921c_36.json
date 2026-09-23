@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_36", "labeller": "L6", "view": "A",
+  "left":  {"state": "edge", "x": 69.1, "lo": 68.8, "hi": 69.6,
+            "outer": 48.1, "x_top": 69.0, "x_bottom": 69.9,
+            "note": "gap inside the frame (deeper than the crop): base cols 49-68 (~89, R/G 2.21, B/G 0.55), full height. Picture beside it is pale backdrop (~67, R/G 2.1, B/G 0.57) so contrast is modest but the boundary is straight and sharp; col 69 is picture above row ~180 and becomes base toward the bottom. Neighbour 0-47 is dense uniform picture (likeness ~5, R/G 3.0-3.4, not base, not gate); its boundary ~48.9 at top, ~47.6 lower"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427, likeness ~28"},
+  "frame_note": "gap at cols 49-68; right part 69-427 (~359 cols) is the frame, left part 0-47 (~48 cols) is the neighbour"
+}

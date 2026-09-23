@@ -1,0 +1,26 @@
+{
+  "id": "r0911_03",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark museum wall runs to col 0 (smooth 66-71, no sharp full-height line); painting frame edge at ~17 is scene, not full height"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall runs to 428, smooth gradient 82->69 (denser toward border, so not base); small step at ~413 is scene, not a plateau"
+  },
+  "frame_note": ""
+}

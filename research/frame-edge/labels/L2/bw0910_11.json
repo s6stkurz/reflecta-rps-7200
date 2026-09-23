@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_11",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 5.1,
+    "lo": 4.8,
+    "hi": 5.9,
+    "outer": null,
+    "x_top": 6.0,
+    "x_bottom": 5.4,
+    "note": "base 0-4; col 5 = 83/46/40/43 -> 50% crossing ~5.9 in b1, ~5.05 in b2/b3, ~5.3 in b4: edge bulges outward at the top quarter (same shape as other bw0910 frames), not a straight tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "window frame/wall run to 428; dark bar at ~422-427 (b2 ~50) is the window mullion, has texture and differs across bands"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,6671 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "strip6_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 416.9524230769231,
+    "lo": 416.7024230769231,
+    "hi": 417.2024230769231,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 417.00342307692307,
+    "x_bottom": 416.90142307692304,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       417.05293426325187
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       416.938
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       416.95384615384614
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       416.951
+      ]
+     }
+    }
+   }
+  },
+  "strip6_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 416.345,
+    "lo": 416.095,
+    "hi": 416.595,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 416.9705324126164,
+    "x_bottom": 415.7199675873836,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       416.2371262096397
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       416.367
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       416.3809523809524
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       416.323
+      ]
+     }
+    }
+   }
+  },
+  "strip6_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 417.9036719576719,
+    "lo": 417.6536719576719,
+    "hi": 418.1536719576719,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 417.62367195767195,
+    "x_bottom": 418.1846719576719,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       417.9270568516952
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       417.865
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       417.9153439153439
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       417.892
+      ]
+     }
+    }
+   }
+  },
+  "strip3_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "strip3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.9375,
+    "lo": 425.6875,
+    "hi": 426.1875,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.4045,
+    "x_bottom": 425.4705,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.93139711481433
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.94
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.0188679245283
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.935
+      ]
+     }
+    }
+   }
+  },
+  "strip3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.1575,
+    "lo": 420.9075,
+    "hi": 421.4075,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 420.61874135070184,
+    "x_bottom": 421.6967586492982,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.1823619247167
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.154
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.0473684210526
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.161
+      ]
+     }
+    }
+   }
+  },
+  "r0909_01": {
+   "left": {
+    "state": "edge",
+    "x": 12.468511255890128,
+    "lo": 12.043956043956044,
+    "hi": 12.718511255890128,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 11.058408302468008,
+    "x_bottom": 13.934614209312247,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       12.504022511780258
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       12.55
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       12.043956043956044
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       12.433
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0909_04": {
+   "left": {
+    "state": "edge",
+    "x": 9.615504437986207,
+    "lo": 9.113553113553113,
+    "hi": 9.865504437986207,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.652562448413397,
+    "x_bottom": 10.642946427559018,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       9.647008875972416
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       9.719
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       9.113553113553113
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       9.584
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0909_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.4532803531191,
+    "lo": 427.2032803531191,
+    "hi": 427.7032803531191,
+    "conf": 0.5,
+    "outer": null,
+    "x_top": 428.1633496308612,
+    "x_bottom": 426.74271107537703,
+    "note": "edge: changepoint,gapmodel; border: chroma,stepline"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.46256070623815
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.444
+      ]
+     }
+    }
+   }
+  },
+  "r0909_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.9481809891681,
+    "lo": 421.6981809891681,
+    "hi": 422.1981809891681,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 422.7265437891824,
+    "x_bottom": 421.14972960634935,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.9473619783362
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.949
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.89864245092645
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.968
+      ]
+     }
+    }
+   }
+  },
+  "r0909_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.5203714664515,
+    "lo": 423.2703714664515,
+    "hi": 423.7703714664515,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 424.18416713041745,
+    "x_bottom": 422.8570758024855,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       423.525742932903
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       423.493
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       423.5295123366744
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       423.515
+      ]
+     }
+    }
+   }
+  },
+  "r0909_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.019,
+    "lo": 426.769,
+    "hi": 427.269,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 427.5419330158667,
+    "x_bottom": 426.49606698413334,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.08578163436835
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.974
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.9576852996681
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.064
+      ]
+     }
+    }
+   }
+  },
+  "r0909_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.05345264248103,
+    "lo": 425.80345264248103,
+    "hi": 426.30345264248103,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.41145264248104,
+    "x_bottom": 425.63645264248106,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.05490528496205
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.135
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.0
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.052
+      ]
+     }
+    }
+   }
+  },
+  "r0909_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.696,
+    "lo": 426.446,
+    "hi": 426.946,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 427.052,
+    "x_bottom": 426.339,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.7190213631584
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.708
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.6517326732673
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.684
+      ]
+     }
+    }
+   }
+  },
+  "r0909_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.9446484266391,
+    "lo": 422.6946484266391,
+    "hi": 423.1946484266391,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 423.1766484266391,
+    "x_bottom": 422.7126484266391,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.95429685327827
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.901
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.9631901840491
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.935
+      ]
+     }
+    }
+   }
+  },
+  "r0909_13": {
+   "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "gate: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "no_film",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "no_film",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "no_film",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "no_film",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "stage3_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "stage3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.0413835342125,
+    "lo": 425.7913835342125,
+    "hi": 426.2913835342125,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.2673835342125,
+    "x_bottom": 425.85438353421256,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.0527670684251
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.136
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.9734216335541
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.03
+      ]
+     }
+    }
+   }
+  },
+  "stage3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.6115,
+    "lo": 424.2175556796032,
+    "hi": 425.46753246753246,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 423.2124583511423,
+    "x_bottom": 425.43383905306257,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "refuse",
+       10.306021054533472
+      ],
+      "right": [
+       "edge",
+       424.2175556796032
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       424.499
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.46753246753246
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       424.724
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.2235,
+    "lo": 420.77000930660154,
+    "hi": 421.4735,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 420.15936296260776,
+    "x_bottom": 421.88905222991906,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       420.77000930660154
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.171
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.29743918053776
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       421.276
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.3585,
+    "lo": 426.1085,
+    "hi": 426.71329692659384,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 425.8642182678494,
+    "x_bottom": 426.5402122212205,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.1292367224643
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.337
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.71329692659384
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.38
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.40076248121716,
+    "lo": 424.15076248121716,
+    "hi": 424.71311475409834,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 423.6294557102745,
+    "x_bottom": 425.06157168939274,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       424.4535249624343
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       424.348
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       424.71311475409834
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       424.291
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.3843916330162,
+    "lo": 427.0,
+    "hi": 427.6343916330162,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.9953427503766,
+    "x_bottom": 428.01247800120404,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.3337832660324
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.44
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.0
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.435
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.1079711322255,
+    "lo": 425.8579711322255,
+    "hi": 426.3579711322255,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 425.57282710505257,
+    "x_bottom": 426.6006950626239,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.12794226445095
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.088
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.26625971630585
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.973
+      ]
+     }
+    }
+   }
+  },
+  "bw0910_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.69907510612813,
+    "lo": 422.44907510612813,
+    "hi": 422.9898404907975,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 421.963434592506,
+    "x_bottom": 423.41121894701837,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.76015021225635
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.638
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.9898404907975
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.582
+      ]
+     }
+    }
+   }
+  },
+  "r0911_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "refuse",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "refuse",
+       25.41622031010091
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: chroma,stepline"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       418.3521648866513
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no agreement: changepoint=refuse@427.2, chroma=picture_to_border, stepline=edge@426.0, gapmodel=refuse"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       427.20754326854114
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.99236641221376
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.7605,
+    "lo": 425.5105,
+    "hi": 426.0105,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 425.3915,
+    "x_bottom": 426.17449999999997,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.752873620347
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.754
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.81833060556465
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.767
+      ]
+     }
+    }
+   }
+  },
+  "r0911_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.29122085924865,
+    "lo": 422.04122085924865,
+    "hi": 422.54122085924865,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 421.91422085924864,
+    "x_bottom": 422.6672208592487,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.3094417184973
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.229
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.34558823529414
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.273
+      ]
+     }
+    }
+   }
+  },
+  "r0911_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_14": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.78650054860134,
+    "lo": 427.348,
+    "hi": 428.03650054860134,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "edge: changepoint,chroma,gapmodel; border: stepline"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.78650054860134
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.88
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.348
+      ]
+     }
+    }
+   }
+  },
+  "r0911_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_16": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.7872318804629,
+    "lo": 427.358024691358,
+    "hi": 428.0372318804629,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "edge: changepoint,chroma,stepline; border: gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.7872318804629
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.852
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.358024691358
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 413.234,
+    "lo": 412.984,
+    "hi": 413.6717948717949,
+    "conf": 0.75,
+    "outer": 418.918,
+    "x_top": 411.6417033338113,
+    "x_bottom": 414.671,
+    "note": "edge: changepoint,chroma,stepline"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       413.176310190608
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       413.234
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       413.6717948717949
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       426.829
+      ]
+     }
+    }
+   }
+  },
+  "r0911_18": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline; edge: gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       0.518
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.8103448275862,
+    "lo": 422.5603448275862,
+    "hi": 423.0603448275862,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": 422.2794583919414,
+    "x_bottom": 423.26898646518316,
+    "note": "edge: changepoint,chroma,stepline"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.80781685465894
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       423.016
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.8103448275862
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.74162321219535,
+    "lo": 427.49162321219535,
+    "hi": 427.99162321219535,
+    "conf": 0.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "edge: changepoint,chroma; border: stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.68224642439077
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.801
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: chroma,stepline"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_22": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_23": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "refuse",
+       4.01586312895294
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_24": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_26": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_27": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.8376371653433,
+    "lo": 427.4672897196262,
+    "hi": 428.0876371653433,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "edge: changepoint,chroma,stepline; border: gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.8376371653433
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.916
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       427.4672897196262
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline; edge: gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       0.584
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0911_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_01": {
+   "left": {
+    "state": "edge",
+    "x": 15.346946358265502,
+    "lo": 15.096946358265502,
+    "hi": 15.596946358265502,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 14.9259463582655,
+    "x_bottom": 15.767946358265501,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       15.336892716531002
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       15.357
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       15.270592396653544
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       15.358
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_05": {
+   "left": {
+    "state": "edge",
+    "x": 9.205595881468994,
+    "lo": 8.955595881468994,
+    "hi": 9.455595881468994,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.775595881468995,
+    "x_bottom": 9.635595881468994,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       9.194191762937987
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       9.217
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       9.161605425650368
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       9.219
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_06": {
+   "left": {
+    "state": "edge",
+    "x": 8.267473523488354,
+    "lo": 8.017473523488354,
+    "hi": 8.517473523488354,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.075473523488355,
+    "x_bottom": 8.46033440685628,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       8.244947046976709
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       8.29
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       8.22804455376359
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       8.291
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_07": {
+   "left": {
+    "state": "edge",
+    "x": 4.340906375432109,
+    "lo": 4.090906375432109,
+    "hi": 4.590906375432109,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.942906375432109,
+    "x_bottom": 4.739906375432109,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       4.341812750864219
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       4.34
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       4.2015503875969
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       4.369
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_08": {
+   "left": {
+    "state": "edge",
+    "x": 0.5276381909547738,
+    "lo": 0.2776381909547738,
+    "hi": 0.7776381909547738,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "edge: changepoint,chroma,stepline; border: gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       0.6008667678293831
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       0.451
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       0.5276381909547738
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_09": {
+   "left": {
+    "state": "edge",
+    "x": 8.326776580377782,
+    "lo": 8.076776580377782,
+    "hi": 8.576776580377782,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 7.854776580377782,
+    "x_bottom": 8.798776580377782,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       8.322553160755565
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       8.331
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       8.22993006993007
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       8.336
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_10": {
+   "left": {
+    "state": "edge",
+    "x": 6.065721712538226,
+    "lo": 5.815721712538226,
+    "hi": 6.315721712538226,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 5.5677217125382255,
+    "x_bottom": 6.563721712538226,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       6.068055789635307
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       6.039
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       6.065443425076452
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       6.066
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_11": {
+   "left": {
+    "state": "edge",
+    "x": 7.494268241142509,
+    "lo": 7.244268241142509,
+    "hi": 7.744268241142509,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 7.192268241142508,
+    "x_bottom": 7.796268241142508,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       7.480536482285016
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       7.522
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       7.417525773195877
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       7.508
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_12": {
+   "left": {
+    "state": "edge",
+    "x": 12.543060403910694,
+    "lo": 12.293060403910694,
+    "hi": 12.793060403910694,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 12.132060403910693,
+    "x_bottom": 12.959060403910694,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       12.536120807821389
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       12.55
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       12.428896090660796
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       12.551
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_13": {
+   "left": {
+    "state": "edge",
+    "x": 9.493732762155371,
+    "lo": 9.243732762155371,
+    "hi": 9.743732762155371,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.950603896410158,
+    "x_bottom": 10.037361627900587,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       9.483465524310743
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       9.383
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       9.599995968717245
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       9.504
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_14": {
+   "left": {
+    "state": "edge",
+    "x": 7.098976554640188,
+    "lo": 6.848976554640188,
+    "hi": 7.348976554640188,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 6.450976554640188,
+    "x_bottom": 7.705096307005386,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       7.074953109280377
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       7.123
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       7.044727272727273
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       7.17
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_16": {
+   "left": {
+    "state": "edge",
+    "x": 10.49484240221184,
+    "lo": 10.24484240221184,
+    "hi": 10.74484240221184,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 9.76984240221184,
+    "x_bottom": 11.256583546602954,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       10.491684804423679
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       10.507
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       10.30320612852887
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       10.498
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_17": {
+   "left": {
+    "state": "edge",
+    "x": 9.581173660371903,
+    "lo": 9.331173660371903,
+    "hi": 9.831173660371903,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.954219388611364,
+    "x_bottom": 10.214961206128644,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       9.582347320743803
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       9.58
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       9.516
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       9.592
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_18": {
+   "left": {
+    "state": "edge",
+    "x": 5.514,
+    "lo": 5.264,
+    "hi": 5.764,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": 4.611,
+    "x_bottom": 6.416,
+    "note": "edge: changepoint,chroma,gapmodel; border: stepline"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       5.66010918464477
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       5.413
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       5.514
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 324.68660428985817,
+    "lo": 324.43660428985817,
+    "hi": 324.93660428985817,
+    "conf": 0.5,
+    "outer": 342.539042293355,
+    "x_top": 324.14311561980287,
+    "x_bottom": 325.2295929599134,
+    "note": "edge: changepoint,gapmodel; border: chroma"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       324.6672085797163
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       324.706
+      ]
+     }
+    }
+   }
+  },
+  "r0914_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "gate: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "no_film",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "no_film",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "no_film",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "no_film",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_23": {
+   "left": {
+    "state": "edge",
+    "x": 18.251517211183543,
+    "lo": 18.001517211183543,
+    "hi": 18.501517211183543,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 17.951517211183543,
+    "x_bottom": 18.55251721118354,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       18.238034422367086
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       18.265
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       18.20123966942149
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       18.28
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_24": {
+   "left": {
+    "state": "edge",
+    "x": 15.876051650158347,
+    "lo": 15.626051650158347,
+    "hi": 16.126051650158345,
+    "conf": 1.0,
+    "outer": 2.0,
+    "x_top": 15.2951082557353,
+    "x_bottom": 16.45699504458139,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       15.875893817975136
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       15.737
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       15.876209482341558
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       15.89
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_25": {
+   "left": {
+    "state": "edge",
+    "x": 13.048534198572913,
+    "lo": 12.798534198572913,
+    "hi": 13.298534198572913,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 12.474534198572913,
+    "x_bottom": 13.622534198572913,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       13.021068397145825
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       13.076
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       13.01622884982553
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       13.105
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_27": {
+   "left": {
+    "state": "edge",
+    "x": 4.0280000000000005,
+    "lo": 3.7780000000000005,
+    "hi": 4.2780000000000005,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.37,
+    "x_bottom": 4.686,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       4.112805009212601
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       4.023
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       4.0
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       4.033
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_28": {
+   "left": {
+    "state": "edge",
+    "x": 16.241,
+    "lo": 15.991,
+    "hi": 16.491,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 15.52373415059431,
+    "x_bottom": 16.97956292823128,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       16.27065588467291
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       16.249
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       16.134354571177678
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       16.233
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_31": {
+   "left": {
+    "state": "edge",
+    "x": 1.4469830335729568,
+    "lo": 1.1969830335729568,
+    "hi": 1.6969830335729568,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": 0.7459830335729567,
+    "x_bottom": 2.2060464424420463,
+    "note": "edge: changepoint,stepline,gapmodel; border: chroma"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       1.4469830335729568
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       1.204242174097044
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       1.453
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_33": {
+   "left": {
+    "state": "edge",
+    "x": 4.254720384196312,
+    "lo": 4.004720384196312,
+    "hi": 4.504720384196312,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.9557203841963124,
+    "x_bottom": 4.553720384196312,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       4.237440768392624
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       4.281
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       4.191885830784913
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       4.272
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "r0914_34": {
+   "left": {
+    "state": "edge",
+    "x": 1.6716572716510338,
+    "lo": 1.4216572716510338,
+    "hi": 1.9216572716510338,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 1.1581408415490388,
+    "x_bottom": 2.196506955737893,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       1.729080177530676
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       1.603
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       1.6163145433020674
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       1.727
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_10": {
+   "left": {
+    "state": "edge",
+    "x": 1.0030000000000001,
+    "lo": 0.7530000000000001,
+    "hi": 1.2530000000000001,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 0.18200000000000016,
+    "x_bottom": 1.813696120445703,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       0.8743271116052044
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       1.117
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       1.2298114009216676
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       0.889
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_22": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.13213645673324,
+    "lo": 424.88213645673324,
+    "hi": 425.38213645673324,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 424.59463645673327,
+    "x_bottom": 425.67063645673323,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.12120701327933
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.125
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.13927291346647
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       425.176
+      ]
+     }
+    }
+   }
+  },
+  "x0920_37": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_40": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_43": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_46": {
+   "left": {
+    "state": "edge",
+    "x": 1.800559239574994,
+    "lo": 1.550559239574994,
+    "hi": 2.0505592395749943,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 1.384559239574994,
+    "x_bottom": 2.2055592395749946,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "edge",
+       1.7911184791499881
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "edge",
+       1.823
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "edge",
+       1.6811537406434922
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "edge",
+       1.81
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_55": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "refuse",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_58": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_61": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.97205072994683,
+    "lo": 422.72205072994683,
+    "hi": 423.22205072994683,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 422.59705072994683,
+    "x_bottom": 423.3480507299468,
+    "note": "edge: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.94410145989366
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       423.0
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       423.0
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       422.903
+      ]
+     }
+    }
+   }
+  },
+  "x0920_64": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  },
+  "x0920_73": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline; edge: gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "edge",
+       357.326
+      ]
+     }
+    }
+   }
+  },
+  "x0920_76": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border: changepoint,chroma,stepline,gapmodel"
+   },
+   "debug": {
+    "members": {
+     "changepoint": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "chroma": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "stepline": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     },
+     "gapmodel": {
+      "left": [
+       "picture_to_border",
+       null
+      ],
+      "right": [
+       "picture_to_border",
+       null
+      ]
+     }
+    }
+   }
+  }
+ }
+}

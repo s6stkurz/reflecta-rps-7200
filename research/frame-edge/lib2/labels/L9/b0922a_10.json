@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_10", "labeller": "L9", "view": "A",
+  "left":  {"state": "edge", "x": 59.1, "lo": 58.7, "hi": 59.6,
+            "outer": 38.4, "x_top": null, "x_bottom": null,
+            "note": "base 39-58 (81-84, R/G 2.2, B/G 0.54, sd 1-2). The frame's picture beside it is a very thin dark-woods area whose median equals base (64/28/16), so the edge is set by where texture starts (sd 2 -> 8 at col 59, straight and full height in a tight stretch) and by the top band (83 -> 71 -> 65). Neighbour picture 0-37; outer tilts ~39.5 at the top to ~38.1 at the bottom, ~38.4 mid-height"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "faces/foliage run to 428"},
+  "frame_note": "picture next to the left gap is nearly base in value; placed from texture, not level"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_07", "labeller": "L3", "view": "B",
+  "left":  {"state": "edge", "x": 24.1, "lo": 23.8, "hi": 24.8,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "base cols 0-23 (93-95, R/G 2.28-2.31, B/G 0.55). Night scene beside it is nearly unexposed (88-92, same ratio) so the step is only 2-4 points in the upper rows; col 24 tracks the picture column 25 in 9 of 10 bands. Placed from the bench/highlight features in the lower third, which start at 24 (bottom tenth ~24.8)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "overexposed white wall runs to col 427 (likeness 2-11, the densest part of the frame, R/G >3) -- picture, not gate or base"},
+  "frame_note": "hard-ish: low contrast between base and the dark scene on the left"
+}

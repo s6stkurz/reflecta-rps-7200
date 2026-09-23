@@ -1,0 +1,26 @@
+{
+  "id": "x0920_19",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "NOT base: cols 0-8 are a beige wall strip (~30, base would be ~100; beige not black in B) with a vertical scene line at 9; picture to column 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall reaches 428; the slanted dark line 419->412 is a scene edge (wall corner), too tilted for a gap; col 427 slightly lighter only at the bottom corner, no plateau"
+  },
+  "frame_note": ""
+}

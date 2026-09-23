@@ -1,0 +1,8480 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "b0920_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.549,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "83% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.1338615671198,
+    "lo": 424.6338615671198,
+    "hi": 425.6338615671198,
+    "conf": 0.995,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     21656.0,
+     9054.0,
+     4668.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        0,
+        1
+       ],
+       "peak": 0.856,
+       "with_run": 0.856,
+       "stepped": 0.17,
+       "agree": 0.144,
+       "through": 0.051,
+       "tilt": 2.1,
+       "line_a": 2.99,
+       "line_b": -0.00762
+      }
+     ],
+     "frac_none": 0.83,
+     "sliver": 0.339
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        3
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.996,
+       "agree": 0.996,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 3.0,
+       "line_b": 0.0,
+       "crossings": 274,
+       "spread": 0.0,
+       "ok": 0.996
+      }
+     ]
+    }
+   }
+  },
+  "b0920_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.805,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 420.98936170212767,
+    "lo": 420.48936170212767,
+    "hi": 421.48936170212767,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.195
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        7
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 7.0,
+       "line_b": -0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0920_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.751,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.9605263157895,
+    "lo": 418.4605263157895,
+    "hi": 419.4605263157895,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.249
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        9
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 9.0,
+       "line_b": 0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0920_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.946,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 24% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.054
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        9
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.238,
+       "agree": 0.22,
+       "through": 0.022,
+       "tilt": 0.99,
+       "line_a": 10.04,
+       "line_b": -0.00358
+      },
+      {
+       "band": [
+        10,
+        12
+       ],
+       "peak": 0.819,
+       "with_run": 0.859,
+       "stepped": 0.029
+      }
+     ],
+     "frac_none": 0.762,
+     "sliver": 0.014
+    }
+   }
+  },
+  "b0920_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.758,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.957,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.242
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        13,
+        27
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.0
+      },
+      {
+       "band": [
+        28,
+        32
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.0
+      },
+      {
+       "band": [
+        39,
+        40
+       ],
+       "peak": 0.859,
+       "with_run": 0.859,
+       "stepped": 0.0
+      }
+     ],
+     "frac_none": 1.0,
+     "sliver": 0.043
+    }
+   }
+  },
+  "b0921a_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.728,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "99% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 409.15277777777777,
+    "lo": 408.65277777777777,
+    "hi": 409.65277777777777,
+    "conf": 0.722,
+    "outer": 423.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 91% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.989,
+     "sliver": 0.264
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        5,
+        18
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.91,
+       "agree": 0.91,
+       "through": 0.0,
+       "tilt": 0.15,
+       "line_a": 18.03,
+       "line_b": 0.00056,
+       "width": 13.0,
+       "up": 1.0,
+       "down_wide": 1.0,
+       "crossings": 245,
+       "spread": 0.153,
+       "ok": 0.91
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.769,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 404.9326923076923,
+    "lo": 404.4326923076923,
+    "hi": 405.4326923076923,
+    "conf": 0.994,
+    "outer": 421.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.231
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        7,
+        23
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 23.0,
+       "line_b": -0.0,
+       "width": 16.0,
+       "up": 0.939,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.755,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 402.1666666666667,
+    "lo": 401.6666666666667,
+    "hi": 402.6666666666667,
+    "conf": 0.851,
+    "outer": 423.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.245
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        5,
+        26
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 26.0,
+       "line_b": 0.0,
+       "width": 21.0,
+       "up": 1.0,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.953,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.844,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "94% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.047
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.939,
+     "sliver": 0.101
+    }
+   }
+  },
+  "b0921a_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.565,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "98% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.924,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.978,
+     "sliver": 0.422
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.076
+    }
+   }
+  },
+  "b0921a_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.801,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.723,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "80% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.199
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.801,
+     "sliver": 0.097
+    }
+   }
+  },
+  "b0921a_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.812,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 408.5,
+    "lo": 408.0,
+    "hi": 409.0,
+    "conf": 0.93,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 96% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.188
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        19
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.96,
+       "agree": 0.96,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 19.0,
+       "line_b": -0.0,
+       "crossings": 265,
+       "spread": 0.0,
+       "ok": 0.96
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_15": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 29% with a stepped base run, none on one line"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.874,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "91% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.715,
+     "sliver": 0.162
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.91,
+     "sliver": 0.04
+    }
+   }
+  },
+  "b0921a_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.765,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.844,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "94% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.235
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.942,
+     "sliver": 0.105
+    }
+   }
+  },
+  "b0921a_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.747,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 408.9166666666667,
+    "lo": 408.4166666666667,
+    "hi": 409.4166666666667,
+    "conf": 0.984,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 99% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.253
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        19
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.989,
+       "agree": 0.989,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 19.0,
+       "line_b": 0.0,
+       "crossings": 260,
+       "spread": 0.0,
+       "ok": 0.989
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.744,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 411.14285714285717,
+    "lo": 410.64285714285717,
+    "hi": 411.64285714285717,
+    "conf": 0.984,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 99% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.256
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        17
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.989,
+       "agree": 0.989,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 17.0,
+       "line_b": -0.0,
+       "crossings": 273,
+       "spread": 0.0,
+       "ok": 0.989
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_23": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.758,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.242
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        19
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.791,
+       "agree": 0.791,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 18.99,
+       "line_b": 2e-05
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.791,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 411.0,
+    "lo": 410.5,
+    "hi": 411.5,
+    "conf": 0.989,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 99% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.209
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        17
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.993,
+       "agree": 0.993,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 17.0,
+       "line_b": 0.0,
+       "crossings": 273,
+       "spread": 0.0,
+       "ok": 0.993
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_27": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.767,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "99% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 411.1035714285714,
+    "lo": 410.6035714285714,
+    "hi": 411.6035714285714,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 410.45959563447747,
+    "x_bottom": 411.7475472226654,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.993,
+     "sliver": 0.227
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        16
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 1.29,
+       "line_a": 16.96,
+       "line_b": -0.00467,
+       "crossings": 276,
+       "spread": 0.339,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921a_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.686,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 25% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.314
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        10,
+        11
+       ],
+       "peak": 0.567,
+       "with_run": 0.567,
+       "stepped": 0.036,
+       "agree": 0.036,
+       "through": 0.31,
+       "tilt": 9.91,
+       "line_a": 14.16,
+       "line_b": -0.0359
+      },
+      {
+       "band": [
+        15,
+        16
+       ],
+       "peak": 0.686,
+       "with_run": 0.686,
+       "stepped": 0.39,
+       "agree": 0.39,
+       "through": 0.0,
+       "tilt": 0.18,
+       "line_a": 16.17,
+       "line_b": -0.00067
+      }
+     ],
+     "frac_none": 0.755,
+     "sliver": 0.076
+    }
+   }
+  },
+  "b0921a_31": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.755,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 411.98,
+    "lo": 411.48,
+    "hi": 412.48,
+    "conf": 0.991,
+    "outer": 426.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.245
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        2,
+        16
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 16.0,
+       "line_b": 0.0,
+       "width": 14.0,
+       "up": 0.91,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.527,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "97% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 420.96153846153845,
+    "lo": 420.46153846153845,
+    "hi": 421.46153846153845,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     71.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.968,
+     "sliver": 0.455
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        7
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 7.0,
+       "line_b": -0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.704,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 417.85714285714283,
+    "lo": 417.35714285714283,
+    "hi": 418.35714285714283,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.296
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        10
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 10.0,
+       "line_b": 0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.628,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 414.04347826086956,
+    "lo": 413.54347826086956,
+    "hi": 414.54347826086956,
+    "conf": 0.998,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.372
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        14
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 14.0,
+       "line_b": -0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.69,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 410.99,
+    "lo": 410.49,
+    "hi": 411.49,
+    "conf": 0.987,
+    "outer": 425.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.31
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        3,
+        17
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 17.0,
+       "line_b": -0.0,
+       "width": 14.0,
+       "up": 0.895,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.643,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 407.93617021276594,
+    "lo": 407.43617021276594,
+    "hi": 408.43617021276594,
+    "conf": 0.976,
+    "outer": 422.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.357
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        6,
+        20
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 20.0,
+       "line_b": 0.0,
+       "width": 14.0,
+       "up": 0.928,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.718,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 404.9021739130435,
+    "lo": 404.4021739130435,
+    "hi": 405.4021739130435,
+    "conf": 0.905,
+    "outer": 419.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     71.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.282
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        9,
+        23
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 23.0,
+       "line_b": -0.0,
+       "width": 14.0,
+       "up": 0.884,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.661,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 401.0208333333333,
+    "lo": 400.5208333333333,
+    "hi": 401.5208333333333,
+    "conf": 0.994,
+    "outer": 415.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.339
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        13,
+        27
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 27.0,
+       "line_b": -0.0,
+       "width": 14.0,
+       "up": 0.946,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.69,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 3 columns"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 3,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.31
+    },
+    "right": {
+     "gate_cols": 3
+    }
+   }
+  },
+  "b0921b_38": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.588,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 410.9166666666667,
+    "lo": 410.4166666666667,
+    "hi": 411.4166666666667,
+    "conf": 0.999,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.412
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        17
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.09,
+       "line_a": 16.68,
+       "line_b": 0.00032,
+       "crossings": 276,
+       "spread": 0.425,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_39": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.823,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 407.14434523809524,
+    "lo": 406.64434523809524,
+    "hi": 407.64434523809524,
+    "conf": 0.997,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.177
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        20
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 20.0,
+       "line_b": 0.0,
+       "crossings": 274,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_40": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.881,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 2 columns"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 2,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.119
+    },
+    "right": {
+     "gate_cols": 2
+    }
+   }
+  },
+  "b0921b_41": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.78,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 5 columns"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 5,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.22
+    },
+    "right": {
+     "gate_cols": 5
+    }
+   }
+  },
+  "b0921b_42": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.74,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 9 columns"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 9,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.26
+    },
+    "right": {
+     "gate_cols": 9
+    }
+   }
+  },
+  "b0921b_43": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.74,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 12 columns"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 12,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.26
+    },
+    "right": {
+     "gate_cols": 12
+    }
+   }
+  },
+  "b0921b_44": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.69,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 15 columns"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 15,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.31
+    },
+    "right": {
+     "gate_cols": 15
+    }
+   }
+  },
+  "b0921b_45": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.805,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 6 columns"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 6,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.195
+    },
+    "right": {
+     "gate_cols": 6
+    }
+   }
+  },
+  "b0921b_48": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.776,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 8 columns"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 8,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.224
+    },
+    "right": {
+     "gate_cols": 8
+    }
+   }
+  },
+  "b0921b_49": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.679,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 15 columns"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 15,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.321
+    },
+    "right": {
+     "gate_cols": 15
+    }
+   }
+  },
+  "b0921b_51": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.668,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 3 columns"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 3,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.332
+    },
+    "right": {
+     "gate_cols": 3
+    }
+   }
+  },
+  "b0921b_52": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.733,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 410.7361111111111,
+    "lo": 410.2361111111111,
+    "hi": 411.2361111111111,
+    "conf": 0.999,
+    "outer": 424.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.267
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        4,
+        17
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 17.0,
+       "line_b": -0.0,
+       "width": 13.0,
+       "up": 0.96,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921b_54": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.751,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate over 8 columns"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "neutral and brighter than all film",
+    "gate_cols": 8,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.249
+    },
+    "right": {
+     "gate_cols": 8
+    }
+   }
+  },
+  "b0921c_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.769,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 374.0,
+    "lo": 373.5,
+    "hi": 374.5,
+    "conf": 0.961,
+    "outer": 391.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.231
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        37,
+        54
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 54.0,
+       "line_b": -0.0,
+       "width": 17.0,
+       "up": 0.971,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921c_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.751,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 370.00625,
+    "lo": 369.50625,
+    "hi": 370.50625,
+    "conf": 0.935,
+    "outer": 387.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.249
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        41,
+        58
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 58.0,
+       "line_b": 0.0,
+       "width": 17.0,
+       "up": 0.928,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921c_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.747,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 365.92391304347825,
+    "lo": 365.42391304347825,
+    "hi": 366.42391304347825,
+    "conf": 0.996,
+    "outer": 382.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.253
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        46,
+        62
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 62.0,
+       "line_b": -0.0,
+       "width": 16.0,
+       "up": 0.968,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921c_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.823,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.834,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.177
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.166
+    }
+   }
+  },
+  "b0921c_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.744,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.823,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.256
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.177
+    }
+   }
+  },
+  "b0921c_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.762,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.892,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.238
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.108
+    }
+   }
+  },
+  "b0921c_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.693,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.942,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.307
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.058
+    }
+   }
+  },
+  "b0921c_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.773,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.892,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.227
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.108
+    }
+   }
+  },
+  "b0921c_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.751,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.866,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.249
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.134
+    }
+   }
+  },
+  "b0921c_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.816,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.884,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.184
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.116
+    }
+   }
+  },
+  "b0921c_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.794,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.971,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.206
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.029
+    }
+   }
+  },
+  "b0921c_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.834,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.899,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.166
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.101
+    }
+   }
+  },
+  "b0921c_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.801,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.874,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     32.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.199
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.126
+    }
+   }
+  },
+  "b0921c_14": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.596,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.823,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.404
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.177
+    }
+   }
+  },
+  "b0921c_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.693,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.866,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     32.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.307
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.134
+    }
+   }
+  },
+  "b0921c_16": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.661,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.906,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     32.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.339
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.094
+    }
+   }
+  },
+  "b0921c_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.646,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.859,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     32.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.354
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.141
+    }
+   }
+  },
+  "b0921c_18": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.762,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.769,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     75.0,
+     34.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.238
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.231
+    }
+   }
+  },
+  "b0921c_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.729,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.823,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     79.0,
+     36.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.271
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.177
+    }
+   }
+  },
+  "b0921c_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.693,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.65,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     78.0,
+     35.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.307
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.35
+    }
+   }
+  },
+  "b0921c_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.87,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.881,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     77.0,
+     35.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.13
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.119
+    }
+   }
+  },
+  "b0921c_22": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.863,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.736,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     76.0,
+     34.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.137
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.264
+    }
+   }
+  },
+  "b0921c_23": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.744,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.863,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     76.0,
+     34.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.256
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.137
+    }
+   }
+  },
+  "b0921c_24": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.671,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.877,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     75.0,
+     33.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.329
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.123
+    }
+   }
+  },
+  "b0921c_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.801,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.906,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     73.0,
+     33.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.199
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.094
+    }
+   }
+  },
+  "b0921c_26": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.827,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.794,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     72.0,
+     32.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.173
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.206
+    }
+   }
+  },
+  "b0921c_27": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.83,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.823,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.17
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.177
+    }
+   }
+  },
+  "b0921c_28": {
+   "left": {
+    "state": "edge",
+    "x": 60.92467948717949,
+    "lo": 60.42467948717949,
+    "hi": 61.42467948717949,
+    "conf": 0.933,
+    "outer": 45.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 97% of rows, base through it in 0%"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.794,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        45,
+        60
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.968,
+       "agree": 0.968,
+       "through": 0.0,
+       "tilt": 0.25,
+       "line_a": 59.95,
+       "line_b": 0.0009,
+       "width": 15.0,
+       "up": 1.0,
+       "down_wide": 1.0,
+       "crossings": 266,
+       "spread": 0.111,
+       "ok": 0.968
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.206
+    }
+   }
+  },
+  "b0921c_29": {
+   "left": {
+    "state": "edge",
+    "x": 43.112723214285715,
+    "lo": 42.612723214285715,
+    "hi": 43.612723214285715,
+    "conf": 0.796,
+    "outer": 27.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 92% of rows, base through it in 0%"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.747,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        27,
+        43
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.924,
+       "agree": 0.924,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 43.0,
+       "line_b": 0.0,
+       "width": 16.0,
+       "up": 1.0,
+       "down_wide": 0.992,
+       "crossings": 254,
+       "spread": 0.0,
+       "ok": 0.924
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.253
+    }
+   }
+  },
+  "b0921c_30": {
+   "left": {
+    "state": "edge",
+    "x": 25.852272727272727,
+    "lo": 25.352272727272727,
+    "hi": 26.352272727272727,
+    "conf": 0.825,
+    "outer": 10.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 92% of rows, base through it in 0%"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.776,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        10,
+        25
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.921,
+       "agree": 0.921,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 25.0,
+       "line_b": 0.0,
+       "width": 15.0,
+       "up": 1.0,
+       "down_wide": 0.996,
+       "crossings": 251,
+       "spread": 0.0,
+       "ok": 0.921
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.224
+    }
+   }
+  },
+  "b0921c_31": {
+   "left": {
+    "state": "edge",
+    "x": 9.05,
+    "lo": 8.55,
+    "hi": 9.55,
+    "conf": 0.879,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 92% of rows, base through it in 0%"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.924,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     61.0,
+     27.0,
+     14.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        0,
+        9
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.917,
+       "agree": 0.917,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 9.0,
+       "line_b": -0.0,
+       "crossings": 248,
+       "spread": 0.0,
+       "ok": 0.917
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.076
+    }
+   }
+  },
+  "b0921c_32": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.798,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 427.5,
+    "lo": 427.0,
+    "hi": 427.95,
+    "conf": 0.794,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sliver: border column brighter in 79% of rows"
+   },
+   "debug": {
+    "ref": [
+     42.0,
+     20.0,
+     12.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.202
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.794
+    }
+   }
+  },
+  "b0921c_33": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.816,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 410.0,
+    "lo": 409.5,
+    "hi": 410.5,
+    "conf": 0.999,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     58.0,
+     27.0,
+     15.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.184
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        18
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 18.0,
+       "line_b": 0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921c_34": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.798,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 393.4583333333333,
+    "lo": 392.9583333333333,
+    "hi": 393.9583333333333,
+    "conf": 0.929,
+    "outer": 414.0,
+    "x_top": 394.1843546823191,
+    "x_bottom": 392.7323119843476,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     61.0,
+     28.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.202
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        14,
+        34
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 1.45,
+       "line_a": 33.72,
+       "line_b": 0.00526,
+       "width": 20.0,
+       "up": 1.0,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.276,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921c_35": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.852,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 377.0,
+    "lo": 376.5,
+    "hi": 377.5,
+    "conf": 0.998,
+    "outer": 397.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     64.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.148
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        31,
+        51
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 51.0,
+       "line_b": 0.0,
+       "width": 20.0,
+       "up": 1.0,
+       "down_wide": 1.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0921c_36": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.762,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.957,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.238
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.043
+    }
+   }
+  },
+  "b0921c_37": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.848,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.986,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.152
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.014
+    }
+   }
+  },
+  "b0921c_38": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.848,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.921,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.152
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.079
+    }
+   }
+  },
+  "b0921c_39": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.805,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.921,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.195
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.079
+    }
+   }
+  },
+  "b0921c_40": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.863,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.599,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     31.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.137
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.401
+    }
+   }
+  },
+  "b0921c_41": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.852,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.834,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     71.0,
+     32.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.148
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.166
+    }
+   }
+  },
+  "b0921c_42": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.773,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.621,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     72.0,
+     33.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.227
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.379
+    }
+   }
+  },
+  "b0921c_43": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.773,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.758,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     74.0,
+     34.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.227
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.242
+    }
+   }
+  },
+  "b0921c_44": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.827,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.783,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     76.0,
+     34.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.173
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.217
+    }
+   }
+  },
+  "b0921c_45": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.776,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.751,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     78.0,
+     35.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.224
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.249
+    }
+   }
+  },
+  "b0921c_46": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.83,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.744,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     78.0,
+     35.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.17
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.256
+    }
+   }
+  },
+  "b0921c_47": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.884,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.812,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     74.0,
+     33.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.116
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.188
+    }
+   }
+  },
+  "b0921c_48": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.892,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     63.0,
+     29.0,
+     15.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        4,
+        5
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.0
+      },
+      {
+       "band": [
+        6,
+        17
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 17.0,
+       "line_b": -0.0,
+       "width": 11.0,
+       "up": 0.004,
+       "down_wide": 1.0
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.108
+    }
+   }
+  },
+  "b0921c_49": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.935,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.643,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     64.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.065
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.357
+    }
+   }
+  },
+  "b0921c_50": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.841,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.776,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     77.0,
+     34.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.159
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.224
+    }
+   }
+  },
+  "b0921c_51": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.83,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        42,
+        44
+       ],
+       "peak": 0.671,
+       "with_run": 0.747,
+       "stepped": 0.318,
+       "agree": 0.318,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 72.0,
+       "line_b": 0.0
+      },
+      {
+       "band": [
+        45,
+        72
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.913,
+       "agree": 0.913,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 72.0,
+       "line_b": 0.0,
+       "width": 27.0,
+       "up": 0.198,
+       "down_wide": 1.0
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.17
+    }
+   }
+  },
+  "b0921c_52": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.762,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.91,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     31.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.238
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.09
+    }
+   }
+  },
+  "b0921c_53": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.69,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.863,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     75.0,
+     34.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.31
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.137
+    }
+   }
+  },
+  "b0921c_54": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.787,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.794,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.213
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.206
+    }
+   }
+  },
+  "b0921c_55": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.877,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.863,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     71.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.123
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.137
+    }
+   }
+  },
+  "b0921c_56": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.812,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.545,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     73.0,
+     33.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.188
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.455
+    }
+   }
+  },
+  "b0921c_57": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.686,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "97% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 32% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     64.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.975,
+     "sliver": 0.296
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        23,
+        27
+       ],
+       "peak": 0.877,
+       "with_run": 0.917,
+       "stepped": 0.217,
+       "agree": 0.181,
+       "through": 0.0,
+       "tilt": 0.74,
+       "line_a": 27.06,
+       "line_b": -0.00268
+      },
+      {
+       "band": [
+        30,
+        31
+       ],
+       "peak": 0.74,
+       "with_run": 0.74,
+       "stepped": 0.213,
+       "agree": 0.213,
+       "through": 0.0,
+       "tilt": 0.1,
+       "line_a": 31.28,
+       "line_b": -0.00034
+      }
+     ],
+     "frac_none": 0.679,
+     "sliver": 0.285
+    }
+   }
+  },
+  "b0921c_58": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.679,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.711,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     75.0,
+     33.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.321
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.289
+    }
+   }
+  },
+  "b0921c_59": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.733,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.751,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     76.0,
+     34.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.267
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.249
+    }
+   }
+  },
+  "b0921c_60": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.769,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        37,
+        38
+       ],
+       "peak": 0.758,
+       "with_run": 0.758,
+       "stepped": 0.177,
+       "agree": 0.177,
+       "through": 0.0,
+       "tilt": 0.61,
+       "line_a": 39.41,
+       "line_b": -0.0022
+      },
+      {
+       "band": [
+        43,
+        81
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.935,
+       "agree": 0.866,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 81.0,
+       "line_b": -0.0,
+       "width": 38.0,
+       "up": 0.221,
+       "down_wide": 1.0
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.231
+    }
+   }
+  },
+  "b0921c_61": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.931,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 407.125,
+    "lo": 406.625,
+    "hi": 407.625,
+    "conf": 0.904,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 94% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     58.0,
+     26.0,
+     15.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.069
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        20
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.939,
+       "agree": 0.939,
+       "through": 0.0,
+       "tilt": 0.02,
+       "line_a": 20.07,
+       "line_b": 8e-05,
+       "crossings": 245,
+       "spread": 0.126,
+       "ok": 0.939
+      }
+     ]
+    }
+   }
+  },
+  "b0921c_62": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.812,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.69,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.188
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.31
+    }
+   }
+  },
+  "b0921c_63": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.704,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.632,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     77.0,
+     34.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.296
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.368
+    }
+   }
+  },
+  "b0921c_64": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.827,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.856,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     71.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.173
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.144
+    }
+   }
+  },
+  "b0921c_65": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.791,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.657,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     60.0,
+     24.0,
+     12.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.209
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.343
+    }
+   }
+  },
+  "b0921c_66": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.52,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.708,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.48
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.292
+    }
+   }
+  },
+  "b0921c_67": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.744,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.578,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     73.0,
+     33.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.256
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.422
+    }
+   }
+  },
+  "b0921c_68": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.783,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.621,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     74.0,
+     32.0,
+     18.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.217
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.379
+    }
+   }
+  },
+  "b0921c_69": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.657,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     63.0,
+     29.0,
+     15.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        0,
+        17
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.751,
+       "agree": 0.751,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 17.0,
+       "line_b": -0.0
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.343
+    }
+   }
+  },
+  "b0921c_70": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.693,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.834,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     64.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.307
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.166
+    }
+   }
+  },
+  "b0922a_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.664,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 38% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     28.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.336
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        3
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.383,
+       "agree": 0.375,
+       "through": 0.007,
+       "tilt": 0.59,
+       "line_a": 2.62,
+       "line_b": 0.00214
+      },
+      {
+       "band": [
+        27,
+        28
+       ],
+       "peak": 0.523,
+       "with_run": 0.523,
+       "stepped": 0.166,
+       "agree": 0.166,
+       "through": 0.0,
+       "tilt": 0.25,
+       "line_a": 28.32,
+       "line_b": -0.00089
+      }
+     ],
+     "frac_none": 0.617,
+     "sliver": 0.155
+    }
+   }
+  },
+  "b0922a_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.769,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 27% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.231
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        19
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.271,
+       "agree": 0.264,
+       "through": 0.004,
+       "tilt": 0.18,
+       "line_a": 18.87,
+       "line_b": 0.00065
+      },
+      {
+       "band": [
+        44,
+        45
+       ],
+       "peak": 0.516,
+       "with_run": 0.516,
+       "stepped": 0.105,
+       "agree": 0.105,
+       "through": 0.0,
+       "tilt": 0.78,
+       "line_a": 45.62,
+       "line_b": -0.00282
+      }
+     ],
+     "frac_none": 0.729,
+     "sliver": 0.152
+    }
+   }
+  },
+  "b0922a_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.628,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 36% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.372
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        19,
+        36
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.372,
+       "agree": 0.336,
+       "through": 0.014,
+       "tilt": 0.5,
+       "line_a": 36.77,
+       "line_b": -0.00182
+      }
+     ],
+     "frac_none": 0.639,
+     "sliver": 0.307
+    }
+   }
+  },
+  "b0922a_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.545,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.654,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "95% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.455
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        36,
+        42
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.047,
+       "agree": 0.029,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 54.0,
+       "line_b": 0.0
+      },
+      {
+       "band": [
+        43,
+        54
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.365,
+       "agree": 0.354,
+       "through": 0.011,
+       "tilt": 0.51,
+       "line_a": 53.6,
+       "line_b": 0.00185
+      }
+     ],
+     "frac_none": 0.953,
+     "sliver": 0.314
+    }
+   }
+  },
+  "b0922a_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.635,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.736,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "99% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.365
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        41,
+        48
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.0
+      }
+     ],
+     "frac_none": 0.989,
+     "sliver": 0.256
+    }
+   }
+  },
+  "b0922a_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.599,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 25% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.401
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        24,
+        43
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.245,
+       "agree": 0.227,
+       "through": 0.018,
+       "tilt": 0.28,
+       "line_a": 43.26,
+       "line_b": -0.001
+      }
+     ],
+     "frac_none": 0.755,
+     "sliver": 0.245
+    }
+   }
+  },
+  "b0922a_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.769,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 42% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.231
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        8,
+        27
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.419,
+       "agree": 0.397,
+       "through": 0.032,
+       "tilt": 0.97,
+       "line_a": 27.11,
+       "line_b": -0.0035
+      }
+     ],
+     "frac_none": 0.585,
+     "sliver": 0.202
+    }
+   }
+  },
+  "b0922a_14": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.617,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 45% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.383
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        10
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.448,
+       "agree": 0.412,
+       "through": 0.022,
+       "tilt": 1.0,
+       "line_a": 9.18,
+       "line_b": 0.00361
+      },
+      {
+       "band": [
+        33,
+        34
+       ],
+       "peak": 0.708,
+       "with_run": 0.708,
+       "stepped": 0.173,
+       "agree": 0.17,
+       "through": 0.004,
+       "tilt": 1.37,
+       "line_a": 34.78,
+       "line_b": -0.00497
+      }
+     ],
+     "frac_none": 0.552,
+     "sliver": 0.058
+    }
+   }
+  },
+  "b0922a_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.74,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 42% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     28.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.26
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        5
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.415,
+       "agree": 0.401,
+       "through": 0.014,
+       "tilt": 0.26,
+       "line_a": 4.76,
+       "line_b": 0.00096
+      }
+     ],
+     "frac_none": 0.585,
+     "sliver": 0.119
+    }
+   }
+  },
+  "b0922a_16": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.686,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 31% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     28.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.314
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        22,
+        28
+       ],
+       "peak": 0.946,
+       "with_run": 1.0,
+       "stepped": 0.256,
+       "agree": 0.199,
+       "through": 0.032,
+       "tilt": 4.47,
+       "line_a": 26.58,
+       "line_b": 0.01619
+      },
+      {
+       "band": [
+        29,
+        30
+       ],
+       "peak": 0.614,
+       "with_run": 0.614,
+       "stepped": 0.181,
+       "agree": 0.162,
+       "through": 0.0,
+       "tilt": 0.73,
+       "line_a": 30.59,
+       "line_b": -0.00265
+      }
+     ],
+     "frac_none": 0.693,
+     "sliver": 0.329
+    }
+   }
+  },
+  "b0922a_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.635,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 28% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     64.0,
+     28.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.365
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        19,
+        22
+       ],
+       "peak": 0.852,
+       "with_run": 0.939,
+       "stepped": 0.245,
+       "agree": 0.137,
+       "through": 0.051,
+       "tilt": 2.32,
+       "line_a": 21.14,
+       "line_b": 0.00842
+      }
+     ],
+     "frac_none": 0.722,
+     "sliver": 0.22
+    }
+   }
+  },
+  "b0922a_18": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 43% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     64.0,
+     28.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [
+      {
+       "band": [
+        0,
+        9
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.585,
+       "agree": 0.578,
+       "through": 0.0,
+       "tilt": 0.71,
+       "line_a": 8.64,
+       "line_b": 0.00256
+      }
+     ]
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.574,
+     "sliver": 0.242
+    }
+   }
+  },
+  "b0922a_19": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 23% with a stepped base run, none on one line"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 43% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     15.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.769,
+     "sliver": 0.0
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        24,
+        26
+       ],
+       "peak": 0.906,
+       "with_run": 0.968,
+       "stepped": 0.296,
+       "agree": 0.245,
+       "through": 0.036,
+       "tilt": 0.41,
+       "line_a": 26.86,
+       "line_b": -0.00147
+      },
+      {
+       "band": [
+        27,
+        29
+       ],
+       "peak": 0.968,
+       "with_run": 0.971,
+       "stepped": 0.307,
+       "agree": 0.264,
+       "through": 0.043,
+       "tilt": 0.05,
+       "line_a": 29.28,
+       "line_b": -0.00018
+      }
+     ],
+     "frac_none": 0.574,
+     "sliver": 0.274
+    }
+   }
+  },
+  "b0922a_20": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 32% with a stepped base run, none on one line"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 51% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.679,
+     "sliver": 0.191
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.487,
+     "sliver": 0.181
+    }
+   }
+  },
+  "b0922a_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.791,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.746,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "96% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.209
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.957,
+     "sliver": 0.22
+    }
+   }
+  },
+  "b0922a_22": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.856,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.816,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     71.0,
+     32.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.144
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.184
+    }
+   }
+  },
+  "b0922a_23": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.859,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.751,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     79.0,
+     35.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.141
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.249
+    }
+   }
+  },
+  "b0922a_24": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.758,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 373.9947916666667,
+    "lo": 373.4947916666667,
+    "hi": 374.4947916666667,
+    "conf": 0.979,
+    "outer": 393.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     65.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.242
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        35,
+        54
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.01,
+       "line_a": 54.0,
+       "line_b": -5e-05,
+       "width": 19.0,
+       "up": 0.751,
+       "down_wide": 1.0,
+       "crossings": 276,
+       "spread": 0.016,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922a_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.805,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.729,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     79.0,
+     35.0,
+     19.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.195
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.271
+    }
+   }
+  },
+  "b0922a_27": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.686,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.738,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "99% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.314
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.993,
+     "sliver": 0.256
+    }
+   }
+  },
+  "b0922a_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.65,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.729,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "96% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     69.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.35
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        41,
+        48
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.043,
+       "agree": 0.043,
+       "through": 0.004,
+       "tilt": 4.94,
+       "line_a": 62.13,
+       "line_b": -0.01792
+      }
+     ],
+     "frac_none": 0.957,
+     "sliver": 0.238
+    }
+   }
+  },
+  "b0922b_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.78,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.646,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     70.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.22
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.354
+    }
+   }
+  },
+  "b0922b_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.809,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.903,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     31.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.191
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.097
+    }
+   }
+  },
+  "b0922b_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.964,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.036
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        44,
+        46
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.004
+      },
+      {
+       "band": [
+        47,
+        68
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.592,
+       "agree": 0.588,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 68.0,
+       "line_b": 0.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922b_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.682,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.821,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "97% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.318
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        21,
+        23
+       ],
+       "peak": 0.863,
+       "with_run": 0.874,
+       "stepped": 0.025
+      },
+      {
+       "band": [
+        24,
+        25
+       ],
+       "peak": 0.52,
+       "with_run": 0.52,
+       "stepped": 0.0
+      },
+      {
+       "band": [
+        26,
+        33
+       ],
+       "peak": 0.964,
+       "with_run": 0.964,
+       "stepped": 0.018
+      },
+      {
+       "band": [
+        34,
+        46
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.018
+      },
+      {
+       "band": [
+        47,
+        109
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.025
+      }
+     ],
+     "frac_none": 0.968,
+     "sliver": 0.152
+    }
+   }
+  },
+  "b0922b_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.852,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.874,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.148
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.126
+    }
+   }
+  },
+  "b0922b_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.895,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     29.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.105
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        28,
+        30
+       ],
+       "peak": 0.639,
+       "with_run": 0.726,
+       "stepped": 0.433,
+       "agree": 0.433,
+       "through": 0.0,
+       "tilt": 1.35,
+       "line_a": 30.92,
+       "line_b": -0.00488
+      },
+      {
+       "band": [
+        43,
+        62
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.986,
+       "agree": 0.986,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 62.0,
+       "line_b": -0.0,
+       "width": 19.0,
+       "up": 0.59,
+       "down_wide": 0.989
+      }
+     ]
+    }
+   }
+  },
+  "b0922b_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.819,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 51% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.181
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        21,
+        22
+       ],
+       "peak": 0.57,
+       "with_run": 0.57,
+       "stepped": 0.217,
+       "agree": 0.202,
+       "through": 0.014,
+       "tilt": 0.74,
+       "line_a": 22.78,
+       "line_b": 0.00268
+      },
+      {
+       "band": [
+        41,
+        62
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.466,
+       "agree": 0.466,
+       "through": 0.0,
+       "tilt": 0.01,
+       "line_a": 62.03,
+       "line_b": 3e-05
+      }
+     ],
+     "frac_none": 0.495,
+     "sliver": 0.213
+    }
+   }
+  },
+  "b0922b_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.801,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.816,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.199
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.184
+    }
+   }
+  },
+  "b0922b_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.758,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 366.7916666666667,
+    "lo": 366.2916666666667,
+    "hi": 367.2916666666667,
+    "conf": 0.993,
+    "outer": 388.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.242
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        40,
+        61
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.996,
+       "agree": 0.996,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 61.0,
+       "line_b": -0.0,
+       "width": 21.0,
+       "up": 1.0,
+       "down_wide": 1.0,
+       "crossings": 261,
+       "spread": 0.0,
+       "ok": 0.996
+      }
+     ]
+    }
+   }
+  },
+  "b0922b_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.783,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 367.2421875,
+    "lo": 366.66991165814017,
+    "hi": 367.81446334185983,
+    "conf": 0.771,
+    "outer": 386.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.217
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        42,
+        60
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.65,
+       "line_a": 60.05,
+       "line_b": 0.00236,
+       "width": 18.0,
+       "up": 0.848,
+       "down_wide": 1.0,
+       "crossings": 276,
+       "spread": 0.572,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922b_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.805,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 366.9479166666667,
+    "lo": 366.4479166666667,
+    "hi": 367.4479166666667,
+    "conf": 0.733,
+    "outer": 387.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 88% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.195
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        41,
+        61
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.877,
+       "agree": 0.877,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 61.0,
+       "line_b": 0.0,
+       "width": 20.0,
+       "up": 0.918,
+       "down_wide": 0.955,
+       "crossings": 224,
+       "spread": 0.0,
+       "ok": 0.877
+      }
+     ]
+    }
+   }
+  },
+  "b0922b_14": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.718,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 368.015625,
+    "lo": 367.515625,
+    "hi": 368.515625,
+    "conf": 0.984,
+    "outer": 389.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.282
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        39,
+        60
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 60.0,
+       "line_b": 0.0,
+       "width": 21.0,
+       "up": 0.776,
+       "down_wide": 1.0,
+       "crossings": 275,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922b_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.801,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 368.09375,
+    "lo": 367.59375,
+    "hi": 368.59375,
+    "conf": 0.969,
+    "outer": 388.0,
+    "x_top": 367.4590834369312,
+    "x_bottom": 368.7284165630688,
+    "note": "line in 99% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.199
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        40,
+        59
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.993,
+       "agree": 0.993,
+       "through": 0.0,
+       "tilt": 1.27,
+       "line_a": 59.98,
+       "line_b": -0.0046,
+       "width": 20.0,
+       "up": 0.658,
+       "down_wide": 1.0,
+       "crossings": 272,
+       "spread": 0.34,
+       "ok": 0.993
+      }
+     ]
+    }
+   }
+  },
+  "b0922b_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.787,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.715,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.213
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.285
+    }
+   }
+  },
+  "b0922b_18": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.877,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.805,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     31.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.123
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.195
+    }
+   }
+  },
+  "b0922b_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.81,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "97% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "a full-height base band that is not one straight edge"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.971,
+     "sliver": 0.166
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        8
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.787,
+       "agree": 0.787,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 8.0,
+       "line_b": 0.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.881,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 417.05263157894734,
+    "lo": 416.55263157894734,
+    "hi": 417.55263157894734,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.119
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        11
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 11.0,
+       "line_b": 0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.765,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 412.97222222222223,
+    "lo": 412.47222222222223,
+    "hi": 413.47222222222223,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.235
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        15
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 15.0,
+       "line_b": 0.0,
+       "crossings": 277,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.838,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 44% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.162
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        7,
+        15
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.437,
+       "agree": 0.43,
+       "through": 0.007,
+       "tilt": 0.43,
+       "line_a": 14.97,
+       "line_b": -0.00156
+      }
+     ],
+     "frac_none": 0.563,
+     "sliver": 0.054
+    }
+   }
+  },
+  "b0922s_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.78,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 23% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     64.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.22
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        40,
+        94
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.238,
+       "agree": 0.162,
+       "through": 0.101,
+       "tilt": 2.52,
+       "line_a": 93.07,
+       "line_b": 0.00914
+      }
+     ],
+     "frac_none": 0.765,
+     "sliver": 0.065
+    }
+   }
+  },
+  "b0922s_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.946,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.87,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.054
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.996,
+     "sliver": 0.126
+    }
+   }
+  },
+  "b0922s_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.931,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 420.125,
+    "lo": 419.625,
+    "hi": 420.625,
+    "conf": 0.905,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 94% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.069
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        7
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.935,
+       "agree": 0.935,
+       "through": 0.0,
+       "tilt": 0.88,
+       "line_a": 7.84,
+       "line_b": -0.00318,
+       "crossings": 253,
+       "spread": 0.464,
+       "ok": 0.935
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_08": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 29% with a stepped base run, none on one line"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 46% with a stepped base run, none on one line"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.715,
+     "sliver": 0.173
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        7
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.462,
+       "agree": 0.462,
+       "through": 0.0,
+       "tilt": 0.96,
+       "line_a": 7.0,
+       "line_b": 0.00349
+      }
+     ],
+     "frac_none": 0.538,
+     "sliver": 0.083
+    }
+   }
+  },
+  "b0922s_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.744,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.887,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "97% of rows show no base"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.256
+    },
+    "right": {
+     "bands": [],
+     "frac_none": 0.975,
+     "sliver": 0.09
+    }
+   }
+  },
+  "b0922s_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.805,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.0,
+    "lo": 420.5,
+    "hi": 421.5,
+    "conf": 0.984,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 99% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.195
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        7
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.989,
+       "agree": 0.989,
+       "through": 0.0,
+       "tilt": 0.17,
+       "line_a": 6.87,
+       "line_b": 0.00062,
+       "crossings": 265,
+       "spread": 0.065,
+       "ok": 0.989
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.773,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.9375,
+    "lo": 421.4375,
+    "hi": 422.4375,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.227
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        6
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 6.0,
+       "line_b": -0.0,
+       "crossings": 275,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.949,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.0,
+    "lo": 420.5,
+    "hi": 421.5,
+    "conf": 0.789,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 85% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.051
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        7
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 0.852,
+       "agree": 0.852,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 7.0,
+       "line_b": -0.0,
+       "crossings": 223,
+       "spread": 0.0,
+       "ok": 0.852
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.755,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "100% of rows show no base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.04285714285714,
+    "lo": 421.54285714285714,
+    "hi": 422.54285714285714,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 1.0,
+     "sliver": 0.245
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        6
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 6.0,
+       "line_b": -0.0,
+       "crossings": 275,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  },
+  "b0922s_14": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "rows disagree: 24% with a stepped base run, none on one line"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.6923076923077,
+    "lo": 422.1923076923077,
+    "hi": 423.1923076923077,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "line in 100% of rows, base through it in 0%"
+   },
+   "debug": {
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "gate": "no neutral column",
+    "gate_cols": 0,
+    "left": {
+     "bands": [],
+     "frac_none": 0.762,
+     "sliver": 0.162
+    },
+    "right": {
+     "bands": [
+      {
+       "band": [
+        0,
+        5
+       ],
+       "peak": 1.0,
+       "with_run": 1.0,
+       "stepped": 1.0,
+       "agree": 1.0,
+       "through": 0.0,
+       "tilt": 0.0,
+       "line_a": 5.0,
+       "line_b": 0.0,
+       "crossings": 273,
+       "spread": 0.0,
+       "ok": 1.0
+      }
+     ]
+    }
+   }
+  }
+ }
+}

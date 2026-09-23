@@ -1,0 +1,26 @@
+{
+  "id": "x0920_08",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 23.6,
+    "lo": 23.2,
+    "hi": 24.1,
+    "outer": 4.3,
+    "x_top": 24.0,
+    "x_bottom": 23.4,
+    "note": "DENSE GAP, not bright base: cols 5-22 uniform ~1 (white in B, black in A), straight sharp full-height; neighbour frame picture (sky over buildings) at cols 0-4, outer ~4.3 (b1 4.8, b3 4.1; b4 hard, neighbour dark there). Gap->picture crossing 24.0 (b1) .. 23.4 (b4). Reversal-like roll (A reads as natural positive). Labelled edge because it is plainly the inter-frame gap; reject if only bright base counts"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "snowy sky/trees run to 428; no gap"
+  },
+  "frame_note": "REVERSAL-LIKE FILM: inter-frame gap is dense (min), the opposite of the bright-base rule; same scene as x0920_01"
+}

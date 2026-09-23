@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_06",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 3.3,
+    "lo": 3.1,
+    "hi": 3.8,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base plateau cols 0-2, sharp; crossings b2 3.3, b3 3.2 at mid-height, wider at the corners (b1 4.4, b4 3.75) - rounded gate corners rather than a tilt; base dimmer in b4 (~72)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall/people picture reaches 428; no plateau"
+  },
+  "frame_note": ""
+}

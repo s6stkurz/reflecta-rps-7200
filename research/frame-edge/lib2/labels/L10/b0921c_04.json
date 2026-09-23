@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_04",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 66.3,
+    "lo": 65.9,
+    "hi": 66.8,
+    "outer": 49.5,
+    "x_top": 66.0,
+    "x_bottom": 67.2,
+    "note": "base gap cols ~49-65 (raw 66/30/16, R/G 2.2, B/G 0.53), sharp both sides. This frame starts at ~66.0 top / ~67.2 bottom (tilted). Neighbour picture at 0-49: its edge ~50.0 at top, ~49.1 at bottom, so the gap widens slightly downward."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "picture (dress, chair) runs to column 427"
+  },
+  "frame_note": "Gap inside the frame at cols 49-65; neighbour part 49 cols, this frame ~361 cols on the right."
+}

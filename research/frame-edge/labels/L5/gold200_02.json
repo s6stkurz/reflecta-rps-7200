@@ -1,0 +1,26 @@
+{
+  "id": "gold200_02",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "leafy foreground (textured, not black in B) runs to column 0; values 47-75, no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright sky runs to 428 (~11), no black band in B"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_48", "labeller": "L8", "view": "B",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate cols 0-7 (G~177, neutral R/G 1.00): ~8 cols wide at the top, ~5.7 at the bottom. BASE lies between gate and picture: cols ~8-29 (R/G 2.2-2.3, B/G 0.52; only ~19 on the table because the gate owns the stretch). Picture starts at x=30.0 (lo 29.0, hi 30.3); in the top band col 29 is already picture (29.0)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trees/people run off the right border"},
+  "frame_note": "gate + base + picture on the left; view B looks pale cyan because the gate sliver dominates the stretch. If the gate state is not wanted, the picture/base boundary is 30.0"
+}

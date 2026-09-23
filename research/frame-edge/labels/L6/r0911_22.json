@@ -1,0 +1,26 @@
+{
+  "id": "r0911_22",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "near-unexposed night scene: flat ~90 in all bands across cols 0-64 with no vertical line; base could be present but has zero contrast against the scene"
+  },
+  "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "same: flat ~90-93 across 364-427, no line; faint scratch near bottom only"
+  },
+  "frame_note": "almost blank night frame with one lit object in the middle; not all_base (picture present), edges have no contrast"
+}

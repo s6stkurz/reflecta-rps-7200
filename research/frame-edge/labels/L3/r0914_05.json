@@ -1,0 +1,26 @@
+{
+  "id": "r0914_05",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall and picture frame to col 0, no black strip"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.9,
+    "lo": 418.4,
+    "hi": 419.2,
+    "outer": null,
+    "x_top": 419.1,
+    "x_bottom": 418.4,
+    "note": "base 419-427 ~98 all bands, black in B. per band: b1 419.1, b2 418.9, b3 418.8, b4 418.5 (col 418 = 59, ~54% base). Clean, slight lean. Slanted thin line 404-410 is a wall corner in the scene"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_61", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 20.7, "lo": 20.4, "hi": 21.1,
+            "outer": null, "x_top": 20.5, "x_bottom": 21.5,
+            "note": "base cols 0-19 (82-90 with a slight ramp, raw 54-58/25-26/14-15, R/G 2.2 B/G 0.56), dark brown rather than black in B. Col 20 ~50% base in the upper half; edge leans to ~21.0 lower and ~21.6 in the bottom eighth (low contrast there, picture ~80)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "jeans/pavement scene to col 427"},
+  "frame_note": ""
+}

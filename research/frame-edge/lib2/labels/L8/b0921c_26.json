@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_26", "labeller": "L8", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grey backdrop (G~12 vs base ~31) runs to column 0; no plateau"},
+  "right": {"state": "edge", "x": 333.5, "lo": 333.0, "hi": 334.1,
+            "outer": 350.8, "x_top": 334.0, "x_bottom": 333.1,
+            "note": "DEEP gap beyond the crop: base cols ~334-349 (R/G 2.2, B/G 0.53, full height). This frame is left of it (~334 cols); neighbour picture cols 351-427 (~77 cols). Outer: 350.0 in top band, ~351.0 elsewhere."},
+  "frame_note": "gap at cols 334-350 found in the 1:1 thumbnail; the right crop (364+) shows only the neighbour"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_10", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 7.0, "lo": 6.6, "hi": 7.5,
+            "outer": null, "x_top": 6.7, "x_bottom": 7.4,
+            "note": "black base strip cols 0-5 (R/G 2.3, B/G 0.56, ~97, full height); straight edge against the tree foliage, slight lean (6.7 top, 7.4 bottom). Foliage beside it is fairly dark (72-84) but clearly below base."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "jeans, bench and pavement run off the right border"},
+  "frame_note": "no deep gap in the thumbnail or column overview"
+}

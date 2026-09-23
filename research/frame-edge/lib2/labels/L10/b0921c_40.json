@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_40",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 135.8,
+    "lo": 135.3,
+    "hi": 136.3,
+    "outer": 114.6,
+    "x_top": 135.2,
+    "x_bottom": 136.6,
+    "note": "gap deep inside the frame at cols ~115-135 (raw 68-71/31-32/17-18, R/G 2.2, B/G 0.55). Frame picture (bright grey backdrop, likeness ~72-79, so contrast is lower) starts ~135.2 top / ~136.6 bottom, tilted. Neighbour (dense white wall) edge ~115.2 top, ~114.1 bottom."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "woman/backdrop runs to column 427"
+  },
+  "frame_note": "Interior gap at 115-135: neighbour part 115 cols on the left, this frame ~292 cols on the right."
+}

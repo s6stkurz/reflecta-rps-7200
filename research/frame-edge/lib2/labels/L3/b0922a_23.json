@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_23", "labeller": "L3", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figures and foliage run to col 0, no plateau"},
+  "right": {"state": "edge", "x": 229.9, "lo": 229.5, "hi": 230.4,
+            "outer": 250.2, "x_top": 230.25, "x_bottom": null,
+            "note": "gap deeper than the crop: black base cols 231-248 (R/G 2.23-2.26, B/G 0.54). Picture edge ~230.25 in the top 20%, 230.0 at 30-40%, ~229.7 at 40-50%; below mid-height the scene beside the gap is shadow at base level (86-95) so the edge there is placed only from a faint straight line at 229-230 in view B. Neighbour (garden) starts at ~249.1 in the top tenth, 249.3, 249.9, then 250.05-250.5 from 30% height down"},
+  "frame_note": "internal gap at cols ~230-250; frame is the left part (0-230, ~230 cols) vs neighbour 250-427 (~178 cols)"
+}

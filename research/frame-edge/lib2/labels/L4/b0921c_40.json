@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_40",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 135.8,
+    "lo": 135.3,
+    "hi": 136.3,
+    "outer": 114.7,
+    "x_top": 135.3,
+    "x_bottom": 136.2,
+    "note": "gap deeper than the crop: base cols ~115-135 (R/G 2.2, B/G 0.55, ~95); the frame side is the grey backdrop (~72-79, R/G 2.08, B/G 0.58, near base ratio but clearly darker) so contrast is modest. Edge straight, drifting from ~135.2 at top to ~135.9 lower, ~136.7 in the bottom band. Outer (neighbour, dense white wall) ~115.2 at top to ~114.1 lower"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop and figure run to column 428"
+  },
+  "frame_note": "interior gap at cols ~115-135; the frame is the right part (292 picture columns vs 115)"
+}

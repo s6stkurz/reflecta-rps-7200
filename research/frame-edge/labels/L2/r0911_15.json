@@ -1,0 +1,26 @@
+{
+  "id": "r0911_15",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "brown wall runs to col 0; smooth 62-78, no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall runs to 428; bright slanted shape at 364-369 is the picture frame side (scene, not full height, not straight)"
+  },
+  "frame_note": ""
+}

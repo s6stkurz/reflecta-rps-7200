@@ -1,0 +1,26 @@
+{
+  "id": "r0909_04",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/water picture reaches column 0; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.7,
+    "lo": 418.1,
+    "hi": 419.1,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.3,
+    "note": "sharp at top (b1/b2 ~418.9-419.1 against dark sky); lower half pale pier picture gives low contrast, edge there ~418.1-418.3 -> slight tilt; faint diagonal scratch in base at bottom"
+  },
+  "frame_note": ""
+}

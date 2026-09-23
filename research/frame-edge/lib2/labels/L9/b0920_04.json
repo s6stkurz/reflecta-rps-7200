@@ -1,0 +1,10 @@
+{
+  "id": "b0920_04", "labeller": "L9", "view": "B",
+  "left":  {"state": "edge", "x": 9.0, "lo": 8.8, "hi": 9.4,
+            "outer": null, "x_top": 9.0, "x_bottom": 10.0,
+            "note": "clean: base 0-8 (93-96, R/G 2.25, B/G 0.55), grey backdrop from col 9 (~72). Edge at 9.0 from the top to row ~235, then steps to 10.0 over the bottom ~40 rows (corner)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trousers and backdrop run to 428; the bright b2 readings at 424-427 are dark trousers, not full height"},
+  "frame_note": ""
+}

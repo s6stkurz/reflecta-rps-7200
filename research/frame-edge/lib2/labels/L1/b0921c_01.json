@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_01", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 54.0, "lo": 53.7, "hi": 54.5,
+            "outer": 37.0, "x_top": 53.7, "x_bottom": 54.5,
+            "note": "gap at 37-53 (~96-99, base). Frame edge clean with a slight lean: col 53 ~73% base in top band, col 54 ~46% base in bottom band. Neighbour picture cols 0-36, its edge ~37.4 top to ~36.8 bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/table to col 427"},
+  "frame_note": "gap at 37-54 lies within the magnified crop; frame is the right part"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0921a_11",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 18.3,
+    "lo": 17.8,
+    "hi": 19.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night scene: the edge is visible only where the sky is, rows ~0-100 (top third), as a dead-straight vertical line at 18.3 (col 18 ~30% base on every 8-row strip). Cols 0-17 are featureless and base-coloured (R/G 2.29, B/G 0.53) full height, but below the sky the adjacent picture is unexposed night and reads the same as base, so no boundary there. Same position as the clean edge on b0921a_23 (18.6)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky continues to 427 in the top band; night trees below"
+  },
+  "frame_note": "dark scene beside the gap; edge placed from the sky alone"
+}

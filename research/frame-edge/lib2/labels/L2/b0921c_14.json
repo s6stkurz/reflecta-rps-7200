@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_14", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 105.3, "lo": 105.0, "hi": 105.8,
+            "outer": 88.3, "x_top": 105.0, "x_bottom": 106.1,
+            "note": "interior gap deeper than the crop: black base cols 89-104 (R/G 2.22, B/G 0.55), neighbour picture cols 0-87, this frame from 105. Edge tilts steadily from 105.0 at the top to ~105.8 at 7/8 height and ~106.1 in the bottom rows. Outer ~89.0 at the top, ~88.0-88.3 lower"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "dress/table picture runs to 427"},
+  "frame_note": "gap at ~88-105, not visible in the crops; frame = right part (~322 cols) vs neighbour (~88 cols)"
+}

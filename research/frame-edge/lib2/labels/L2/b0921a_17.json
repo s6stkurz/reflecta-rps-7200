@@ -1,0 +1,9 @@
+{
+  "id": "b0921a_17", "labeller": "L2", "view": "A",
+  "left":  {"state": "edge", "x": 18.7, "lo": 17.5, "hi": 20.0,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "scene is dark foliage at base density everywhere (whole frame reads R/G 2.3, B/G 0.55), so the boundary is nearly invisible. Cols 0-17 are featureless (row std ~1) and col 18 is ~1.5 counts darker in all six row bands; texture starts at 18-20. Neighbour frames b0921a_15/_19 of the same roll show a clean gap to ~19.0, consistent. Wide interval for that reason"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "sky through leaves runs to 427"},
+  "frame_note": "severely underexposed scene: base and dark picture have the same value; left edge placed from texture onset"
+}

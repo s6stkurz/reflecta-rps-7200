@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_25", "labeller": "L7", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grey wall runs to col 0 (likeness ~29, counts 26/11/6 against base 73/33/17): picture, not base"},
+  "right": {"state": "edge", "x": 315.3, "lo": 314.9, "hi": 315.7,
+            "outer": 332.4, "x_top": 315.6, "x_bottom": 314.7,
+            "note": "interior gap cols 315-331 (R/G 2.2, B/G 0.53), deeper than the crop. This frame 0-314 (315 cols) vs neighbour 332-427 (96 cols). Col 315 reads 79/48/93/94, col 314 63 in the bottom band: slight tilt. Outer ~331.6 at top, ~332.3-332.8 lower."},
+  "frame_note": "gap at 315-332 found on the 1:1 thumbnail; frame is the left part"
+}

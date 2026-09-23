@@ -1,0 +1,9 @@
+{
+  "id": "b0922b_01", "labeller": "L2", "view": "A",
+  "left":  {"state": "edge", "x": 63.4, "lo": 63.0, "hi": 64.0,
+            "outer": 48.2, "x_top": 63.0, "x_bottom": 64.0,
+            "note": "clean base cols 49-62 (R/G 2.27, B/G 0.53). Edge 63.0-63.1 in the top half, drifting to 64.0 in the bottom third, where the wall beside the gap is pale (~110 vs base 116 summed RGB) but still a consistent step at 64. Neighbour picture ends ~48.8 at the top, 48.0 over the middle, ~48.3 at the bottom (outer at mid-height)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "wall/table picture runs to 427"},
+  "frame_note": ""
+}

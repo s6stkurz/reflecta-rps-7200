@@ -1,0 +1,26 @@
+{
+  "id": "x0920_28",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 2.75,
+    "lo": 2.5,
+    "hi": 3.1,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "black full-height strip cols 0-1 (99-100), col 2 ~60-75% base (b1 ~100%) -> crossing ~2.6-3.1 per band; dark painting next to it is ~85-90 in b1-b3, so contrast is modest there"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall to col 427 (~10)"
+  },
+  "frame_note": ""
+}

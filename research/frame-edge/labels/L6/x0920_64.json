@@ -1,0 +1,26 @@
+{
+  "id": "x0920_64",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dense (dark on negative) curved mirror surround at cols 0-8 is picture; no clear plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dense wall and curved mirror rim run to col 427; values 10-14, no plateau"
+  },
+  "frame_note": "round mirror selfie"
+}

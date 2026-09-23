@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_43",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate (178/178/176, neutral) at cols 0-11; film end slants from ~12 at the top to ~9 in the bottom rows. BASE lies between gate and picture: cols ~12-32 (R/G 2.28, B/G 0.54), and the base/picture boundary is sharp and tilted: ~32.5-33.0 in the top quarter, 33.9-34.0 from mid-height down."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees/lawn run to 427"
+  },
+  "frame_note": "strip end (same scene as b0921b_10): gate, then ~21 cols of base, then picture"
+}

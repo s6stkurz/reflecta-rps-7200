@@ -1,0 +1,26 @@
+{
+  "id": "r0911_29",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "shelf post (cols 0-5, ~52) and TV wall picture reach column 0; no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "shelf and step picture reach 428 (b3/b4 dark 18-35 to the border); col 426 a darker line, not a base boundary"
+  },
+  "frame_note": ""
+}

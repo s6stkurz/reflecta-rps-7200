@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_37", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 84.5, "lo": 84.2, "hi": 84.9,
+            "outer": 63.1, "x_top": 84.1, "x_bottom": 85.3,
+            "note": "internal gap just past the crop: base cols 64-83 (~90, R/G 2.2 B/G 0.53). Frame picture beside it is a light backdrop (~66-74), so contrast is modest; edge leans ~84.1 top to ~85.4 bottom (8-band read). Left of the gap (0-62) is uniformly dense exposed film (white in B), treated as the neighbour; its edge ~64.0 top, ~62.9 lower"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop and trousers to col 427"},
+  "frame_note": "gap inside the frame at 63-84; frame is the right part (343 cols vs 63). The neighbour part is featureless dense film, not no_film (dark in A, not the bright neutral gate)"
+}

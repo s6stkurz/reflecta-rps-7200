@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_60",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage/bookcase run to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 347.0,
+    "lo": 346.7,
+    "hi": 347.4,
+    "outer": null,
+    "x_top": 347.6,
+    "x_bottom": 346.3,
+    "note": "interior edge deeper than the crop: base from 347 all the way to 427 (G 30-31 near the edge falling to 25-26 at 427, R/G 2.25, B/G 0.54; bright specks in B are dust on the base). Edge tilted: col 347 ~30-45% base in rows 20-100, ~85% in rows 100-140, base below; col 346 partial in rows 180-280. Top-corner rows 0-20 at ~346.8"
+  },
+  "frame_note": "~80 cols of base to the right with no neighbour: a wide blank stretch (end of the exposed frames?), not a normal inter-frame gap"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0921a_09",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-~19 sit flat at base level and base ratio (raw ~66/29/15, R/G 2.3, B/G 0.53), then a smooth decline into flash-falloff dark grass by ~130; no straight sharp boundary anywhere in 0-140 in any band. Unexposed scene and base have the same density here, so any base strip cannot be separated from the scene. If forced: plateau ends ~19 (0-40 plausible)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grass runs to column 427"
+  },
+  "frame_note": "Left side is dark underexposed grass merging into base level; honest unreadable rather than a guess."
+}

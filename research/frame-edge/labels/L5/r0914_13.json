@@ -1,0 +1,26 @@
+{
+  "id": "r0914_13",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "darker blue backdrop band at cols 0-12 (~62) is scene, well below base (~94) and blue not black in B"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.7,
+    "lo": 418.2,
+    "hi": 419.1,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.25,
+    "note": "black base 419-427 (~94). Col 418 is a dark-blue transition column (42 top to 71 bottom), so the crossing moves from ~419.0 at top to ~418.25 at bottom: slight tilt"
+  },
+  "frame_note": ""
+}

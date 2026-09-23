@@ -1,0 +1,139 @@
+{
+ "split": "test",
+ "side": {
+  "n": 40,
+  "correct": 32,
+  "accuracy": 0.8,
+  "false_base": 4,
+  "missed": 3,
+  "refused": 0,
+  "edge_n": 4,
+  "edge_mae_cols": 2.098,
+  "edge_p90_cols": 4.563,
+  "edge_max_cols": 6.1,
+  "edge_bias_cols": -1.438,
+  "edge_mae_units": 1.689,
+  "confusion": {
+   "edge": {
+    "edge": 4,
+    "picture_to_border": 3,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 4,
+    "picture_to_border": 29,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 20,
+  "ok": 13,
+  "bad": 7,
+  "refused": 0,
+  "sign_errors": 1,
+  "accuracy": 0.65,
+  "du_mae_units": 4.904,
+  "du_p90_units": 19.192
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.8,
+   "edge_mae_cols": 2.098,
+   "n": 40
+  }
+ },
+ "per_roll": {
+  "gold200": {
+   "accuracy": 0.794,
+   "edge_mae_cols": 3.536,
+   "n": 34
+  },
+  "hwcheck": {
+   "accuracy": 0.833,
+   "edge_mae_cols": 0.659,
+   "n": 6
+  }
+ },
+ "worst": [
+  "gold200_17 move -25.8 u <- vs truth none (+0.0 u)",
+  "gold200_12 move -24.2 u <- vs truth none (+0.0 u)",
+  "gold200_17 left false base 26.0 cols",
+  "gold200_12 left false base 24.0 cols",
+  "gold200_01 move -12.1 u <- vs truth +6.5 u ->",
+  "gold200_10 move +8.9 u -> vs truth none (+0.0 u)",
+  "gold200_01 left false base 9.0 cols",
+  "gold200_16 move none (+0.0 u) vs truth +7.1 u ->",
+  "hwcheck_02 move none (+0.0 u) vs truth +6.6 u ->",
+  "gold200_14 right off -6.1 cols",
+  "gold200_14 move +13.7 u -> vs truth +8.8 u ->",
+  "gold200_10 right false base 5.0 cols",
+  "gold200_16 right missed 2.8 cols of base",
+  "hwcheck_02 right missed 2.2 cols of base",
+  "gold200_01 right missed 2.0 cols of base"
+ ],
+ "label_free": {
+  "pairs": {
+   "n": 0,
+   "both_edge": 0,
+   "state_changes": 0,
+   "mae_cols": NaN,
+   "p90_cols": NaN,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 0,
+   "state_changes": 0,
+   "mae_cols": NaN,
+   "over_1": 0
+  },
+  "ladder": {
+   "left": {
+    "found": 0,
+    "of": 21
+   },
+   "right": {
+    "found": 0,
+    "of": 21
+   }
+  }
+ }
+}

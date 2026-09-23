@@ -1,0 +1,26 @@
+{
+  "id": "strip6_01",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 11.0,
+    "lo": 10.7,
+    "hi": 11.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-10 uniform ~80-84 all bands, sharp vertical line; top band cols 11-35 is hair (bluish on negative, also bright) so top quarter cannot confirm, but b2-b4 step 83->14 at col 11. Last few rows the step looks ~1 col further right"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair of the person on the right runs to col 427, soft, no plateau"
+  },
+  "frame_note": ""
+}

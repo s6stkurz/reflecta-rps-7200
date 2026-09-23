@@ -1,0 +1,26 @@
+{
+  "id": "r0911_06",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark museum wall (~90, near base) runs to column 0; no step or line in any band or in B. Painting frame edge at col 9 is scene, not full height"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall ~90 flat to 428, no step, no line in B"
+  },
+  "frame_note": "very low contrast: wall is almost as clear as base, so a base sliver would be hard to see; none visible"
+}

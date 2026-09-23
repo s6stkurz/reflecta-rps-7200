@@ -1,0 +1,26 @@
+{
+  "id": "r0914_01",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall (dark in A, ~16) runs to column 0, no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 412.7,
+    "lo": 412.3,
+    "hi": 413.0,
+    "outer": null,
+    "x_top": 412.9,
+    "x_bottom": 412.3,
+    "note": "clean sharp base from 413 (~96) against wall ~16. Col 412 partial and more base toward the bottom (b1 27 to b4 70): slight tilt"
+  },
+  "frame_note": ""
+}

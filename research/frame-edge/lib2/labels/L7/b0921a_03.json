@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_03", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 23.2, "lo": 22.9, "hi": 23.7,
+            "outer": 6.1, "x_top": 23.0, "x_bottom": 23.6,
+            "note": "clean white gap cols 6-22 (R/G 2.3, B/G 0.53); neighbour picture 0-5. Col 23 is 17/8/24/52 by band, so the bottom band carries half a column more base. Outer ~6.0 in bands 2-4, ~6.9 in the top band."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427 (likeness ~36, ratio not base)"},
+  "frame_note": "whole thumbnail checked: no interior gap"
+}

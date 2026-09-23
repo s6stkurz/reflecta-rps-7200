@@ -1,0 +1,26 @@
+{
+  "id": "r0909_01",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/river to col 0; col 0 slightly odd around horizon but no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 416.0,
+    "lo": 415.4,
+    "hi": 416.6,
+    "outer": null,
+    "x_top": 416.8,
+    "x_bottom": 415.1,
+    "note": "base 417-427 ~95 all bands. b1: col 416=31 (23% base) -> 416.8; b2: clean step 415->416 -> 416.0; bottom half the scene is near base-bright on the negative, B view shows picture ending ~415 at bottom. Tilted."
+  },
+  "frame_note": ""
+}

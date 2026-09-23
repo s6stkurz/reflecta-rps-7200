@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_05", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 25.7, "lo": 25.3, "hi": 26.2,
+            "outer": 4.5, "x_top": null, "x_bottom": null,
+            "note": "base plateau cols 5-24 (R/G 2.3, B/G 0.53); picture beside it is a light grey backdrop (likeness ~72) so contrast is modest but the boundary is straight and full height. Neighbour picture sliver cols 0-3 (dense, outer ~4.5, slightly wobbly 4-5)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trousers and backdrop run off the right border; no plateau"},
+  "frame_note": "no deep gap in the whole-frame thumbnail or column overview"
+}

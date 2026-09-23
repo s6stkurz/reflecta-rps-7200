@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_01", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 63.2, "lo": 62.9, "hi": 63.7,
+            "outer": 48.2, "x_top": null, "x_bottom": null,
+            "note": "black base cols 49-62 (G~31, R/G 2.26, B/G 0.53, full height). This frame's bright wall/window starts at ~63.0-63.4 in the top three bands; in the bottom band the dark radiator/floor is within ~5 points of base, so the edge there is not measurable and was taken as continuous with the upper part. Neighbour picture (chair and legs) cols 0-47, outer ~48.2 (top band ~48.8)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "wall, window and the dark table (near base only in the bottom band, not full height) run off the right border"},
+  "frame_note": ""
+}

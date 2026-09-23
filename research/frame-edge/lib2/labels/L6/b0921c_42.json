@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_42", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 168.5, "lo": 168.2, "hi": 168.8,
+            "outer": 147.0, "x_top": 168.0, "x_bottom": 169.0,
+            "note": "gap in the middle of the scan: base cols 148-167 (~93-99, R/G 2.15-2.30, B/G 0.55), full height, black in B. This frame's picture (pale backdrop, ~75, R/G 2.1, B/G 0.58) starts at 168.0 at the top and 169.0 at the bottom -- a clean, steady tilt. Neighbour (dense, likeness ~10): boundary ~147.8 at the top, ~147.0 at mid-height, ~146.9 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop/figure to col 427; no plateau"},
+  "frame_note": "gap at cols 148-167; right part 168-427 (~259 cols) is the frame, left part 0-146 (~147 cols) the neighbour"
+}

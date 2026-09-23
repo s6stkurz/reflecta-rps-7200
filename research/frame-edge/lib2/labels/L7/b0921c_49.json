@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_49", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 84.0, "lo": 83.4, "hi": 84.8,
+            "outer": 58.3, "x_top": null, "x_bottom": null,
+            "note": "base cols 58-83 (likeness 86-88, R/G 2.2, B/G 0.55), deeper than the crop. The frame opens on a very dark interior that is nearly base density (likeness 84-85, same ratio), so the step is only visible in the lower half (band 4: 86 -> 80 at col 84). A locally stretched positive shows a straight line at ~84 with scene detail (table edge, figures) cut there and none to its left. Gap is ~26 cols, wider than the usual ~17-21, which is why the interval is wide. Outer (speckled neighbour 0-57 to base): ~58.8 top band, ~58.1 below."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dense picture (a bright wall in the positive, likeness ~2) runs to col 427; no base, not the empty gate"},
+  "frame_note": "hard: dark scene against the gap. Frame is the right part (84-427) vs neighbour 0-57."
+}

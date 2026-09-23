@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_01", "labeller": "L6", "view": "A",
+  "left":  {"state": "edge", "x": 18.7, "lo": 18.3, "hi": 19.1,
+            "outer": 3.5, "x_top": null, "x_bottom": null,
+            "note": "base cols 4-17 (~93, R/G 2.3), col 18 ~70% base in the top bands; neighbour picture sliver cols 0-3, outer boundary slightly tilted (~4.0 top, ~3.1 lower)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark wall/shadow reaches col 427 in top bands (min band ~60); no plateau"},
+  "frame_note": "no internal gap in the thumbnail"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_09",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 1.9,
+    "lo": 1.5,
+    "hi": 2.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "narrow sliver, sharp; band crossings b1 2.6, b2 1.8, b3 1.6, b4 2.0 (base dimmer in b4) - not a clean tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey wall and window frame (vertical bar at 419-420) reach 428; no plateau"
+  },
+  "frame_note": ""
+}

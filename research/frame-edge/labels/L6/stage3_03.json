@@ -1,0 +1,26 @@
+{
+  "id": "stage3_03",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "snowy ground and branches run to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "snow/pavement runs to col 427 over most of the height; col 427 is dark in B only in the top ~35 and bottom ~40 rows (rounded frame corners), so the edge lies just beyond 428 at mid-height; texture change at ~400 is scene"
+  },
+  "frame_note": ""
+}

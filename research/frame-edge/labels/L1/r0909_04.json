@@ -1,0 +1,26 @@
+{
+  "id": "r0909_04",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/river to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.6,
+    "lo": 418.0,
+    "hi": 419.2,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.2,
+    "note": "base 96-98 from 419; top bands cross at ~419.0 (col 418 b1=11), b3 col 418 =94 i.e. ~85% base -> ~418.15; bottom band picture (dark pier) nearly base-like so bottom placement less sure"
+  },
+  "frame_note": ""
+}

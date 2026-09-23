@@ -1,0 +1,9327 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "strip6_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 417.08512070482453,
+    "lo": 416.75503851709595,
+    "hi": 417.4152028925531,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 417.35862468830345,
+    "x_bottom": 416.8116167213456,
+    "note": "Z 466, step in 12/12 bands (0 flat), scatter 0.05"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     55.0,
+     26.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.02248207347804431,
+     0.023740542279331908,
+     0.04213057244447906
+    ],
+    "sig_pix": 0.015221368406420839,
+    "left": {
+     "U_border": [
+      14.67,
+      14.74,
+      15.04,
+      15.37
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8558,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 14.67
+     }
+    },
+    "right": {
+     "U_border": [
+      1.9,
+      1.68,
+      2.27,
+      1.58
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9624,
+       "run": 10,
+       "k": 10,
+       "tilt": -1.0,
+       "Z": 465.85,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 8.34,
+       "uniform": 1.75,
+       "fit": [
+        10.914879295175473,
+        0.5470079669578242,
+        0.05210387754873773
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+       ]
+      }
+     ],
+     "edge": {
+      "x": 10.915,
+      "slope": 0.547,
+      "scatter": 0.052
+     }
+    }
+   }
+  },
+  "strip6_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 416.4328343342977,
+    "lo": 416.0306762029895,
+    "hi": 416.8349924656058,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 417.2141408571065,
+    "x_bottom": 415.65152781148885,
+    "note": "Z 57, step in 10/12 bands (2 flat), scatter 0.15"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     55.0,
+     26.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.022766334818329008,
+     0.023558619734231866,
+     0.04099169746008971
+    ],
+    "sig_pix": 0.015203501885636867,
+    "left": {
+     "U_border": [
+      36.27,
+      37.4,
+      36.51,
+      37.59
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6286,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 36.27
+     }
+    },
+    "right": {
+     "U_border": [
+      1.9,
+      2.18,
+      1.71,
+      2.12
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9586,
+       "run": 11,
+       "k": 11,
+       "tilt": 2.0,
+       "Z": 56.55,
+       "steps": 10,
+       "flat": 2,
+       "zmin": -0.86,
+       "uniform": 2.12,
+       "fit": [
+        11.567165665702333,
+        1.562613045617588,
+        0.1532371969622422
+       ],
+       "n_pts": 9,
+       "why": "ok",
+       "ks": [
+        10,
+        10,
+        10,
+        11,
+        11,
+        11,
+        11,
+        11,
+        11,
+        12,
+        12,
+        12
+       ]
+      }
+     ],
+     "edge": {
+      "x": 11.567,
+      "slope": 1.563,
+      "scatter": 0.153
+     }
+    }
+   }
+  },
+  "strip6_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 417.92108749297086,
+    "lo": 417.53579489822283,
+    "hi": 418.30638008771894,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 417.6518703705679,
+    "x_bottom": 418.1903046153738,
+    "note": "Z 552, step in 12/12 bands (0 flat), scatter 0.15"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     55.0,
+     26.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.022734216765913133,
+     0.02383309835073449,
+     0.041836976028233754
+    ],
+    "sig_pix": 0.015309341690515567,
+    "left": {
+     "U_border": [
+      6.35,
+      6.28,
+      6.11,
+      6.24
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3755,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 6.35
+     }
+    },
+    "right": {
+     "U_border": [
+      1.9,
+      1.05,
+      1.7,
+      1.55
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9584,
+       "run": 10,
+       "k": 10,
+       "tilt": -1.0,
+       "Z": 551.66,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 150.14,
+       "uniform": 1.42,
+       "fit": [
+        10.07891250702913,
+        -0.5384342448058873,
+        0.1477311076129897
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+       ]
+      }
+     ],
+     "edge": {
+      "x": 10.079,
+      "slope": -0.538,
+      "scatter": 0.148
+     }
+    }
+   }
+  },
+  "strip3_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 9/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7999999999999999,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 5/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     52.0,
+     24.0,
+     13.0
+    ],
+    "sig_rel": [
+     0.023293411062387255,
+     0.02561981091255607,
+     0.04902558679415354
+    ],
+    "sig_pix": 0.01625937915249905,
+    "left": {
+     "U_border": [
+      47.49,
+      47.86,
+      46.26,
+      45.59
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6684,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 9,
+      "U0": 47.49
+     }
+    },
+    "right": {
+     "U_border": [
+      20.73,
+      20.98,
+      21.31,
+      21.67
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9392,
+       "run": 0,
+       "why": "no full-height base column"
+      },
+      {
+       "a": 36,
+       "plateau": 1.0103,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 5,
+      "U0": 20.73
+     }
+    }
+   }
+  },
+  "strip3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     55.0,
+     25.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.02978207588046703,
+     0.03535285339920616,
+     0.07276760076136722
+    ],
+    "sig_pix": 0.021737092677859438,
+    "left": {
+     "U_border": [
+      14.66,
+      14.38,
+      15.25,
+      15.01
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3285,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 14.66
+     }
+    },
+    "right": {
+     "U_border": [
+      1.55,
+      10.91,
+      19.69,
+      12.01
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0,
+       "run": 1,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 350.64,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 72.48,
+       "uniform": 6.23,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.55
+     }
+    }
+   }
+  },
+  "strip3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.21611325396634,
+    "lo": 420.8237951288801,
+    "hi": 421.6084313790526,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 420.64328834673205,
+    "x_bottom": 421.78893816120063,
+    "note": "Z 319, step in 12/12 bands (0 flat), scatter 0.16"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     55.0,
+     26.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.03659367983290717,
+     0.053396820737942906,
+     0.049774842559513255
+    ],
+    "sig_pix": 0.025810206228029393,
+    "left": {
+     "U_border": [
+      19.99,
+      18.44,
+      16.78,
+      17.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3646,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 19.99
+     }
+    },
+    "right": {
+     "U_border": [
+      0.8,
+      0.99,
+      0.54,
+      0.9
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9729,
+       "run": 6,
+       "k": 6,
+       "tilt": -1.0,
+       "Z": 319.3,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 62.06,
+       "uniform": 0.95,
+       "fit": [
+        6.783886746033658,
+        -1.1456498144686236,
+        0.15989968310887645
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+       ]
+      }
+     ],
+     "edge": {
+      "x": 6.784,
+      "slope": -1.146,
+      "scatter": 0.16
+     }
+    }
+   }
+  },
+  "r0909_01": {
+   "left": {
+    "state": "edge",
+    "x": 12.645300068848519,
+    "lo": 12.242986549575116,
+    "hi": 13.047613588121921,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 10.912837271510464,
+    "x_bottom": 14.377762866186574,
+    "note": "Z 260, step in 12/12 bands (0 flat), scatter 0.18"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.026772544681571295,
+     0.039993221723328164,
+     0.0385503751158646
+    ],
+    "sig_pix": 0.01926911326589677,
+    "left": {
+     "U_border": [
+      2.27,
+      2.64,
+      1.42,
+      1.74
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9925,
+       "run": 11,
+       "k": 12,
+       "tilt": 2.0,
+       "Z": 260.32,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 4.48,
+       "uniform": 1.74,
+       "fit": [
+        12.645300068848519,
+        3.464925594676109,
+        0.17721221368271017
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        11,
+        11,
+        11,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        13,
+        13,
+        13
+       ]
+      }
+     ],
+     "edge": {
+      "x": 12.645,
+      "slope": 3.465,
+      "scatter": 0.177
+     }
+    },
+    "right": {
+     "U_border": [
+      30.26,
+      30.33,
+      30.01,
+      30.03
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4985,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 30.26
+     }
+    }
+   }
+  },
+  "r0909_04": {
+   "left": {
+    "state": "edge",
+    "x": 9.40030933594061,
+    "lo": 9.019416531342387,
+    "hi": 9.781202140538834,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 8.728719853164863,
+    "x_bottom": 10.071898818716358,
+    "note": "Z 313, step in 12/12 bands (0 flat), scatter 0.14"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.018124597332205613,
+     0.04085573788999475,
+     0.037282301117936706
+    ],
+    "sig_pix": 0.015139940441144814,
+    "left": {
+     "U_border": [
+      2.11,
+      2.7,
+      2.27,
+      1.86
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9949,
+       "run": 8,
+       "k": 9,
+       "tilt": 2.0,
+       "Z": 312.97,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 6.43,
+       "uniform": 2.11,
+       "fit": [
+        9.40030933594061,
+        1.3431789655514956,
+        0.1401104475308653
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        8,
+        8,
+        8,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        10,
+        10,
+        10
+       ]
+      }
+     ],
+     "edge": {
+      "x": 9.4,
+      "slope": 1.343,
+      "scatter": 0.14
+     }
+    },
+    "right": {
+     "U_border": [
+      43.39,
+      44.96,
+      43.74,
+      39.73
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6349,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 43.39
+     }
+    }
+   }
+  },
+  "r0909_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     58.0,
+     26.5,
+     11.5
+    ],
+    "sig_rel": [
+     0.03413458933348048,
+     0.024561147447482234,
+     0.11326775809144977
+    ],
+    "sig_pix": 0.019634750118408845,
+    "left": {
+     "U_border": [
+      80.54,
+      78.11,
+      77.86,
+      80.3
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9474,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 80.54
+     }
+    },
+    "right": {
+     "U_border": [
+      53.73,
+      37.42,
+      37.56,
+      35.92
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7214,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 53.73
+     }
+    }
+   }
+  },
+  "r0909_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 11/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.95163299421927,
+    "lo": 421.55814258562475,
+    "hi": 422.3451234028138,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 422.8627680099886,
+    "x_bottom": 421.0404979784499,
+    "note": "Z 198, step in 12/12 bands (0 flat), scatter 0.16"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.029314147903822925,
+     0.04437481418085468,
+     0.042470905715465405
+    ],
+    "sig_pix": 0.021195462574724735,
+    "left": {
+     "U_border": [
+      30.96,
+      29.68,
+      29.5,
+      29.1
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4072,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 11,
+      "U0": 30.96
+     }
+    },
+    "right": {
+     "U_border": [
+      0.82,
+      0.42,
+      1.09,
+      0.83
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0078,
+       "run": 5,
+       "k": 6,
+       "tilt": 2.0,
+       "Z": 198.05,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 25.28,
+       "uniform": 0.83,
+       "fit": [
+        6.0483670057807455,
+        1.8222700315387061,
+        0.16193013770609774
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        5,
+        5,
+        5,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        7,
+        7,
+        7
+       ]
+      }
+     ],
+     "edge": {
+      "x": 6.048,
+      "slope": 1.822,
+      "scatter": 0.162
+     }
+    }
+   }
+  },
+  "r0909_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.5271730383008,
+    "lo": 423.13743422814423,
+    "hi": 423.9169118484574,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 424.18592094238596,
+    "x_bottom": 422.86842513421567,
+    "note": "Z 431, step in 12/12 bands (0 flat), scatter 0.16"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     70.0,
+     31.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.03854990157929802,
+     0.04282481467694223,
+     0.039028896588679876
+    ],
+    "sig_pix": 0.02309610317684704,
+    "left": {
+     "U_border": [
+      22.1,
+      21.94,
+      19.92,
+      19.3
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7654,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 22.1
+     }
+    },
+    "right": {
+     "U_border": [
+      1.31,
+      0.69,
+      0.9,
+      0.67
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9761,
+       "run": 4,
+       "k": 4,
+       "tilt": -1.0,
+       "Z": 431.33,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 114.27,
+       "uniform": 0.79,
+       "fit": [
+        4.472826961699184,
+        1.317495808170316,
+        0.15543217860203054
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+       ]
+      }
+     ],
+     "edge": {
+      "x": 4.473,
+      "slope": 1.317,
+      "scatter": 0.155
+     }
+    }
+   }
+  },
+  "r0909_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.76,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 4/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.027934459400140676,
+     0.03254266037239651,
+     0.06467001275094887
+    ],
+    "sig_pix": 0.020141996026089497,
+    "left": {
+     "U_border": [
+      7.92,
+      7.26,
+      8.94,
+      10.13
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2839,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 7.92
+     }
+    },
+    "right": {
+     "U_border": [
+      29.95,
+      16.24,
+      3.12,
+      3.62
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5688,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 4,
+      "U0": 29.95
+     }
+    }
+   }
+  },
+  "r0909_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     56.0,
+     26.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.06107364788633777,
+     0.054199825507736644,
+     0.10290892789807628
+    ],
+    "sig_pix": 0.03771745268955203,
+    "left": {
+     "U_border": [
+      21.82,
+      21.11,
+      19.83,
+      20.73
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5313,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 21.82
+     }
+    },
+    "right": {
+     "U_border": [
+      0.65,
+      6.09,
+      9.64,
+      11.15
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9978,
+       "run": 1,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 91.38,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 11.59,
+       "uniform": 3.37,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 0.65
+     }
+    }
+   }
+  },
+  "r0909_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 2.6)"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     56.0,
+     25.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.03285187832222467,
+     0.0507897095934408,
+     0.04783900523213712
+    ],
+    "sig_pix": 0.023896484926916723,
+    "left": {
+     "U_border": [
+      19.84,
+      20.9,
+      23.33,
+      24.07
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.723,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 19.84
+     }
+    },
+    "right": {
+     "U_border": [
+      2.55,
+      10.94,
+      16.54,
+      15.99
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9412,
+       "run": 1,
+       "k": 1,
+       "tilt": -1.0,
+       "Z": 131.0,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 13.7,
+       "uniform": 2.55,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 2.55
+     }
+    }
+   }
+  },
+  "r0909_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.9363605055138,
+    "lo": 422.5904132739631,
+    "hi": 423.2823077370645,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 423.1641745200868,
+    "x_bottom": 422.7085464909408,
+    "note": "Z 372, step in 12/12 bands (0 flat), scatter 0.08"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     57.0,
+     27.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.03624132313174271,
+     0.025402438746358398,
+     0.04786798978810263
+    ],
+    "sig_pix": 0.01907794724022949,
+    "left": {
+     "U_border": [
+      3.16,
+      3.64,
+      3.31,
+      3.28
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.285,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 3.16
+     }
+    },
+    "right": {
+     "U_border": [
+      1.24,
+      1.4,
+      0.98,
+      0.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9662,
+       "run": 4,
+       "k": 5,
+       "tilt": -1.0,
+       "Z": 371.9,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 89.76,
+       "uniform": 1.24,
+       "fit": [
+        5.0636394944862,
+        0.4556280291460059,
+        0.07958293951294079
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+       ]
+      }
+     ],
+     "edge": {
+      "x": 5.064,
+      "slope": 0.456,
+      "scatter": 0.08
+     }
+    }
+   }
+  },
+  "r0909_13": {
+   "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "278 columns of empty gate"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     278,
+     0
+    ],
+    "B": [
+     59.0,
+     25.0,
+     22.5
+    ],
+    "sig_rel": [
+     0.042226707989282936,
+     0.05128415866257291,
+     0.0692886150338779
+    ],
+    "sig_pix": 0.029496918916799092,
+    "right": {
+     "U_border": [
+      3.45,
+      1.9,
+      1.93,
+      1.81
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3095,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 3.45
+     }
+    }
+   }
+  },
+  "stage3_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 3.7)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 9/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     40.5,
+     15.0,
+     5.0
+    ],
+    "sig_rel": [
+     0.06228583296814535,
+     0.0845594153610983,
+     0.12297509238026913
+    ],
+    "sig_pix": 0.046436701964322764,
+    "left": {
+     "U_border": [
+      3.71,
+      3.29,
+      4.86,
+      5.15
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9393,
+       "run": 0,
+       "why": "no full-height base column"
+      },
+      {
+       "a": 21,
+       "plateau": 0.9529,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 2,
+      "U0": 3.71
+     }
+    },
+    "right": {
+     "U_border": [
+      22.3,
+      5.4,
+      4.76,
+      4.28
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4517,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 9,
+      "U0": 22.3
+     }
+    }
+   }
+  },
+  "stage3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     57.0,
+     22.0,
+     9.0
+    ],
+    "sig_rel": [
+     0.0382508338629232,
+     0.06415752199220802,
+     0.07746702664128242
+    ],
+    "sig_pix": 0.030246890263215868,
+    "left": {
+     "U_border": [
+      8.08,
+      7.24,
+      8.47,
+      7.21
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6075,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 8.08
+     }
+    },
+    "right": {
+     "U_border": [
+      2.05,
+      30.3,
+      24.89,
+      7.27
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9878,
+       "run": 1,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 211.56,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 40.73,
+       "uniform": 16.17,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 2.05
+     }
+    }
+   }
+  },
+  "stage3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 11/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     30.0,
+     10.5,
+     4.0
+    ],
+    "sig_rel": [
+     0.10532643111119767,
+     0.1786819757088388,
+     0.34107153937075485
+    ],
+    "sig_pix": 0.08768588656800957,
+    "left": {
+     "U_border": [
+      5.3,
+      1.32,
+      1.18,
+      1.09
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4234,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 11,
+      "U0": 5.3
+     }
+    },
+    "right": {
+     "U_border": [
+      1.64,
+      1.46,
+      1.42,
+      0.96
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2653,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.64
+     }
+    }
+   }
+  },
+  "bw0910_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.76,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 4/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     20.0,
+     20.0,
+     21.0
+    ],
+    "sig_rel": [
+     0.061487546190134565,
+     0.06291953089499319,
+     0.05734366581513991
+    ],
+    "sig_pix": 0.03489585502314824,
+    "left": {
+     "U_border": [
+      8.62,
+      8.63,
+      8.15,
+      7.75
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9378,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 4,
+      "U0": 8.62
+     }
+    },
+    "right": {
+     "U_border": [
+      7.03,
+      5.28,
+      8.34,
+      17.73
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9685,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 7.03
+     }
+    }
+   }
+  },
+  "bw0910_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7999999999999999,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 5/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     20.0,
+     19.0,
+     22.0
+    ],
+    "sig_rel": [
+     0.061564550035199006,
+     0.06480906409202147,
+     0.05615359563128507
+    ],
+    "sig_pix": 0.034941605329239754,
+    "left": {
+     "U_border": [
+      8.67,
+      7.81,
+      9.13,
+      9.1
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.936,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 5,
+      "U0": 8.67
+     }
+    },
+    "right": {
+     "U_border": [
+      7.55,
+      5.7,
+      7.3,
+      6.87
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9544,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 7.55
+     }
+    }
+   }
+  },
+  "bw0910_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.76,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 4/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     20.0,
+     19.0,
+     22.0
+    ],
+    "sig_rel": [
+     0.061487546190134565,
+     0.0970855992475809,
+     0.08394209690194537
+    ],
+    "sig_pix": 0.044172057384877395,
+    "left": {
+     "U_border": [
+      7.9,
+      6.49,
+      7.94,
+      7.07
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.931,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 4,
+      "U0": 7.9
+     }
+    },
+    "right": {
+     "U_border": [
+      5.41,
+      7.48,
+      15.57,
+      17.69
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9512,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 5.41
+     }
+    }
+   }
+  },
+  "bw0910_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     19.0,
+     19.0,
+     21.0
+    ],
+    "sig_rel": [
+     0.07526658209455866,
+     0.07608324161040124,
+     0.10428110752125631
+    ],
+    "sig_pix": 0.04760663031307267,
+    "left": {
+     "U_border": [
+      15.51,
+      13.43,
+      15.84,
+      18.92
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4168,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 15.51
+     }
+    },
+    "right": {
+     "U_border": [
+      5.49,
+      5.99,
+      5.82,
+      14.41
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9742,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 5.49
+     }
+    }
+   }
+  },
+  "bw0910_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 9/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     12.0,
+     12.0,
+     13.0
+    ],
+    "sig_rel": [
+     0.10400723998795038,
+     0.10491166779369458,
+     0.09764849766278057
+    ],
+    "sig_pix": 0.05890790049079216,
+    "left": {
+     "U_border": [
+      13.26,
+      18.15,
+      17.51,
+      20.11
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6491,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 9,
+      "U0": 13.26
+     }
+    },
+    "right": {
+     "U_border": [
+      19.18,
+      9.45,
+      6.62,
+      6.56
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7572,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 19.18
+     }
+    }
+   }
+  },
+  "bw0910_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     12.0,
+     11.0,
+     13.0
+    ],
+    "sig_rel": [
+     0.10247924365022427,
+     0.11179553852751739,
+     0.09725074245489002
+    ],
+    "sig_pix": 0.05965870087230115,
+    "left": {
+     "U_border": [
+      14.26,
+      15.73,
+      16.22,
+      18.66
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6787,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 14.26
+     }
+    },
+    "right": {
+     "U_border": [
+      4.55,
+      5.57,
+      4.48,
+      5.12
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8049,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.55
+     }
+    }
+   }
+  },
+  "bw0910_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     4933.5,
+     4699.5,
+     5499.0
+    ],
+    "sig_rel": [
+     0.07141632178495695,
+     0.08514793464443306,
+     0.08952274345541253
+    ],
+    "sig_pix": 0.046687617466106814,
+    "left": {
+     "U_border": [
+      15.46,
+      12.94,
+      10.62,
+      9.15
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5932,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 15.46
+     }
+    },
+    "right": {
+     "U_border": [
+      5.97,
+      6.85,
+      10.51,
+      3.0
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9644,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 5.97
+     }
+    }
+   }
+  },
+  "bw0910_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     5031.5,
+     4810.5,
+     5579.5
+    ],
+    "sig_rel": [
+     0.07187888964184222,
+     0.08473152290077053,
+     0.09771820815053184
+    ],
+    "sig_pix": 0.047805685738198433,
+    "left": {
+     "U_border": [
+      8.66,
+      8.81,
+      9.36,
+      10.53
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.573,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 8.66
+     }
+    },
+    "right": {
+     "U_border": [
+      4.73,
+      5.34,
+      5.43,
+      5.88
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9834,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 4.73
+     }
+    }
+   }
+  },
+  "r0911_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     73.0,
+     34.0,
+     19.0
+    ],
+    "sig_rel": [
+     0.01686902717148126,
+     0.036222452355596464,
+     0.03270799247992393
+    ],
+    "sig_pix": 0.013852798442651783,
+    "left": {
+     "U_border": [
+      1.59,
+      2.65,
+      2.37,
+      1.37
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7476,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.59
+     }
+    },
+    "right": {
+     "U_border": [
+      1.01,
+      0.86,
+      0.85,
+      0.81
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7158,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.01
+     }
+    }
+   }
+  },
+  "r0911_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     73.0,
+     34.0,
+     18.0
+    ],
+    "sig_rel": [
+     0.025622282316691714,
+     0.036657572490947456,
+     0.034159747883408094
+    ],
+    "sig_pix": 0.017890327614346314,
+    "left": {
+     "U_border": [
+      0.85,
+      0.98,
+      0.99,
+      0.97
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7622,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 0.85
+     }
+    },
+    "right": {
+     "U_border": [
+      0.98,
+      0.76,
+      1.1,
+      1.23
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.73,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 0.98
+     }
+    }
+   }
+  },
+  "r0911_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     33.0,
+     18.0
+    ],
+    "sig_rel": [
+     0.0270276741546407,
+     0.037493103221448214,
+     0.03425503327877286
+    ],
+    "sig_pix": 0.018466264419444364,
+    "left": {
+     "U_border": [
+      1.12,
+      1.23,
+      0.81,
+      0.92
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7933,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.12
+     }
+    },
+    "right": {
+     "U_border": [
+      0.8,
+      0.92,
+      0.8,
+      0.59
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7663,
+       "why": "below base"
+      },
+      {
+       "a": 134,
+       "plateau": 0.9554,
+       "run": 21,
+       "k": 155,
+       "tilt": -2.0,
+       "Z": 67.09,
+       "steps": 3,
+       "flat": 9,
+       "zmin": -3.05,
+       "uniform": 3.12,
+       "why": "step in too few bands, base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 0.8
+     }
+    }
+   }
+  },
+  "r0911_04": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 2.9)"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.018368204133667583,
+     0.020495848730044855,
+     0.03682483224538816
+    ],
+    "sig_pix": 0.012822782009833597,
+    "left": {
+     "U_border": [
+      2.9,
+      2.75,
+      2.04,
+      2.75
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9494,
+       "run": 22,
+       "k": 7,
+       "tilt": -1.0,
+       "Z": 7.9,
+       "steps": 5,
+       "flat": 7,
+       "zmin": 0.41,
+       "uniform": 2.75,
+       "why": "weak step, base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 2.9
+     }
+    },
+    "right": {
+     "U_border": [
+      1.69,
+      2.53,
+      2.26,
+      1.53
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9515,
+       "run": 74,
+       "k": 27,
+       "tilt": -1.0,
+       "Z": 14.24,
+       "steps": 10,
+       "flat": 2,
+       "zmin": -0.41,
+       "uniform": 2.25,
+       "why": "weak step, base side structured"
+      },
+      {
+       "a": 78,
+       "plateau": 0.9436,
+       "run": 4,
+       "k": 83,
+       "tilt": -2.0,
+       "Z": 243.98,
+       "steps": 7,
+       "flat": 5,
+       "zmin": -1.07,
+       "uniform": 6.08,
+       "why": "base side structured, interior gap too narrow"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.69
+     }
+    }
+   }
+  },
+  "r0911_05": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.018409527479784707,
+     0.04099169746008971,
+     0.07685943273766821
+    ],
+    "sig_pix": 0.016406598860483047,
+    "left": {
+     "U_border": [
+      1.51,
+      0.91,
+      1.46,
+      0.96
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9775,
+       "run": 39,
+       "k": 20,
+       "tilt": -1.0,
+       "Z": 7.05,
+       "steps": 3,
+       "flat": 9,
+       "zmin": -0.05,
+       "uniform": 1.11,
+       "why": "weak step, step in too few bands"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.51
+     }
+    },
+    "right": {
+     "U_border": [
+      2.04,
+      1.81,
+      2.47,
+      2.17
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9599,
+       "run": 78,
+       "k": 20,
+       "tilt": -2.0,
+       "Z": 6.86,
+       "steps": 2,
+       "flat": 10,
+       "zmin": 0.29,
+       "uniform": 2.52,
+       "why": "weak step, step in too few bands, base side structured"
+      },
+      {
+       "a": 85,
+       "plateau": 0.9348,
+       "run": 1,
+       "k": 87,
+       "tilt": -1.0,
+       "Z": 202.01,
+       "steps": 8,
+       "flat": 4,
+       "zmin": -1.34,
+       "uniform": 8.01,
+       "why": "base side structured, interior gap too narrow"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 2.04
+     }
+    }
+   }
+  },
+  "r0911_06": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "right": {
+    "state": "edge",
+    "x": 418.5612036838098,
+    "lo": 418.06788498106437,
+    "hi": 419.0545223865552,
+    "conf": 0.8402333333333334,
+    "outer": null,
+    "x_top": 418.4095886978647,
+    "x_bottom": 418.71281866975494,
+    "note": "Z 36, step in 8/12 bands (4 flat), scatter 0.29"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.01827285500696164,
+     0.041060188230424836,
+     0.03682483224538816
+    ],
+    "sig_pix": 0.01520483824014801,
+    "left": {
+     "U_border": [
+      2.09,
+      1.89,
+      0.84,
+      1.12
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.96,
+       "run": 132,
+       "k": 35,
+       "tilt": -1.0,
+       "Z": 10.09,
+       "steps": 6,
+       "flat": 6,
+       "zmin": 1.34,
+       "uniform": 1.1,
+       "why": "weak step, wider than a gap"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 2.09
+     }
+    },
+    "right": {
+     "U_border": [
+      1.42,
+      1.49,
+      1.27,
+      1.45
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9705,
+       "run": 9,
+       "k": 9,
+       "tilt": -1.0,
+       "Z": 36.38,
+       "steps": 8,
+       "flat": 4,
+       "zmin": -0.15,
+       "uniform": 1.49,
+       "fit": [
+        9.438796316190196,
+        -0.30322997189023426,
+        0.2899780541181598
+       ],
+       "n_pts": 9,
+       "why": "ok",
+       "ks": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+       ]
+      }
+     ],
+     "edge": {
+      "x": 9.439,
+      "slope": -0.303,
+      "scatter": 0.29
+     }
+    }
+   }
+  },
+  "r0911_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02769759243821896,
+     0.020495848730044855,
+     0.038429716368834105
+    ],
+    "sig_pix": 0.015142592866262832,
+    "left": {
+     "U_border": [
+      51.01,
+      52.43,
+      52.58,
+      52.71
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7049,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 51.01
+     }
+    },
+    "right": {
+     "U_border": [
+      1.19,
+      2.2,
+      3.22,
+      5.16
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.968,
+       "run": 2,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 43.64,
+       "steps": 10,
+       "flat": 2,
+       "zmin": -4.97,
+       "uniform": 1.69,
+       "why": "reversed in a band"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.19
+     }
+    }
+   }
+  },
+  "r0911_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 19.4)"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     64.0,
+     28.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.029142799133281074,
+     0.043998314544849,
+     0.03904463087538585
+    ],
+    "sig_pix": 0.02062857878666237,
+    "left": {
+     "U_border": [
+      9.87,
+      9.66,
+      9.83,
+      9.94
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8672,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 9.87
+     }
+    },
+    "right": {
+     "U_border": [
+      19.45,
+      18.94,
+      18.93,
+      20.23
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9804,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 2,
+      "U0": 19.45
+     }
+    }
+   }
+  },
+  "r0911_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.0432491070697386,
+     0.04792975730602874,
+     0.04079275136091313
+    ],
+    "sig_pix": 0.02523076968223579,
+    "left": {
+     "U_border": [
+      18.8,
+      17.08,
+      18.64,
+      19.54
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7047,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 18.8
+     }
+    },
+    "right": {
+     "U_border": [
+      0.64,
+      12.95,
+      32.26,
+      32.09
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9906,
+       "run": 1,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 172.13,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 20.98,
+       "uniform": 6.79,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 0.64
+     }
+    }
+   }
+  },
+  "r0911_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.36107481834233,
+    "lo": 421.9328057608524,
+    "hi": 422.78934387583234,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 421.7807785642004,
+    "x_bottom": 422.94137107248434,
+    "note": "Z 191, step in 12/12 bands (0 flat), scatter 0.22"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.029464093372682482,
+     0.04420248415437817,
+     0.08018599060470843
+    ],
+    "sig_pix": 0.023445315215135515,
+    "left": {
+     "U_border": [
+      8.96,
+      8.88,
+      9.11,
+      8.65
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7416,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 8.96
+     }
+    },
+    "right": {
+     "U_border": [
+      0.97,
+      0.94,
+      0.84,
+      0.72
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9811,
+       "run": 5,
+       "k": 5,
+       "tilt": -1.0,
+       "Z": 190.69,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 33.09,
+       "uniform": 0.94,
+       "fit": [
+        5.638925181657646,
+        -1.1605925082839392,
+        0.22216852461162834
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+       ]
+      }
+     ],
+     "edge": {
+      "x": 5.639,
+      "slope": -1.161,
+      "scatter": 0.222
+     }
+    }
+   }
+  },
+  "r0911_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 7.4)"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     56.0,
+     26.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.033207685216130975,
+     0.04842890427762097,
+     0.0419830043117624
+    ],
+    "sig_pix": 0.02293825328163587,
+    "left": {
+     "U_border": [
+      12.09,
+      11.94,
+      12.99,
+      14.69
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8588,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 12.09
+     }
+    },
+    "right": {
+     "U_border": [
+      7.35,
+      7.64,
+      7.41,
+      8.18
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9757,
+       "run": 1,
+       "k": 1,
+       "tilt": -1.0,
+       "Z": 8.64,
+       "steps": 4,
+       "flat": 4,
+       "zmin": -0.38,
+       "uniform": 7.35,
+       "why": "weak step, step in too few bands, 4 bands darker beyond but no step here, base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 7.35
+     }
+    }
+   }
+  },
+  "r0911_12": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 2.5)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     63.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.029491193027408685,
+     0.0427007144942418,
+     0.0780892617507717
+    ],
+    "sig_pix": 0.02317316801203347,
+    "left": {
+     "U_border": [
+      2.45,
+      3.45,
+      3.1,
+      2.29
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9843,
+       "run": 13,
+       "k": 14,
+       "tilt": -2.0,
+       "Z": 14.39,
+       "steps": 10,
+       "flat": 1,
+       "zmin": 0.44,
+       "uniform": 2.87,
+       "why": "weak step, base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 2.45
+     }
+    },
+    "right": {
+     "U_border": [
+      6.38,
+      5.61,
+      6.2,
+      6.12
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7843,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 6.38
+     }
+    }
+   }
+  },
+  "r0911_13": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 3.5)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     63.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.029349747641150337,
+     0.04240520426905832,
+     0.038429716368834105
+    ],
+    "sig_pix": 0.02043745830260805,
+    "left": {
+     "U_border": [
+      3.5,
+      3.04,
+      2.64,
+      2.02
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9649,
+       "run": 32,
+       "k": 30,
+       "tilt": -2.0,
+       "Z": 21.22,
+       "steps": 11,
+       "flat": 1,
+       "zmin": 2.11,
+       "uniform": 2.34,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 3.5
+     }
+    },
+    "right": {
+     "U_border": [
+      6.56,
+      7.19,
+      6.35,
+      6.32
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8146,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 6.56
+     }
+    }
+   }
+  },
+  "r0911_14": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     60.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.022565186787290522,
+     0.04336997113511447,
+     0.03917119403024169
+    ],
+    "sig_pix": 0.01782509813662924,
+    "left": {
+     "U_border": [
+      4.26,
+      5.13,
+      5.34,
+      5.86
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6193,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.26
+     }
+    },
+    "right": {
+     "U_border": [
+      17.89,
+      8.1,
+      5.7,
+      7.56
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7607,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 17.89
+     }
+    }
+   }
+  },
+  "r0911_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     64.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.032414786922046634,
+     0.04361477065874079,
+     0.039558398111241254
+    ],
+    "sig_pix": 0.021736790836678035,
+    "left": {
+     "U_border": [
+      5.85,
+      5.83,
+      5.62,
+      6.73
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7292,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 5.85
+     }
+    },
+    "right": {
+     "U_border": [
+      6.25,
+      5.99,
+      5.88,
+      5.71
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7968,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 6.25
+     }
+    }
+   }
+  },
+  "r0911_16": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     61.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.03552485912175208,
+     0.04720741608583017,
+     0.04023006577160898
+    ],
+    "sig_pix": 0.023193308407110185,
+    "left": {
+     "U_border": [
+      4.84,
+      5.37,
+      5.13,
+      4.84
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5644,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.84
+     }
+    },
+    "right": {
+     "U_border": [
+      21.15,
+      10.75,
+      8.79,
+      8.33
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5455,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 21.15
+     }
+    }
+   }
+  },
+  "r0911_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 10/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.029661126477956684,
+     0.043129247882038514,
+     0.039558398111241254
+    ],
+    "sig_pix": 0.02079153546521992,
+    "left": {
+     "U_border": [
+      4.2,
+      4.83,
+      4.98,
+      5.22
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8297,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.2
+     }
+    },
+    "right": {
+     "U_border": [
+      7.66,
+      18.99,
+      14.15,
+      13.5
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8398,
+       "why": "below base"
+      },
+      {
+       "a": 10,
+       "plateau": 0.9951,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 10,
+      "U0": 7.66
+     }
+    }
+   }
+  },
+  "r0911_18": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     22.0,
+     16.0,
+     11.0
+    ],
+    "sig_rel": [
+     0.05602524438772196,
+     0.03929899598164061,
+     0.055897769263758695
+    ],
+    "sig_pix": 0.027884146425863735,
+    "left": {
+     "U_border": [
+      41.48,
+      45.14,
+      38.63,
+      40.7
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8748,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 41.48
+     }
+    },
+    "right": {
+     "U_border": [
+      2.49,
+      3.73,
+      3.01,
+      2.7
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4706,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 2.49
+     }
+    }
+   }
+  },
+  "r0911_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.25852740381464,
+    "lo": 421.747378351611,
+    "hi": 422.7696764560182,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 421.33487233546845,
+    "x_bottom": 423.18218247216083,
+    "note": "Z 477, step in 12/12 bands (0 flat), scatter 0.37"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02210838418177919,
+     0.02385999903089991,
+     0.042150365996167456
+    ],
+    "sig_pix": 0.015135352997340094,
+    "left": {
+     "U_border": [
+      1.37,
+      1.48,
+      2.14,
+      1.64
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2372,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.37
+     }
+    },
+    "right": {
+     "U_border": [
+      1.44,
+      1.46,
+      0.93,
+      13.15
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0001,
+       "run": 3,
+       "k": 5,
+       "tilt": -2.0,
+       "Z": 476.8,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 98.43,
+       "uniform": 1.46,
+       "fit": [
+        5.74147259618538,
+        -1.8473101366923825,
+        0.3657208863866025
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        6,
+        6,
+        6,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        4,
+        4,
+        4
+       ]
+      }
+     ],
+     "edge": {
+      "x": 5.741,
+      "slope": -1.847,
+      "scatter": 0.366
+     }
+    }
+   }
+  },
+  "r0911_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.88,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 7/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     45.0,
+     22.0,
+     13.0
+    ],
+    "sig_rel": [
+     0.04122134462086759,
+     0.05602524438772196,
+     0.047298112453949666
+    ],
+    "sig_pix": 0.02717523999189049,
+    "left": {
+     "U_border": [
+      49.65,
+      50.97,
+      49.33,
+      47.43
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9704,
+       "run": 0,
+       "why": "no full-height base column"
+      },
+      {
+       "a": 55,
+       "plateau": 0.9171,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 49.65
+     }
+    },
+    "right": {
+     "U_border": [
+      52.8,
+      43.93,
+      47.6,
+      46.23
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4863,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 7,
+      "U0": 52.8
+     }
+    }
+   }
+  },
+  "r0911_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 6.8)"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     65.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.0283788674723698,
+     0.04240520426905832,
+     0.038429716368834105
+    ],
+    "sig_pix": 0.02010111445112669,
+    "left": {
+     "U_border": [
+      17.14,
+      17.73,
+      15.3,
+      11.56
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9713,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 17.14
+     }
+    },
+    "right": {
+     "U_border": [
+      6.75,
+      8.65,
+      8.79,
+      9.79
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9923,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 2,
+      "U0": 6.75
+     }
+    }
+   }
+  },
+  "r0911_22": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     31.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.026929569750500024,
+     0.039797972932718396,
+     0.03616914481772621
+    ],
+    "sig_pix": 0.0189842094915015,
+    "left": {
+     "U_border": [
+      1.02,
+      1.31,
+      1.11,
+      1.15
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9476,
+       "run": 124,
+       "k": 35,
+       "tilt": -1.0,
+       "Z": 13.08,
+       "steps": 10,
+       "flat": 2,
+       "zmin": 2.41,
+       "uniform": 0.98,
+       "why": "weak step, wider than a gap"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.02
+     }
+    },
+    "right": {
+     "U_border": [
+      0.83,
+      1.71,
+      0.81,
+      1.71
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9474,
+       "run": 180,
+       "k": 27,
+       "tilt": -1.0,
+       "Z": 9.48,
+       "steps": 6,
+       "flat": 6,
+       "zmin": -0.56,
+       "uniform": 1.17,
+       "why": "weak step"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 0.83
+     }
+    }
+   }
+  },
+  "r0911_23": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.02722714309065867,
+     0.04099169746008971,
+     0.03616914481772621
+    ],
+    "sig_pix": 0.019214858184417052,
+    "left": {
+     "U_border": [
+      4.24,
+      4.89,
+      3.32,
+      3.27
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9468,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 4.24
+     }
+    },
+    "right": {
+     "U_border": [
+      1.15,
+      1.49,
+      1.88,
+      1.34
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9614,
+       "run": 50,
+       "k": 27,
+       "tilt": -1.0,
+       "Z": 8.26,
+       "steps": 6,
+       "flat": 6,
+       "zmin": 0.0,
+       "uniform": 1.1,
+       "why": "weak step"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.15
+     }
+    }
+   }
+  },
+  "r0911_24": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     65.0,
+     29.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.028532922169419463,
+     0.04292644671645001,
+     0.07783857326515575
+    ],
+    "sig_pix": 0.022727011614009304,
+    "left": {
+     "U_border": [
+      10.33,
+      11.61,
+      12.43,
+      9.19
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9798,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 10.33
+     }
+    },
+    "right": {
+     "U_border": [
+      5.43,
+      4.45,
+      4.75,
+      4.87
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.1452,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 5.43
+     }
+    }
+   }
+  },
+  "r0911_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     78.0,
+     34.0,
+     19.0
+    ],
+    "sig_rel": [
+     0.024053342883882146,
+     0.03638380038068361,
+     0.03262042072309867
+    ],
+    "sig_pix": 0.017090646906200522,
+    "left": {
+     "U_border": [
+      1.13,
+      0.9,
+      1.32,
+      1.17
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7295,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.13
+     }
+    },
+    "right": {
+     "U_border": [
+      1.09,
+      1.31,
+      1.36,
+      1.58
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7011,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.09
+     }
+    }
+   }
+  },
+  "r0911_26": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.76,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 4/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     49.0,
+     22.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.03780003847516674,
+     0.05615359563128507,
+     0.04391967585009612
+    ],
+    "sig_pix": 0.025520316125380398,
+    "left": {
+     "U_border": [
+      10.76,
+      10.53,
+      11.07,
+      11.1
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8724,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 10.76
+     }
+    },
+    "right": {
+     "U_border": [
+      5.51,
+      5.7,
+      6.03,
+      6.61
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9386,
+       "run": 24,
+       "k": 24,
+       "tilt": -1.0,
+       "Z": 11.07,
+       "steps": 5,
+       "flat": 4,
+       "zmin": 1.7,
+       "uniform": 7.07,
+       "why": "weak step, 3 bands darker beyond but no step here, base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 4,
+      "U0": 5.51
+     }
+    }
+   }
+  },
+  "r0911_27": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     58.0,
+     28.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.03655629384822986,
+     0.04753781227848738,
+     0.03904463087538585
+    ],
+    "sig_pix": 0.023269860724159767,
+    "left": {
+     "U_border": [
+      4.85,
+      4.67,
+      4.81,
+      4.74
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5234,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.85
+     }
+    },
+    "right": {
+     "U_border": [
+      18.13,
+      8.76,
+      6.17,
+      6.18
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4896,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 18.13
+     }
+    }
+   }
+  },
+  "r0911_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 9/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     24.0,
+     17.0,
+     12.0
+    ],
+    "sig_rel": [
+     0.05123962182511214,
+     0.036602323669057704,
+     0.05145446394903813
+    ],
+    "sig_pix": 0.02577692029255444,
+    "left": {
+     "U_border": [
+      37.33,
+      40.55,
+      36.51,
+      37.1
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7417,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 9,
+      "U0": 37.33
+     }
+    },
+    "right": {
+     "U_border": [
+      1.99,
+      2.15,
+      1.88,
+      1.74
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4065,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.99
+     }
+    }
+   }
+  },
+  "r0911_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     29.0,
+     14.0
+    ],
+    "sig_rel": [
+     0.027389937624037554,
+     0.042775562429850596,
+     0.04575391792846878
+    ],
+    "sig_pix": 0.020597016207238045,
+    "left": {
+     "U_border": [
+      53.64,
+      38.17,
+      53.11,
+      55.1
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7477,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 53.64
+     }
+    },
+    "right": {
+     "U_border": [
+      9.23,
+      8.92,
+      11.13,
+      9.33
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6567,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 9.23
+     }
+    }
+   }
+  },
+  "r0914_01": {
+   "left": {
+    "state": "edge",
+    "x": 15.347936946883848,
+    "lo": 14.984233743096363,
+    "hi": 15.711640150671334,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 14.943940163005314,
+    "x_bottom": 15.751933730762383,
+    "note": "Z 436, step in 12/12 bands (0 flat), scatter 0.11"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.028033965147200128,
+     0.04126773894576083,
+     0.07759028372263582
+    ],
+    "sig_pix": 0.022218287282254248,
+    "left": {
+     "U_border": [
+      0.99,
+      1.14,
+      1.6,
+      0.86
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9807,
+       "run": 15,
+       "k": 15,
+       "tilt": -1.0,
+       "Z": 436.2,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 117.53,
+       "uniform": 0.96,
+       "fit": [
+        15.347936946883848,
+        0.8079935677570702,
+        0.11033718556483811
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15
+       ]
+      }
+     ],
+     "edge": {
+      "x": 15.348,
+      "slope": 0.808,
+      "scatter": 0.11
+     }
+    },
+    "right": {
+     "U_border": [
+      1.62,
+      1.71,
+      1.95,
+      1.52
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2637,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.62
+     }
+    }
+   }
+  },
+  "r0914_05": {
+   "left": {
+    "state": "edge",
+    "x": 9.209446129746924,
+    "lo": 8.84642075767586,
+    "hi": 9.572471501817988,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 8.78446315091313,
+    "x_bottom": 9.634429108580719,
+    "note": "Z 436, step in 12/12 bands (0 flat), scatter 0.11"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.027180549730118547,
+     0.04176453099374558,
+     0.07834238806048338
+    ],
+    "sig_pix": 0.021874902748756454,
+    "left": {
+     "U_border": [
+      1.74,
+      0.87,
+      1.07,
+      0.72
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9813,
+       "run": 8,
+       "k": 9,
+       "tilt": -1.0,
+       "Z": 435.89,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 111.46,
+       "uniform": 1.0,
+       "fit": [
+        9.209446129746924,
+        0.8499659576675882,
+        0.10916314659301538
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+       ]
+      }
+     ],
+     "edge": {
+      "x": 9.209,
+      "slope": 0.85,
+      "scatter": 0.109
+     }
+    },
+    "right": {
+     "U_border": [
+      2.35,
+      2.35,
+      1.78,
+      1.66
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2714,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 2.35
+     }
+    }
+   }
+  },
+  "r0914_06": {
+   "left": {
+    "state": "edge",
+    "x": 8.267166742223663,
+    "lo": 7.894882190038435,
+    "hi": 8.639451294408891,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 8.06452750643119,
+    "x_bottom": 8.469805978016137,
+    "note": "Z 449, step in 12/12 bands (0 flat), scatter 0.13"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.027693534297240915,
+     0.04213057244447906,
+     0.07834238806048338
+    ],
+    "sig_pix": 0.022193669208683084,
+    "left": {
+     "U_border": [
+      0.94,
+      0.77,
+      0.97,
+      1.13
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9807,
+       "run": 8,
+       "k": 8,
+       "tilt": -1.0,
+       "Z": 448.73,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 120.03,
+       "uniform": 0.95,
+       "fit": [
+        8.267166742223663,
+        0.40527847158494745,
+        0.12520051698717954
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+       ]
+      }
+     ],
+     "edge": {
+      "x": 8.267,
+      "slope": 0.405,
+      "scatter": 0.125
+     }
+    },
+    "right": {
+     "U_border": [
+      2.4,
+      2.56,
+      2.62,
+      2.41
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2095,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 2.4
+     }
+    }
+   }
+  },
+  "r0914_07": {
+   "left": {
+    "state": "edge",
+    "x": 4.364173974791267,
+    "lo": 3.997571959797512,
+    "hi": 4.730775989785023,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 3.9060684377602124,
+    "x_bottom": 4.822279511822322,
+    "note": "Z 382, step in 12/12 bands (0 flat), scatter 0.12"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.03414394415927592,
+     0.053102291083153993,
+     0.049872985624035165
+    ],
+    "sig_pix": 0.024887930949354167,
+    "left": {
+     "U_border": [
+      1.33,
+      1.32,
+      0.64,
+      1.29
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9853,
+       "run": 4,
+       "k": 4,
+       "tilt": -1.0,
+       "Z": 381.71,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 98.66,
+       "uniform": 1.3,
+       "fit": [
+        4.364173974791267,
+        0.9162110740621101,
+        0.11535807385564861
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+       ]
+      }
+     ],
+     "edge": {
+      "x": 4.364,
+      "slope": 0.916,
+      "scatter": 0.115
+     }
+    },
+    "right": {
+     "U_border": [
+      4.35,
+      4.47,
+      5.32,
+      3.91
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2503,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.35
+     }
+    }
+   }
+  },
+  "r0914_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     58.0,
+     26.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.03183135586396329,
+     0.04743514252124025,
+     0.0419830043117624
+    ],
+    "sig_pix": 0.022367859379118473,
+    "left": {
+     "U_border": [
+      43.46,
+      5.63,
+      2.08,
+      1.53
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4502,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 43.46
+     }
+    },
+    "right": {
+     "U_border": [
+      33.22,
+      35.93,
+      34.54,
+      36.5
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9802,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 33.22
+     }
+    }
+   }
+  },
+  "r0914_09": {
+   "left": {
+    "state": "edge",
+    "x": 8.312527247853026,
+    "lo": 7.929047949046199,
+    "hi": 8.696006546659854,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 7.873588965017911,
+    "x_bottom": 8.751465530688142,
+    "note": "Z 596, step in 12/12 bands (0 flat), scatter 0.14"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.018681544994232777,
+     0.0428144316449853,
+     0.08046013154321796
+    ],
+    "sig_pix": 0.01674751094497417,
+    "left": {
+     "U_border": [
+      2.64,
+      0.7,
+      1.25,
+      1.16
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9858,
+       "run": 8,
+       "k": 8,
+       "tilt": -1.0,
+       "Z": 595.67,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 156.47,
+       "uniform": 1.28,
+       "fit": [
+        8.312527247853026,
+        0.8778765656702309,
+        0.14459038691364992
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+       ]
+      }
+     ],
+     "edge": {
+      "x": 8.313,
+      "slope": 0.878,
+      "scatter": 0.145
+     }
+    },
+    "right": {
+     "U_border": [
+      1.29,
+      1.63,
+      1.37,
+      1.76
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2146,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.29
+     }
+    }
+   }
+  },
+  "r0914_10": {
+   "left": {
+    "state": "edge",
+    "x": 6.031962470344458,
+    "lo": 5.658564849130462,
+    "hi": 6.405360091558453,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 5.5780053615697724,
+    "x_bottom": 6.485919579119143,
+    "note": "Z 169, step in 12/12 bands (0 flat), scatter 0.13"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.028369804012356007,
+     0.04304989317289888,
+     0.07938008079785015
+    ],
+    "sig_pix": 0.022699419387066867,
+    "left": {
+     "U_border": [
+      1.01,
+      0.96,
+      0.99,
+      0.65
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9997,
+       "run": 5,
+       "k": 6,
+       "tilt": -1.0,
+       "Z": 168.66,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 30.21,
+       "uniform": 0.98,
+       "fit": [
+        6.031962470344458,
+        0.9079142175493711,
+        0.12712840909733572
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6,
+        6
+       ]
+      }
+     ],
+     "edge": {
+      "x": 6.032,
+      "slope": 0.908,
+      "scatter": 0.127
+     }
+    },
+    "right": {
+     "U_border": [
+      14.57,
+      14.82,
+      13.48,
+      14.95
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8291,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 14.57
+     }
+    }
+   }
+  },
+  "r0914_11": {
+   "left": {
+    "state": "edge",
+    "x": 7.476697749653769,
+    "lo": 7.10072778721473,
+    "hi": 7.852667712092808,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 7.12780435789789,
+    "x_bottom": 7.825591141409648,
+    "note": "Z 304, step in 12/12 bands (0 flat), scatter 0.13"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.028134541879120397,
+     0.04336997113511447,
+     0.08101695570651413
+    ],
+    "sig_pix": 0.022661018408411615,
+    "left": {
+     "U_border": [
+      0.8,
+      1.02,
+      0.89,
+      0.75
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9745,
+       "run": 7,
+       "k": 7,
+       "tilt": -1.0,
+       "Z": 304.08,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 72.43,
+       "uniform": 0.99,
+       "fit": [
+        7.476697749653769,
+        0.6977867835117578,
+        0.1315838347935149
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7
+       ]
+      }
+     ],
+     "edge": {
+      "x": 7.477,
+      "slope": 0.698,
+      "scatter": 0.132
+     }
+    },
+    "right": {
+     "U_border": [
+      24.8,
+      26.24,
+      25.93,
+      26.34
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.701,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 24.8
+     }
+    }
+   }
+  },
+  "r0914_12": {
+   "left": {
+    "state": "edge",
+    "x": 12.561260550718657,
+    "lo": 12.198808857147561,
+    "hi": 12.923712244289753,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 12.171848289198246,
+    "x_bottom": 12.950672812239068,
+    "note": "Z 428, step in 12/12 bands (0 flat), scatter 0.11"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.027047424010513015,
+     0.0412329285313452,
+     0.03879514186131791
+    ],
+    "sig_pix": 0.01953832490896502,
+    "left": {
+     "U_border": [
+      1.41,
+      1.2,
+      0.79,
+      0.94
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9849,
+       "run": 12,
+       "k": 12,
+       "tilt": -1.0,
+       "Z": 428.4,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 96.65,
+       "uniform": 1.16,
+       "fit": [
+        12.561260550718657,
+        0.7788245230408215,
+        0.10816950628386203
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+       ]
+      }
+     ],
+     "edge": {
+      "x": 12.561,
+      "slope": 0.779,
+      "scatter": 0.108
+     }
+    },
+    "right": {
+     "U_border": [
+      4.15,
+      3.8,
+      3.97,
+      3.17
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4902,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.15
+     }
+    }
+   }
+  },
+  "r0914_13": {
+   "left": {
+    "state": "edge",
+    "x": 9.425683119361896,
+    "lo": 9.08838475574895,
+    "hi": 9.762981482974842,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 8.91736825924619,
+    "x_bottom": 9.933997979477601,
+    "note": "Z 315, step in 12/12 bands (0 flat), scatter 0.06"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.026637377707155338,
+     0.04052827188221905,
+     0.04023006577160898
+    ],
+    "sig_pix": 0.019477127385672286,
+    "left": {
+     "U_border": [
+      1.39,
+      1.25,
+      1.33,
+      1.25
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9851,
+       "run": 8,
+       "k": 9,
+       "tilt": -1.0,
+       "Z": 314.64,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 74.45,
+       "uniform": 1.25,
+       "fit": [
+        9.425683119361896,
+        1.0166297202314094,
+        0.06460266081680135
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+       ]
+      }
+     ],
+     "edge": {
+      "x": 9.426,
+      "slope": 1.017,
+      "scatter": 0.065
+     }
+    },
+    "right": {
+     "U_border": [
+      2.59,
+      2.69,
+      2.89,
+      1.91
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7873,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 2.59
+     }
+    }
+   }
+  },
+  "r0914_14": {
+   "left": {
+    "state": "edge",
+    "x": 7.178114018552308,
+    "lo": 6.710898935367198,
+    "hi": 7.645329101737418,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 6.864442836161394,
+    "x_bottom": 7.491785200943222,
+    "note": "Z 210, step in 12/12 bands (0 flat), scatter 0.29"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     70.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.026658232151520248,
+     0.041302637674150516,
+     0.07938008079785015
+    ],
+    "sig_pix": 0.021556339731908278,
+    "left": {
+     "U_border": [
+      1.44,
+      1.23,
+      1.0,
+      1.28
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9724,
+       "run": 7,
+       "k": 7,
+       "tilt": -1.0,
+       "Z": 209.97,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 5.32,
+       "uniform": 1.28,
+       "fit": [
+        7.178114018552308,
+        0.6273423647818289,
+        0.2896250198684664
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7
+       ]
+      }
+     ],
+     "edge": {
+      "x": 7.178,
+      "slope": 0.627,
+      "scatter": 0.29
+     }
+    },
+    "right": {
+     "U_border": [
+      18.9,
+      16.87,
+      15.45,
+      16.94
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8524,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 18.9
+     }
+    }
+   }
+  },
+  "r0914_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 11/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     15.0
+    ],
+    "sig_rel": [
+     0.027126858613294662,
+     0.04133762509056768,
+     0.04265958690030767
+    ],
+    "sig_pix": 0.02002545964323587,
+    "left": {
+     "U_border": [
+      37.8,
+      47.39,
+      51.97,
+      52.44
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7964,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 11,
+      "U0": 37.8
+     }
+    },
+    "right": {
+     "U_border": [
+      9.47,
+      9.65,
+      14.59,
+      15.2
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7596,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 9.47
+     }
+    }
+   }
+  },
+  "r0914_16": {
+   "left": {
+    "state": "edge",
+    "x": 10.389631306645953,
+    "lo": 9.972584647124265,
+    "hi": 10.80667796616764,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 9.774514448018577,
+    "x_bottom": 11.004748165273329,
+    "note": "Z 464, step in 12/12 bands (0 flat), scatter 0.20"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.026772544681571295,
+     0.04092354829000102,
+     0.038919286632577876
+    ],
+    "sig_pix": 0.019416743351217767,
+    "left": {
+     "U_border": [
+      1.77,
+      1.18,
+      1.19,
+      1.43
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9851,
+       "run": 9,
+       "k": 10,
+       "tilt": 2.0,
+       "Z": 463.64,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 68.85,
+       "uniform": 1.13,
+       "fit": [
+        10.389631306645953,
+        1.230233717254752,
+        0.20273076114777958
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        9,
+        9,
+        9,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        11,
+        11,
+        11
+       ]
+      }
+     ],
+     "edge": {
+      "x": 10.39,
+      "slope": 1.23,
+      "scatter": 0.203
+     }
+    },
+    "right": {
+     "U_border": [
+      9.94,
+      13.34,
+      18.59,
+      16.05
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7119,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 9.94
+     }
+    }
+   }
+  },
+  "r0914_17": {
+   "left": {
+    "state": "edge",
+    "x": 9.537331868407415,
+    "lo": 9.195043990249077,
+    "hi": 9.879619746565753,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 8.93467439721553,
+    "x_bottom": 10.139989339599301,
+    "note": "Z 273, step in 12/12 bands (0 flat), scatter 0.07"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.026831106642937013,
+     0.04112902346438279,
+     0.03879514186131791
+    ],
+    "sig_pix": 0.01944536577049623,
+    "left": {
+     "U_border": [
+      1.35,
+      1.2,
+      1.27,
+      1.41
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9849,
+       "run": 9,
+       "k": 9,
+       "tilt": -1.0,
+       "Z": 273.17,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 7.57,
+       "uniform": 1.28,
+       "fit": [
+        9.537331868407415,
+        1.2053149423837717,
+        0.07324475351452205
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+        9
+       ]
+      }
+     ],
+     "edge": {
+      "x": 9.537,
+      "slope": 1.205,
+      "scatter": 0.073
+     }
+    },
+    "right": {
+     "U_border": [
+      23.32,
+      34.17,
+      34.62,
+      33.14
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3731,
+       "why": "below base"
+      },
+      {
+       "a": 48,
+       "plateau": 0.9766,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 23.32
+     }
+    }
+   }
+  },
+  "r0914_18": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 3.6)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     70.0,
+     31.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.026503690373096505,
+     0.019898986466359198,
+     0.036492571327031036
+    ],
+    "sig_pix": 0.014586562341121347,
+    "left": {
+     "U_border": [
+      3.59,
+      1.35,
+      2.62,
+      2.35
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9473,
+       "run": 4,
+       "k": 5,
+       "tilt": 2.0,
+       "Z": 166.33,
+       "steps": 9,
+       "flat": 3,
+       "zmin": -0.19,
+       "uniform": 2.62,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 2,
+      "U0": 3.59
+     }
+    },
+    "right": {
+     "U_border": [
+      24.59,
+      24.71,
+      29.46,
+      31.66
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3332,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 24.59
+     }
+    }
+   }
+  },
+  "r0914_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7999999999999999,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 5/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 321.5449619601072,
+    "lo": 320.68581063579717,
+    "hi": 322.4041132844172,
+    "conf": 0.95,
+    "outer": 344.0,
+    "x_top": 322.8455578781931,
+    "x_bottom": 320.2443660420213,
+    "note": "Z 87, step in 8/12 bands (4 flat), scatter 0.79"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.5,
+     31.0,
+     16.5
+    ],
+    "sig_rel": [
+     0.026879846204711934,
+     0.039733522731832435,
+     0.037783977272625155
+    ],
+    "sig_pix": 0.019181507898219968,
+    "left": {
+     "U_border": [
+      48.1,
+      43.78,
+      42.17,
+      42.68
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9466,
+       "run": 0,
+       "why": "no full-height base column"
+      },
+      {
+       "a": 80,
+       "plateau": 0.9736,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 5,
+      "U0": 48.1
+     }
+    },
+    "right": {
+     "U_border": [
+      4.06,
+      3.8,
+      4.35,
+      3.18
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.905,
+       "why": "below base"
+      },
+      {
+       "a": 84,
+       "plateau": 0.9884,
+       "run": 20,
+       "k": 106,
+       "tilt": 2.0,
+       "Z": 86.99,
+       "steps": 8,
+       "flat": 4,
+       "zmin": -2.23,
+       "uniform": 1.05,
+       "fit": [
+        106.45503803989281,
+        2.601191836171864,
+        0.7907593862580778
+       ],
+       "n_pts": 8,
+       "why": "ok",
+       "ks": [
+        105,
+        105,
+        105,
+        106,
+        106,
+        106,
+        106,
+        106,
+        106,
+        107,
+        107,
+        107
+       ]
+      }
+     ],
+     "edge": {
+      "x": 106.455,
+      "slope": 2.601,
+      "scatter": 0.791
+     }
+    }
+   }
+  },
+  "r0914_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 324.69661529081765,
+    "lo": 324.3658051015809,
+    "hi": 325.02742548005443,
+    "conf": 0.95,
+    "outer": 342.0,
+    "x_top": 324.2164959838973,
+    "x_bottom": 325.176734597738,
+    "note": "Z 77, step in 12/12 bands (0 flat), scatter 0.05"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     71.0,
+     32.0,
+     17.0
+    ],
+    "sig_rel": [
+     0.026335418154460385,
+     0.03917119403024169,
+     0.036602323669057704
+    ],
+    "sig_pix": 0.018764681226553757,
+    "left": {
+     "U_border": [
+      12.12,
+      12.51,
+      12.86,
+      12.54
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8224,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 12.12
+     }
+    },
+    "right": {
+     "U_border": [
+      17.18,
+      18.18,
+      17.07,
+      16.18
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3856,
+       "why": "below base"
+      },
+      {
+       "a": 86,
+       "plateau": 0.9774,
+       "run": 17,
+       "k": 103,
+       "tilt": -1.0,
+       "Z": 76.84,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 10.24,
+       "uniform": 1.22,
+       "fit": [
+        103.30338470918234,
+        -0.9602386138406943,
+        0.05336481314887009
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        103,
+        103,
+        103,
+        103,
+        103,
+        103,
+        103,
+        103,
+        103,
+        103,
+        103,
+        103
+       ]
+      }
+     ],
+     "edge": {
+      "x": 103.303,
+      "slope": -0.96,
+      "scatter": 0.053
+     }
+    }
+   }
+  },
+  "r0914_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "97 columns of empty gate"
+   },
+   "debug": {
+    "gate": [
+     0,
+     97
+    ],
+    "B": [
+     70.0,
+     32.0,
+     19.0
+    ],
+    "sig_rel": [
+     0.02881042019330371,
+     0.04243043795428405,
+     0.037205439116570274
+    ],
+    "sig_pix": 0.020069858765752346,
+    "left": {
+     "U_border": [
+      9.63,
+      9.37,
+      11.1,
+      11.25
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3045,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 9.63
+     }
+    }
+   }
+  },
+  "r0914_23": {
+   "left": {
+    "state": "edge",
+    "x": 18.27070648185313,
+    "lo": 17.880096628349524,
+    "hi": 18.661316335356734,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 17.999622988815528,
+    "x_bottom": 18.54178997489073,
+    "note": "Z 432, step in 12/12 bands (0 flat), scatter 0.16"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.027186895998308418,
+     0.04140786749482402,
+     0.038429716368834105
+    ],
+    "sig_pix": 0.01956168438110918,
+    "left": {
+     "U_border": [
+      1.49,
+      1.12,
+      0.98,
+      0.64
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9842,
+       "run": 18,
+       "k": 18,
+       "tilt": -1.0,
+       "Z": 432.03,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 101.0,
+       "uniform": 1.02,
+       "fit": [
+        18.27070648185313,
+        0.5421669860752026,
+        0.15694086993461487
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18,
+        18
+       ]
+      }
+     ],
+     "edge": {
+      "x": 18.271,
+      "slope": 0.542,
+      "scatter": 0.157
+     }
+    },
+    "right": {
+     "U_border": [
+      4.12,
+      3.76,
+      3.65,
+      3.88
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4952,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.12
+     }
+    }
+   }
+  },
+  "r0914_24": {
+   "left": {
+    "state": "edge",
+    "x": 15.807093809244295,
+    "lo": 15.467735214696075,
+    "hi": 16.146452403792512,
+    "conf": 0.95,
+    "outer": 3.0,
+    "x_top": 15.240682520000275,
+    "x_bottom": 16.373505098488316,
+    "note": "Z 324, step in 12/12 bands (0 flat), scatter 0.07"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.026733715734841117,
+     0.040258080390802316,
+     0.038429716368834105
+    ],
+    "sig_pix": 0.019268797875146685,
+    "left": {
+     "U_border": [
+      20.95,
+      19.29,
+      1.04,
+      1.32
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7694,
+       "why": "below base"
+      },
+      {
+       "a": 3,
+       "plateau": 0.9927,
+       "run": 12,
+       "k": 15,
+       "tilt": -1.0,
+       "Z": 323.85,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 79.28,
+       "uniform": 1.12,
+       "fit": [
+        15.807093809244295,
+        1.1328225784880392,
+        0.06817108547201928
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15
+       ]
+      }
+     ],
+     "edge": {
+      "x": 15.807,
+      "slope": 1.133,
+      "scatter": 0.068
+     }
+    },
+    "right": {
+     "U_border": [
+      2.15,
+      1.46,
+      2.34,
+      1.5
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7675,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 2.15
+     }
+    }
+   }
+  },
+  "r0914_25": {
+   "left": {
+    "state": "edge",
+    "x": 13.136063034049643,
+    "lo": 12.675931808062577,
+    "hi": 13.59619426003671,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 12.904933837415442,
+    "x_bottom": 13.367192230683845,
+    "note": "Z 268, step in 12/12 bands (0 flat), scatter 0.28"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02716683926669735,
+     0.04119820605905516,
+     0.03867217755243587
+    ],
+    "sig_pix": 0.01956360957321111,
+    "left": {
+     "U_border": [
+      1.37,
+      1.06,
+      1.09,
+      1.11
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9924,
+       "run": 12,
+       "k": 13,
+       "tilt": -1.0,
+       "Z": 268.36,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 11.48,
+       "uniform": 1.37,
+       "fit": [
+        13.136063034049643,
+        0.4622583932684016,
+        0.2773554192878909
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13,
+        13
+       ]
+      }
+     ],
+     "edge": {
+      "x": 13.136,
+      "slope": 0.462,
+      "scatter": 0.277
+     }
+    },
+    "right": {
+     "U_border": [
+      16.12,
+      21.98,
+      26.16,
+      23.36
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7755,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 16.12
+     }
+    }
+   }
+  },
+  "r0914_27": {
+   "left": {
+    "state": "edge",
+    "x": 4.054603946950395,
+    "lo": 3.572783352134812,
+    "hi": 4.536424541765977,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 3.5293637958126416,
+    "x_bottom": 4.579844098088148,
+    "note": "Z 215, step in 12/12 bands (0 flat), scatter 0.31"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.88,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 7/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.027287850285512706,
+     0.04119820605905516,
+     0.03995731641814172
+    ],
+    "sig_pix": 0.01977016570630569,
+    "left": {
+     "U_border": [
+      2.05,
+      1.68,
+      1.33,
+      3.84
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9846,
+       "run": 4,
+       "k": 4,
+       "tilt": -1.0,
+       "Z": 215.15,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 6.68,
+       "uniform": 1.87,
+       "fit": [
+        4.054603946950395,
+        1.0504803022755063,
+        0.31492250808298394
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+       ]
+      }
+     ],
+     "edge": {
+      "x": 4.055,
+      "slope": 1.05,
+      "scatter": 0.315
+     }
+    },
+    "right": {
+     "U_border": [
+      14.84,
+      18.48,
+      12.74,
+      13.61
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8928,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 7,
+      "U0": 14.84
+     }
+    }
+   }
+  },
+  "r0914_28": {
+   "left": {
+    "state": "edge",
+    "x": 16.14082985610404,
+    "lo": 15.712149479807314,
+    "hi": 16.569510232400766,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 15.498955129943969,
+    "x_bottom": 16.782704582264113,
+    "note": "Z 446, step in 12/12 bands (0 flat), scatter 0.22"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     31.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02722714309065867,
+     0.040392498395497196,
+     0.038429716368834105
+    ],
+    "sig_pix": 0.019466224808363648,
+    "left": {
+     "U_border": [
+      1.9,
+      1.16,
+      0.89,
+      0.97
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9775,
+       "run": 15,
+       "k": 16,
+       "tilt": 2.0,
+       "Z": 445.61,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 64.05,
+       "uniform": 1.08,
+       "fit": [
+        16.14082985610404,
+        1.2837494523201458,
+        0.22288094968301245
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        15,
+        15,
+        15,
+        16,
+        16,
+        16,
+        16,
+        16,
+        16,
+        17,
+        17,
+        17
+       ]
+      }
+     ],
+     "edge": {
+      "x": 16.141,
+      "slope": 1.284,
+      "scatter": 0.223
+     }
+    },
+    "right": {
+     "U_border": [
+      11.94,
+      13.11,
+      10.62,
+      11.52
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7196,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 11.94
+     }
+    }
+   }
+  },
+  "r0914_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7999999999999999,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 5/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     48622.0,
+     49425.5,
+     40774.5
+    ],
+    "sig_rel": [
+     0.025361611704804946,
+     0.02491962717270944,
+     0.030921000140956067
+    ],
+    "sig_pix": 0.015410272215620597,
+    "left": {
+     "U_border": [
+      50.4,
+      55.78,
+      52.29,
+      64.12
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8575,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 50.4
+     }
+    },
+    "right": {
+     "U_border": [
+      23.73,
+      16.67,
+      19.5,
+      21.77
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9657,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 5,
+      "U0": 23.73
+     }
+    }
+   }
+  },
+  "r0914_31": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 9.1)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     53063.0,
+     58987.5,
+     40342.5
+    ],
+    "sig_rel": [
+     0.026363806904479887,
+     0.02427481522282594,
+     0.028307288554711475
+    ],
+    "sig_pix": 0.015103504741603707,
+    "left": {
+     "U_border": [
+      9.12,
+      65.27,
+      41.52,
+      28.09
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.935,
+       "run": 1,
+       "k": 1,
+       "tilt": -1.0,
+       "Z": 466.59,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 61.36,
+       "uniform": 9.12,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 2,
+      "U0": 9.12
+     }
+    },
+    "right": {
+     "U_border": [
+      38.29,
+      40.31,
+      41.54,
+      42.32
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2403,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 38.29
+     }
+    }
+   }
+  },
+  "r0914_33": {
+   "left": {
+    "state": "edge",
+    "x": 4.27093702837998,
+    "lo": 3.8834717657109117,
+    "hi": 4.658402291049049,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 3.9970734527720726,
+    "x_bottom": 4.544800603987888,
+    "note": "Z 396, step in 12/12 bands (0 flat), scatter 0.15"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02854569021952108,
+     0.0465134517530383,
+     0.04474929182568578
+    ],
+    "sig_pix": 0.021374549980333654,
+    "left": {
+     "U_border": [
+      1.24,
+      0.95,
+      0.73,
+      2.92
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9912,
+       "run": 4,
+       "k": 4,
+       "tilt": -1.0,
+       "Z": 396.45,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 91.12,
+       "uniform": 1.09,
+       "fit": [
+        4.27093702837998,
+        0.5477271512158151,
+        0.15149427884018393
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+       ]
+      }
+     ],
+     "edge": {
+      "x": 4.271,
+      "slope": 0.548,
+      "scatter": 0.151
+     }
+    },
+    "right": {
+     "U_border": [
+      14.15,
+      14.66,
+      13.11,
+      12.93
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4842,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 14.15
+     }
+    }
+   }
+  },
+  "r0914_34": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "sig_rel": [
+     0.02642742060238395,
+     0.04444141046159042,
+     0.0622389493819422
+    ],
+    "sig_pix": 0.021338033250865356,
+    "left": {
+     "U_border": [
+      1.35,
+      14.62,
+      6.91,
+      2.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.987,
+       "run": 1,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 214.13,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 50.56,
+       "uniform": 7.99,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.35
+     }
+    },
+    "right": {
+     "U_border": [
+      2.46,
+      1.74,
+      2.09,
+      1.94
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8514,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 2.46
+     }
+    }
+   }
+  },
+  "x0920_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 3.4)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     6286.0,
+     4463.0,
+     5974.0
+    ],
+    "sig_rel": [
+     0.054539071972229125,
+     0.057819080583837175,
+     0.05738727658775034
+    ],
+    "sig_pix": 0.03263437452492237,
+    "left": {
+     "U_border": [
+      3.36,
+      3.53,
+      3.64,
+      5.93
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9924,
+       "run": 1,
+       "k": 3,
+       "tilt": -2.0,
+       "Z": 13.16,
+       "steps": 2,
+       "flat": 9,
+       "zmin": -2.05,
+       "uniform": 3.53,
+       "why": "weak step, step in too few bands, base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 3.36
+     }
+    },
+    "right": {
+     "U_border": [
+      0.31,
+      0.23,
+      0.17,
+      0.18
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.0132,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 0.31
+     }
+    }
+   }
+  },
+  "x0920_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.72,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 3/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     6237.0,
+     4430.0,
+     5928.0
+    ],
+    "sig_rel": [
+     0.05524611118122537,
+     0.05991875608982256,
+     0.054653189952493506
+    ],
+    "sig_pix": 0.03259978541135017,
+    "left": {
+     "U_border": [
+      9.92,
+      8.82,
+      11.71,
+      12.96
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9982,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 3,
+      "U0": 9.92
+     }
+    },
+    "right": {
+     "U_border": [
+      16.16,
+      0.51,
+      0.25,
+      0.17
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.0361,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 16.16
+     }
+    }
+   }
+  },
+  "x0920_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 14.7)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     6267.0,
+     4401.0,
+     5826.0
+    ],
+    "sig_rel": [
+     0.05406492321558129,
+     0.06062494852422867,
+     0.05745069700799004
+    ],
+    "sig_pix": 0.033019855891618904,
+    "left": {
+     "U_border": [
+      14.73,
+      15.57,
+      15.47,
+      16.06
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0061,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 2,
+      "U0": 14.73
+     }
+    },
+    "right": {
+     "U_border": [
+      29.51,
+      30.19,
+      28.89,
+      28.76
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8388,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 29.51
+     }
+    }
+   }
+  },
+  "x0920_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 13.1)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     43339.0,
+     32296.0,
+     41621.0
+    ],
+    "sig_rel": [
+     0.045657722622165296,
+     0.04198062314615691,
+     0.043936214064580224
+    ],
+    "sig_pix": 0.025276806676345485,
+    "left": {
+     "U_border": [
+      13.12,
+      16.34,
+      16.66,
+      16.98
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9941,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 2,
+      "U0": 13.12
+     }
+    },
+    "right": {
+     "U_border": [
+      35.84,
+      33.74,
+      38.71,
+      36.35
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8575,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 35.84
+     }
+    }
+   }
+  },
+  "x0920_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.76,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 4/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 9/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     16370.0,
+     7439.0,
+     3806.0
+    ],
+    "sig_rel": [
+     0.028907145461366284,
+     0.03852702622196984,
+     0.052687314429532624
+    ],
+    "sig_pix": 0.021173081019827997,
+    "left": {
+     "U_border": [
+      54.08,
+      17.67,
+      2.84,
+      2.28
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5188,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 4,
+      "U0": 54.08
+     }
+    },
+    "right": {
+     "U_border": [
+      45.21,
+      46.39,
+      44.37,
+      43.89
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.422,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 9,
+      "U0": 45.21
+     }
+    }
+   }
+  },
+  "x0920_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     11692.0,
+     6018.0,
+     3409.0
+    ],
+    "sig_rel": [
+     0.027986490120103836,
+     0.03604117380406239,
+     0.044680330066956486
+    ],
+    "sig_pix": 0.019812651217204023,
+    "left": {
+     "U_border": [
+      12.44,
+      3.02,
+      2.43,
+      2.68
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3573,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 12.44
+     }
+    },
+    "right": {
+     "U_border": [
+      3.85,
+      3.04,
+      2.7,
+      2.96
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4799,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 3.85
+     }
+    }
+   }
+  },
+  "x0920_22": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     12285.0,
+     6221.0,
+     3748.0
+    ],
+    "sig_rel": [
+     0.0279109259049208,
+     0.0372852111770616,
+     0.041360187294439285
+    ],
+    "sig_pix": 0.01965869916316203,
+    "left": {
+     "U_border": [
+      3.06,
+      2.87,
+      3.45,
+      2.64
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2816,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 3.06
+     }
+    },
+    "right": {
+     "U_border": [
+      3.63,
+      3.57,
+      3.14,
+      3.45
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2774,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 3.63
+     }
+    }
+   }
+  },
+  "x0920_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.92,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 8/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.88,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 7/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     5927.0,
+     2356.0,
+     1303.0
+    ],
+    "sig_rel": [
+     0.05734568766267739,
+     0.08775126574942897,
+     0.12477498184185623
+    ],
+    "sig_pix": 0.044802804303503106,
+    "left": {
+     "U_border": [
+      5.03,
+      5.0,
+      4.77,
+      5.16
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8378,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 8,
+      "U0": 5.03
+     }
+    },
+    "right": {
+     "U_border": [
+      7.15,
+      6.83,
+      6.96,
+      7.1
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.814,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 7,
+      "U0": 7.15
+     }
+    }
+   }
+  },
+  "x0920_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.1689817497159,
+    "lo": 424.8198617783338,
+    "hi": 425.518101721098,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 424.58593598980855,
+    "x_bottom": 425.75202750962325,
+    "note": "Z 132, step in 12/12 bands (0 flat), scatter 0.09"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     16437.0,
+     7637.0,
+     4161.0
+    ],
+    "sig_rel": [
+     0.026564453281144304,
+     0.03355263632448085,
+     0.04691145102922027
+    ],
+    "sig_pix": 0.019035467043133542,
+    "left": {
+     "U_border": [
+      1.97,
+      2.32,
+      1.65,
+      1.49
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.303,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 1.97
+     }
+    },
+    "right": {
+     "U_border": [
+      0.72,
+      0.93,
+      8.25,
+      20.72
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 1.0003,
+       "run": 2,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 132.46,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 15.44,
+       "uniform": 0.83,
+       "fit": [
+        2.831018250284094,
+        -1.1660915198146886,
+        0.08507828610012143
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+       ]
+      }
+     ],
+     "edge": {
+      "x": 2.831,
+      "slope": -1.166,
+      "scatter": 0.085
+     }
+    }
+   }
+  },
+  "x0920_37": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     9478.0,
+     4475.0,
+     2810.0
+    ],
+    "sig_rel": [
+     0.02917998595509253,
+     0.04194621452561817,
+     0.055630829850193714
+    ],
+    "sig_pix": 0.022001099216609834,
+    "left": {
+     "U_border": [
+      3.38,
+      2.92,
+      3.14,
+      2.48
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3731,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 3.38
+     }
+    },
+    "right": {
+     "U_border": [
+      2.55,
+      2.4,
+      2.65,
+      2.84
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3573,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 2.55
+     }
+    }
+   }
+  },
+  "x0920_40": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.45,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border near base level but structured along y (U 14.8)"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     14027.0,
+     6599.0,
+     3679.0
+    ],
+    "sig_rel": [
+     0.030963971740452803,
+     0.04087758976685488,
+     0.053939439471635355
+    ],
+    "sig_pix": 0.02244408058082919,
+    "left": {
+     "U_border": [
+      4.27,
+      4.37,
+      5.34,
+      4.31
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.7872,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.27
+     }
+    },
+    "right": {
+     "U_border": [
+      14.83,
+      14.76,
+      15.14,
+      15.66
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.991,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 14.83
+     }
+    }
+   }
+  },
+  "x0920_43": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.76,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 4/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     12377.0,
+     5511.0,
+     2913.0
+    ],
+    "sig_rel": [
+     0.03275571333229701,
+     0.046842417101001774,
+     0.06798776279012024
+    ],
+    "sig_pix": 0.024967978144049077,
+    "left": {
+     "U_border": [
+      4.77,
+      4.64,
+      5.29,
+      4.65
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6072,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.77
+     }
+    },
+    "right": {
+     "U_border": [
+      28.83,
+      29.96,
+      30.05,
+      30.85
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9929,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 4,
+      "U0": 28.83
+     }
+    }
+   }
+  },
+  "x0920_46": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     16558.0,
+     7788.0,
+     4128.0
+    ],
+    "sig_rel": [
+     0.02549392006859165,
+     0.03705615803882615,
+     0.0531757025062864
+    ],
+    "sig_pix": 0.019534747449979066,
+    "left": {
+     "U_border": [
+      1.51,
+      26.03,
+      10.44,
+      4.97
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9914,
+       "run": 1,
+       "k": 2,
+       "tilt": -1.0,
+       "Z": 358.47,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 92.17,
+       "uniform": 13.77,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.51
+     }
+    },
+    "right": {
+     "U_border": [
+      16.67,
+      15.82,
+      15.63,
+      14.54
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.523,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 16.67
+     }
+    }
+   }
+  },
+  "x0920_55": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border at base level and flat, no step within a gap: dark scene or hidden base"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     17016.0,
+     6310.0,
+     1321.0
+    ],
+    "sig_rel": [
+     0.023605192699909548,
+     0.04361286784153883,
+     0.08981904280605174
+    ],
+    "sig_pix": 0.020226322100462105,
+    "left": {
+     "U_border": [
+      4.52,
+      3.83,
+      4.29,
+      3.67
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6677,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 4.52
+     }
+    },
+    "right": {
+     "U_border": [
+      1.61,
+      2.83,
+      2.5,
+      3.12
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9816,
+       "run": 21,
+       "k": 22,
+       "tilt": -2.0,
+       "Z": 49.03,
+       "steps": 11,
+       "flat": 1,
+       "zmin": -1.86,
+       "uniform": 2.37,
+       "why": "base side structured"
+      }
+     ],
+     "border": {
+      "n_dark": 0,
+      "U0": 1.61
+     }
+    }
+   }
+  },
+  "x0920_58": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     16442.0,
+     7624.0,
+     3566.0
+    ],
+    "sig_rel": [
+     0.027091559146246856,
+     0.03535348027530234,
+     0.057370591204939515
+    ],
+    "sig_pix": 0.020135796779831558,
+    "left": {
+     "U_border": [
+      52.55,
+      54.51,
+      55.05,
+      54.45
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.8993,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 52.55
+     }
+    },
+    "right": {
+     "U_border": [
+      10.74,
+      10.55,
+      21.34,
+      19.84
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.6798,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 10.74
+     }
+    }
+   }
+  },
+  "x0920_61": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.8963192193567,
+    "lo": 422.46188099022856,
+    "hi": 423.33075744848486,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": 422.62586971527287,
+    "x_bottom": 423.1667687234405,
+    "note": "Z 158, step in 12/12 bands (0 flat), scatter 0.23"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     16349.0,
+     7631.0,
+     4148.0
+    ],
+    "sig_rel": [
+     0.024854799387031314,
+     0.03427018250479122,
+     0.049683625279357
+    ],
+    "sig_pix": 0.018649042038799548,
+    "left": {
+     "U_border": [
+      46.08,
+      50.62,
+      48.66,
+      47.54
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9422,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 46.08
+     }
+    },
+    "right": {
+     "U_border": [
+      0.63,
+      1.46,
+      1.03,
+      1.06
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.995,
+       "run": 5,
+       "k": 5,
+       "tilt": -1.0,
+       "Z": 158.34,
+       "steps": 12,
+       "flat": 0,
+       "zmin": 22.29,
+       "uniform": 1.06,
+       "fit": [
+        5.103680780643301,
+        -0.5408990081676515,
+        0.23285384332952774
+       ],
+       "n_pts": 12,
+       "why": "ok",
+       "ks": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+       ]
+      }
+     ],
+     "edge": {
+      "x": 5.104,
+      "slope": -0.541,
+      "scatter": 0.233
+     }
+    }
+   }
+  },
+  "x0920_64": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     14880.0,
+     6123.0,
+     1738.0
+    ],
+    "sig_rel": [
+     0.03200037338130345,
+     0.04476381714560029,
+     0.08133076434264379
+    ],
+    "sig_pix": 0.024793445632616165,
+    "left": {
+     "U_border": [
+      26.2,
+      24.12,
+      23.61,
+      22.94
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.3305,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 26.2
+     }
+    },
+    "right": {
+     "U_border": [
+      10.77,
+      19.77,
+      29.88,
+      32.66
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.2573,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 10.77
+     }
+    }
+   }
+  },
+  "x0920_73": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 9/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     16542.0,
+     7824.0,
+     4042.0
+    ],
+    "sig_rel": [
+     0.023537363233029657,
+     0.0318611086625927,
+     0.05131958972068991
+    ],
+    "sig_pix": 0.01776162788240558,
+    "left": {
+     "U_border": [
+      50.47,
+      51.79,
+      53.01,
+      52.45
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5493,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 9,
+      "U0": 50.47
+     }
+    },
+    "right": {
+     "U_border": [
+      25.79,
+      23.7,
+      27.86,
+      26.39
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.4441,
+       "why": "below base"
+      },
+      {
+       "a": 57,
+       "plateau": 0.9914,
+       "run": 0,
+       "why": "no full-height base column"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 25.79
+     }
+    }
+   }
+  },
+  "x0920_76": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.84,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 6/12 bands, structured along y"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.95,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "border darker than base in 12/12 bands, structured along y"
+   },
+   "debug": {
+    "gate": [
+     0,
+     0
+    ],
+    "B": [
+     16801.0,
+     7969.0,
+     4303.0
+    ],
+    "sig_rel": [
+     0.02556906492735076,
+     0.03385808972829784,
+     0.04693234373048901
+    ],
+    "sig_pix": 0.018712385084281073,
+    "left": {
+     "U_border": [
+      12.58,
+      15.06,
+      17.35,
+      10.99
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.9293,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 6,
+      "U0": 12.58
+     }
+    },
+    "right": {
+     "U_border": [
+      53.56,
+      54.25,
+      55.46,
+      57.55
+     ],
+     "runs": [
+      {
+       "a": 0,
+       "plateau": 0.5981,
+       "why": "below base"
+      }
+     ],
+     "border": {
+      "n_dark": 12,
+      "U0": 53.56
+     }
+    }
+   }
+  }
+ }
+}

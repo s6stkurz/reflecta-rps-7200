@@ -1,0 +1,26 @@
+{
+  "id": "x0920_55",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-21 a lighter uniform strip (~68-72) but the arm continues faintly through it to col 0, its boundary steps from ~27 at top to ~21 at bottom (not parallel to the right one), and it is well below the frame max (arm =100); scene (floor/wall), not base"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 414-427 are a uniform full-height strip with a sharp vertical boundary at ~413.8, BUT it reads only ~30-33 (denser than the 70 strip on the left and the 100 arm); base cannot be denser than picture, so treated as scene. Hard case"
+  },
+  "frame_note": "odd colour balance; two uniform strips, neither base-bright"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_06",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark museum wall (near base level, ~90) runs to col 0; no sharp full-height line; painting starts at ~9 (scene)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall runs to 428, faint scene line at bottom right crosses 413-428; no boundary"
+  },
+  "frame_note": "dark scene nearly as clear as base on both sides; same scene as r0911_03"
+}

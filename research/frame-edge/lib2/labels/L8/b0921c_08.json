@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_08", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 80.0, "lo": 79.6, "hi": 80.5,
+            "outer": 63.0, "x_top": 79.8, "x_bottom": 80.3,
+            "note": "DEEP gap beyond the crop: black base cols 63-79 (G~30, R/G 2.2, B/G 0.53, full height). This frame (cols 80-427, ~348 cols) lies right of it, starting with the bright window wall. Neighbour picture cols 0-62 (outer ~63.0, top band ~63.6)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/tablecloth run off the right border"},
+  "frame_note": "the left 64-col crop only shows the neighbour plus a sliver of base at 63; the gap was read from the thumbnail"
+}

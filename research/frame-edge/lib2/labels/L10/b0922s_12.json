@@ -1,0 +1,26 @@
+{
+  "id": "b0922s_12",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 6.8,
+    "lo": 6.4,
+    "hi": 7.2,
+    "outer": null,
+    "x_top": 6.8,
+    "x_bottom": 7.6,
+    "note": "base cols 0-5 (raw 66/29-30/16, R/G 2.25, B/G 0.54), black full height in view B. Edge ~6.8 through most rows (6.4-6.9; low contrast where the foliage is dark), ~7.1 lower and ~7.9 in the bottom rows (corner). No neighbour visible."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building wall/railing run to column 427; the dark object at 410-427 in rows ~140-210 has B/G 0.41-0.46 and is not full height, so it is scene, not base"
+  },
+  "frame_note": ""
+}

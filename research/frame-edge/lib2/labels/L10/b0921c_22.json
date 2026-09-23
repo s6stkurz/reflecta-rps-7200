@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_22",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "figure/backdrop run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 264.3,
+    "lo": 263.8,
+    "hi": 264.9,
+    "outer": 281.5,
+    "x_top": 264.1,
+    "x_bottom": 263.8,
+    "note": "gap deep inside the frame at cols ~264-280 (raw 76-77/33-34/18, R/G 2.25, B/G 0.54). Frame edge sharp but not straight: ~264.1 top rows (bright picture, less sure), ~264.8-264.9 in rows 35-100, ~264.0-264.3 mid, ~263.8 at the bottom. Neighbour picture from ~280.2 in the top rows, ~281.0-281.8 lower."
+  },
+  "frame_note": "Interior gap at 264-280: this frame ~264 cols on the left, neighbour ~147 cols on the right."
+}

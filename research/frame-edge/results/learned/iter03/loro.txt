@@ -1,0 +1,29 @@
+174 images, 3534406 pixels, 23 features, 0.007 base  [25.9 s]
+  hold out bw0910   px  308355  base 0.540  pic 1.000  | sides 13/16  refused 0 false-base 0 missed 3 edge MAE 0.065
+       bw0910_01 left: picture_to_border vs edge 3.5
+       bw0910_04 left: picture_to_border vs edge 7.0
+       bw0910_05 left: picture_to_border vs edge 1.8
+  hold out r0909    px  319026  base 0.996  pic 0.998  | sides 19/20  refused 1 false-base 0 missed 0 edge MAE 0.043
+       r0909_10 left: refuse vs edge 1.2
+  hold out r0911    px  828715  base 0.997  pic 0.915  | sides 48/55  refused 6 false-base 0 missed 1 edge MAE 0.103
+       r0911_05 left: refuse vs picture_to_border
+       r0911_05 right: refuse vs picture_to_border
+       r0911_07 left: picture_to_border vs edge 2.4
+       r0911_08 right: refuse vs picture_to_border
+       r0911_16 left: refuse vs edge 0.2
+       r0911_18 right: refuse vs picture_to_border
+       r0911_21 right: refuse vs picture_to_border
+  hold out r0914    px  940979  base 0.927  pic 0.997  | sides 50/54  refused 1 false-base 0 missed 3 edge MAE 0.038
+       r0914_10 left: refuse vs picture_to_border
+       r0914_17 right: picture_to_border vs edge 418.3
+       r0914_18 right: picture_to_border vs edge 423.0
+       r0914_20 left: picture_to_border vs edge 103.3
+  hold out stage3   px  118418  base 1.000  pic 0.999  | sides 6/6  refused 0 false-base 0 missed 0 edge MAE 0.004
+  hold out strip3   px   88746  base 1.000  pic 1.000  | sides 6/6  refused 0 false-base 0 missed 0 edge MAE 0.0
+  hold out strip6   px   88182  base 0.647  pic 1.000  | sides 5/6  refused 0 false-base 0 missed 1 edge MAE 0.0
+       strip6_02 left: picture_to_border vs edge 11.8
+  hold out x0920    px  841985  base 0.987  pic 0.989  | sides 28/30  refused 2 false-base 0 missed 0 edge MAE 0.162
+       x0920_55 left: refuse vs picture_to_border
+       x0920_64 left: refuse vs picture_to_border
+  LORO total {'sides': 193, 'correct': 175, 'refused': 10, 'false_base': 0, 'missed': 8, 'acc': 0.907}
+final {'base_recall': 0.9939, 'picture_recall': 0.992, 'balanced': 0.993} -> /private/tmp/claude-501/-Users-stefan-kurzella-github-reflecta-rps-7200-1/164a69cb-a659-4b59-949c-ad12356bd196/scratchpad/w9.json

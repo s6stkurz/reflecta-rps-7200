@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_29", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 60.6, "lo": 60.1, "hi": 61.1,
+            "outer": 39.4, "x_top": 60.4, "x_bottom": 61.0,
+            "note": "base cols 40-59 (likeness 82-85, R/G 2.25, B/G 0.56); neighbour tree-trunk picture 0-38. The frame opens on dark foliage at ~80-84, nearly base, so bands 2-3 show no step; band 1 steps at col 60 (71) and band 4 at col 61 (79). A locally stretched positive shows a straight line at ~60.0-60.7 with texture to the right only. Outer ~39.0-39.4 in bands 2-4, ~40.5 in the top band."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/building/figure run to col 427, likeness ~55"},
+  "frame_note": "hard-ish: base is not the top of the table and the frame's dark foliage matches it in the middle bands; edge from the top/bottom bands and a local stretch"
+}

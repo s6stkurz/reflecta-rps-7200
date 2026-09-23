@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_41", "labeller": "L9", "view": "A",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate (~178 neutral) in cols 0-4 at the top, receding to cols 0-1 at the bottom (film edge tilted, ~5.0 top to ~2.5 bottom). BASE lies between gate and picture: cols ~5/6-25 (R/G 2.28, B/G 0.53, uniform). Base->picture boundary tilted: 26.0 in the top third, 27.0 below row ~95 (mid-height ~27.0, range 26.0-27.2)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "path/lawn texture runs to 428 (R/G 2.5, sd 6-7), no plateau"},
+  "frame_note": "strip-end frame: gate, then ~21 columns of base, then picture"
+}

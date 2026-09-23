@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_38", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 100.9, "lo": 100.5, "hi": 101.3,
+            "outer": 79.4, "x_top": 100.5, "x_bottom": 101.9,
+            "note": "interior gap deeper than the crop: black base cols 80-99 (R/G 2.2, B/G 0.55). Neighbour cols 0-79 is a dense, blown-out picture (darkest on the negative, white in B), not the gate. This frame's backdrop starts ~100.5 at the top, ~101.0 over the lower half, ~101.9 in the bottom rows. Outer ~80.4 at the top, ~79.0-79.6 mid, ~79.8 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "backdrop/figure run to 427"},
+  "frame_note": "gap at ~80-101; frame = right part (~327 cols) vs neighbour (~80 cols)"
+}

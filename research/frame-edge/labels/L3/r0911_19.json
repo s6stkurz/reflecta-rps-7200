@@ -1,0 +1,26 @@
+{
+  "id": "r0911_19",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 5.2,
+    "lo": 4.7,
+    "hi": 5.8,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base 0-2 ~100; soft 3-col ramp (cols 3-5 grey-brown in B) to wall ~13 at col 6. Area-weighted: b2 5.3, b3 5.2, b4 5.1. Top quarter bulges right (b1 ~6.3, grey wedge reaching col ~8 at the top rows, tapering) - looks like a rounded frame corner rather than a straight tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall (dark on negative, ~7-10) to col 427, no step"
+  },
+  "frame_note": ""
+}

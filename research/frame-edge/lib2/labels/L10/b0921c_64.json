@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_64",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair/building run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 324.5,
+    "lo": 324.0,
+    "hi": 325.0,
+    "outer": 346.2,
+    "x_top": 324.8,
+    "x_bottom": 324.0,
+    "note": "gap deep inside the frame at cols ~325-345 (raw 65-70/29-31/16-17, R/G 2.25, B/G 0.53; base dims slightly toward 340-344). Edge sharp and clean at the bottom (324.0, dark street), lower contrast in the upper bands where the picture is pale sky/foliage (~324.4-325.0). Neighbour (bright foliage, low contrast) begins ~345.3 at top, ~346-347 mid, ~346.0 bottom."
+  },
+  "frame_note": "Interior gap at 325-345: this frame ~325 cols on the left, neighbour ~82 cols on the right."
+}

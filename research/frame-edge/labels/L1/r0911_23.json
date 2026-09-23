@@ -1,0 +1,26 @@
+{
+  "id": "r0911_23",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night scene is as clear as base: cols 0-63 read 89-93 in all four bands, no vertical line visible in either view; the nearest picture detail is a faint light streak at cols >=30. A base sliver of a few columns could be hidden; cannot tell"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "lit building detail (b2 dips to 69-80) runs to col 427"
+  },
+  "frame_note": "left unreadable: underexposed night frame, scene = base in the numbers"
+}

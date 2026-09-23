@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_68", "labeller": "L8", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hydrangeas and railing run to column 0"},
+  "right": {"state": "edge", "x": 302.7, "lo": 302.1, "hi": 303.2,
+            "outer": 321.5, "x_top": 303.0, "x_bottom": 302.1,
+            "note": "DEEP gap beyond the crop: black base cols 303-320 (G~32, R/G 2.25, B/G 0.53, full height). This frame (house front, cols 0-302, ~303 cols) ends at 303.0 in the upper half; in the lower half the dark scene is only ~8-14 points below base and the edge sits ~302.1. Neighbour (car/hedge/person) starts at outer ~321.5 (top band ~320.7)."},
+  "frame_note": "right 64-col crop shows only the neighbour; gap read from the 1:1 thumbnail"
+}

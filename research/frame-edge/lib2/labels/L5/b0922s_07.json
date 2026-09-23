@@ -1,0 +1,26 @@
+{
+  "id": "b0922s_07",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 7.8,
+    "lo": 7.3,
+    "hi": 8.8,
+    "outer": null,
+    "x_top": 7.4,
+    "x_bottom": 8.3,
+    "note": "clean base 0-6 (R/G 2.27, B/G 0.55). Sharp against the sky at the top (~7.4); lower down the dusk lawn/building is nearly base-bright, lower contrast: ~7.8 at mid-height, ~8.1 in the lower quarter, ~8.8 in the bottom band (corner)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky, dark building and lawn run to 427; band 2 near the right reads ~90 but is textured scene"
+  },
+  "frame_note": ""
+}

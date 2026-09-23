@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_13", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 100.4, "lo": 100.0, "hi": 100.9,
+            "outer": 83.3, "x_top": 100.1, "x_bottom": 101.0,
+            "note": "interior gap cols 83-99, deeper than the crop (R/G 2.2, B/G 0.54). Neighbour picture 0-82 (83 cols) vs this frame 100-427 (328 cols). Col 100 reads 23/19/72/93 by band, so the lower half carries up to a column more base. Outer ~84.0 at top, ~83.0 at bottom."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427, likeness ~36"},
+  "frame_note": "gap at 83-100 found on the 1:1 thumbnail, not visible in the magnified crops"
+}

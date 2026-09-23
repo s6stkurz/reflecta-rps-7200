@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_01",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 3.6,
+    "lo": 3.0,
+    "hi": 4.1,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night scene is as clear as base in b1-b3 (78-80 both), so the edge shows only where picture has features: tube at row ~110, wall band and box all start at col 3-4; b4 col 3 ~63% base"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "NOT base: region 391-427 reads like the night-sky picture in every band; wall/rail ends at 388-391 with a 3-col ramp, no straight full-height line; with left base ending at 3.6 a 36mm frame runs past 428"
+  },
+  "frame_note": "hard: dark night scene nearly base-bright"
+}

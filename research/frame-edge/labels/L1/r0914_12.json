@@ -1,0 +1,26 @@
+{
+  "id": "r0914_12",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "ground/figures to col 0, ~36 flat"
+  },
+  "right": {
+    "state": "edge",
+    "x": 415.5,
+    "lo": 415.1,
+    "hi": 415.8,
+    "outer": null,
+    "x_top": 415.6,
+    "x_bottom": 415.15,
+    "note": "clean edge, base 94-98 from 416; col 415 ~40% base top, ~76% bottom (b4) -> slight lean"
+  },
+  "frame_note": ""
+}

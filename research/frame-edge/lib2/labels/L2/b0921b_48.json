@@ -1,0 +1,9 @@
+{
+  "id": "b0921b_48", "labeller": "L2", "view": "A",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate cols 0-7 (~177 neutral, R/G 1.0); the strip's end is curved, from ~8.0 at the top to ~5.3 at the bottom. BASE lies between gate and picture: cols 8-29 (R/G 2.25, B/G 0.53); base-to-picture edge at ~29.1 in the top ~3/8 of the height and 30.0 below"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "trees/path run to 427"},
+  "frame_note": "strip end: gate + base + picture on the left"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_07", "labeller": "L6", "view": "A",
+  "left":  {"state": "edge", "x": 62.0, "lo": 61.7, "hi": 62.5,
+            "outer": 42.7, "x_top": null, "x_bottom": null,
+            "note": "gap inside the frame (the crop shows it, but it is not at the border): base cols 43-61 (~92, R/G 2.23-2.31, B/G 0.53-0.59), full height. Night scene: this frame's picture is at base density below row ~95, so the edge is readable only in the top ~95 rows where the sky is dense -- sharp there, col 62 fully picture. Neighbour 0-42: dense sky top, near-base lower; its boundary ~43.0-43.4 in rows 0-80 and ~42.1 in rows 170-260"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky/skyline and hair reach col 427; the bright middle is night scene near base density, not a plateau with a boundary"},
+  "frame_note": "gap at cols 43-61; right part 62-427 (~366 cols) is the frame, left part 0-42 (~43 cols) the neighbour"
+}

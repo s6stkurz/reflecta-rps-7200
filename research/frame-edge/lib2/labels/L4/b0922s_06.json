@@ -1,0 +1,26 @@
+{
+  "id": "b0922s_06",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 8.0,
+    "lo": 7.6,
+    "hi": 8.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols 0-7 (R/G 2.3, B/G 0.55). Night portrait: the edge is visible only where the sky is (rows ~5-105), and there it is a sharp vertical line with col 7 fully base and col 8 fully sky. Below the horizon the scene is black at base value and the edge cannot be seen, so no tilt measurable"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky in rows ~5-37 reaches column 427 (G 23-26 vs base 29); below that the tree silhouette and night scene are at base value but the sky rows show no base at the border"
+  },
+  "frame_note": "night flash portrait; most of the frame is at base density"
+}

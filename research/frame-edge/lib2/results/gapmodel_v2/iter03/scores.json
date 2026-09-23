@@ -1,0 +1,152 @@
+{
+ "split": "dev",
+ "side": {
+  "n": 152,
+  "correct": 150,
+  "accuracy": 0.987,
+  "false_base": 0,
+  "missed": 1,
+  "refused": 1,
+  "edge_n": 60,
+  "edge_mae_cols": 0.195,
+  "edge_p90_cols": 0.479,
+  "edge_max_cols": 0.995,
+  "edge_bias_cols": 0.069,
+  "edge_mae_units": 0.157,
+  "confusion": {
+   "edge": {
+    "edge": 60,
+    "picture_to_border": 1,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 1,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 2,
+    "picture_to_border": 77,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 11,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 63,
+  "ok": 61,
+  "bad": 1,
+  "refused": 1,
+  "sign_errors": 0,
+  "accuracy": 0.968,
+  "du_mae_units": 1.03,
+  "du_p90_units": 0.395
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.987,
+   "edge_mae_cols": 0.195,
+   "n": 152
+  }
+ },
+ "per_roll": {
+  "b0920": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.226,
+   "n": 7
+  },
+  "b0921a": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.197,
+   "n": 21
+  },
+  "b0921b": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.194,
+   "n": 26
+  },
+  "b0921c": {
+   "accuracy": 0.98,
+   "edge_mae_cols": 0.191,
+   "n": 51
+  },
+  "b0922b": {
+   "accuracy": 0.964,
+   "edge_mae_cols": 0.253,
+   "n": 28
+  },
+  "b0922s": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.11,
+   "n": 19
+  }
+ },
+ "worst": [
+  "b0922b_06 move none (+0.0 u) vs truth -54.4 u <-",
+  "b0922b_06 left missed 63.8 cols of base"
+ ],
+ "label_free": {
+  "pairs": {
+   "n": 358,
+   "both_edge": 99,
+   "state_changes": 50,
+   "mae_cols": 0.283,
+   "p90_cols": 0.48,
+   "over_1_5": 1
+  },
+  "dups": {
+   "n": 90,
+   "state_changes": 2,
+   "mae_cols": 0.151,
+   "over_1": 0
+  },
+  "ladder": {
+   "left": {
+    "found": 0,
+    "of": 0
+   },
+   "right": {
+    "found": 0,
+    "of": 0
+   }
+  },
+  "mirror": {
+   "state_changes": 0,
+   "mae_cols": 0.0,
+   "over_0_5": 0
+  }
+ },
+ "seconds_per_frame": 0.0458
+}

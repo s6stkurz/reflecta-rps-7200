@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_69", "labeller": "L3", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hydrangea/fence runs to col 0, no plateau"},
+  "right": {"state": "edge", "x": 410.5, "lo": 410.0, "hi": 411.0,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "base cols 411-427 (R/G 2.2, B/G 0.53; 88-89 near the edge falling to ~82 at 427 with x-falloff). Col 410 reads mostly base beside the bright/mid picture (top, lower-middle) but mostly picture beside the dark door (middle bands), so the crossing wanders 410.0-410.9; bottom rows have cream pavement ~85-88, nearly base level, crossing uncertain there. Small dark patch at col 427 in the top ~10% of rows only: not full height, not taken as a neighbour edge"},
+  "frame_note": ""
+}

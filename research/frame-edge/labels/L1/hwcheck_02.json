@@ -1,0 +1,26 @@
+{
+  "id": "hwcheck_02",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage/road to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 425.6,
+    "lo": 425.1,
+    "hi": 426.0,
+    "outer": null,
+    "x_top": 425.1,
+    "x_bottom": 426.0,
+    "note": "base plateau 81-82 at 426-427, all bands equal; col 425 partial, more base at top (78) than bottom (27) -> slight tilt"
+  },
+  "frame_note": ""
+}

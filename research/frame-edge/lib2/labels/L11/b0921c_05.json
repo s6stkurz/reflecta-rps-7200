@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_05", "labeller": "L11", "view": "A",
+  "left":  {"state": "edge", "x": 70.3, "lo": 70.0, "hi": 71.0,
+            "outer": 53.2, "x_top": 70.0, "x_bottom": 70.9,
+            "note": "gap inside the frame: base columns 54-69 (R/G 2.20, B/G 0.53), sharp on both sides. This frame's picture starts at ~70, slightly tilted (column 70 ~4% base at the top, ~86% at the bottom). Neighbour's picture occupies 0-53, its boundary ~54.0 at the top to ~53.0 lower down"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture runs to column 427"},
+  "frame_note": "two partial pictures: neighbour 0-53 (54 cols), this frame 70-427 (358 cols)"
+}

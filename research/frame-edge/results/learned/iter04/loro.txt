@@ -1,0 +1,27 @@
+174 images, 7072236 pixels, 23 features, 0.007 base  [51.5 s]
+  hold out bw0910   px  617991  base 0.542  pic 1.000  | sides 13/16  refused 0 false-base 0 missed 3 edge MAE 0.065
+       bw0910_01 left: picture_to_border vs edge 3.5
+       bw0910_04 left: picture_to_border vs edge 7.0
+       bw0910_05 left: picture_to_border vs edge 1.8
+  hold out r0909    px  638270  base 0.993  pic 0.998  | sides 20/20  refused 0 false-base 0 missed 0 edge MAE 0.112
+  hold out r0911    px 1657217  base 0.977  pic 0.893  | sides 49/55  refused 5 false-base 0 missed 1 edge MAE 0.108
+       r0911_03 left: refuse vs picture_to_border
+       r0911_05 left: refuse vs picture_to_border
+       r0911_07 left: picture_to_border vs edge 2.4
+       r0911_08 right: refuse vs picture_to_border
+       r0911_16 left: refuse vs edge 0.2
+       r0911_18 right: refuse vs picture_to_border
+  hold out r0914    px 1881960  base 0.894  pic 0.998  | sides 50/54  refused 1 false-base 0 missed 3 edge MAE 0.039
+       r0914_17 right: refuse vs edge 418.3
+       r0914_18 right: picture_to_border vs edge 423.0
+       r0914_20 left: picture_to_border vs edge 103.3
+       r0914_34 right: picture_to_border vs edge 426.4
+  hold out stage3   px  235980  base 1.000  pic 0.999  | sides 6/6  refused 0 false-base 0 missed 0 edge MAE 0.004
+  hold out strip3   px  177282  base 1.000  pic 1.000  | sides 6/6  refused 0 false-base 0 missed 0 edge MAE 0.0
+  hold out strip6   px  176364  base 0.889  pic 1.000  | sides 5/6  refused 0 false-base 0 missed 1 edge MAE 0.0
+       strip6_02 left: picture_to_border vs edge 11.8
+  hold out x0920    px 1687172  base 1.000  pic 0.987  | sides 28/30  refused 2 false-base 0 missed 0 edge MAE 0.162
+       x0920_55 left: refuse vs picture_to_border
+       x0920_64 left: refuse vs picture_to_border
+  LORO total {'sides': 193, 'correct': 177, 'refused': 8, 'false_base': 0, 'missed': 8, 'acc': 0.917}
+final {'base_recall': 0.994, 'picture_recall': 0.9923, 'balanced': 0.9931} -> /private/tmp/claude-501/-Users-stefan-kurzella-github-reflecta-rps-7200-1/164a69cb-a659-4b59-949c-ad12356bd196/scratchpad/w11.json

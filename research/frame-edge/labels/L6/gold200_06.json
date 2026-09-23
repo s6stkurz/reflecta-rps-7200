@@ -1,0 +1,26 @@
+{
+  "id": "gold200_06",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base plateau; cols 0-3 slightly lighter in bottom band only (b4 ~25), picture"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "picture (flowers) to border"
+  },
+  "frame_note": ""
+}

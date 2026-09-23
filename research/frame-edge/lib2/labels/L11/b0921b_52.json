@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_52", "labeller": "L11", "view": "B",
+  "left":  {"state": "edge", "x": 17.1, "lo": 17.0, "hi": 18.7,
+            "outer": 3.4, "x_top": 17.9, "x_bottom": 18.7,
+            "note": "base columns 4-16 (R/G 2.20, B/G 0.53) between a neighbour sliver 0-3 (R/G 2.5, picture) and this frame. The frame edge is sharp but bowed, not straight: column 17 is ~87% base at the very top, ~5% at mid-height, and fully base at the bottom where column 18 is ~67% base; x_top/x_bottom give the ends, x the mid-height value. Same frame and same bow as b0921b_04. Neighbour boundary ~3.0 mid-lower, ~3.8-4.0 elsewhere, low contrast (neighbour picture reads 60-90)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage runs to column 427"},
+  "frame_note": ""
+}

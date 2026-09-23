@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_39", "labeller": "L9", "view": "A",
+  "left":  {"state": "edge", "x": 117.8, "lo": 117.2, "hi": 118.3,
+            "outer": 96.3, "x_top": 117.3, "x_bottom": 118.2,
+            "note": "interior gap: base 96/97-117 (94-96, R/G 2.2, B/G 0.55). Frame is the right part (118-427) vs neighbour 0-95. Picture beside the edge is a light backdrop at only ~74 on the table (low contrast, similar ratio), so the step 96->74 at 117/118 is sharp but its sub-column position is less certain; slight tilt 117.3 top to 118.2 bottom. Outer wavers 96.0-97.0 with height, ~96.2 at mid-height"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figure and backdrop run to 428"},
+  "frame_note": "gap at 96-118 inside the frame, found in the 1:1 thumbnail"
+}

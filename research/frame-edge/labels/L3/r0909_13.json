@@ -1,0 +1,26 @@
+{
+  "id": "r0909_13",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dense, faint picture (ironwork) runs to col 0; table 2-6, no plateau"
+  },
+  "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate: cols ~148-427 read 98 flat in every band (white/neutral in A, black in B). Film end is at roughly col 148 from the thumbnail (outside the 64-col crop, not measured); no base seen between picture and film end"
+  },
+  "frame_note": "end of strip: film covers only the left third"
+}

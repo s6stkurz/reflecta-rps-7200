@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_66",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 105.5,
+    "lo": 105.0,
+    "hi": 106.1,
+    "outer": 86.9,
+    "x_top": 105.05,
+    "x_bottom": 106.1,
+    "note": "interior gap: base cols 87-104 (R/G 2.2, B/G 0.55, G 30), neighbour picture 0-86 on the left. Inner edge tilted: col 105 ~5% base at top, ~30% at rows 100-140, ~65% at rows 140-240, base in rows 260+. Outer: ~87.5 in rows 0-80 (neighbour content near base there), 86.9 in rows 80-160, 87.0 at the bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tree/hair run to 428"
+  },
+  "frame_note": "two parts: neighbour ~87 cols, frame 105-427 (~323 cols)"
+}

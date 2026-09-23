@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_52",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "The gap starts at ~97.8 but its far side cannot be seen. Neighbour frame (night sky over trees) on the left ends in a sharp vertical line at ~97.8 (that is the outer boundary), visible only in the top ~50 rows where its sky is denser than base. From 98 to ~180 everything reads base level and base ratio (raw 65-68/30/17, R/G 2.2, B/G 0.56): base and this frame's unexposed night grass are indistinguishable, no step anywhere in 98-150. Grass texture only emerges gradually ~180-190. The frame would start ~115 if the gap matched the others on this roll (~17 cols), but nothing visible confirms it."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "flash-lit grass and figure run to column 427"
+  },
+  "frame_note": "Neighbour part 0-98 on the left, this frame on the right; gap-to-picture boundary invisible because the scene is at base density. outer (neighbour edge) ~97.8."
+}

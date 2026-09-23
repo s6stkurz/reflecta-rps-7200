@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_10",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 86.9,
+    "lo": 86.4,
+    "hi": 87.6,
+    "outer": 69.9,
+    "x_top": 86.4,
+    "x_bottom": 87.6,
+    "note": "gap deeper than the crop: base cols ~70-86 (R/G 2.2, B/G 0.54), neighbour picture cols 0-69 on the left. Frame edge sharp but not quite straight: ~86.4 at top, 86.7 upper-mid, 87.0-87.1 lower, 87.9 in the bottom band. Outer boundary ~70.4 at top to ~69.5 lower down"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "purple cloth / scene runs to column 428"
+  },
+  "frame_note": "interior gap at cols ~70-86; the frame is the right part (341 picture columns vs 70)"
+}

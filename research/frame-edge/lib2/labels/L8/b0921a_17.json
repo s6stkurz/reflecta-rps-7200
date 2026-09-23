@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_17", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 18.0, "lo": 17.3, "hi": 19.6,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "LOW CONFIDENCE. Very underexposed forest: the dark foliage reads the same as base (~90, G~29, R/G 2.3, B/G 0.55), so there is no plateau step. Cols 0-17 are featureless over the full height (at most 1-3 dense pixels per band); from col 18 the scene's bright leaf specks appear at once in the middle/lower bands (counts 0-1 -> 4-8 per band), consistent with a straight frame edge at ~18.0. Top bands only show detail from ~21, so the edge could be up to ~19.5."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "leaf highlights run right up to col 427"},
+  "frame_note": "whole frame sits at base-likeness ~90; edges can only be inferred from where picture detail begins"
+}

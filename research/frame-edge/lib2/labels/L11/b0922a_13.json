@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_13", "labeller": "L11", "view": "A",
+  "left":  {"state": "edge", "x": 26.3, "lo": 25.9, "hi": 27.2,
+            "outer": 5.5, "x_top": null, "x_bottom": null,
+            "note": "featureless full-height strip 7-26 (R/G 2.2, B/G 0.56, raw ~[60,27,15]) between a neighbour sliver 0-4 (R/G 2.55, B/G 0.47, picture) and this frame. The frame's dark forest has base's value and ratio, so the base-to-picture boundary is seen only where leaves meet it: a sharp straight vertical at ~26.3 in the top ~50 rows, and a weaker step at 27 around rows 220-250. Neighbour boundary ~6.8 in the top 50 rows, ~5.0 below"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trees, building and figure run to column 427"},
+  "frame_note": "hard: base here reads ~75, below picture highlights and equal to the dark foliage; gap width ~20 cols is consistent with the other gaps on this strip"
+}

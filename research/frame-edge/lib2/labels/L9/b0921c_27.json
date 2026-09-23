@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_27", "labeller": "L9", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grey backdrop runs to column 0, no plateau (35, not base)"},
+  "right": {"state": "edge", "x": 350.0, "lo": 349.0, "hi": 350.7,
+            "outer": 367.1, "x_top": 350.1, "x_bottom": 349.0,
+            "note": "interior gap: base 350-366 (89-92, R/G 2.25, B/G 0.53). Frame is the left part (0-349) vs neighbour 367-427. Edge ~350.0 at the top and mid-height, 350.3-350.7 in rows 53-113, drifting to 349.0 over the bottom quarter. Outer ~366.0 in the top rows, 367.0-367.6 below"},
+  "frame_note": "gap at 350-367 on the right, deeper than the crop's first columns"
+}

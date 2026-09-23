@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_31", "labeller": "L9", "view": "A",
+  "left":  {"state": "edge", "x": 16.0, "lo": 15.7, "hi": 16.3,
+            "outer": 2.0, "x_top": null, "x_bottom": null,
+            "note": "clean: base 2-15 at 94-96 (R/G 2.3, B/G 0.53), col 16 is picture (13); neighbour picture sliver in cols 0-1 (76-80, R/G 2.5), outer ~2.0; slight rounding at the bottom corner"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "flower bed texture runs to 428, no plateau"},
+  "frame_note": ""
+}

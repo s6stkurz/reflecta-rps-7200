@@ -1,0 +1,8 @@
+b0921a_17: L picture_to_border vs edge; move off +19.7 u
+b0922a_01: L picture_to_border vs edge; move off +7.6 u
+b0922a_02: L picture_to_border vs edge; move off +20.5 u
+b0922a_12: L picture_to_border vs edge; move off +40.1 u
+b0922a_14: L picture_to_border vs edge; move off +12.6 u
+b0922a_15: L picture_to_border vs edge; move off +9.0 u
+b0922b_10: L picture_to_border vs edge; move off +54.6 u
+b0922s_09: L picture_to_border vs edge; move off +10.4 u

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_14",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "brown wall to col 0; col 0 only slightly raised (b1 92 at top corner, other bands +1..+5): no full-height plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and label card to col 427, flat ~57"
+  },
+  "frame_note": ""
+}

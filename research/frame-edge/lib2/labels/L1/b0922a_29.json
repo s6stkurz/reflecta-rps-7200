@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_29", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 60.2, "lo": 59.9, "hi": 60.9,
+            "outer": 39.6, "x_top": null, "x_bottom": null,
+            "note": "gap at 40-59, uniform 81-85 in all 8 bands, R/G 2.2 B/G 0.55. Frame edge sharp at 60.0 in the top band; below it the picture beside the gap is near-base (76-84), so the line is placed by the top band and by texture in view B starting at 60-61. Neighbour (tree bark) boundary leans: ~40.7 top, ~39.1 in the lower half"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figure/foliage to col 427"},
+  "frame_note": "gap at 40-60 is inside the magnified crop; frame is the right part"
+}

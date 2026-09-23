@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_36",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 69.1,
+    "lo": 68.9,
+    "hi": 69.6,
+    "outer": 47.6,
+    "x_top": 69.0,
+    "x_bottom": 70.0,
+    "note": "interior gap: base cols 48-68 (G 29, R/G 2.22, B/G 0.55), neighbour picture 0-47 (dense, white in B). Inner edge 69.0-69.1 in rows 0-180, then col 69 goes 30% -> 90% base over rows 180-260, 70.1 at rows 260+. Backdrop beside it is only ~25% below base (G 22-25 vs 29) but the line is straight. Outer edge ~48.8 in rows 0-60, 47.6-47.9 through the middle, ~48.0 at the bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop/trousers run to 428"
+  },
+  "frame_note": "frame = right part (~359 cols) vs neighbour ~48"
+}

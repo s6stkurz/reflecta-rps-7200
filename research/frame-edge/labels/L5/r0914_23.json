@@ -1,0 +1,26 @@
+{
+  "id": "r0914_23",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor/wall run to column 0 (~36), no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 409.8,
+    "lo": 409.5,
+    "hi": 410.1,
+    "outer": null,
+    "x_top": 409.9,
+    "x_bottom": 409.6,
+    "note": "clean sharp base from 410 (~95) against dark panel ~20; col 409 partial (~20% base), a bit more at the bottom (b4 57)"
+  },
+  "frame_note": ""
+}

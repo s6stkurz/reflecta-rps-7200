@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_58",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 150.0,
+    "lo": 148.8,
+    "hi": 152.2,
+    "outer": 131.8,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "gap deeper than the crop. Neighbour (jeans) ends sharply at ~131.8 (132.5 top, 131.5 bottom). Base plateau cols 133-148 is flat (G std ~1). The frame is very dark foliage whose shadows are at base density (same value and ratio), so the base/picture boundary has almost no contrast: a faint full-height denser band starts at ~149 and the first picture specks appear at col 151-152. Placed at 150 with a wide interval"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage with sky specks runs to column 428; no plateau"
+  },
+  "frame_note": "interior gap at cols ~132-149; the frame is the right part (~278 columns vs 132). The frame side of the gap is low contrast: dark foliage reads like base"
+}

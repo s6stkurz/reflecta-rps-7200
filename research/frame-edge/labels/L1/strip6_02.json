@@ -1,0 +1,26 @@
+{
+  "id": "strip6_02",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 11.5,
+    "lo": 10.9,
+    "hi": 12.1,
+    "outer": null,
+    "x_top": 11.0,
+    "x_bottom": 12.0,
+    "note": "base cols 0-10 (76-82, all bands equal), sharp straight line clearly visible in both views; adjacent dark hair is nearly as base-like (b1/b2/b4 ~78), so table only separates in b3 (crossing ~11.7); x from the visible line, slight tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "face/hair to col 427"
+  },
+  "frame_note": ""
+}

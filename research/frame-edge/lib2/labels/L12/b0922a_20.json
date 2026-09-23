@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_20",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage runs to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 393.3,
+    "lo": 393.0,
+    "hi": 393.9,
+    "outer": 414.0,
+    "x_top": 394.0,
+    "x_bottom": null,
+    "note": "base cols 394-411 (G 30, R/G 2.27, B/G 0.53), neighbour picture from ~413.5. Inner edge 394.0 at rows 20-40, 393.7 at 60-80, ~393.3 at rows 80-140; below row ~140 the picture beside the gap is base-level, edge hidden. Outer edge 412.0-412.3 at rows 0-40, 413.0-413.2 at 40-80, ~414.0 through the middle, ~413.6 at the bottom"
+  },
+  "frame_note": "frame = left part (~393 cols); same walk as b0922a_27 (gap ~57 cols further right here)"
+}

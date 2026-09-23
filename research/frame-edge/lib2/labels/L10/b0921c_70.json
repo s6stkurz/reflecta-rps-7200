@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_70",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 83.3,
+    "lo": 82.9,
+    "hi": 83.8,
+    "outer": 62.8,
+    "x_top": 83.1,
+    "x_bottom": 84.4,
+    "note": "gap deeper than the crop: base cols ~63-82 (raw 63-64/29/16, R/G 2.2, B/G 0.55). Frame edge sharp where the picture is dense (rows 100-175: 83.1-83.4), low contrast where hydrangea/sky is pale (bands 1,3,7 read 79-84 vs base 86, but ratio 2.5 marks them as picture). Tilted: ~83.1 top, ~83.8 lower, ~84.5 bottom rows. Neighbour edge ~64.0 top rows, ~62.6-63.0 lower."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "house wall/hydrangeas run to column 427"
+  },
+  "frame_note": "Interior gap at 63-82: neighbour 63 cols on the left, this frame ~344 cols on the right."
+}

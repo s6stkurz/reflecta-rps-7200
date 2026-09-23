@@ -1,0 +1,10 @@
+{
+  "id": "b0920_01", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 2.8, "lo": 2.5, "hi": 3.3,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "black sliver cols 0-2, full height, sharp (likeness 102-103, R/G 2.3-2.4, B/G 0.5). Col 2 reads 86/83/101/101 by band; band 3 steps cleanly at 3.0. In band 4 the dark floor beside it reads 94-99 so the table cannot place it there; the positive shows the same ~3-col black strip down to the bottom, a touch wider in the last rows."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "shadowed wall ramps up gradually (likeness 79 -> 85 over 418-427, 83% of base counts) with the ceiling diagonal and objects running to col 427; no plateau or step"},
+  "frame_note": "uint16 frame; whole thumbnail checked: no interior gap"
+}

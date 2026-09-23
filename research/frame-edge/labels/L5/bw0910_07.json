@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_07",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 0.3,
+    "lo": 0.1,
+    "hi": 1.3,
+    "outer": null,
+    "x_top": 1.3,
+    "x_bottom": 0.4,
+    "note": "very thin sliver, not straight. Top band: col 0 full base (93), col 1 27%, so ~1.3. Middle bands: col 0 only ~20% (grey in B), so ~0.2. Bottom band ~0.4 (col 0 44%). Black in B only in the top third"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and people (dark silhouette) run to 428, no black band"
+  },
+  "frame_note": "left sliver is a fraction of a column over most of the height"
+}

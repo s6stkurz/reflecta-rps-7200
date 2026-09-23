@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_50", "labeller": "L2", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "grass/arm picture runs to column 0"},
+  "right": {"state": "edge", "x": 207.0, "lo": 206.7, "hi": 207.5,
+            "outer": 232.0, "x_top": 207.5, "x_bottom": 206.8,
+            "note": "interior gap deeper than the crop: base cols 207-231 (R/G 2.22, B/G 0.55, row std ~1). This frame's grass ends ~207.5 in the top rows (grass there is pale on the negative, less sure) and 206.8-207.0 below. Neighbour (dark pub interior, near base value) starts at 232.0: texture std jumps 1.2 -> 3.3 there and the bench edge in the bottom rows starts sharply at 232. Sensor hairlines at 213-215 and a faint one at 230 are not picture"},
+  "frame_note": "gap at ~207-232; left part ~207 cols vs right part ~196 cols, so the left part is the frame (11 cols wider; the tie rule would also pick left)"
+}

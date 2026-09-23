@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_56", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 207.1, "lo": 206.4, "hi": 207.8,
+            "outer": 187.7, "x_top": 206.3, "x_bottom": 207.6,
+            "note": "MID-FRAME gap: black base cols ~188-206 (G~33, R/G 2.2, B/G 0.55-0.58, 95-98 on the table, full height). This frame (palace lawn, cols ~207-427, ~221 cols) starts sharply against the sky at the top (206.3); lower down the dark grass is only ~14 points below base so the boundary is softer (~207.6). Outer: the neighbour (street) ends at ~187.7 in the top bands; lower down its dark lamppost/tree region is at base level, so outer is defined only by the upper half."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "lawn, sky and a pale object run off the right border"},
+  "frame_note": "two partial pictures: left 0-187 (~188 cols) vs right 207-427 (~221 cols); right is the frame. A light vertical scan line near col 213-215 inside the frame is not an edge."
+}

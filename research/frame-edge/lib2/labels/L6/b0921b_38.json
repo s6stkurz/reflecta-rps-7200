@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_38", "labeller": "L6", "view": "A",
+  "left":  {"state": "edge", "x": 17.2, "lo": 16.9, "hi": 17.5,
+            "outer": null, "x_top": 16.1, "x_bottom": 17.3,
+            "note": "base cols 0-15 (~95, R/G 2.3, B/G 0.52). Edge not vertical: col 16 is picture in the top ~30 rows, ~90% base by row 70, and col 17 ~20-40% base below row 100. The bend is mostly in the top quarter"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bright canopy/path to col 427, likeness ~76, R/G 2.5 (not base), no plateau"},
+  "frame_note": "no internal gap in the thumbnail"
+}

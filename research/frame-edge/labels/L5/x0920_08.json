@@ -1,0 +1,26 @@
+{
+  "id": "x0920_08",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 23.6,
+    "lo": 23.2,
+    "hi": 24.1,
+    "outer": 4.3,
+    "x_top": 24.0,
+    "x_bottom": 23.3,
+    "note": "REVERSED POLARITY: the inter-frame gap here is BLACK in view A (reads 0-1) and white in B, full height, uniform, straight sharp edges both sides, cols 5-22. Scene reads as a natural positive in A (dark figure on snow), so this looks like reversal film where unexposed = opaque. Labelled the gap as base. Inner edge tilted ~24.0 top to ~23.3 bottom. outer (neighbour picture | gap) ~4.9 top, ~4.1 bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright sky/snow and buildings run to 428; no opaque (or clear) full-height band"
+  },
+  "frame_note": "polarity of this film is opposite to the instructions: gap is black in A. Labelled the physical inter-frame gap as base; confirm how x0920 should be treated"
+}

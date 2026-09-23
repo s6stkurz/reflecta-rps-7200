@@ -1,0 +1,26 @@
+{
+  "id": "r0911_18",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark (white wall in B) runs to column 0, flat ~8, no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "diagonal light line 411->426 top-to-bottom is a scene element (wall corner, black line in B), strongly tilted, only 66-80; region beyond reads ~32, far below base"
+  },
+  "frame_note": ""
+}

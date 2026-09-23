@@ -1,0 +1,26 @@
+{
+  "id": "r0911_17",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 14.4,
+    "lo": 14.0,
+    "hi": 14.8,
+    "outer": 8.5,
+    "x_top": 16.5,
+    "x_bottom": 14.05,
+    "note": "base strip ~cols 9-14 reads 96-97 in all four bands; inner edge sharp: b1 16.5, b2 14.7, b3 14.15, b4 14.05 (top bends right, same lean as r0911_14/_20); outer (neighbour picture, gilt/beaded strip cols 1-7) is softer: b1 ~10.1, b2 8.5, b3 8.3, b4 8.4. Narrow gap (~6 cols); alternative reading is a scene shadow beside a picture-frame moulding"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey wall reaches 428 (73-78), no plateau"
+  },
+  "frame_note": "hard: narrow gap with textured strip beyond it"
+}

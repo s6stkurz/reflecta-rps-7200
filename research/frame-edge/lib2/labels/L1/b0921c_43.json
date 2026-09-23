@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_43", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 187.2, "lo": 186.7, "hi": 187.7,
+            "outer": 166.0, "x_top": 186.8, "x_bottom": 187.6,
+            "note": "internal gap: base cols 166-186 (~96, R/G 2.2 B/G 0.55). Frame picture beside it is a light backdrop (~72), so contrast is modest; col 187 ~30% base, top band already mixed at 186. Neighbour picture cols 0-165 (col 165 mixed in the lower bands)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop and figure to col 427, ~20"},
+  "frame_note": "gap inside the frame at 166-187; frame is the right part (240 cols vs 166)"
+}

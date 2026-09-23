@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_05",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 68.7,
+    "lo": 68.2,
+    "hi": 69.2,
+    "outer": 43.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base plateau cols ~43-67 (flat, G std ~1, R/G 2.23, B/G 0.53). The frame beside it is a dark night scene at base value, so the edge is placed where picture structure starts on a straight line: the bench (rows ~264-278) starts at 68.75, and bands 6-8 drop from col 68. Upper part of the edge has no contrast. Neighbour picture ends ~43.0 (43.4 top, 42.6-42.9 lower)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright wall (dense negative) runs to column 428"
+  },
+  "frame_note": "same scene as b0920_05"
+}

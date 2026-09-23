@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_01", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 54.0, "lo": 53.6, "hi": 54.5,
+            "outer": 36.9, "x_top": 53.7, "x_bottom": 54.4,
+            "note": "gap cols 37-53 (R/G 2.2, B/G 0.54), neighbour picture cols 0-36 (37 cols) vs this frame 54-427 (374 cols). Col 53 reads 76/90/101/99 and col 54 18/8/25/48, so the bottom sits ~0.7 col further right. Outer ~37.0 mid-height, ~37.4 in the top band."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427, likeness ~33"},
+  "frame_note": "gap lies inside the crop at 37-53; the frame is the right-hand part"
+}

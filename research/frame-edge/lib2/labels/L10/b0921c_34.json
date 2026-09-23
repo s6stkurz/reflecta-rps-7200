@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_34",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 34.3,
+    "lo": 33.9,
+    "hi": 34.8,
+    "outer": 13.1,
+    "x_top": 34.1,
+    "x_bottom": 35.6,
+    "note": "base cols ~13-33 (raw 58-61/27-28/15-16, R/G 2.15-2.2, B/G 0.56; only ~80 on the table because picture highlights are brighter; shows dark slate in view B). Frame edge against the grey backdrop is sharp: ~34.1 in the upper half, ~34.5-34.8 lower, 35.0 near the bottom and ~35.8 in the bottom rows (corner). Neighbour (very dense) edge ~14.1 top, ~13.0 through the middle, ~13.7 bottom."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trousers/backdrop run to column 427"
+  },
+  "frame_note": "Left gap at 13-33; neighbour 13 cols, this frame ~393 cols."
+}

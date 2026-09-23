@@ -1,0 +1,10 @@
+Fixed before any test-split score was seen, 2026-09-23 02:59 CEST.
+
+ensemble iter01 = vote of changepoint, chroma, stepline, gapmodel (modules as on disk:
+their final dev iterations, iter04 each). Two votes to stand, edges within 1.0 column
+cluster, ties between an edge pair and a border pair go to the edge. No fitted parameters.
+
+Left out: texture (13 wrong dev sides, overlapping the others), baserun (28 refusals),
+learned (LORO 0.917, shares misses with the members). All are still scored on test, alone.
+
+Test split: gold200 (17) + hwcheck (3) -- scored once, by run.py --split test.

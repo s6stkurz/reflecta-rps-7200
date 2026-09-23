@@ -1,0 +1,26 @@
+{
+  "id": "r0914_28",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "room reflected in mirror runs to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 412.0,
+    "lo": 411.6,
+    "hi": 412.4,
+    "outer": null,
+    "x_top": 412.35,
+    "x_bottom": 411.3,
+    "note": "base 413-427 ~95, sharp straight line; col 412 b1 61%, b2 82%, b3/b4 100%; col 411 ~8-12% in b1-b3, ~66-71% in b4 -> tilt ~1 col, bottom further left; b4 has dark-blue mirror rim (clear-ish, ~50) beside the edge"
+  },
+  "frame_note": "round mirror selfie (same scene as x0920_64)"
+}

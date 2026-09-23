@@ -1,0 +1,26 @@
+{
+  "id": "r0911_05",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark blue wall (clear in the negative, ~87) reaches column 0 with no line or step; not base"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall right of doorway (~90) reaches 428, no line or step; faint diagonal scratch lower right"
+  },
+  "frame_note": "hard: dark wall almost base-bright on both sides; no boundary seen anywhere"
+}
