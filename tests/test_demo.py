@@ -754,3 +754,164 @@ def test_a_pass_read_bottom_up_files_bytes_that_agree_with_its_record(tmp_path):
                        **capture)
     _, verdict = library.reconstruct(out)
     assert verdict.startswith("identical"), verdict
+
+
+# -- a second roll in one session reads other pictures ------------------------
+
+
+def _shown(frames):
+    """Which picture each frame showed, by its prescan's bytes."""
+    return [f.prescan.tobytes() for f in frames]
+
+
+def test_the_first_roll_is_the_one_it_always_was(tmp_path):
+    for n in range(5):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=1) as a:
+        first = _shown(a.scan_roll(frames=5, dry_run=True))
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=2) as b:
+        again = _shown(b.scan_roll(frames=5, dry_run=True))
+    assert first == again, "a fresh session opens on the library's own strip"
+
+
+def test_a_second_roll_reads_a_new_strip_and_fresh_pictures_first(tmp_path):
+    """Stefan: another roll in the same session reads other pictures. With
+    more pictures than one strip holds, the second strip starts from the ones
+    not shown yet."""
+    for n in range(8):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=3) as s:
+        s.LAST_POSITION = 3                    # a four-frame strip of eight
+        first = _shown(s.scan_roll(frames=4, dry_run=True))
+        for _ in range(4):
+            s.retreat()
+        second = _shown(s.scan_roll(frames=4, dry_run=True))
+    assert len(set(first)) == len(set(second)) == 4
+    assert not set(first) & set(second), "the unseen four come first"
+
+
+def test_a_new_strip_repeats_pictures_only_in_other_places(tmp_path):
+    for n in range(5):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=4) as s:
+        first = _shown(s.scan_roll(frames=5, dry_run=True))
+        for _ in range(5):
+            s.retreat()
+        second = _shown(s.scan_roll(frames=5, dry_run=True))
+    assert sorted(first) == sorted(second), "the same five pictures"
+    assert first != second, "laid out differently"
+
+
+def test_scanning_chosen_frames_scans_the_strip_that_was_walked(tmp_path):
+    """The contact sheet's positions belong to the pictures it showed. A roll
+    commissioned from it must not find other ones in the transport."""
+    for n in range(5):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=5) as s:
+        s.scan_roll(frames=1, dry_run=True).__next__()     # an earlier roll
+        for _ in range(1):
+            s.retreat()
+        walked = _shown(s.scan_roll(frames=5, dry_run=True))
+        for _ in range(5):
+            s.retreat()
+        chosen = list(s.scan_roll(frames=5, only=(1, 3), dry_run=True))
+    assert [f.prescan.tobytes() for f in chosen] == [walked[1], walked[3]]
+
+
+# -- the pictures a later roll can draw on: every library, one per photograph -
+
+
+def _photograph(seed, h=60, w=90):
+    """A picture with structure across and down, so a shift is still it."""
+    rng = np.random.default_rng(seed)
+    base = rng.random((h // 6, w // 6, 3))
+    big = np.kron(base, np.ones((6, 6, 1)))
+    return (big * 50000 + 2000).astype(np.uint16)
+
+
+def _scan_only(root, seed, shift=0, raw=True):
+    """An entry with no stored prescan: only a 300 dpi scan of ``seed``'s picture."""
+    from rps7200.direction import encode_index
+
+    image = np.roll(_photograph(seed), shift, axis=1)
+    h, w = image.shape[:2]
+    meta = {"resolution_dpi": 300, "channels": 3, "film": "negative",
+            "channel_order": ["R", "G", "B"], "width": w, "height": h,
+            "bytes_per_line": w * 2, "depth": 16}
+    extra = ({"raw": encode_index(image),
+              "raw_layout": {"format": "index", "bytes_per_line": w * 2,
+                             "line_stride": w * 2 + 2, "index_header": 2,
+                             "width": w, "lines": h, "channels": 3}}
+             if raw else {})
+    return library.save(image, meta, root=root, film=FilmNotes(frame=f"p{seed}"),
+                        **extra), image
+
+
+def test_the_libraries_beside_one_are_found_with_their_nested_ones(tmp_path):
+    from rps7200.demo import libraries_beside
+
+    first, second = tmp_path / "library", tmp_path / "library 2"
+    _scan_only(first, 1)
+    _scan_only(second, 2)
+    _scan_only(second / "600dpi", 3)
+    (tmp_path / "library-old").mkdir()
+    assert libraries_beside(first) == [first, second, second / "600dpi"]
+
+
+def test_one_photograph_scanned_twice_is_one_picture(tmp_path):
+    """Two scans of one frame differ by where the frame sat in the aperture."""
+    from rps7200.demo import group_pictures, picture_signature
+
+    a, _ = _scan_only(tmp_path, 7)
+    b, _ = _scan_only(tmp_path, 7, shift=12)
+    c, _ = _scan_only(tmp_path, 8)
+    labels = group_pictures([picture_signature(p) for p in (a, b, c)])
+    assert labels[0] == labels[1] != labels[2]
+
+
+def test_a_second_roll_draws_its_photographs_from_every_library(tmp_path):
+    first, second = tmp_path / "library", tmp_path / "library 2"
+    for n in range(2):
+        _walkable(first, f"e{n}", seed=n + 1)
+    twenty = _scan_only(second, 20)[0]
+    elsewhere = {twenty, _scan_only(second, 21)[0], _scan_only(second, 22)[0]}
+    again, _ = _scan_only(second, 20, shift=10)          # the same photograph again
+    with DemoScanner(root=first, speed=100000.0, seed=6,
+                     libraries=[first, second]) as s:
+        s.LAST_POSITION = 2
+        list(s.scan_roll(frames=2, dry_run=True))
+        for _ in range(2):
+            s.retreat()
+        list(s.scan_roll(frames=3, dry_run=True))
+        strip = s._strips["negative"]
+    assert len(strip) == 3
+    assert set(strip) <= elsewhere | {again}, "the three unseen photographs"
+    assert len([p for p in strip if p in (twenty, again)]) == 1, (
+        "one photograph appears once, whichever of its entries shows it")
+
+
+def test_an_entry_without_bytes_shows_its_own_picture(tmp_path):
+    """Nothing to decode, so its stored scan -- not another entry's picture."""
+    path, image = _scan_only(tmp_path, 9, raw=False)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    got = s._decode(path)
+    s.close()
+    assert got is not None and np.array_equal(got[0], image)
+    assert got[1]["raw"] is None, "and it files no bytes it does not have"
+
+
+def test_the_likenesses_are_kept_between_sessions(tmp_path, monkeypatch):
+    from rps7200 import demo
+
+    for n in range(3):
+        _scan_only(tmp_path / "lib", 30 + n)
+    cache = tmp_path / "demo" / "pictures.npz"
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+    assert cache.exists()
+    monkeypatch.setattr(demo, "picture_signature",
+                        lambda entry: pytest.fail("read again despite the cache"))
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+        assert len(s._signatures) == 3
