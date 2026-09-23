@@ -459,15 +459,27 @@ def load_tool(name: str):
     repo root on ``sys.path`` and runs. Tests still have to reach the functions
     inside them, and this is the only way in that does not turn the scripts into
     something they are not.
+
+    A tool that needs Tk -- the window -- skips the test where this Python has
+    none, as `test_gui.py` does for itself. GitHub's macOS runner is such a
+    Python, and a test that only borrows one pure function from the window
+    failed there rather than skipping.
     """
     import importlib.util
     from pathlib import Path
+
+    import pytest
 
     path = Path(__file__).resolve().parent.parent / "tools" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"tools_{name}", path)
     assert spec and spec.loader, f"cannot load {path}"
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as exc:
+        if exc.name in ("tkinter", "_tkinter"):
+            pytest.skip(f"tools/{name}.py needs Tk, and this Python has none")
+        raise
     return module
 
 
