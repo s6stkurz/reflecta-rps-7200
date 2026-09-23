@@ -599,6 +599,37 @@ def test_a_walk_with_only_its_roll_json_is_held_from_that(tmp_path,
     assert note["walked"] == 3
 
 
+def test_a_walk_whose_transport_stalled_is_held_frame_for_frame(
+        tmp_path, monkeypatch):
+    """One advance of the walk did not move: positions 5, 6, 6, 7, 8. Two of
+    its frames came back under one number, so `--approved` reported five
+    walked and held four, dropping walk frame 1's prescan without a word.
+    One walk numbers no two frames alike, and the window's sheet agrees."""
+    folder = tmp_path / "stall"
+    _prescans(folder, (1, 2, 3, 4, 5))
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "stall", "dry_run": True,
+        "settings": {"start_at": 1, "only": None, "prescan_resolution": 300},
+        "frames": [{"number": n, "transport_position": p,
+                    "prescan": f"prescan{n:02d}.tif"}
+                   for n, p in enumerate([5, 6, 6, 7, 8], start=1)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder)
+    assert note["walked"] == 5
+    assert sorted(held) == [5, 6, 7, 8, 9]
+    # each prescan is filled with 40 + its walk number
+    assert [int(held[n].reference[0, 0, 0]) - 40 for n in sorted(held)] == [
+        1, 2, 3, 4, 5]
+
+    gui = load_tool("gui")
+    shown = [r.number for r in gui.read_survey(folder)["results"]]
+    assert sorted(held) == shown, "the tool and the window disagree"
+
+
 def test_a_walk_whose_survey_cannot_be_read_is_refused(tmp_path):
     """Not quietly read from `roll.json` instead, and not held as nothing: a
     walk that cannot be read says so before the scanner is even opened."""

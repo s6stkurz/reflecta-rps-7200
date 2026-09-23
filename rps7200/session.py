@@ -476,22 +476,27 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
       its run puts it elsewhere. A misread counter looks like that: positions
       5, 5, 7 for frames counted 1, 2, 3 were frames 6, 6 and 8, two pictures
       under one number, and the run -- numbers counted once per advance, one
-      apart -- puts the middle one on 7. Only a frame that collided moves, and
-      only by its own run: the shift of a whole merged file belongs to one of
-      its runs, and moving by it filed a scan under a frame never scanned, then
-      pushed the frames it landed on along after it.
+      apart -- puts the middle one on 7. It moves by its own run: the shift
+      of a whole merged file belongs to one of its runs, and moving by it
+      filed a scan under a frame never scanned. In a file that is one run --
+      a walk, or a `roll.json` the tool wrote (:func:`_is_one_run`) -- a
+      frame such a move lands on is moved by the run's shift as well, round
+      after round, because one run numbered no two frames alike: an advance
+      that did not move, 5, 6, 6, 7, reads 6, 7, 8, 9 and says frames 3 and
+      4. In a merged file only a frame that collided moves; the frame it
+      lands on can be another run's, and pushing that one along filed it as
+      a frame never scanned.
 
-    Where the runs themselves put two frames on one place, both are kept
-    there and it is said. That is the film going over a place twice -- wound
-    back, or the strip put in again, between two rolls into one file -- and
-    both pictures are of that frame; no two numbers that kept them apart
+    Where two runs of a merged file put two frames on one place, both are
+    kept there and it is said. That is the film going over a place twice --
+    wound back, or the strip put in again, between two rolls into one file --
+    and both pictures are of that frame; no two numbers that kept them apart
     would both be true. A misread and a film that really went back look the
     same here, and so do a misread at either end of the session's
     `roll.json` and a roll of one frame, which this reads as the roll: it
-    keeps the place its own counter named; a `roll.json` the tool wrote is
-    one run (:func:`_is_one_run`). Nothing stored has any of it -- every
-    manifest under `rolls/` with positions has one shift throughout, 213
-    frames across 25 of them, checked 2026-09-23.
+    keeps the place its own counter named. Nothing stored has any of it --
+    every manifest under `rolls/` with positions has one shift throughout,
+    213 frames across 25 of them, checked 2026-09-23.
 
     ``start_at``, ``only`` and ``wanted`` carry no positions and are moved by
     the manifest's shift.
@@ -537,15 +542,33 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
         if i in own:
             numbers[i] = own[i]
             # Its run, and not the file's commonest shift, which in a merged
-            # file can be the other run's. No round again: a frame that did
-            # not collide is where its own position put it, whatever lands
-            # beside it.
+            # file can be the other run's.
             if held[own[i]] > 1 and i in run:
                 ran = moved(record.get("number"), run[i])
                 if isinstance(ran, int):
                     numbers[i] = ran
         elif "number" in record:
             numbers[i] = moved(record["number"], run.get(i))
+    # In one run, a frame moved off a collision can land where another's own
+    # position put it, one that collided with nothing -- an advance that did
+    # not move, 5, 6, 6, 7, puts frame 3 on 8, frame 4's place -- and one run
+    # numbered no two frames alike. So that frame takes the run's shift too,
+    # round after round until none is left; a frame taken off its own
+    # position never goes back, so it ends. Not in a merged file, where the
+    # frame landed on can be another run's: moved by this run's shift, it was
+    # filed as a frame never scanned, and pushed on the one it landed on.
+    while one_run:
+        taken: dict[Any, int] = {}
+        for n in numbers.values():
+            taken[n] = taken.get(n, 0) + 1
+        landed = [i for i in own if numbers[i] == own[i]
+                  and taken[own[i]] > 1
+                  and isinstance(moved(records[i].get("number")), int)
+                  and moved(records[i].get("number")) != own[i]]
+        if not landed:
+            break
+        for i in landed:
+            numbers[i] = moved(records[i]["number"])
 
     roll = manifest.get("roll") or "a roll"
     counted = [record.get("number") for record in records]
@@ -576,10 +599,15 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
             continue
         named = ", ".join(str(counted[i]) for i in sharing[:-1])
         both = "both" if len(sharing) == 2 else "all"
+        # One run cannot have gone over a place again between two rolls, and
+        # after the rounds above only frames it numbered alike share one.
+        why = ("the file numbers them alike, which one walk or one roll, "
+               "counting once per advance, never did" if one_run else
+               "the film went over that place again -- wound back, or the "
+               "strip put in again, between two rolls filed under one name "
+               "-- or a counter misread")
         say(f"frames {named} and {counted[sharing[-1]]} of {roll} are {both} "
-            f"frame {n} of the strip: the film went over that place again -- "
-            "wound back, or the strip put in again, between two rolls filed "
-            "under one name -- or a counter misread. Kept, "
+            f"frame {n} of the strip: {why}. Kept, "
             f"{both} as frame {n}; look at the pictures before trusting any "
             "of them")
     out = dict(manifest)
@@ -1586,9 +1614,10 @@ class ScanSession:
             # -- a file resumed under 8a9ba17 holds one shift per run -- and by
             # its own run's shift where that position is no place on a strip,
             # or gives a number another frame's does and the run puts it
-            # elsewhere; a roll that recorded none is numbered as the walk
-            # beside it was. What this reads is what gets written back, under
-            # "strip", for good.
+            # elsewhere, or, in a roll.json the tool wrote, which is one run,
+            # another frame was moved onto it; a roll that recorded none is
+            # numbered as the walk beside it was. What this reads is what gets
+            # written back, under "strip", for good.
             earlier = renumbered(earlier, fallback=self._walk_shift(out),
                                  say=lambda m: self._emit("log", text=m))
         manifest: dict[str, Any] = {

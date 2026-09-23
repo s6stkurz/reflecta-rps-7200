@@ -1005,6 +1005,20 @@ def test_a_roll_the_tool_wrote_reopens_as_one_run(tmp_path):
     assert len(said) == 1 and "frame 4 of t" in said[0], said
 
 
+def test_a_walk_whose_transport_stalled_reopens_every_prescan(tmp_path):
+    """One advance of a walk that did not move, 5, 6, 6, 7. Its frames 3 and
+    4 came back as two frame 8s: two Results the sheet ticks by one number,
+    so one of the two prescans could never be chosen on its own. One walk
+    numbers no two frames alike."""
+    folder = tmp_path / "stall"
+    _walk_beside(folder, [5, 6, 6, 7])
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert [r.number for r in out["results"]] == [6, 7, 8, 9]
+    assert len({r.seq for r in out["results"]}) == 4
+    assert len(said) == 2 and not any("two rolls" in s for s in said), said
+
+
 @pytest.mark.parametrize("positions, stale", [([72, 1, 2, 3], 1),
                                               ([0, 1, 72, 3], 3)])
 def test_a_walk_that_recorded_the_stale_72_reopens_on_the_strips_numbers(

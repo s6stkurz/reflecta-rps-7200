@@ -1648,6 +1648,33 @@ def test_a_roll_json_the_tool_wrote_is_one_run(positions):
 
 
 @pytest.mark.parametrize("where", ["top", "settings", "tool roll"])
+@pytest.mark.parametrize("positions, strip, moved", [
+    ([5, 6, 6, 7], [6, 7, 8, 9], [3, 4]),
+    ([5, 6, 6, 7, 8], [5, 6, 7, 8, 9], [1, 2]),
+    ([5, 6, 7, 8, 8, 9], [6, 7, 8, 9, 10, 11], [5, 6]),
+])
+def test_one_run_never_gives_two_frames_one_number(positions, where, strip,
+                                                   moved):
+    """An advance that did not move, 5, 6, 6, 7. The frames on 6 collide and
+    take the run's shift, and one of them lands on the place the next frame's
+    own position gave it -- which collided with nothing. Kept there, that was
+    two prescans of one walk under one number: the sheet showed two frame 8s,
+    `--approved` held one of them and dropped the other without a word, and
+    the log blamed two rolls filed under one name. One run numbered no two
+    frames alike, so that frame goes onto the run's shift as well, and so on
+    until none is left; each frame moved is said. Only in one run: in a
+    merged roll.json the frame landed on can be another run's, whose shift
+    this is not (test_an_8a9ba17_roll_that_went_over_a_place_twice_...)."""
+    said = []
+    new = session.renumbered(_one_run(positions, where), say=said.append)
+    assert [f["number"] for f in new["frames"]] == strip
+    assert len(said) == len(moved), said
+    for line, frame in zip(said, moved):
+        assert line.startswith(f"frame {frame} of w "), line
+        assert "two rolls" not in line, line
+
+
+@pytest.mark.parametrize("where", ["top", "settings", "tool roll"])
 @pytest.mark.parametrize("positions", [[5, 6, 8, 9], [5, 6, 7, 9, 10, 11]])
 def test_one_run_that_went_two_frames_at_once_keeps_its_own_positions(
         positions, where):
@@ -1661,6 +1688,20 @@ def test_one_run_that_went_two_frames_at_once_keeps_its_own_positions(
     new = session.renumbered(_one_run(positions, where), say=said.append)
     assert [f["number"] for f in new["frames"]] == [p + 1 for p in positions]
     assert said == []
+
+
+def test_one_frame_listed_twice_in_a_walk_is_not_blamed_on_two_rolls():
+    """Nothing moves two records with one number apart, so both stay on their
+    place and it is said -- but not as the film going over it again between
+    two rolls, which one walk cannot have."""
+    old = _one_run([5, 6], "top")
+    old["frames"].append(dict(old["frames"][-1]))
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == [6, 7, 7]
+    assert len(said) == 1, said
+    assert said[0].startswith("frames 2 and 2 of w are both frame 7"), said
+    assert "two rolls" not in said[0], said
 
 
 @pytest.mark.parametrize("positions, written", [

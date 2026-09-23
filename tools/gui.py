@@ -4552,7 +4552,8 @@ def read_survey(folder, say=None) -> dict:
     # counter. Mapped by each frame's recorded transport position, never by
     # its number -- by its own run's shift only where the position is no
     # place on a strip, or two positions give one number and the run says
-    # which (`session.renumbered`) -- and the decisions filed against those
+    # which, or in one walk a frame was moved onto its place
+    # (`session.renumbered`) -- and the decisions filed against those
     # numbers with the walk's shift, having none of their own.
     shift = legacy_shift(manifest) or 0
     # `approved.json` was written when a roll was commissioned, and that roll
