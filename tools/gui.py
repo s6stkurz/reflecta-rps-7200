@@ -53,7 +53,7 @@ from rps7200.direct import (                              # noqa: E402
     INFRARED_IS_BLIND_TO,
     METER_MODES,
 )
-from rps7200.framing import FULL_FRAME                    # noqa: E402
+from rps7200.framing import FULL_FRAME, units_per_column  # noqa: E402
 from tools import frame_edges                             # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
 from rps7200.mono import (                                 # noqa: E402
@@ -5541,6 +5541,67 @@ def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[di
 MACHINE_SOURCES = ("measured", "unconfirmed", "neighbours")
 
 
+def frame_ends(read: dict | None) -> tuple[float, float, bool] | None:
+    """Both ends of the frame in its prescan's columns: ``(left, right, inferred)``.
+
+    Where the detector read only one edge, the other is placed the measured
+    frame width away from it (`frame_edges.frame_columns`, 435.6 columns at
+    300 dpi) and ``inferred`` is True. None where no edge was read.
+    """
+    if not read or not read.get("width"):
+        return None
+    width = int(read["width"])
+    edges = read.get("edges") or {}
+
+    def at(side):
+        e = edges.get(side) or {}
+        return float(e["x"]) if e.get("state") == "edge" and e.get("x") is not None else None
+
+    left, right = at("left"), at("right")
+    frame = frame_edges.frame_columns(width)
+    if left is not None and right is not None:
+        return left, right, False
+    if left is not None:
+        return left, left + frame, True
+    if right is not None:
+        return right - frame, right, True
+    return None
+
+
+def frame_overhang(read: dict | None, offset_mm: float) -> tuple[float, float] | None:
+    """How much picture lies past each orange guide once the film has moved.
+
+    ``(left, right)`` in units. Positive is picture beyond the aperture, which
+    the scan will not see; negative is unexposed base showing inside it. The
+    frame is 350.6 units and the aperture 344.5, so a centred frame reads
+    about +3 on both sides -- the red line sits just outside the orange one on
+    purpose. The shift is the big view's own: ``offset_mm`` over the aperture,
+    in the prescan's columns, as `measure_shift_mm` checks it.
+    """
+    ends = frame_ends(read)
+    if ends is None:
+        return None
+    left, right, _ = ends
+    width = int(read["width"])
+    shift = offset_mm / APERTURE_MM * width
+    per = units_per_column(width)
+    return (-(left + shift) * per, (right + shift - width) * per)
+
+
+def overhang_note(overhang: tuple[float, float] | None) -> str:
+    """The big view's word on where the frame's ends sit against the guides."""
+    if overhang is None:
+        return ""
+
+    def one(side: str, value: float) -> str:
+        if value >= 0:
+            return f"{value:.1f} past the {side}"
+        return f"{-value:.1f} of base showing on the {side}"
+
+    left, right = overhang
+    return f"   \u00b7   picture {one('left', left)}, {one('right', right)} (units)"
+
+
 def read_note(read: dict | None) -> str:
     """The caption's word on which way the carriage read a pass, when it matters.
 
@@ -6467,6 +6528,10 @@ class _FrameAdjuster:
     #: dotted so the pixels under it stay visible, and heavier than the
     #: guides -- Stefan: "a red dotted line and a bit bigger".
     EDGE_DASH, EDGE_WIDTH = (4, 4), 3
+    #: The frame's other end, where only one edge could be read: the measured
+    #: frame width away from it. Lighter and finer, because it is worked out
+    #: rather than seen.
+    FAR_EDGE, FAR_DASH, FAR_WIDTH = "#f2a19b", (2, 6), 2
 
     def __init__(self, sheet, gui, index: int):
         # Per instance, not in the class body: no Tk root exists there. These
@@ -6497,10 +6562,16 @@ class _FrameAdjuster:
                   "film should sit. \u201cfinest\u201d moves to the next "
                   "position the transport can reach; the others move by that "
                   "much and land on the nearest one. The dashed lines are the "
-                  "aperture -- anything past them will not be scanned. The red "
-                  "dotted line is where the edge detector reads the picture "
-                  "ending and unexposed film beginning; it moves with the "
-                  "picture. Centre puts the frame back as it was walked; Reset "
+                  "aperture -- exactly what the scan takes, and anything past "
+                  "them will not be scanned. The red dotted line is where the "
+                  "edge detector reads the picture ending and unexposed film "
+                  "beginning; the lighter one is where the frame's other end "
+                  "must be, a frame's measured width away. Both move with the "
+                  "picture. A frame is a little wider than the aperture, so "
+                  "centred it overhangs both guides by about 3 units -- the "
+                  "red lines sit just outside the orange ones on purpose, and "
+                  "the line under the picture says how much is past each. "
+                  "Centre puts the frame back as it was walked; Reset "
                   "puts it back where the detector puts it. Return "
                   "keeps this frame and moves to the next. Shown as the film "
                   "sits, not arranged.")
@@ -6710,12 +6781,13 @@ class _FrameAdjuster:
         self.v_title.set(
             f"Frame {self.number} of {len(self.sheet.frames)}")
         if not self.offset:
-            self.v_read.set("as surveyed")
+            said = "as surveyed"
         else:
-            self.v_read.set(
-                f"{say_units(self.offset)}   \u00b7   {moves} "
-                f"move{'s' if moves != 1 else ''}   \u00b7   "
-                f"about {seconds:.0f} s")
+            said = (f"{say_units(self.offset)}   \u00b7   {moves} "
+                    f"move{'s' if moves != 1 else ''}   \u00b7   "
+                    f"about {seconds:.0f} s")
+        self.v_read.set(said + overhang_note(
+            frame_overhang(self.sheet.edges.get(self.number), self.offset)))
         self._draw()
 
     def _draw(self) -> None:
@@ -6775,6 +6847,14 @@ class _FrameAdjuster:
             self.canvas.create_line(
                 x0 + x_top * per_column, top, x0 + x_bottom * per_column, top + height,
                 fill=self.sheet.EDGE_LINE, dash=self.EDGE_DASH, width=self.EDGE_WIDTH)
+        ends = frame_ends(read)
+        if ends is not None and ends[2]:
+            # Only one end was read: the other is a frame's width from it.
+            read_left = ((read.get("edges") or {}).get("left") or {}).get("state") == "edge"
+            far = ends[1] if read_left else ends[0]
+            self.canvas.create_line(
+                x0 + far * per_column, top, x0 + far * per_column, top + height,
+                fill=self.FAR_EDGE, dash=self.FAR_DASH, width=self.FAR_WIDTH)
 
     # -- dragging ----------------------------------------------------------
 

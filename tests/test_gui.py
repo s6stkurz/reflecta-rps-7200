@@ -4194,3 +4194,68 @@ def test_prescan_scan_prescan_scan_shows_everything_upright(window, monkeypatch,
     directions = [(r["scan"].get("read_direction") or {}).get("direction")
                   for r in filed if "prescan" in r.get("tags", [])]
     assert directions == ["forward", "reversed"]
+
+
+# -- the big view: which line is which, and how far the frame overhangs -----
+
+
+def test_one_read_edge_puts_the_other_end_a_frame_width_away():
+    from tools import frame_edges
+
+    frame = frame_edges.frame_columns(428)
+    left_only = {"width": 428, "edges": {"left": {"state": "edge", "x": 14.0},
+                                         "right": {"state": "picture_to_border"}}}
+    assert gui.frame_ends(left_only) == (14.0, 14.0 + frame, True)
+    right_only = {"width": 428, "edges": {"right": {"state": "edge", "x": 410.0}}}
+    assert gui.frame_ends(right_only) == (410.0 - frame, 410.0, True)
+    both = {"width": 428, "edges": {"left": {"state": "edge", "x": 2.0},
+                                    "right": {"state": "edge", "x": 426.0}}}
+    assert gui.frame_ends(both) == (2.0, 426.0, False)
+    assert gui.frame_ends({"width": 428, "edges": {}}) is None
+
+
+def test_a_centred_frame_overhangs_both_guides_by_about_three_units():
+    """What Stefan saw as the orange line being off: the frame is 350.6 units
+    and the aperture 344.5, so centred, the red line sits about 3 units
+    outside the orange one on each side -- by design, and both sides alike."""
+    from rps7200.framing import FRAME_WIDTH_UNITS, units_per_column
+
+    walked = _strip()
+    offsets, notes = gui._propose_positions(walked, {}, film="negative")
+    spare = FRAME_WIDTH_UNITS - 428 * units_per_column(428)       # ~6.1 units
+    for n, note in notes.items():
+        left, right = gui.frame_overhang(note, offsets.get(n, 0.0))
+        assert left + right == pytest.approx(spare, abs=1e-6)
+        # equal on both sides, but for the snap to a position a command reaches
+        assert abs(left - right) < 1.1, (n, left, right)
+        assert left > 2.0 and right > 2.0
+
+
+def test_the_overhang_is_said_in_words():
+    assert "3.0 past the left, 3.1 past the right" in gui.overhang_note((3.02, 3.08))
+    assert "2.0 of base showing on the left" in gui.overhang_note((-2.0, 8.1))
+    assert gui.overhang_note(None) == ""
+
+
+def test_the_big_view_draws_the_frames_other_end_lighter(window, tmp_path):
+    app, root = window
+    out = gui.read_survey(_walked_folder(tmp_path))
+    offsets, notes = gui._propose_positions(out["results"], {}, film="negative")
+    sheet = gui._ContactSheet(app, out["results"], offsets=offsets, proposals=notes)
+    root.update()
+    sheet.adjust(0)
+    adj = sheet._adjuster
+    root.update()
+    adj._draw()
+    c = adj.canvas
+    lines = {c.itemcget(it, "fill"): c.coords(it) for it in c.find_all()
+             if c.type(it) == "line"}
+    guides = sorted(c.coords(it)[0] for it in c.find_all()
+                    if c.type(it) == "line" and c.itemcget(it, "fill") == adj.GUIDE)
+    assert sheet.EDGE_LINE in lines and adj.FAR_EDGE in lines
+    read, far = lines[sheet.EDGE_LINE][0], lines[adj.FAR_EDGE][0]
+    # the read edge just outside the left guide, the far end just outside the right
+    assert read < guides[0] < guides[1] < far
+    assert abs((guides[0] - read) - (far - guides[1])) < 4, "overhanging alike"
+    assert "past the left" in adj.v_read.get()
+    sheet.top.destroy()
