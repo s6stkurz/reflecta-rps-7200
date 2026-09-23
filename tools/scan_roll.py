@@ -5,10 +5,17 @@
     uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
         --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 
-The film is already at the first picture when this starts, so the first frame is
-scanned before anything moves; the transport advances between frames. Shading is
-calibrated once and reused for the whole roll -- which is what the vendor does,
-and the reason a 17-pass session in the captures contains no calibration at all.
+Frame numbers are places on the strip: frame N is where the transport's own
+counter reads N-1, counted from where the strip went in. It has been seen
+resetting to 0 as a strip goes in -- once, in `full_17_strip` -- so the numbers
+are right as long as the strip is in the way it was when it was walked, which
+only the operator can see. The roll starts at `--start-at` (frame 1 unless told
+otherwise) and winds or advances the film there, from wherever the transport
+says it is -- refusing, with nothing calibrated, nothing scanned and nothing
+written, if it cannot tell. Shading is then calibrated once, with the strip in,
+and reused for the whole roll -- which is what the vendor does, and the reason
+a 17-pass session in the captures contains no calibration at all -- and the
+film advances between frames.
 
 Every frame goes to disk the moment it exists: a library entry with the raw
 bytes, the shading reference and the CCD mask beside the pixels, plus a
@@ -44,7 +51,15 @@ from rps7200.direct import (
 from rps7200.library import FilmNotes
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
-from rps7200.session import Approved, FrameWriter, plan_nudges
+from rps7200.session import (
+    NUMBERING,
+    Approved,
+    FilmNotPlaced,
+    FrameWriter,
+    plan_nudges,
+    seek,
+    walked_prescans,
+)
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
 from rps7200.session import rewind as _rewind
 
@@ -67,12 +82,21 @@ def build_parser() -> argparse.ArgumentParser:
                          "until the window holds no picture or the transport "
                          "stops moving")
     ap.add_argument("--start-at", type=int, default=1, metavar="N",
-                    help="resume at picture N, advancing to it without scanning "
-                         "(1 = the picture the film is on now)")
+                    help="start at frame N of the strip, winding the film "
+                         "there first from wherever it is. Frame 1 is where "
+                         "the transport's counter reads 0, counted from where "
+                         "the strip went in (it has been seen resetting to 0 "
+                         "as a strip goes in, once); the frames are numbered "
+                         "by their place on the strip, so a roll resumed with "
+                         "N files its frames under the same numbers as "
+                         "before, as long as the strip went back in the same "
+                         "way -- which only you can see")
     ap.add_argument("--rewind", type=int, default=0,
                     help="wind the film back this many frames before doing "
                          "anything else, one frame at a time, checking each "
-                         "one landed. With --frames 0 it rewinds and stops.")
+                         "one landed. With --frames 0 it rewinds and stops. "
+                         "A roll no longer needs it: --start-at goes to its "
+                         "frame from wherever the film is.")
     ap.add_argument("--nudge", type=float, default=0.0,
                     help="move the film this many mm before starting, after "
                          "any --rewind. The window's fine-adjust buttons do "
@@ -190,17 +214,35 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     what makes this survive an imprecise rewind -- the reference anchors it, so
     the film is driven to "where the walk saw this frame, plus the correction"
     however exactly the transport came back.
+
+    The frames are keyed by their place on the strip, as the roll numbers
+    them, and read from the walk's own records the way the window's contact
+    sheet reads them -- `session.walked_prescans`, one reader for both -- never
+    from the file names in the folder. A walk made before frame numbers meant
+    that named its prescans from wherever it started (`registration-F` calls
+    the counter's 14 its frame 1), and a second walk into the same folder
+    leaves the first one's extra prescans beside its own, named by the other
+    walk's count: `rolls/2026-09-23` was held as frames 6 to 11 here while the
+    window showed it as 6 and 7, and two of those six were one picture.
     """
-    frames = []
-    for path in sorted(folder.glob("prescan*.tif")):
-        if path.stem.endswith("-before"):
-            continue                      # the picture a correction replaced
-        number = int("".join(c for c in path.stem if c.isdigit()) or 0)
-        if number:
-            frames.append((number, tiff.read(str(path))))
+    manifest: dict = {}
+    for name in ("survey.json", "roll.json"):
+        # The walk first, as the window reads it; a roll's own manifest only
+        # where there is no walk, and it lists no prescans unless it was one.
+        if (folder / name).exists():
+            try:
+                manifest = json.loads(
+                    (folder / name).read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise SystemExit(f"{folder / name} cannot be read: {exc}")
+            break
+    frames = [(number, tiff.read(str(path)))
+              for number, path, _ in walked_prescans(folder, manifest,
+                                                     say=print)]
     if len(frames) < 2:
-        raise SystemExit(f"{folder} holds {len(frames)} prescan(s); a strip is "
-                         "needed to propose positions from")
+        raise SystemExit(f"{folder}'s walk lists {len(frames)} prescan(s) "
+                         "that are still there; a strip is needed to propose "
+                         "positions from")
 
     offsets, notes = framing.propose_offsets(
         [(n, im.astype(float)) for n, im in frames])
@@ -244,7 +286,6 @@ def main() -> int:
 
     roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
     out = Path(args.out or f"rolls/{roll_name}")
-    out.mkdir(parents=True, exist_ok=True)
     # A dry run and the scan that follows it share a directory, so they must
     # not share a file: the record of what was walked is what says which frames
     # are worth scanning, and writing the scan over it loses that.
@@ -252,6 +293,10 @@ def main() -> int:
 
     manifest = {
         "roll": roll_name,
+        # The frame numbers below are places on the strip, as the window's
+        # manifests say too; a file without this counted from wherever its
+        # roll happened to start.
+        "numbering": NUMBERING,
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "settings": {
             "dpi": args.dpi, "infrared": args.ir, "meter": args.meter,
@@ -279,9 +324,17 @@ def main() -> int:
         manifest_path.write_text(json.dumps(manifest, indent=2, default=str),
                                  encoding="utf-8")
 
-    checkpoint()
     started = time.monotonic()
     scanned = failed = 0
+    #: Whether the film reached the roll's first frame and the calibration
+    #: after it succeeded, and so whether this run has a manifest at all.
+    #: Nothing is written before that, which is `ScanSession._roll`'s
+    #: "before the directory, before the manifest": the
+    #: default roll name is today's date, the name the window's walks use,
+    #: and the manifest used to be written before the device was even
+    #: opened -- so a seek that refused replaced that day's survey.json with
+    #: an empty one, and the walk it described was gone.
+    placed = False
 
     writer = FrameWriter()
     # debug=False deliberately: this tool files its own library entries,
@@ -298,19 +351,18 @@ def main() -> int:
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
 
-            # On a dry run too. A dry run still prescans, and a prescan
-            # still wants a shading reference -- so skipping this did not
-            # avoid the calibration, it only moved it inside `prescan()`,
-            # where it runs lazily on the first frame. Measured twice on this
-            # machine, that lazy calibration stalls: `bulk read of 16384 bytes
-            # failed after 0 bytes: LIBUSB_ERROR_PIPE`, right after the
-            # shading descriptor, and the device stops answering. Called from
-            # here it is the same call `tools/scan.py` and the window's
-            # Calibrate job make, both of which work.
-            #
-            # It also made `--reuse` inert on a dry run: the flag is read
-            # here and nowhere else, so the lazy path ignored it and
-            # recalibrated regardless.
+            # The lamp first, with status queries only: TEST UNIT READY, and
+            # REQUEST SENSE when one is refused -- what `tools/hold_probe.py`
+            # and `tools/transport_truth.py` send before they move the film.
+            # `DirectScanner.wait_warm` says the scanner answers NOT READY
+            # to every command while the lamp warms, READ_STATE included;
+            # that is its docstring's premise, not something measured here.
+            # If it holds, a roll that asked the counter from cold would hear
+            # nothing and refuse, and a rewind would read "did not move" --
+            # shown on a test double, never seen on the scanner. The
+            # calibration waited the lamp out when it ran first, and it
+            # cannot run first: see below.
+            s.wait_warm()
             if args.rewind:
                 landed = rewind(s, args.rewind)
                 if landed is None:
@@ -318,8 +370,20 @@ def main() -> int:
                           "asked to be, so every frame after this would be "
                           "mis-numbered", file=sys.stderr)
                     return 1
-                print(f"rewound to position {landed}")
+                print(f"rewound to frame {landed + 1}")
                 print()
+            if args.frames != 0:
+                # To the first frame, by the transport's own counter, before
+                # the nudge -- so an offset set on purpose is the last thing
+                # the film does before the roll, and the whole-frame moves do
+                # not happen on top of it. The same helper the window's roll
+                # uses, so the two cannot disagree about where frame N is.
+                try:
+                    seek(s, max(0, args.start_at - 1),
+                         say=lambda m: print(m, flush=True))
+                except FilmNotPlaced as exc:
+                    print(f"refusing to go on: {exc}", file=sys.stderr)
+                    return 1
             if args.nudge:
                 # Deliberately, and said out loud: everything downstream
                 # measures against where the film is now, so a displacement
@@ -352,7 +416,37 @@ def main() -> int:
                 print("nothing else asked for")
                 return 0
 
+            # After the seek, never before it. The seek is what refuses a
+            # counter no strip can have -- `full_17_strip` read a stale 72
+            # before its strip went in (`docs/protocol.md` section 9) -- and
+            # in front of it this spent 3-4 minutes calibrating what may have
+            # been an empty transport before refusing: the state CLAUDE.md
+            # says preceded a wedge ("Calibrate with the film loaded"). With
+            # the film placed it measures the band below the film,
+            # `(0, 3431, 10343, 6888)`, strip in, as CyberView does. The
+            # window's Roll seeks before anything calibrates, too.
+            #
+            # On a dry run too. A dry run still prescans, and a prescan
+            # still wants a shading reference -- so skipping this did not
+            # avoid the calibration, it only moved it inside `prescan()`,
+            # where it runs lazily on the first frame. Measured twice on this
+            # machine, that lazy calibration stalls: `bulk read of 16384 bytes
+            # failed after 0 bytes: LIBUSB_ERROR_PIPE`, right after the
+            # shading descriptor, and the device stops answering. Called from
+            # here it is the same call `tools/scan.py` and the window's
+            # Calibrate job make, both of which work.
+            #
+            # It also made `--reuse` inert on a dry run: the flag is read
+            # here and nowhere else, so the lazy path ignored it and
+            # recalibrated regardless.
             calibrate(s, args)
+
+            # The film is on the roll's first frame and the reference is in
+            # hand, so there is a roll to record -- and not before. See
+            # `placed`: a calibration that fails leaves the folder as it was.
+            out.mkdir(parents=True, exist_ok=True)
+            checkpoint()
+            placed = True
 
             for frame in s.scan_roll(
                 frames=args.frames,
@@ -362,13 +456,15 @@ def main() -> int:
                 film=args.film,
                 meter=args.meter,
                 prescan_resolution=args.prescan_dpi,
-                skip=max(0, args.start_at - 1),
+                # The film is on this frame now; the roll counts from it, so
+                # an index is a transport position and a number is that + 1.
+                first_index=max(0, args.start_at - 1),
                 keep_raw=bool(args.library),
                 max_failures=args.max_failures,
                 dry_run=args.dry_run,
-                # Keyed by the roll's own index, as `session.py` keys it: the
-                # offsets are relative to the survey's start, not to a
-                # transport coordinate.
+                # Keyed by the roll's own index, as `session.py` keys it -- a
+                # place on the strip. The offsets themselves stay relative to
+                # where the walk saw each frame; only the key is absolute.
                 approved={n - 1: a for n, a in held.items()},
                 correct=args.correct,
                 correct_dry_run=args.correct_dry_run,
@@ -506,6 +602,15 @@ def main() -> int:
     for problem in writer.errors:
         failed += 1
         print(f"could not file {problem}", file=sys.stderr)
+
+    if not placed:
+        # Stopped before the roll began -- the device would not open, the
+        # lamp never warmed, or the calibration after the seek failed -- so
+        # nothing was scanned and there is no roll to record. A manifest
+        # already in this folder is left as it was, for the reason `placed`
+        # gives.
+        print("nothing was scanned, and nothing was written", file=sys.stderr)
+        return 1
 
     manifest["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     manifest["duration_s"] = round(time.monotonic() - started, 1)

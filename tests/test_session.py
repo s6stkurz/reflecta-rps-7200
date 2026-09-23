@@ -67,6 +67,33 @@ class FakeScanner:
         self._on_yield = on_yield
         self._fail_scan = fail_scan
         self.only = None
+        #: Where the film is, as the transport's counter says it. A roll now
+        #: asks before it moves anything, so a stand-in with no transport at
+        #: all refuses every roll -- which is right for a stand-in that cannot
+        #: say, and wrong for one meant to be a strip on frame 1.
+        self.pos = 0
+        #: Every whole-frame move, in order, so a test can say which way the
+        #: film went and whether it went before the roll started.
+        self.moves = []
+
+    def wait_warm(self, timeout=300.0, poll=5.0):
+        # Asked by every roll before the counter is; the lamp here is warm.
+        self.warmed = getattr(self, "warmed", 0) + 1
+
+    def position(self):
+        return self.pos
+
+    def advance(self, steps=1, **kw):
+        self.moves.append(("advance", steps))
+        self.pos += 1
+        return self.pos
+
+    def retreat(self, steps=1, **kw):
+        self.moves.append(("retreat", steps))
+        if self.pos <= 0:
+            return None
+        self.pos -= 1
+        return self.pos
 
     def open(self):
         self.opened = True
@@ -122,13 +149,27 @@ class FakeScanner:
         }
 
     def scan_roll(self, frames=None, resolution=1800, infrared=True,
-                  dry_run=False, skip=0, only=None, **kw):
+                  dry_run=False, skip=0, only=None, first_index=0, **kw):
+        """Frames from wherever the film is, as the driver's loop gives them.
+
+        It used to hand back frame ``skip + i`` at position ``skip + i``
+        whatever the transport said, which is the demo's old teleport in
+        miniature: a session that never put the film anywhere passed every
+        test, because the film was always where the numbers said. Now the
+        first frame is where `pos` is, the film advances between frames, and
+        the index counts from ``first_index`` -- so a roll numbers the frame it
+        is on only if the session put the film there first.
+        """
         self.calls.append(("roll", frames, resolution, dry_run, skip))
         self.only = only
+        self.pos += skip
         for i in range(frames or self._frames):
+            if i:
+                self.pos += 1             # the advance between frames
+            index = first_index + skip + i
             # The real one advances past an unchosen frame without prescanning
             # it, which from here looks like a frame that never arrives.
-            if only is not None and skip + i not in only:
+            if only is not None and index not in only:
                 continue
             if self._on_yield:
                 # Stands in for the operator pressing stop while this frame is
@@ -139,7 +180,7 @@ class FakeScanner:
                 resolution=resolution, infrared=infrared
             )
             yield RollFrame(
-                index=skip + i, position=skip + i, image=image, meta=meta,
+                index=index, position=self.pos, image=image, meta=meta,
                 prescan=picture(channels=3, seed=i),
                 registration={"offset_mm": 0.04, "shortfall_mm": 0.02},
             )
@@ -765,14 +806,16 @@ def test_moving_forward_a_frame_reports_the_new_position(tmp_path):
     scanner = FakeTransportScanner(position=3)
     _, scanner, events = run(Move(frames=1), tmp_path, scanner=scanner)
     assert scanner.moves == [("advance", 1)]
-    assert [e.done for e in kinds(events, "transport")] == [4]
+    # The first is the session saying where the film was when it opened, so
+    # the window's readout is right before anything has moved.
+    assert [e.done for e in kinds(events, "transport")] == [3, 4]
 
 
 def test_moving_back_a_frame_uses_the_reverse(tmp_path):
     scanner = FakeTransportScanner(position=3)
     _, scanner, events = run(Move(frames=-1), tmp_path, scanner=scanner)
     assert scanner.moves == [("retreat", 1)]
-    assert [e.done for e in kinds(events, "transport")] == [2]
+    assert [e.done for e in kinds(events, "transport")] == [3, 2]
 
 
 def test_a_transport_that_will_not_move_is_reported_not_raised(tmp_path):
@@ -794,13 +837,65 @@ def test_a_nudge_says_the_frame_counter_cannot_confirm_it(tmp_path):
     assert scanner.moves == [("nudge", pytest.approx(0.3002, abs=1e-4))]
     assert any("prescan to check it landed" in e.text
                for e in kinds(events, "finished"))
-    # Position is still whatever it was; nothing pretends otherwise.
-    assert [e.done for e in kinds(events, "transport")] == [3]
+    # Position is still whatever it was; nothing pretends otherwise. (The
+    # first report is the one the session makes when it opens.)
+    assert [e.done for e in kinds(events, "transport")] == [3, 3]
 
 
 def test_a_move_never_files_anything(tmp_path):
     run(Move(frames=1), tmp_path, scanner=FakeTransportScanner())
     assert library.entries(tmp_path) == []
+
+
+@pytest.mark.parametrize("job", [Move(frames=1), Move(frames=-1),
+                                 Move(millimetres=0.27)])
+def test_a_move_reports_a_counter_no_strip_has_as_unknown(tmp_path, job):
+    """As `_report_position` does. A stale 72 went to the window as the film
+    being on frame 73, which the Roll dialog then forecast a 72-frame wind
+    from."""
+    scanner = FakeTransportScanner(position=72)
+    _, _, events = run(job, tmp_path, scanner=scanner)
+    reported = [e.done for e in kinds(events, "transport")]
+    assert reported and all(done == -1 for done in reported), reported
+    # And the job's own words, which the window shows beside that readout:
+    # "on frame 74 of the strip -- done" next to "film on frame ?".
+    finished = kinds(events, "finished")[0].text
+    assert "of the strip" not in finished, finished
+    for impossible in (72, 73, 74):
+        assert f"frame {impossible}" not in finished, finished
+    if job.frames:
+        assert "no strip has" in finished, finished
+
+
+def test_a_nudge_does_not_forget_which_frame_the_film_is_on(tmp_path):
+    """The READ_STATE straight after a SLIDE comes back empty, and the nudge
+    asked it at once -- so every nudge reported "unknown", and the window,
+    which now believes that, forgot the frame and lost the Roll dialog's
+    forecast. A nudge cannot change the counter; hearing nothing says
+    nothing, so nothing is reported."""
+    class EmptyAfterSlide(FakeTransportScanner):
+        """READ_STATE empty once after any move, modelled on what
+        `DirectScanner._whole_frames` says of a whole-frame one."""
+
+        slid = False
+
+        def nudge(self, millimetres):
+            self.slid = True
+            return super().nudge(millimetres)
+
+        def position(self):
+            if self.slid:
+                self.slid = False
+                return None
+            return super().position()
+
+    from rps7200.direct import DirectScanner
+
+    three_units = 3 * DirectScanner.STEP_MM      # one command, param 1
+    _, scanner, events = run(Move(millimetres=three_units), tmp_path,
+                             scanner=EmptyAfterSlide(position=10))
+    assert [way for way, _ in scanner.moves] == ["nudge"]
+    assert [e.done for e in kinds(events, "transport")] == [10]
 
 
 def test_moving_several_frames_steps_one_at_a_time(tmp_path):
@@ -809,7 +904,7 @@ def test_moving_several_frames_steps_one_at_a_time(tmp_path):
     scanner = FakeTransportScanner(position=0)
     _, scanner, events = run(Move(frames=3), tmp_path, scanner=scanner)
     assert scanner.moves == [("advance", 1)] * 3
-    assert [e.done for e in kinds(events, "transport")] == [1, 2, 3]
+    assert [e.done for e in kinds(events, "transport")] == [0, 1, 2, 3]
 
 
 # -- rotation ---------------------------------------------------------------
@@ -1097,6 +1192,647 @@ def test_the_rewind_can_say_what_it_is_doing():
     rewind(_Winding(3), 3, say=said.append)
     assert any("rewinding 3" in line for line in said)
     assert any("1/3" in line for line in said)
+
+
+# --- a roll starts on its first frame, wherever the film is -----------------
+#
+# Reported 2026-09-23: with the transport on frame 10, a roll commissioned
+# from 1 to 15 started where the film was and numbered it 1. `start_at` was a
+# count of advances from wherever the film happened to be; the transport's
+# own counter, which knew, was never asked. These drive the session with
+# `StripScanner`, whose roll starts where the film is exactly as the driver's
+# does -- the doubles that put frame i at position i whatever the transport
+# said are how this passed every test before.
+
+
+def walk(job, tmp_path, scanner, monkeypatch=None):
+    """Run `job` against `scanner`; return its events and its manifest's
+    (number, transport_position) pairs."""
+    if monkeypatch is not None:
+        monkeypatch.setattr(session, "POSITION_POLL_S", 0.0, raising=False)
+    _, _, events = run(job, tmp_path, scanner=scanner)
+    folder = tmp_path / "rolls" / (job.name or "strip")
+    manifest = folder / ("survey.json" if job.dry_run else "roll.json")
+    frames = []
+    if manifest.exists():
+        frames = [(f["number"], f["transport_position"]) for f in json.loads(
+            manifest.read_text(encoding="utf-8"))["frames"]]
+    return events, frames
+
+
+def test_a_roll_from_frame_one_winds_back_to_it_first(tmp_path):
+    """The reported case, at the session: the film on frame 10, a walk of 1
+    to 3. It used to record frames 1, 2, 3 at transport positions 9, 10, 11."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=9)
+    _, frames = walk(Roll(frames=3, start_at=1, dry_run=True, name="strip"),
+                     tmp_path, scanner)
+    assert frames == [(1, 0), (2, 1), (3, 2)]
+    assert scanner.moves[:9] == [("retreat", 1)] * 9
+    assert scanner.rolls[0]["moves_before"] == 9, "wound back first"
+    assert scanner.rolls[0]["first_index"] == 0
+
+
+@pytest.mark.parametrize("at", [0, 2])
+def test_a_roll_behind_its_first_frame_only_advances(tmp_path, at):
+    """Frame 4 is three frames on from frame 1 whichever frame the film is on,
+    and the film gets there before the roll begins -- so a refusal would come
+    before anything was created, not part-way into a roll."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=at)
+    _, frames = walk(Roll(frames=3, start_at=4, dry_run=True, name="strip"),
+                     tmp_path, scanner)
+    assert frames == [(4, 3), (5, 4), (6, 5)]
+    assert ("retreat", 1) not in scanner.moves
+    assert scanner.rolls[0]["moves_before"] == 3 - at
+    assert scanner.rolls[0]["skip"] == 0
+
+
+def test_a_rewind_that_stops_short_files_nothing(tmp_path):
+    """Nothing scanned, nothing filed, no folder: every frame after a short
+    rewind would be numbered as a frame it is not."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=9, sticks_at=5)
+    events, frames = walk(Roll(frames=3, start_at=1, dry_run=True,
+                               name="strip"), tmp_path, scanner)
+    assert frames == []
+    assert scanner.rolls == [], "the roll never started"
+    assert library.entries(tmp_path) == []
+    assert not (tmp_path / "rolls" / "strip").exists()
+    failed = kinds(events, "failed")
+    assert failed and "nothing was scanned" in failed[0].text
+
+
+def test_a_roll_refuses_when_the_transport_will_not_say(tmp_path, monkeypatch):
+    """Where the film is unknown, frame 1 is a guess -- which is today's bug
+    with a different number. Refused, through the failed-job path."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=4, silent=True)
+    events, frames = walk(Roll(frames=3, start_at=1, dry_run=True,
+                               name="strip"), tmp_path, scanner, monkeypatch)
+    assert frames == [] and scanner.rolls == [] and scanner.moves == []
+    assert library.entries(tmp_path) == []
+    assert not (tmp_path / "rolls" / "strip").exists()
+    failed = kinds(events, "failed")
+    assert failed and "would not say" in failed[0].text
+    # And the likeliest reason is said: the scanner is silent while its lamp
+    # warms, and this sentence used to send the operator to check the strip.
+    assert "lamp" in failed[0].text
+
+
+def test_seek_waits_for_the_lamp_with_status_queries_only(monkeypatch):
+    """If the scanner answers NOT READY to everything for its first ~80 s,
+    READ_STATE included -- `DirectScanner.wait_warm`'s docstring says so, and
+    this double is built on it; nothing here measured it -- a roll started
+    while the lamp warmed would ask the counter, hear nothing and refuse. It
+    waits for the lamp now, and what it sends while waiting is TEST UNIT
+    READY and REQUEST SENSE: nothing that moves the film and nothing that
+    scans."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+    from rps7200.protocol import SCSI_REQUEST_SENSE, SCSI_TEST_UNIT_READY
+
+    clock = NoWaiting()
+    monkeypatch.setattr(direct, "time", clock)
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    scanner = ScannerOnStrip(at=3, warm_at=80.0, clock=clock)
+    assert session.seek(scanner, 1) == 1
+    assert scanner.t.at == 1
+    assert scanner.t.while_warming, "the lamp was warming when it began"
+    assert set(scanner.t.while_warming) <= {SCSI_TEST_UNIT_READY,
+                                            SCSI_REQUEST_SENSE}
+
+
+def test_a_counter_no_strip_has_is_not_a_place_to_start(tmp_path):
+    """A stale 72 was once read with no strip in. Winding back 72 frames from
+    it would spend four minutes of commands against the end of a strip."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=72, last=80)
+    events, frames = walk(Roll(frames=3, start_at=1, dry_run=True,
+                               name="strip"), tmp_path, scanner)
+    assert frames == [] and scanner.moves == []
+    failed = kinds(events, "failed")
+    assert failed and "frame 73" in failed[0].text
+
+
+def test_a_strip_that_ends_before_the_first_frame_refuses(tmp_path):
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=2, last=4)
+    events, frames = walk(Roll(frames=3, start_at=9, dry_run=True,
+                               name="strip"), tmp_path, scanner)
+    assert frames == [] and scanner.rolls == []
+    failed = kinds(events, "failed")
+    assert failed and "strip ended on frame 5" in failed[0].text
+
+
+def test_a_film_already_there_is_not_moved(tmp_path):
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=4)
+    _, frames = walk(Roll(frames=2, start_at=5, dry_run=True, name="strip"),
+                     tmp_path, scanner)
+    assert frames == [(5, 4), (6, 5)]
+    assert scanner.rolls[0]["moves_before"] == 0
+
+
+def test_the_chosen_frames_are_places_on_the_strip(tmp_path):
+    """`only` names frames the same way `start_at` does, so a sheet's ticks
+    reach the pictures it showed whichever frame the film was left on."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=12)
+    _, frames = walk(Roll(start_at=2, only=(2, 4), infrared=False,
+                          resolution=300, name="strip"), tmp_path, scanner)
+    assert frames == [(2, 1), (4, 3)]
+
+
+def test_the_window_hears_where_the_film_is_when_the_session_opens(tmp_path):
+    """So the Roll dialog can say what the roll will do to the film. The
+    readout used to hear only about the moves its own buttons made, and read
+    '?' from launch until one was pressed."""
+    from conftest import StripScanner
+
+    _, _, events = run(Prescan(), tmp_path, scanner=StripScanner(at=4))
+    reported = [e.done for e in kinds(events, "transport")]
+    assert reported[0] == 4, "at open, before any job"
+    assert reported[-1] == 4, "and again once the job has finished"
+
+
+def test_a_roll_tells_the_window_where_the_film_went(tmp_path):
+    from conftest import StripScanner
+
+    _, _, events = run(Roll(frames=2, start_at=1, dry_run=True, name="strip"),
+                       tmp_path, scanner=StripScanner(at=3))
+    reported = [e.done for e in kinds(events, "transport")]
+    assert reported[0] == 3
+    assert reported[-1] == 1, "the last frame walked"
+    assert 0 in reported, "and where the seek put it"
+
+
+def test_the_readout_follows_a_roll_frame_by_frame(tmp_path):
+    """Each frame's counter reading goes to the window as the roll reaches
+    it, already read, so the readout follows the walk rather than jumping
+    from where the seek landed to where the roll stopped. A counter no
+    strip has is left out of it, as every other report leaves it out."""
+    from dataclasses import replace
+
+    from conftest import StripScanner
+
+    class Stale(StripScanner):
+        """Frame 2's record says 72; the film is where it always was."""
+
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index == 1:
+                    frame = replace(frame, position=72)
+                yield frame
+
+    _, _, events = run(Roll(frames=4, start_at=1, dry_run=True, name="strip"),
+                       tmp_path, scanner=Stale(at=0))
+    reported = [e.done for e in kinds(events, "transport")]
+    assert 2 in reported, "frame 3 was reported as the roll reached it"
+    assert 72 not in reported
+    assert reported[-1] == 3, "and the last frame walked"
+
+
+def test_resuming_a_roll_numbered_the_old_way_renumbers_it_by_position(
+        tmp_path):
+    """A roll.json written before frame numbers were places on the strip is
+    counted from wherever that roll started. Merged as it stands, its frame 1
+    and this run's frame 6 could be the same picture in one file."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "strip", "wanted": [1, 2, 3],
+        "frames": [{"number": 1, "transport_position": 5, "done": True},
+                   {"number": 2, "transport_position": 6, "done": True}],
+    }), encoding="utf-8")
+    _, frames = walk(Roll(frames=1, start_at=8, infrared=False,
+                          resolution=300, name="strip"), tmp_path,
+                     StripScanner(at=0))
+    assert frames == [(6, 5), (7, 6), (8, 7)]
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["wanted"] == [6, 7, 8]
+    assert manifest["numbering"] == session.NUMBERING
+
+
+def test_a_walk_files_each_picture_under_its_own_place(tmp_path,
+                                                        monkeypatch):
+    """The transport double-steps from frame 3 to frame 5, under the real
+    driver's roll and the real session. The picture at frame 5 was filed as
+    `prescan04.tif`, frame 4's name -- so a sheet ticking 4 commissioned a
+    seek to a picture it had never shown."""
+    from conftest import NoWaiting, ScannerOnStrip, strip_picture
+    from rps7200 import direct, tiff
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = ScannerOnStrip(at=0, double_steps={2})
+    _, frames = walk(Roll(frames=5, start_at=1, dry_run=True, name="strip",
+                          infrared=False), tmp_path, scanner, monkeypatch)
+    assert frames == [(1, 0), (2, 1), (3, 2), (5, 4)]
+    folder = tmp_path / "rolls" / "strip"
+    assert not (folder / "prescan04.tif").exists()
+    assert np.array_equal(tiff.read(str(folder / "prescan05.tif")),
+                          strip_picture(4))
+
+
+# --- the seek itself, and the numbering it gives manifests -------------------
+
+
+def test_seek_goes_nowhere_when_the_film_is_there():
+    from conftest import StripScanner
+
+    film = StripScanner(at=6)
+    assert session.seek(film, 6) == 6
+    assert film.moves == []
+
+
+def test_seek_refuses_when_the_film_is_not_where_it_ended_up(monkeypatch):
+    """The last word is the counter's. An advance that reports a frame the
+    counter then disagrees with is a roll about to mis-number itself."""
+    from conftest import StripScanner
+
+    class Slips(StripScanner):
+        def advance(self, steps=1, **kw):
+            landed = super().advance(steps, **kw)
+            if landed == 3:
+                self.at = 4                   # the counter says one further
+            return landed
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    with pytest.raises(session.FilmNotPlaced, match="frame 4 .* frame 5"):
+        session.seek(Slips(at=0), 3)
+
+
+def test_seek_asks_again_while_the_transport_says_nothing(monkeypatch):
+    """READ_STATE right after a transport command comes back empty every
+    time; one empty answer is not the film being lost."""
+    from conftest import StripScanner
+
+    class Slow(StripScanner):
+        asked = 0
+
+        def position(self):
+            self.asked += 1
+            return None if self.asked < 3 else self.at
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    assert session.seek(Slow(at=2), 2) == 2
+
+
+def test_the_old_numbering_is_mapped_by_position_not_by_number():
+    """rolls/2026-09-23 as it is on disk: a walk begun on the counter's 5 that
+    called that frame 1."""
+    old = {"frames": [{"number": 1, "transport_position": 5},
+                      {"number": 2, "transport_position": 6}],
+           "settings": {"start_at": 1, "only": None}}
+    assert session.legacy_shift(old) == 5
+    new = session.renumbered(old)
+    assert [f["number"] for f in new["frames"]] == [6, 7]
+    assert new["settings"]["start_at"] == 6
+    assert new["numbering"] == session.NUMBERING
+    assert session.renumbered(new) is new, "already on the strip's numbers"
+
+
+def test_one_misread_position_does_not_give_two_frames_one_number():
+    """Numbers in an old manifest were counted once per advance, so they sit
+    one apart. Following a lone disagreeing position gave its frame the
+    number its neighbour already had -- 5, 5, 7 came back as 6, 6, 8 -- and
+    two pictures under one number. The frames whose positions collide take
+    the walk's own shift, and the disagreement is said rather than hidden."""
+    old = {"roll": "misread",
+           "frames": [{"number": 1, "transport_position": 5},
+                      {"number": 2, "transport_position": 5},
+                      {"number": 3, "transport_position": 7}]}
+    assert session.legacy_shift(old) == 5
+    new = session.renumbered(old)
+    assert [f["number"] for f in new["frames"]] == [6, 7, 8]
+    said = []
+    session.renumbered(old, say=said.append)
+    assert len(said) == 1 and "frame 2 of misread" in said[0], said
+
+
+def _counted(roll, positions, **keys):
+    """An old manifest whose frames were counted 1, 2, ... at `positions`."""
+    return {"roll": roll, **keys,
+            "frames": [{"number": n, "index": n - 1, "transport_position": p,
+                        "registration": {}, "error": None, "done": True}
+                       for n, p in enumerate(positions, start=1)]}
+
+
+@pytest.mark.parametrize("positions, stale", [
+    ([72, 1, 2, 3], 1),
+    ([0, 1, 72, 3], 3),
+    ([72, 1], 1),
+])
+def test_a_position_no_strip_has_is_not_a_frame_number(positions, stale):
+    """`docs/protocol.md` section 9: the counter read a stale 72 before its
+    strip went in. An old record holding it was numbered by it -- frame 73,
+    past the end of every strip, so the sheet could never scan it, and a
+    resume wrote 73 back for good -- and nothing said so. It is numbered where
+    the frames around it put it, and said, the way the roll loop keeps its
+    count past such a reading. Nor is it counted towards the manifest's
+    shift: in a walk of two it tied with the real one, won, and moved
+    `start_at` to 73."""
+    old = _counted("stale", positions,
+                   settings={"start_at": 1, "only": None})
+    assert session.legacy_shift(old) == 0
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == list(
+        range(1, len(positions) + 1))
+    assert new["settings"]["start_at"] == 1
+    assert len(said) == 1, said
+    assert f"frame {stale} of stale" in said[0], said
+    assert "72, which no strip has" in said[0], said
+
+
+def test_a_position_no_strip_has_takes_the_shift_of_its_own_run():
+    """The last frame of the tied 8a9ba17 file, its counter read as 72. It
+    sits after the second run, strip frames 6 to 8, so it is frame 8. By the
+    file's commonest shift, the first run's, it would be 6, a place the second
+    run's first frame already holds; by its own reading it was 73."""
+    from conftest import resumed_by_8a9ba17
+
+    old = resumed_by_8a9ba17("tied")
+    old["frames"][-1]["transport_position"] = 72
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == [1, 2, 3, 6, 7, 8]
+    assert len(said) == 1 and "frame 6 of r" in said[0], said
+
+
+@pytest.mark.parametrize("positions", [[72, 1, 2, 3], [0, 1, 72, 3]])
+def test_a_resume_does_not_write_back_a_position_no_strip_has(tmp_path,
+                                                             positions):
+    """The write-back half, through the real session: frame 5 resumed into an
+    old roll.json one of whose records holds the stale 72. That record came
+    back under 'strip' as frame 73, where no roll will ever go."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "stale"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(
+        json.dumps(_counted("stale", positions, dry_run=False)),
+        encoding="utf-8")
+    events, frames = walk(Roll(frames=1, start_at=5, infrared=False,
+                               resolution=300, name="stale"), tmp_path,
+                          StripScanner(at=4))
+    assert frames == [*enumerate(positions, start=1), (5, 4)]
+    logged = [e.text for e in events
+              if e.kind == "log" and "which no strip has" in (e.text or "")]
+    assert len(logged) == 1, logged
+
+
+@pytest.mark.parametrize("where", ["top", "settings"])
+@pytest.mark.parametrize("positions", [[6, 6, 7], [5, 5, 7], [5, 6, 6]])
+def test_a_walks_misread_takes_the_walks_shift_wherever_it_is(positions,
+                                                              where):
+    """A walk's file is one run -- each walk wrote survey.json afresh -- so a
+    lone disagreeing position at either end of it is read as the middle one
+    is: a misread, on the walk's shift. At an end of a roll.json the session
+    merged, 8a9ba17's, the same record could be a roll of one frame, and is
+    read as one; a roll.json `tools/scan_roll.py` wrote is one run, as a walk
+    is (see the next test). The session says it is a walk at the top level,
+    the tool in `settings`."""
+    old = _one_run(positions, where)
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == [6, 7, 8]
+    assert len(said) == 1, said
+
+
+def _one_run(positions, where):
+    """`positions` counted 1, 2, ... in a file that is one run: a walk, which
+    the session marks at the top level and `tools/scan_roll.py` in
+    `settings`, or a roll.json the tool wrote -- `dry_run` false and only in
+    `settings`, as every version of it wrote one, afresh."""
+    old = _counted("w", positions)
+    if where == "top":
+        old["dry_run"] = True
+    elif where == "settings":
+        old["settings"] = {"dry_run": True}
+    else:
+        old["started"] = "2026-09-01T10:00:00+00:00"
+        old["settings"] = {"dry_run": False, "start_at": 1,
+                           "frames": len(positions)}
+    return old
+
+
+@pytest.mark.parametrize("positions", [[5, 6, 7, 7], [6, 6, 7, 8],
+                                       [6, 6, 7], [5, 6, 6]])
+def test_a_roll_json_the_tool_wrote_is_one_run(positions):
+    """Every version of `tools/scan_roll.py` began its roll.json with no
+    frames and never read one back, so it holds one roll: a lone
+    disagreeing position at an end of it is a misread, as in a walk, and not
+    a roll of one frame. Read as one, the last frame of 5, 6, 7, 7 was kept
+    on frame 8 beside frame 3, so the window offered strip frame 9 again,
+    and the log blamed two rolls filed under one name, which the tool never
+    made. The session writes `dry_run` at the top level; the tool only inside
+    `settings`."""
+    said = []
+    new = session.renumbered(_one_run(positions, "tool roll"),
+                             say=said.append)
+    assert [f["number"] for f in new["frames"]] == list(
+        range(6, 6 + len(positions)))
+    assert len(said) == 1, said
+    assert "two rolls" not in said[0], said
+
+
+@pytest.mark.parametrize("where", ["top", "settings", "tool roll"])
+@pytest.mark.parametrize("positions, strip, moved", [
+    ([5, 6, 6, 7], [6, 7, 8, 9], [3, 4]),
+    ([5, 6, 6, 7, 8], [5, 6, 7, 8, 9], [1, 2]),
+    ([5, 6, 7, 8, 8, 9], [6, 7, 8, 9, 10, 11], [5, 6]),
+])
+def test_one_run_never_gives_two_frames_one_number(positions, where, strip,
+                                                   moved):
+    """An advance that did not move, 5, 6, 6, 7. The frames on 6 collide and
+    take the run's shift, and one of them lands on the place the next frame's
+    own position gave it -- which collided with nothing. Kept there, that was
+    two prescans of one walk under one number: the sheet showed two frame 8s,
+    `--approved` held one of them and dropped the other without a word, and
+    the log blamed two rolls filed under one name. One run numbered no two
+    frames alike, so that frame goes onto the run's shift as well, and so on
+    until none is left; each frame moved is said. Only in one run: in a
+    merged roll.json the frame landed on can be another run's, whose shift
+    this is not (test_an_8a9ba17_roll_that_went_over_a_place_twice_...)."""
+    said = []
+    new = session.renumbered(_one_run(positions, where), say=said.append)
+    assert [f["number"] for f in new["frames"]] == strip
+    assert len(said) == len(moved), said
+    for line, frame in zip(said, moved):
+        assert line.startswith(f"frame {frame} of w "), line
+        assert "two rolls" not in line, line
+
+
+@pytest.mark.parametrize("where", ["top", "settings", "tool roll"])
+@pytest.mark.parametrize("positions", [[5, 6, 8, 9], [5, 6, 7, 9, 10, 11]])
+def test_one_run_that_went_two_frames_at_once_keeps_its_own_positions(
+        positions, where):
+    """A double step inside a walk: frames 3 and 4 of 5, 6, 8, 9 are strip
+    frames 9 and 10, whatever the walk counted. Read with one shift for the
+    whole walk, as a0de517 read it, they were 8 and 9, and frame 3's picture
+    of 9 was filed under 8. A walk is one run, and all that keeps its frames
+    on their own positions is that only a frame whose position collides takes
+    the run's shift; nothing here collides, so nothing is said."""
+    said = []
+    new = session.renumbered(_one_run(positions, where), say=said.append)
+    assert [f["number"] for f in new["frames"]] == [p + 1 for p in positions]
+    assert said == []
+
+
+def test_one_frame_listed_twice_in_a_walk_is_not_blamed_on_two_rolls():
+    """Nothing moves two records with one number apart, so both stay on their
+    place and it is said -- but not as the film going over it again between
+    two rolls, which one walk cannot have."""
+    old = _one_run([5, 6], "top")
+    old["frames"].append(dict(old["frames"][-1]))
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == [6, 7, 7]
+    assert len(said) == 1, said
+    assert said[0].startswith("frames 2 and 2 of w are both frame 7"), said
+    assert "two rolls" not in said[0], said
+
+
+@pytest.mark.parametrize("positions, written", [
+    ([5, 6, 7, 7], [(6, 5), (7, 6), (8, 7), (9, 8)]),
+    ([6, 6, 7, 8], [(6, 6), (7, 6), (8, 7), (9, 8), (10, 9)]),
+])
+def test_a_resume_of_a_roll_the_tool_wrote_takes_it_as_one_run(
+        tmp_path, positions, written):
+    """The write-back half, through the real session: the frame after the
+    roll resumed with the film where it stopped. Read as two rolls, 5, 6, 7,
+    7 wrote the old scan of strip frame 9 back as a second frame 8, for good,
+    and 6, 6, 7, 8 wrote two frame 7s."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "w"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(
+        json.dumps(_one_run(positions, "tool roll")), encoding="utf-8")
+    last = max(positions) + 1
+    _, frames = walk(Roll(frames=1, start_at=last + 1, infrared=False,
+                          resolution=300, name="w"), tmp_path,
+                     StripScanner(at=last))
+    assert frames == written
+
+
+@pytest.mark.parametrize("which, strip", [
+    ("tied", [1, 2, 3, 6, 7, 8]),
+    ("second-longer", [1, 2, 4, 5, 6]),
+])
+def test_a_roll_resumed_under_8a9ba17_is_read_frame_by_frame(which, strip):
+    """Each run of a resumed 8a9ba17 roll counted from wherever the film then
+    was, so its file holds two shifts honestly. The commonest applied to all
+    of it read the tied file as 1 to 6 -- strip frames 6 to 8 as 4 to 6 --
+    and the other as 2 to 6, the first run's frames one place on; a resume
+    then wrote that down. Every frame's own position says where it was, and
+    nothing in either file collides, so there is nothing to report."""
+    from conftest import resumed_by_8a9ba17
+
+    old = resumed_by_8a9ba17(which)
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == strip
+    assert [f["index"] for f in new["frames"]] == [n - 1 for n in strip]
+    assert said == []
+
+
+def test_a_resume_writes_back_the_frames_an_8a9ba17_roll_really_scanned(
+        tmp_path):
+    """The write-back half, through the real session: frames 4 and 5 of the
+    strip, never scanned, resumed into the tied file with the film on frame
+    8. The file then said 'strip' over frames 1 to 6 read with one shift, so
+    the new frames 4 and 5 replaced the records of strip frames 6 and 7, and
+    the scan of frame 8 stayed filed as frame 6 for good."""
+    from conftest import StripScanner, resumed_by_8a9ba17
+
+    folder = tmp_path / "rolls" / "r"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17("tied")),
+                                      encoding="utf-8")
+    _, frames = walk(Roll(frames=2, start_at=4, infrared=False,
+                          resolution=300, name="r"), tmp_path,
+                     StripScanner(at=7))
+    assert frames == [(1, 0), (2, 1), (3, 2), (6, 5), (7, 6), (8, 7),
+                      (4, 3), (5, 4)]
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["numbering"] == session.NUMBERING
+
+
+@pytest.mark.parametrize("which, strip, shared", [
+    ("rewound", [6, 7, 8, 7, 8, 9],
+     ["frames 2 and 4 of r are both frame 7 of the strip",
+      "frames 3 and 5 of r are both frame 8 of the strip"]),
+    ("reinserted", [6, 7, 8, 4, 5, 6],
+     ["frames 1 and 6 of r are both frame 6 of the strip"]),
+    ("one-frame", [6, 7, 8, 7],
+     ["frames 2 and 4 of r are both frame 7 of the strip"]),
+])
+def test_an_8a9ba17_roll_that_went_over_a_place_twice_keeps_both_there(
+        which, strip, shared):
+    """Two 8a9ba17 runs into one roll that overlap on the strip, the film
+    wound back or the strip put in again between them. The frames that
+    collided were moved by the file's commonest shift, which was the other
+    run's, and each then landed on a frame that had collided with nothing,
+    which was moved in turn: the rewound file read 6 to 11, filing the scan
+    of strip frame 9 as 11 -- never scanned -- and saying frame 6 of it had
+    collided when nothing shared its place. Each run keeps its own shift,
+    both scans of a place are kept on it, and only a place really shared is
+    said."""
+    from conftest import resumed_by_8a9ba17
+
+    said = []
+    new = session.renumbered(resumed_by_8a9ba17(which), say=said.append)
+    assert [f["number"] for f in new["frames"]] == strip
+    assert [f["index"] for f in new["frames"]] == [n - 1 for n in strip]
+    assert len(said) == len(shared), said
+    for line, start in zip(said, shared):
+        assert line.startswith(start), line
+
+
+@pytest.mark.parametrize("which, resume, film_at, written", [
+    ("rewound", 10, 8,
+     [(6, 5), (7, 6), (8, 7), (7, 6), (8, 7), (9, 8), (10, 9)]),
+    ("reinserted", 11, 10,
+     [(6, 5), (7, 6), (8, 7), (4, 3), (5, 4), (6, 5), (11, 10)]),
+])
+def test_a_resume_keeps_both_scans_of_a_place_an_8a9ba17_roll_went_over(
+        tmp_path, which, resume, film_at, written):
+    """The write-back half, through the real session, for the two files
+    above. The rewound one came back as frames 6 to 11 under 'strip', so
+    resuming frame 10 replaced the record of strip frame 8's second scan and
+    left the scan of frame 9 filed as 11 for good; the reinserted one filed
+    the second scan of strip frame 6 as 11, and resuming frame 11 replaced
+    it."""
+    from conftest import StripScanner, resumed_by_8a9ba17
+
+    folder = tmp_path / "rolls" / "r"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17(which)),
+                                      encoding="utf-8")
+    _, frames = walk(Roll(frames=1, start_at=resume, infrared=False,
+                          resolution=300, name="r"), tmp_path,
+                     StripScanner(at=film_at))
+    assert frames == written
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["numbering"] == session.NUMBERING
+
+
+def test_a_manifest_that_recorded_no_positions_borrows_its_walks_shift():
+    died = {"wanted": [1, 2], "frames": [{"number": 1, "done": False}]}
+    assert session.legacy_shift(died) is None
+    assert session.renumbered(died, fallback=5)["wanted"] == [6, 7]
 
 
 def test_a_plan_says_what_the_hardware_will_actually_travel():

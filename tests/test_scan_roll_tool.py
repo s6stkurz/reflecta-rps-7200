@@ -12,13 +12,14 @@ it stayed green against a tool that no longer produced that shape. What these
 hold it to is the thing that only driving `main()` can show: that a roll leaves
 files behind.
 """
+import json
 import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from conftest import load_tool
+from conftest import FilmOnFrame, load_tool
 from rps7200.direct import DirectScanner, RollFrame
 
 scan_roll = load_tool("scan_roll")
@@ -26,13 +27,18 @@ scan_roll = load_tool("scan_roll")
 RAW_LEVEL, CORRECTED_LEVEL = 111, 222
 
 
-class FakeRollScanner(DirectScanner):
+class FakeRollScanner(FilmOnFrame, DirectScanner):
     """Yields frames the way the driver does, including the raw pixels.
 
     `RollFrame` carries `raw_image` beside `image` precisely because the
     library stores what the scanner sent and recomputes the correction on the
     way out. The two levels here are distinct so a test can say which was
     filed.
+
+    On a transport now, because the tool asks where the film is before it
+    moves anything; a double that cannot say is a scanner every roll refuses.
+    Its frames count from ``first_index`` and sit where the film is, as the
+    driver's do.
     """
 
     def __init__(self, frames: int = 3, **kw):
@@ -65,11 +71,14 @@ class FakeRollScanner(DirectScanner):
         # argument that stops being passed, which is this tool's known
         # failure mode: --no-fast-ir was parsed, stored and dropped.
         count = kw.get("frames") or self._frames
-        for index in range(count):
+        first = kw.get("first_index", 0)
+        for i in range(count):
+            if i:
+                self.at += 1                  # the advance between frames
             shape = (6, 6, 3)
             yield RollFrame(
-                index=index,
-                position=index,
+                index=first + i,
+                position=self.at,
                 image=np.full(shape, CORRECTED_LEVEL, np.uint16),
                 meta={"resolution_dpi": kw.get("resolution", 1800),
                       "channel_order": list("RGB"), "duration_s": 1.0},
@@ -265,6 +274,374 @@ def test_a_frame_that_failed_makes_the_run_fail(tmp_path, monkeypatch):
     code = scan_roll.main()
     assert len(list((tmp_path / "roll").glob("frame*.tif"))) == 2
     assert code != 0, "two scanned and one lost is not a clean run"
+
+
+# --- --start-at is a place on the strip --------------------------------------
+
+
+def _run_on(tmp_path, monkeypatch, at, *argv):
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            self.at = at
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--no-shading", "--roll", "placed", *argv])
+    code = scan_roll.main()
+    return created[0], code
+
+
+def test_start_at_is_a_place_on_the_strip(tmp_path, monkeypatch):
+    """`--start-at 3` used to mean "advance twice from wherever the film is",
+    so with the film on frame 8 it scanned 10 and 11 and called them 3 and 4.
+    It goes to frame 3 now, by the transport's counter, and numbers from it."""
+    import json
+
+    scanner, code = _run_on(tmp_path, monkeypatch, 7,
+                            "--start-at", "3", "--frames", "2")
+    assert code == 0
+    assert scanner.moves == [("retreat", 1)] * 5
+    assert scanner.asked["first_index"] == 2
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert [(f["number"], f["transport_position"])
+            for f in manifest["frames"]] == [(3, 2), (4, 3)]
+    assert manifest["numbering"] == "strip"
+
+
+def test_a_roll_the_tool_cannot_place_scans_nothing(tmp_path, monkeypatch):
+    from rps7200 import session
+
+    class Silent(FakeRollScanner):
+        def position(self):
+            return None
+
+    created = []
+
+    class Patched(Silent):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0, raising=False)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--no-shading", "--roll", "lost", "--frames", "2"])
+    assert scan_roll.main() == 1
+    assert created[0].asked == {}, "the roll was never started"
+    assert not list((tmp_path / "roll").glob("frame*.tif"))
+
+
+class _Cold(FakeRollScanner):
+    """Silent until its lamp is warm, and `wait_warm` is what warms it -- as
+    `DirectScanner.wait_warm` blocks until TEST UNIT READY succeeds. That the
+    counter says nothing meanwhile is `wait_warm`'s docstring's premise, not
+    a measurement. ``order`` is what the tool asked, in order."""
+
+    warm = False
+
+    def __init__(self, frames=2, at=0, order=None):
+        super().__init__(frames=frames)
+        self.at = at
+        self.order = [] if order is None else order
+
+    def wait_warm(self, timeout=300.0, poll=5.0):
+        self.order.append("wait_warm")
+        self.warm = True
+
+    def position(self):
+        self.order.append("position")
+        return self.at if self.warm else None
+
+    def ensure_shading(self, path, reuse=False, skip=False):
+        self.order.append("calibrate")
+        return super().ensure_shading(path, reuse, skip)
+
+
+def _tool(tmp_path, monkeypatch, *argv, make):
+    """Run the tool with ``make()`` standing where the scanner stands."""
+    from rps7200 import session
+
+    created = []
+
+    def opened(**kw):
+        created.append(make())
+        return created[-1]
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    monkeypatch.setattr(scan_roll, "DirectScanner", opened)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--reference", str(tmp_path / "shading.npz"), "--roll", "roll",
+         *argv])
+    return scan_roll.main(), created
+
+
+def test_a_roll_from_cold_waits_for_the_lamp_before_it_asks_where_the_film_is(
+        tmp_path, monkeypatch):
+    """With the counter silent while the lamp warms, a seek that asked first
+    would hear nothing and refuse. The lamp is waited for with status queries
+    alone, then the film is placed, and only then is anything calibrated."""
+    order = []
+    code, created = _tool(tmp_path, monkeypatch, "--dry-run", "--frames", "2",
+                          make=lambda: _Cold(order=order))
+    assert code == 0
+    assert order[0] == "wait_warm", order
+    assert order.index("position") < order.index("calibrate"), order
+    assert created[0].asked["first_index"] == 0
+
+
+def test_a_counter_no_strip_has_refuses_before_anything_is_calibrated(
+        tmp_path, monkeypatch):
+    """A stale 72 is the one reading of a transport with no strip in
+    (`full_17_strip`). The tool calibrated first and refused after, spending
+    3-4 minutes calibrating what may have been an empty transport -- the
+    state CLAUDE.md says preceded a wedge. It refuses first now."""
+    order = []
+    code, created = _tool(tmp_path, monkeypatch, "--dry-run", "--frames", "2",
+                          make=lambda: _Cold(at=72, order=order))
+    assert code == 1
+    assert "calibrate" not in order, order
+    assert created[0].asked == {}, "the roll never started"
+    assert created[0].moves is None, "nothing moved"
+    assert not (tmp_path / "roll").exists()
+
+
+def test_frames_0_does_not_calibrate(tmp_path, monkeypatch):
+    """A rewind alone is a transport job; a calibration there would spend
+    3-4 minutes of lamp on nothing."""
+    order = []
+
+    def warm():
+        scanner = _Cold(at=5, order=order)
+        scanner.warm = True
+        return scanner
+
+    code, created = _tool(tmp_path, monkeypatch, "--frames", "0",
+                          "--rewind", "2", make=warm)
+    assert code == 0
+    assert created[0].at == 3, "the rewind itself ran"
+    assert "calibrate" not in order, order
+
+
+def test_a_rewind_from_cold_waits_for_the_lamp_first(tmp_path, monkeypatch):
+    """`--rewind` is the first thing that talks to the transport, so the lamp
+    is waited for ahead of it as well. Ahead of a silent counter, the rewind
+    read every command as backlash and refused."""
+    order = []
+    code, created = _tool(tmp_path, monkeypatch, "--frames", "0",
+                          "--rewind", "2",
+                          make=lambda: _Cold(at=5, order=order))
+    assert code == 0
+    assert order[0] == "wait_warm", order
+    assert created[0].at == 3
+
+
+def test_a_calibration_that_fails_writes_nothing_and_exits_1(tmp_path,
+                                                             monkeypatch):
+    """The folder is today's date by default, the window's walks' name, so a
+    run that stops before its roll begins leaves the walk there alone."""
+    class Broken(_Cold):
+        def ensure_shading(self, path, reuse=False, skip=False):
+            raise TimeoutError("lamp still warming after 300s")
+
+    walked = tmp_path / "roll"
+    walked.mkdir()
+    before = {"roll": "roll", "frames": [{"number": 1, "prescan": "p.tif"}]}
+    (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
+    code, created = _tool(tmp_path, monkeypatch, "--dry-run", "--frames", "2",
+                          make=Broken)
+    assert code == 1
+    assert created[0].asked == {}, "nothing was scanned"
+    assert json.loads((walked / "survey.json").read_text(
+        encoding="utf-8")) == before
+    assert [p.name for p in walked.iterdir()] == ["survey.json"]
+
+
+def test_a_roll_that_cannot_be_placed_leaves_the_folder_as_it_was(
+        tmp_path, monkeypatch):
+    """The default roll name is today's date, the same name the window's
+    walks use, and the manifest was written before the device was opened --
+    so a seek that refused replaced that day's survey.json with an empty
+    one. Nothing is written until the film is on the roll's first frame."""
+    import json
+
+    from rps7200 import session
+
+    class Silent(FakeRollScanner):
+        def position(self):
+            return None
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0, raising=False)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: Silent(frames=2))
+
+    walked = tmp_path / "2026-09-23"
+    walked.mkdir()
+    before = {"roll": "2026-09-23", "frames": [
+        {"number": 1, "transport_position": 5, "prescan": "prescan01.tif"}]}
+    (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
+    fresh = tmp_path / "never-placed"
+    for out in (walked, fresh):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["scan_roll.py", "--out", str(out), "--library", "",
+             "--no-shading", "--roll", out.name, "--dry-run",
+             "--frames", "2"])
+        assert scan_roll.main() == 1
+    assert json.loads((walked / "survey.json").read_text(
+        encoding="utf-8")) == before, "the walk was overwritten"
+    assert not fresh.exists(), "a folder for a roll that never started"
+
+
+def test_an_old_walks_prescans_are_held_under_the_strips_numbers(
+        tmp_path, monkeypatch):
+    """`registration-F` named its prescans 01 to 03 from a walk begun on the
+    counter's 14. Held under those numbers, a roll that now numbers frames by
+    their place on the strip would hold frame 1 of the strip to frame 15's
+    reference."""
+    import json
+
+    from rps7200 import tiff
+
+    folder = tmp_path / "registration-F"
+    folder.mkdir()
+    for n in (1, 2, 3):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n + 13,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, _note = scan_roll.hold_from_walk(folder)
+    assert sorted(held) == [15, 16, 17]
+    assert all(a.number == n for n, a in held.items())
+
+
+def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(
+        tmp_path, monkeypatch):
+    """`rolls/2026-09-23` as it is on disk. The survey lists the second walk:
+    prescan01 and 02, at transport positions 5 and 6. prescan03 to 06 were
+    left by an earlier walk into the same folder, at positions 2 to 5. Read
+    by file name with the survey's one shift, those four became frames 8 to
+    11 -- prescan06 a second picture of prescan01's place, held as frame 11
+    -- where the window's sheet shows frames 6 and 7. The tool and the window
+    read one folder one way."""
+    import json
+
+    from rps7200 import tiff
+
+    folder = tmp_path / "2026-09-23"
+    folder.mkdir()
+    for n in range(1, 7):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "2026-09-23", "dry_run": True,
+        "settings": {"start_at": 1, "only": None, "prescan_resolution": 300},
+        "frames": [{"number": n, "transport_position": n + 4,
+                    "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder)
+    assert sorted(held) == [6, 7]
+    assert note["walked"] == 2
+    assert np.array_equal(held[6].reference,
+                          tiff.read(str(folder / "prescan01.tif")))
+
+    gui = load_tool("gui")
+    shown = [r.number for r in gui.read_survey(folder)["results"]]
+    assert sorted(held) == shown, "the tool and the window disagree"
+
+
+def _prescans(folder, numbers):
+    from rps7200 import tiff
+
+    folder.mkdir()
+    for n in numbers:
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+
+
+def test_a_walk_with_only_its_roll_json_is_held_from_that(tmp_path,
+                                                          monkeypatch):
+    """A walk made before walks had a file of their own wrote `roll.json`.
+    With no `survey.json` beside it, that is the walk's record -- read by the
+    same reader, so its old numbers still become the strip's."""
+    folder = tmp_path / "old-walk"
+    _prescans(folder, (1, 2, 3))
+    (folder / "roll.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n + 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder)
+    assert sorted(held) == [3, 4, 5]
+    assert note["walked"] == 3
+
+
+def test_a_walk_whose_transport_stalled_is_held_frame_for_frame(
+        tmp_path, monkeypatch):
+    """One advance of the walk did not move: positions 5, 6, 6, 7, 8. Two of
+    its frames came back under one number, so `--approved` reported five
+    walked and held four, dropping walk frame 1's prescan without a word.
+    One walk numbers no two frames alike, and the window's sheet agrees."""
+    folder = tmp_path / "stall"
+    _prescans(folder, (1, 2, 3, 4, 5))
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "stall", "dry_run": True,
+        "settings": {"start_at": 1, "only": None, "prescan_resolution": 300},
+        "frames": [{"number": n, "transport_position": p,
+                    "prescan": f"prescan{n:02d}.tif"}
+                   for n, p in enumerate([5, 6, 6, 7, 8], start=1)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder)
+    assert note["walked"] == 5
+    assert sorted(held) == [5, 6, 7, 8, 9]
+    # each prescan is filled with 40 + its walk number
+    assert [int(held[n].reference[0, 0, 0]) - 40 for n in sorted(held)] == [
+        1, 2, 3, 4, 5]
+
+    gui = load_tool("gui")
+    shown = [r.number for r in gui.read_survey(folder)["results"]]
+    assert sorted(held) == shown, "the tool and the window disagree"
+
+
+def test_a_walk_whose_survey_cannot_be_read_is_refused(tmp_path):
+    """Not quietly read from `roll.json` instead, and not held as nothing: a
+    walk that cannot be read says so before the scanner is even opened."""
+    folder = tmp_path / "torn"
+    _prescans(folder, (1, 2))
+    (folder / "survey.json").write_text('{"frames": [', encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n - 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
+        encoding="utf-8")
+    with pytest.raises(SystemExit, match="survey.json cannot be read"):
+        scan_roll.hold_from_walk(folder)
 
 
 # --- winding the film back, and refusing to go on if it did not -------------

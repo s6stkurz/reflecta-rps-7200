@@ -267,6 +267,24 @@ def test_skip_resumes_a_part_scanned_roll():
     assert [f.index for f in out] == [3, 4]
 
 
+def test_a_roll_counts_from_where_the_film_was_put():
+    """`first_index` is the transport position the caller put the film on, so
+    a frame's index is its place on the strip -- and `only` and `frames` count
+    the same way. Counting from 0 wherever the film was is what numbered the
+    frame on the counter's 10 as frame 1."""
+    s = FakeRoll([picture(seed=i) for i in range(9)])
+    s.at = 3
+    out = list(s.scan_roll(frames=2, first_index=3, meter=METER_NONE))
+    assert [f.index for f in out] == [3, 4]
+    assert [f.position for f in out] == [3, 4]
+
+    s = FakeRoll([picture(seed=i) for i in range(9)])
+    s.at = 3
+    out = list(s.scan_roll(only=(5,), first_index=3, meter=METER_NONE))
+    assert [(f.index, f.position) for f in out] == [(5, 5)]
+    assert s.at == 5, "and the roll ends at its last chosen frame"
+
+
 def test_only_scans_the_frames_that_were_chosen():
     """The point of a survey: pay for the four good frames, not the seventeen."""
     s = FakeRoll([picture(seed=i) for i in range(6)])
@@ -1591,3 +1609,182 @@ def test_a_reversed_pass_is_read_at_a_finer_prescan_too():
     mm, detail = measure_shift_mm(reference, shifted[::-1])
     assert mm is not None, detail["reason"]
     assert detail["row_reversed"] is True
+
+
+# --------------------------------------------------------------------------
+# a frame is numbered by where the film is
+# --------------------------------------------------------------------------
+#
+# A roll counts one place per advance, and every file and record is named by
+# that count. When an advance moved the film two places, the counter said so
+# and the log said so -- and the frame was filed under the other picture's
+# number anyway, where a sheet's tick or an approved position then reached the
+# wrong photograph. These run the driver's own advance, wait and READ_STATE
+# on a transport that double-steps once.
+
+
+def _walked(scanner, **kw):
+    kw.setdefault("dry_run", True)
+    kw.setdefault("meter", METER_NONE)
+    return [(f.index, f.position, f.prescan)
+            for f in scanner.scan_roll(infrared=False, **kw)]
+
+
+def test_a_frame_after_a_double_step_is_filed_where_the_film_is(
+        monkeypatch):
+    """The advance from place 2 lands on 4. That picture is frame 5 of the
+    strip, and was being filed as frame 4 -- whose picture nobody took."""
+    from conftest import NoWaiting, ScannerOnStrip, strip_picture
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, double_steps={2})
+    walked = _walked(s, frames=6)
+    assert [(i, p) for i, p, _ in walked] == [(0, 0), (1, 1), (2, 2),
+                                             (4, 4), (5, 5)]
+    for index, _, prescan in walked:
+        assert np.array_equal(prescan, strip_picture(index)), index
+    said = " ".join(s.logged)
+    assert "filed as frame 5" in said
+    assert "went past frame 4 without it being scanned" in said
+
+
+def test_a_double_step_past_the_end_of_a_roll_ends_it(monkeypatch):
+    """Frames 1 to 4, and the film jumps from 3 to 5: frame 5 is not in the
+    roll, so it is neither scanned nor filed as frame 4."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    walked = _walked(ScannerOnStrip(at=0, double_steps={2}), frames=4)
+    assert [(i, p) for i, p, _ in walked] == [(0, 0), (1, 1), (2, 2)]
+
+
+def test_a_chosen_frame_is_held_to_its_own_position_after_a_jump(
+        monkeypatch):
+    """Ticked 3 and 4, and the film jumps from 2 to 4 while passing frames
+    nobody chose. The picture now in the gate is frame 4's, so it is held to
+    frame 4's approved position and filed as 4 -- not held to frame 3's and
+    filed as 3 -- and the log says 3 went by unscanned."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+    from rps7200.session import Approved
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, double_steps={1})
+    approved = {2: Approved(number=3), 3: Approved(number=4)}
+    walked = _walked(s, only=(2, 3), approved=approved)
+    assert [(i, p) for i, p, _ in walked] == [(3, 3)]
+    assert s.held == [(3, 4)], "held to its own reference"
+    assert any("went past frame 3 without it being scanned" in line
+               for line in s.logged), s.logged
+
+
+def test_a_jump_onto_a_chosen_frame_through_an_unchosen_one_is_caught(
+        monkeypatch):
+    """Only 4 ticked, and the advance from place 1 lands on 3. The counter
+    read at the top of index 2 -- a frame nobody chose -- is what finds the
+    film already on the chosen frame. Read only at chosen frames, the roll
+    advanced past it, and the one frame chosen was lost."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, double_steps={1})
+    walked = [(f.index, f.position) for f in s.scan_roll(
+        only=(3,), dry_run=True, meter=METER_NONE, infrared=False)]
+    assert walked == [(3, 3)]
+
+
+def test_a_counter_behind_the_count_ends_the_roll(monkeypatch):
+    """The advance from place 3 lands back on place 1. Followed, the roll
+    took frames 2 to 4 again under the numbers it had already filed them as,
+    overwrote their prescans, and gave eight pictures for five asked. It
+    ends there, as a jump past the end already did, and says which frames
+    the film went back over."""
+    from conftest import NoWaiting, ScannerOnStrip, strip_picture
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, goes_back={3: 1})
+    walked = _walked(s, frames=5)
+    assert [(i, p) for i, p, _ in walked] == [(0, 0), (1, 1), (2, 2), (3, 3)]
+    for index, _, prescan in walked:
+        assert np.array_equal(prescan, strip_picture(index)), index
+    assert any("frame 5: the transport says the film is on frame 2" in line
+               and "went back over frames 2, 3, 4" in line
+               and "ends here" in line for line in s.logged), s.logged
+
+
+def test_where_the_counter_ends_a_roll_is_one_decision():
+    """Behind the count, or past the roll's end: both are ``None``, which is
+    how both loops -- the driver's and the demo's -- know to stop."""
+    ends = DirectScanner.roll_ends(0, 0, 4, None)
+    assert DirectScanner.place_on_strip(4, 1, finished=ends)[0] is None
+    assert DirectScanner.place_on_strip(2, 4, finished=ends)[0] is None
+    assert DirectScanner.place_on_strip(2, 3, finished=ends)[0] == 3
+    back = DirectScanner.place_on_strip(4, 3)[1]
+    assert back is not None and "went back over frame 4," in back
+
+
+def test_a_counter_no_strip_has_does_not_renumber_a_frame():
+    """A stale reading is logged, and the count kept."""
+    assert DirectScanner.place_on_strip(3, 72)[0] == 3
+    assert DirectScanner.place_on_strip(3, None) == (3, None)
+    assert DirectScanner.place_on_strip(3, 3) == (3, None)
+
+
+def test_the_roll_log_counts_frames_the_way_the_window_does():
+    """From 1. The log said 'frame 0: contrast ...' beside a window calling
+    the same picture frame 1."""
+    s = FakeRoll([picture(seed=i) for i in range(3)])
+    lines = []
+    s.log_hook = lines.append
+    list(s.scan_roll(frames=2, dry_run=True, meter=METER_NONE))
+    contrast = [line for line in lines if "contrast" in line]
+    assert [line.split(":")[0] for line in contrast] == ["frame 1", "frame 2"]
+    assert not any(line.startswith("frame 0") for line in lines), lines
+
+
+def test_the_hold_loop_counts_frames_the_way_the_window_does():
+    """Its lines sit between the roll's own in one log, so they count from 1
+    as well -- `tools/hold_probe.py` holds index 0 as `Approved(number=1)`,
+    which now reads as the same frame in both."""
+    from rps7200.session import Approved
+
+    image = picture(seed=3)
+    s = FakeRoll([image])
+    lines = []
+    s.log_hook = lines.append
+    s._hold_to_approved(0, image, 300,
+                        Approved(number=1, offset_mm=0.0, reference=image))
+    assert lines and lines[-1].startswith("frame 1:"), lines
+
+
+def test_the_reasons_a_roll_stops_correcting_count_frames_from_1():
+    """These reach the manifest as well as the log: a roll's `roll_abort`
+    and the aim's travel budget are filed with the frame they stopped on,
+    and said 'frame 0' of the frame the window calls 1."""
+    from rps7200.framing import ROLL_TRAVEL_LIMIT_MM, StripWalk
+
+    # Asked forward, and the film went back: the direction check.
+    reference = _lit()
+    s = FakeRoll([reference, reference.copy(), None])
+    s.prescans = [reference.copy(), np.roll(reference, -14, axis=1),
+                  reference.copy()]
+    frames = list(s.scan_roll(
+        frames=2, resolution=300, infrared=False, meter=METER_NONE,
+        approved={0: _approved(1, 0.5, reference),
+                  1: _approved(2, 0.5, reference)}))
+    abort = frames[0].registration["approved"]["roll_abort"]
+    assert abort.startswith("frame 1:"), abort
+
+    # A roll that has already nudged as far as a strip should ever need.
+    class Spent(StripWalk):
+        def judge(self, number, image):
+            return 5 * DirectScanner.STEP_MM, {"agreed": ["left"]}
+
+    walk = Spent(travel_mm=ROLL_TRAVEL_LIMIT_MM)
+    out = FakeRoll([reference])._aim_frame(0, reference, 300, walk)
+    assert out["outcome"] == "budget"
+    assert out["reason"].startswith("frame 1 wants"), out["reason"]

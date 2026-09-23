@@ -381,7 +381,7 @@ class RollFrame:
     the rest.
     """
 
-    index: int                          # 0-based, from the start of the roll
+    index: int                          # 0-based, its place on the strip
     position: int | None                # what READ_STATE said the transport held
     image: np.ndarray | None
     meta: dict[str, Any]
@@ -2832,8 +2832,8 @@ class DirectScanner:
                 if abs(went) > HOLD_TOLERANCE_MM and (went > 0) != (want > 0):
                     out["outcome"] = "wrong_way"
                     out["roll_abort"] = (
-                        f"frame {index}: asked for {say_units(want)} and the "
-                        f"film went {say_units(went)}. The direction is "
+                        f"frame {index + 1}: asked for {say_units(want)} and "
+                        f"the film went {say_units(went)}. The direction is "
                         "inverted, so "
                         "every frame would be driven the wrong way -- holding "
                         "is off for the rest of this roll."
@@ -2849,7 +2849,7 @@ class DirectScanner:
                     # longer looking like the one that was judged at all.
                     out["outcome"] = "abandoned"
                     out["abandoned"] = why
-                    self._log(f"frame {index}: {why}")
+                    self._log(f"frame {index + 1}: {why}")
                     break
 
         final = measured
@@ -2866,7 +2866,8 @@ class DirectScanner:
         out["row_reversed"] = any(h.get("row_reversed")
                                   for h in out["history"])
         self._log(
-            f"frame {index}: {source} {say_units(target)} -> {out['outcome']}"
+            f"frame {index + 1}: {source} {say_units(target)} -> "
+            f"{out['outcome']}"
             + (f", now {say_units(final)} after {out['moves']} move(s)"
                if final is not None else ", not verified")
         )
@@ -2903,7 +2904,7 @@ class DirectScanner:
 
         if decision is None:
             out["reason"] = detail.get("reason", "")
-            self._log(f"frame {index}: left as it came -- {out['reason']}")
+            self._log(f"frame {index + 1}: left as it came -- {out['reason']}")
             return out
 
         agreed = "+".join(detail.get("agreed", []))
@@ -2911,7 +2912,7 @@ class DirectScanner:
             # Inside the smallest move the hardware can make, so there is
             # nothing to ask for. Not "close enough" -- unaskable.
             out["outcome"] = "in_place"
-            self._log(f"frame {index}: {say_units(decision)} by {agreed}, "
+            self._log(f"frame {index + 1}: {say_units(decision)} by {agreed}, "
                       f"inside the "
                       f"{say_units(HOLD_TOLERANCE_MM, signed=False)} the "
                       "transport can move")
@@ -2920,12 +2921,12 @@ class DirectScanner:
         if not walk.affordable(decision):
             walk.record(index, None, 0.0)
             walk.stop(
-                f"frame {index} wants {say_units(decision)} on top of the "
+                f"frame {index + 1} wants {say_units(decision)} on top of the "
                 f"{say_units(walk.travel_mm, signed=False)} this roll has "
                 "already nudged")
             out["outcome"] = "budget"
             out["reason"] = walk.off_reason
-            self._log(f"frame {index}: {walk.off_reason}")
+            self._log(f"frame {index + 1}: {walk.off_reason}")
             return out
 
         if dry_run:
@@ -2938,12 +2939,13 @@ class DirectScanner:
             }
             out["outcome"] = "dry_run"
             self._log(
-                f"frame {index}: {say_units(decision)} by {agreed}; would send "
+                f"frame {index + 1}: {say_units(decision)} by {agreed}; "
+                f"would send "
                 f"{out['would_send']['action']:#04x} {param:#04x} 00 04 "
                 f"({say_units(out['would_send']['asked_mm'])}) -- dry run")
             return out
 
-        self._log(f"frame {index}: {say_units(decision)} by {agreed} "
+        self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
                   f"(from {detail.get('chose', '?')})")
         fix = self._hold_to_approved(
             index, image, prescan_resolution,
@@ -2990,7 +2992,7 @@ class DirectScanner:
                 return True, ""          # cannot see; not evidence of trouble
             if abs(reading.mm) > abs(target_mm) + MAX_CORRECTION_MM:
                 return False, (
-                    f"frame {index}: after moving, the gap reads "
+                    f"frame {index + 1}: after moving, the gap reads "
                     f"{say_units(reading.mm)} -- further out than the "
                     f"{say_units(target_mm)} this started from. The frame is "
                     "not "
@@ -3079,6 +3081,124 @@ class DirectScanner:
 
     # -- rolls -------------------------------------------------------------
 
+    #: The highest transport position taken at its word. READ_STATE byte 2
+    #: counts whole frames from where the strip went in, and a 36-exposure roll
+    #: is about 38 of them -- the longest this driver is written for. The one
+    #: reading ever seen past that was a stale 72, left over with no strip in
+    #: and reset to 0 when one went in (`docs/protocol.md` section 9). A number
+    #: no strip can have is not a place to count frames from, so above this the
+    #: position is unknown.
+    #:
+    #: Here rather than in :mod:`rps7200.session`, which re-exports it, because
+    #: both roll loops -- this one and the demo's -- decide with it, and a
+    #: decision the stand-in needs is taken from this class, never retyped.
+    LAST_PLAUSIBLE_POSITION = 39
+
+    @staticmethod
+    def plausible_position(position: int | None) -> bool:
+        """Whether a counter reading is a place on a strip at all."""
+        return (position is not None
+                and 0 <= position <= DirectScanner.LAST_PLAUSIBLE_POSITION)
+
+    @staticmethod
+    def roll_ends(
+        first_index: int,
+        skip: int,
+        frames: int | None,
+        only: Sequence[int] | frozenset[int] | None,
+    ) -> Callable[[int], bool]:
+        """When a roll is over, as a test on the index it has reached.
+
+        Over at ``frames`` places on from where it started (``skip`` of them
+        advanced past first), or once it is past the last frame in ``only`` --
+        there is nothing left to do there, so it ends rather than advancing
+        through the rest of the strip looking for pictures the operator has
+        already said no to. Neither given: never, and the roll runs until the
+        strip does.
+
+        Static, and asked by :meth:`scan_roll` and the demo's roll alike, for
+        the reason :meth:`param_for_mm` is. The demo carried its own copy of
+        this and it drifted three ways in one day -- a six-frame default,
+        ignoring the end of ``only``, walking past its own strip -- each of
+        which made the demo report something the scanner would not do.
+        """
+        end = None if frames is None else first_index + skip + frames
+        last_wanted = max(only) if only else None
+
+        def finished(index: int) -> bool:
+            if end is not None and index >= end:
+                return True
+            return last_wanted is not None and index > last_wanted
+
+        return finished
+
+    @staticmethod
+    def place_on_strip(
+        index: int,
+        position: int | None,
+        wanted: frozenset[int] | None = None,
+        finished: Callable[[int], bool] | None = None,
+    ) -> tuple[int | None, str | None]:
+        """The index a frame is filed under, and what to log if it moved.
+
+        A roll counts one place per advance, and that count is what every file
+        and record is named by -- which is right only while the film moves one
+        place per advance. An advance that took two, or a key pressed on the
+        scanner mid-roll, left the count naming a picture it was not: the
+        counter said so, the log said so, and the frame was filed under the
+        other picture's number anyway, where a sheet's tick or an approved
+        position then reached the wrong photograph.
+
+        So the counter's word is taken whenever it has one that a strip can
+        have: the index becomes ``position``, and the count carries on from
+        there. Returns ``(index, None)`` when there is nothing to say.
+
+        ``wanted`` is the roll's chosen indexes, so a jump that passed one of
+        them says which -- that frame was not scanned, and nothing else would
+        say so. A reading no strip can have is logged and the count kept.
+
+        ``(None, why)`` says the roll ends here, and it ends on either side of
+        the count. Past its end, by the roll's own ``finished``
+        (:meth:`roll_ends`), where the frame is not in the roll at all. And
+        **behind its count**, naming the frames the film went back over:
+        followed backwards, the count went over them again -- re-scanning
+        places this roll had already taken, filing them under numbers it had
+        already used, overwriting their prescans, and yielding more than
+        ``frames`` pictures, because where a roll ends is fixed from where it
+        started. Neither has been seen on this transport, and the second
+        takes a counter going back mid-roll or a caller that did not seek: the
+        seek puts the film on ``first_index`` before a roll begins.
+
+        Static and asked by both roll loops, for the reason :meth:`roll_ends`
+        is: a decision the demo needs is taken from here, never retyped.
+        """
+        if position is None or position == index:
+            return index, None
+        if not DirectScanner.plausible_position(position):
+            return index, (f"frame {index + 1}: the transport's counter reads "
+                           f"{position}, which no strip has, so the frame "
+                           "keeps the number the roll counted")
+        said = (f"frame {index + 1}: the transport says the film is on frame "
+                f"{position + 1}")
+
+        def listed(numbers: list[int]) -> str:
+            return (("frame " if len(numbers) == 1 else "frames ")
+                    + ", ".join(str(n) for n in numbers))
+
+        if position < index:
+            return None, (f"{said}, behind the roll -- it went back over "
+                          f"{listed(list(range(position + 1, index + 1)))}, "
+                          "so the roll ends here rather than take them again")
+        passed = [n + 1 for n in range(index, position)
+                  if wanted is None or n in wanted]
+        unscanned = (f" -- the film went past {listed(passed)} without it "
+                     "being scanned") if passed else ""
+        if finished is not None and finished(position):
+            return None, (f"{said}, past the end of this roll, so it ends "
+                          f"here{unscanned}")
+        return position, (f"{said}, so it is filed as frame {position + 1}"
+                          f"{unscanned}")
+
     def scan_roll(
         self,
         frames: int | None = None,
@@ -3102,6 +3222,7 @@ class DirectScanner:
         approved: dict[int, Any] | None = None,
         reverse_hold: bool = False,
         fast_infrared: bool = True,
+        first_index: int = 0,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -3113,7 +3234,17 @@ class DirectScanner:
 
         The first picture is scanned **before** any advance -- the film is
         already positioned at it when the roll starts. ``skip`` advances that
-        many times first, which is how a part-scanned roll is resumed.
+        many times first.
+
+        ``first_index`` is where the film is when the roll starts, as the
+        transport counts it, and so the index the first frame is given. The
+        caller puts the film there first -- `session.seek` does, from wherever
+        it was -- so that a frame's index is its place on the strip and the
+        same picture has the same number in every roll and walk. Counting from
+        0 wherever the film happened to be is what numbered frame 11 as 1.
+        ``only``, ``approved`` and ``frames`` all count from it, and where the
+        counter disagrees with the count part-way, the counter wins: see
+        :meth:`place_on_strip`.
 
         Every frame is scanned at the full transport window. Cropping is a
         host-side decision that can be revisited; a window detected wrongly
@@ -3123,11 +3254,13 @@ class DirectScanner:
         measure before the log says the film has drifted -- 240 units is 0.85 mm,
         comfortably past detection jitter and well short of losing anything.
 
-        Stops on whichever comes first: ``frames`` pictures, a prescan with no
-        picture in it (:func:`frame_contrast` below ``blank_contrast``), an
-        advance that does not move the film, or ``max_failures`` consecutive
-        failures. A single failed frame does not end the roll -- it is yielded
-        with ``error`` set and the roll goes on.
+        Stops on whichever comes first: ``frames`` places on from where it
+        started -- pictures, while the counter agrees with the count -- a
+        prescan with no picture in it (:func:`frame_contrast` below
+        ``blank_contrast``), an advance that does not move the film, a counter
+        that reads past the end of the roll or behind its count, or
+        ``max_failures`` consecutive failures. A single failed frame does not
+        end the roll -- it is yielded with ``error`` set and the roll goes on.
 
         ``meter`` is one of:
 
@@ -3142,7 +3275,7 @@ class DirectScanner:
         ``"none"``
             scan at whatever the device holds.
 
-        ``only`` is the frame numbers worth scanning, in the same numbering the
+        ``only`` is the frame indexes worth scanning, in the same numbering the
         yielded :class:`RollFrame` carries. Everything else is advanced past
         without being prescanned or scanned, so a frame nobody chose costs its
         ~7 s advance rather than 13 s surveyed or six minutes scanned, and the
@@ -3194,21 +3327,13 @@ class DirectScanner:
         # when nothing asked for aiming, so an ordinary roll is untouched.
         walk = StripWalk() if (correct or correct_dry_run) else None
         misses = 0
-        index = 0
+        index = first_index
 
-        # Past the last chosen frame there is nothing left to do, so the roll
-        # ends there rather than advancing through the rest of the strip
-        # looking for pictures the operator has already said no to.
         wanted = frozenset(only) if only is not None else None
         if wanted is not None and not wanted:
             self._log("no frames were chosen, so there is nothing to scan")
             return
-        last_wanted = max(wanted) if wanted else None
-
-        def finished(index: int) -> bool:
-            if frames is not None and index >= skip + frames:
-                return True
-            return last_wanted is not None and index > last_wanted
+        finished = self.roll_ends(first_index, skip, frames, wanted)
 
         def keep_going() -> bool:
             """Advance to the next frame, unless stop was asked for first."""
@@ -3228,7 +3353,7 @@ class DirectScanner:
                 return
             index += 1
 
-        while frames is None or index < skip + frames:
+        while not finished(index):
             # The frame has not begun here, so this is where stopping is
             # cheapest -- and it covers the advance, which takes 2-7 seconds
             # during which a stop would otherwise not be looked at again until
@@ -3238,11 +3363,26 @@ class DirectScanner:
                 self._log("stopping before the next frame, as asked")
                 return
 
+            # Where the film is, before anything is decided about this frame:
+            # whether it was chosen, which approved position it is held to and
+            # what it is filed as all follow from its place on the strip, and
+            # the counter is what knows that. Read for a frame that is only
+            # being passed as well, so a jump is caught where it happened
+            # rather than at the next chosen frame.
+            position = self.position()
+            placed, moved = self.place_on_strip(index, position, wanted,
+                                                finished)
+            if moved is not None:
+                self._log(moved)
+            if placed is None:
+                return                # past the end, or behind the count
+            index = placed
+
             if wanted is not None and index not in wanted:
                 # Surveyed and not chosen. The prescan that would decide this
                 # has already been taken and looked at, so taking another one
                 # here would only spend the operator's time re-asking.
-                self._log(f"frame {index}: not chosen, advancing past it")
+                self._log(f"frame {index + 1}: not chosen, advancing past it")
                 index += 1
                 if finished(index) or not keep_going():
                     return
@@ -3254,7 +3394,6 @@ class DirectScanner:
             raw_prescan = None
             prescan_meta: dict[str, Any] = {}
             marks: dict[str, Any] = {}
-            position = self.position()
 
             try:
                 prescan_image, _ = self.prescan(
@@ -3266,7 +3405,7 @@ class DirectScanner:
                 marks = dict(registration(prescan_image, window))
                 marks["contrast"] = round(contrast, 4)
                 self._log(
-                    f"frame {index}: contrast {contrast:.3f}, "
+                    f"frame {index + 1}: contrast {contrast:.3f}, "
                     f"picture x{marks['x0']}..{marks['x1']}, "
                     f"offset {say_units(marks['offset_mm'])}, "
                     f"short by {say_units(marks['shortfall_mm'], signed=False)}"
@@ -3274,7 +3413,7 @@ class DirectScanner:
 
                 if contrast < blank_contrast:
                     self._log(
-                        f"frame {index}: nothing in the window "
+                        f"frame {index + 1}: nothing in the window "
                         f"(contrast {contrast:.3f} < {blank_contrast}); "
                         "end of film"
                     )
@@ -3366,7 +3505,7 @@ class DirectScanner:
                     # is picture hanging outside the aperture, which no amount
                     # of nudging brings back.
                     self._log(
-                        f"frame {index}: picture is "
+                        f"frame {index + 1}: picture is "
                         f"{say_units(marks['shortfall_mm'], signed=False)} "
                         "narrower than a whole frame -- the film has drifted and "
                         "part of it is outside the aperture"
@@ -3432,7 +3571,8 @@ class DirectScanner:
             except (UsbError, ScanReadError, CalibrationRequired,
                     ShadingUnavailable, TimeoutError, ValueError) as exc:
                 failures += 1
-                self._log(f"frame {index} failed ({failures}/{max_failures}): {exc}")
+                self._log(f"frame {index + 1} failed "
+                          f"({failures}/{max_failures}): {exc}")
                 yield RollFrame(
                     index, position, None, {}, prescan_image, marks,
                     error=str(exc), raw_prescan=raw_prescan,
@@ -3442,7 +3582,8 @@ class DirectScanner:
                     self._log(f"giving up after {failures} consecutive failures")
                     return
 
-            self._log(f"frame {index} took {time.monotonic() - started:.0f}s")
+            self._log(f"frame {index + 1} took "
+                      f"{time.monotonic() - started:.0f}s")
             index += 1
             if finished(index):
                 break

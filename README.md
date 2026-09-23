@@ -230,17 +230,20 @@ holds every pass of the session; the channel selector switches between RGB and R
 is inverted by default so a negative can be judged by eye, and that inversion is display
 only — what reaches `library/` is the raw negative. Inverting for real is NegPy's job.
 
-Opening the window claims the device and asks it who it is, and nothing else: no
-calibration, no lamp, no transport until a button is pressed.
+Opening the window claims the device, asks it who it is and reads the transport's frame
+counter (`READ_STATE`) for the readout, and nothing else: no calibration, no lamp, and
+nothing moves until a button is pressed.
 
 **The contact sheet.** A dry run walks the strip prescanning and advancing only — about 20
 seconds a frame — and opens every picture it found in a grid with its frame number and its
 measured contrast. (A position you set by hand replaces the contrast with the offset in
-millimetres; a frame already scanned reads *scanned*.) Tick what is worth having and only
-those frames are scanned: the film rewinds to where the walk started, and an unticked
-frame costs its ~7 s advance instead of the minutes a scan would. Seventeen frames at 3600
-dpi RGBI is about an hour and a half, and a strip with four keepers should not cost the
-same as one with seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame,
+units of the transport's own adjustment parameter; a frame already scanned reads
+*scanned*.) Tick what is worth having and only
+those frames are scanned: the roll goes to the first ticked frame by the transport's
+counter, winding back or advancing from wherever the film is, and an unticked frame costs
+its ~7 s advance instead of the minutes a scan would. Seventeen frames at 3600 dpi RGBI
+is about an hour and a half, and a strip with four keepers should not cost the same as
+one with seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame,
 so a strip can be looked at again tomorrow instead of walked again.
 
 **A roll that died can be finished, however much later.** *Rolls …* is a table of every
@@ -490,6 +493,29 @@ deflate-compressed TIFFs:
 5 minutes all in — ~16 s prescan, up to 48 s metering, the scan itself, ~7 s advance — so
 a 36-frame roll at 1800 dpi RGBI is a couple of hours and one calibration (3–4 min) covers
 all of it.
+
+Frame numbers are places on the strip: frame N is where the transport's own counter
+(`READ_STATE` byte 2) reads N-1, counted from where the strip went in. It has been seen
+resetting to 0 as a strip goes in — once, in `full_17_strip` (`docs/protocol.md` §9) — so
+the numbers are right as long as the strip is in the way it was when it was walked, and
+only the operator can see that. A roll — from the window or from `--start-at N` here —
+waits for the lamp, reads that counter and winds or advances the film to its first frame,
+and refuses with nothing scanned if the counter will not answer or the film does not
+arrive. A frame is numbered by that counter throughout, so a film that jumps two places
+mid-roll is filed where it landed and the log names the frame it went past; a counter
+that reads behind the roll's count ends the roll, naming the frames it went back over,
+rather than scan them twice. A roll used to start wherever the film happened to be and
+call that frame 1. Manifests written before this say so by lacking
+`"numbering": "strip"`, and each frame in them is moved onto the strip's numbers by its
+own recorded transport position rather than read by its number. Two readings are not
+followed, and both are logged: a position no strip has, such as the stale 72, and one that
+gives a number another frame's does where the frames around it put it elsewhere, which is
+how a misread counter looks — those take the shift of their own walk or run. A walk, or a
+`roll.json` this tool wrote, is one run, which numbered no two frames alike, so there a
+frame that such a move lands on is moved along too, and that is logged. Two frames whose
+own runs put them on one place in a `roll.json` the window merged, because the film went
+over it twice between two rolls filed under one name, are both kept there, and that is
+logged too.
 
 `--start-at` resumes a roll that stopped, `--max-failures 3` gives up after three bad
 frames rather than grinding through a whole strip, and a resumed roll carries forward what

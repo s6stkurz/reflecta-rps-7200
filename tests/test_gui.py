@@ -732,34 +732,350 @@ def test_infrared_is_dropped_before_it_is_counted_not_after():
 # -- picking frames off a contact sheet --------------------------------------
 
 
-def test_the_film_goes_back_to_where_the_walk_started():
-    """A survey ends at the last picture; a roll starts where the film is."""
-    assert gui.rewind_frames([4, 5, 6, 7, 8, 9]) == 5
+#
+# `rewind_frames` used to be here: how far back to wind before scanning the
+# ticked frames, counted from where the walk had *ended*. It is gone because a
+# roll now goes to its first frame by the transport's own counter, and
+# counting back from the walk's end scanned the wrong frames without a word
+# whenever the film had moved since. What replaced it is tested below, and end
+# to end in `test_the_sheet_scans_the_frames_it_showed_wherever_the_film_is`.
 
 
-def test_rewinding_counts_positions_not_frames_that_came_back():
-    """A frame can fail and still have moved the film. Counting the results
-    would leave the rewind one short for every failure, and every frame after
-    that would be the wrong photograph."""
-    # Six pictures walked, positions 0..5, but only four came back with one.
-    assert gui.rewind_frames([0, 1, 4, 5]) == 5
+def test_a_sheets_roll_starts_on_its_first_ticked_frame():
+    """And covers every frame to the last one ticked, so it ends there."""
+    assert gui.chosen_span((4, 2)) == (2, 3)
+    assert gui.chosen_span((7,)) == (7, 1)
 
 
-def test_rewinding_falls_back_to_one_frame_a_result():
-    """A transport that will not say where it is still has to be rewound."""
-    assert gui.rewind_frames([None, None, None]) == 2
-    assert gui.rewind_frames([None]) == 0
-    assert gui.rewind_frames([]) == 0
+def test_the_readout_counts_frames_the_way_a_roll_does():
+    """It showed the counter itself: "frame position: 10" beside a roll that
+    called the same picture frame 11."""
+    assert gui.position_label(10) == "film on frame 11"
+    assert gui.position_label(0) == "film on frame 1"
+    assert gui.position_label(None) == "film on frame ?"
 
 
-def test_starting_part_way_in_is_rewound_past_as_well():
-    """`start at 3` advances twice before the first picture, and the roll that
-    follows advances twice again -- so the film has to go back that far too."""
-    assert gui.rewind_frames([2, 3, 4], start_at=3) == 4
+def test_the_roll_dialog_says_what_happens_to_the_film_first():
+    """The report was a roll that started where the film was; the dialog now
+    says where it will go, from where the transport last said it was."""
+    back, cost = gui.seek_note(10, 1)
+    assert "frame 11" in back and "winds back 10 frames to frame 1" in back
+    assert cost == 0.0
+
+    ahead, cost = gui.seek_note(0, 4)
+    assert "advances 3 frames to frame 4" in ahead
+    assert cost == pytest.approx(3 * gui.FORWARD_FRAME_S)
+
+    here, cost = gui.seek_note(3, 4)
+    assert "nothing moves" in here and cost == 0.0
+
+    unknown, cost = gui.seek_note(None, 1)
+    assert "asks the transport first" in unknown and cost == 0.0
 
 
-def test_the_rewind_is_never_negative():
-    assert gui.rewind_frames([7, 7, 7]) == 0
+def test_a_frame_no_strip_has_is_forecast_as_the_refusal_it_gets():
+    """The seek refuses frame 45 before it reads or moves anything. The
+    dialog said the film would advance 44 frames first, in about 202 s, and
+    the operator confirmed a wind that never happened."""
+    note, cost = gui.seek_note(0, 45)
+    assert "refuse" in note and "costs nothing" in note, note
+    assert "advances" not in note
+    assert cost == 0.0
+    assert "refuse" in gui.seek_note(None, 45)[0]
+    # The last frame a strip is taken to have is still a wind, the next not.
+    last = gui.LAST_PLAUSIBLE_POSITION + 1
+    assert f"advances {last - 1} frames" in gui.seek_note(0, last)[0]
+    assert "refuse" in gui.seek_note(0, last + 1)[0]
+
+
+def test_a_wind_back_is_not_given_a_time_nobody_measured():
+    """A forward frame is measured; a backward one never has been. An
+    estimate that invents one reads exactly like one that measured it."""
+    note, cost = gui.seek_note(9, 1)
+    assert cost == 0.0
+    assert "never been timed" in note
+
+
+def _stub_window(survey, transport, submitted, tmp_path):
+    """Enough of `ScannerGui` for `on_scan_chosen` to build its roll."""
+    from rps7200.library import FilmNotes
+
+    def var(value):
+        return types.SimpleNamespace(get=lambda: value)
+
+    return types.SimpleNamespace(
+        busy=False, survey=survey, _transport=transport, _survey_start=1,
+        _survey_predpi=300, orientations={},
+        v_ir=var(False), v_fast_ir=var(True), v_film=var("negative"),
+        v_meter=var("none"), v_correct=var(False), v_mono=var(False),
+        v_reverse=var(False), v_mono_channel=var("G"),
+        fields={"roll": var("sheet-roll")},
+        _per_frame_seconds=lambda **kw: 60.0,
+        _approved_note=lambda *a: "", _options_note=lambda *a: "",
+        _write_approved=lambda *a: None, _notes=FilmNotes,
+        _tags=lambda: (), _say=lambda *a: None,
+        session=types.SimpleNamespace(submit=submitted.append,
+                                      rolls=str(tmp_path / "rolls")),
+    )
+
+
+def _scan_the_sheet(monkeypatch, tmp_path, survey, numbers, film_at):
+    """Commission `numbers` from `survey` the way the sheet's button does,
+    then run that roll against a strip whose film is on `film_at`."""
+    from conftest import StripScanner
+
+    from rps7200.session import ScanSession
+
+    submitted = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    options = {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
+               "film": "negative", "meter": "none", "correct": False}
+    gui.ScannerGui.on_scan_chosen(
+        _stub_window(survey, film_at, submitted, tmp_path), tuple(numbers),
+        (), options)
+    assert len(submitted) == 1, "the sheet commissioned one roll"
+
+    scanner = StripScanner(at=film_at)
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(submitted[0])
+    s.shutdown()
+    s.join(timeout=20)
+    manifest = tmp_path / "rolls" / "sheet-roll" / "roll.json"
+    if not manifest.exists():
+        return []
+    return [(f["number"], f["transport_position"]) for f in json.loads(
+        manifest.read_text(encoding="utf-8"))["frames"]]
+
+
+def test_the_sheet_scans_the_frames_it_showed_wherever_the_film_is(
+        monkeypatch, tmp_path):
+    """Walked 1 to 6 on positions 0 to 5, then the film moved on to 10 -- by
+    the window's own button or the scanner's keys, it does not matter. Ticking
+    2 and 4 used to rewind by the walk's span and scan positions 6 and 8 as
+    frames 2 and 4, without a word."""
+    survey = [types.SimpleNamespace(number=n, position=n - 1)
+              for n in range(1, 7)]
+    frames = _scan_the_sheet(monkeypatch, tmp_path, survey, (2, 4), 10)
+    assert frames == [(2, 1), (4, 3)]
+
+
+def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
+    """rolls/2026-09-23, as it is on disk: a second walk, begun on the
+    counter's 5, called that frame 1 -- and the roll beside it, begun on 0,
+    scanned the same picture as its frame 6. Each mapped by its own recorded
+    position, the two agree about which frame that is and that it is done."""
+    folder = tmp_path / "2026-09-23"
+    _write_survey(folder, frames=2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    for record in survey["frames"]:
+        record["transport_position"] = record["number"] + 4
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "2026-09-23", "wanted": [1, 2, 3, 4, 5, 6],
+        "frames": [{"number": n, "transport_position": n - 1, "done": True}
+                   for n in range(1, 7)],
+    }), encoding="utf-8")
+    (folder / "approved.json").write_text(json.dumps({
+        "roll": "2026-09-23",
+        "frames": [{"number": 2, "offset_mm": 0.25, "rotation": 90}],
+    }), encoding="utf-8")
+
+    out = gui.read_survey(folder)
+    assert [(r.number, r.position) for r in out["results"]] == [(6, 5), (7, 6)]
+    assert 6 in out["scanned"] and 7 not in out["scanned"]
+    # Decided against the roll's numbering, which began on 0: its frame 2 is
+    # the strip's frame 2, whatever the later walk called its own frames.
+    assert out["offsets"] == {2: pytest.approx(0.25)}
+
+
+def test_a_roll_resumed_under_8a9ba17_reopens_with_the_frames_it_scanned(
+        tmp_path):
+    """8a9ba17 resumed a roll into the file its first run left, each run
+    counting from wherever the film then was: frames 1-3 at positions 0-2,
+    4-6 at 5-7. Read with one shift for the file, the window called frames 4
+    and 5 of the strip done -- never scanned -- and 6 to 8 not, and offered
+    to scan the wrong ones. The browser's list reads it the same way."""
+    from conftest import resumed_by_8a9ba17
+
+    folder = tmp_path / "r"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17("tied")),
+                                      encoding="utf-8")
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == [1, 2, 3, 6, 7, 8]
+    assert said == []
+    assert sorted(gui.roll_summary(folder)["done"]) == [1, 2, 3, 6, 7, 8]
+
+
+def _walk_beside(folder, positions):
+    """A walk's survey.json in `folder`, beside whatever roll.json is there,
+    as 8a9ba17's session left a date-named folder: `dry_run` at the top."""
+    _write_survey(folder, frames=len(positions))
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["dry_run"] = True
+    for record, position in zip(survey["frames"], positions):
+        record["transport_position"] = position
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+
+@pytest.mark.parametrize("beside", [False, True],
+                         ids=["roll alone", "walk beside"])
+@pytest.mark.parametrize("which, scanned, said_about", [
+    ("rewound", [6, 7, 8, 9], ["frame 7", "frame 8"]),
+    ("reinserted", [4, 5, 6, 7, 8], ["frame 6"]),
+    ("one-frame", [6, 7, 8], ["frame 7"]),
+])
+def test_an_8a9ba17_roll_that_went_over_a_place_twice_reopens_as_scanned(
+        tmp_path, which, scanned, said_about, beside):
+    """Two 8a9ba17 runs into one roll with the film taken back between them,
+    so some places were scanned twice. The window called strip frames 10 and
+    11 of the rewound roll done, 11 of the reinserted one and 9 of the last,
+    none of them ever scanned -- the one-frame roll's picture of frame 7 was
+    that 9. It says which places hold two scans, and the browser's list
+    agrees.
+
+    Said with a walk's survey.json beside the roll as well, which is where
+    each of the three session roll.json files under `rolls/` is: the roll
+    was read there with nothing to say to, so both scans sat on one number
+    without a word -- and said only once when the roll.json is alone, where
+    the window reads it as the walk too."""
+    from conftest import resumed_by_8a9ba17
+
+    folder = tmp_path / "r"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17(which)),
+                                      encoding="utf-8")
+    if beside:
+        _walk_beside(folder, [5, 6, 7])
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == scanned
+    assert len(said) == len(said_about), said
+    for line, place in zip(said, said_about):
+        assert f"{place} of the strip" in line, line
+    assert sorted(gui.roll_summary(folder)["done"]) == scanned
+
+
+@pytest.mark.parametrize("beside", [False, True],
+                         ids=["roll alone", "walk beside"])
+def test_an_old_rolls_stale_72_is_said_wherever_the_roll_is(tmp_path,
+                                                            beside):
+    """The last frame of the tied 8a9ba17 roll, its counter read as 72. It is
+    numbered where its run puts it, 8, and said once -- beside a walk too,
+    where the roll used to be read in silence."""
+    from conftest import resumed_by_8a9ba17
+
+    folder = tmp_path / "r"
+    folder.mkdir()
+    old = resumed_by_8a9ba17("tied")
+    old["frames"][-1]["transport_position"] = 72
+    (folder / "roll.json").write_text(json.dumps(old), encoding="utf-8")
+    if beside:
+        _walk_beside(folder, [0, 1, 2])
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == [1, 2, 3, 6, 7, 8]
+    assert len(said) == 1, said
+    assert "frame 6 of r" in said[0] and "72, which no strip has" in said[0]
+
+
+def test_a_roll_the_tool_wrote_reopens_as_one_run(tmp_path):
+    """A roll.json from `tools/scan_roll.py` -- `dry_run` only inside
+    `settings`, and one roll, since the tool wrote each afresh -- whose last
+    frame's counter read one frame late, 5, 6, 7, 7. Read as two rolls, it
+    kept that frame on 8 beside frame 3, so the window and the browser called
+    strip frame 9 not scanned and offered it again."""
+    folder = tmp_path / "t"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "t", "started": "2026-09-01T10:00:00+00:00",
+        "settings": {"dpi": 300, "dry_run": False, "start_at": 1,
+                     "frames": 4, "prescan_resolution": 300},
+        "frames": [{"number": n, "index": n - 1, "transport_position": p,
+                    "registration": {}, "error": None, "done": True}
+                   for n, p in enumerate([5, 6, 7, 7], start=1)],
+    }), encoding="utf-8")
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == [6, 7, 8, 9]
+    assert sorted(gui.roll_summary(folder)["done"]) == [6, 7, 8, 9]
+    assert len(said) == 1 and "frame 4 of t" in said[0], said
+
+
+def test_a_walk_whose_transport_stalled_reopens_every_prescan(tmp_path):
+    """One advance of a walk that did not move, 5, 6, 6, 7. Its frames 3 and
+    4 came back as two frame 8s: two Results the sheet ticks by one number,
+    so one of the two prescans could never be chosen on its own. One walk
+    numbers no two frames alike."""
+    folder = tmp_path / "stall"
+    _walk_beside(folder, [5, 6, 6, 7])
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert [r.number for r in out["results"]] == [6, 7, 8, 9]
+    assert len({r.seq for r in out["results"]}) == 4
+    assert len(said) == 2 and not any("two rolls" in s for s in said), said
+
+
+@pytest.mark.parametrize("positions, stale", [([72, 1, 2, 3], 1),
+                                              ([0, 1, 72, 3], 3)])
+def test_a_walk_that_recorded_the_stale_72_reopens_on_the_strips_numbers(
+        tmp_path, positions, stale):
+    """`docs/protocol.md` section 9's stale 72, recorded by one frame of an
+    old walk. The sheet showed that frame as 73 -- past the end of every
+    strip, so its tick could only ever be refused -- and nothing said why.
+    It comes back where the rest of its walk puts it, and the log says so."""
+    folder = tmp_path / "stale"
+    _write_survey(folder, frames=4)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["dry_run"] = True                   # as the session writes a walk
+    for record, position in zip(survey["frames"], positions):
+        record["transport_position"] = position
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert [(r.number, r.position) for r in out["results"]] == list(
+        zip([1, 2, 3, 4], positions))
+    assert len(said) == 1, said
+    assert f"frame {stale} of a-strip" in said[0], said
+    assert "72, which no strip has" in said[0], said
+
+
+def test_a_reopened_old_walk_sends_the_film_to_the_frame_it_showed(
+        monkeypatch, tmp_path):
+    """The reopen path, end to end: an old walk begun on the counter's 14
+    (`registration-F`), the strip put back in -- counter 0 -- and its second
+    frame ticked. The frame that walk saw on 15 is the one scanned."""
+    folder = tmp_path / "registration-F"
+    _write_survey(folder, frames=3)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    for record in survey["frames"]:
+        record["transport_position"] = record["number"] + 13
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+    results = gui.read_survey(folder)["results"]
+    ticked = [r.number for r in results if r.position == 15]
+    frames = _scan_the_sheet(monkeypatch, tmp_path, results, ticked, 0)
+    assert frames == [(16, 15)]
+
+
+def test_a_decision_filed_on_the_strips_numbers_is_read_as_it_stands(tmp_path):
+    """`approved.json` says when its numbers are places on the strip, so an old
+    walk's shift is not applied to it a second time."""
+    folder = tmp_path / "roll"
+    _write_survey(folder, frames=2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    for record in survey["frames"]:
+        record["transport_position"] = record["number"] + 4
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "approved.json").write_text(json.dumps({
+        "roll": "roll", "numbering": "strip",
+        "frames": [{"number": 7, "offset_mm": 0.25}],
+    }), encoding="utf-8")
+    assert gui.read_survey(folder)["offsets"] == {7: pytest.approx(0.25)}
 
 
 # -- the window itself, where a display allows it ---------------------------
@@ -957,6 +1273,114 @@ def test_a_dry_run_says_walked_not_scanned(window):
     app._update_roll_eta()
     assert "walked" in app.v_roll_eta.get()
     assert "scanned" not in app.v_roll_eta.get()
+
+
+def _press_roll(app, monkeypatch, frames="3", start_at="1", answer=True):
+    """Press Scan roll with these fields; return (dialog texts, jobs, errors)."""
+    said, jobs, errors = [], [], []
+
+    def ask(title, message, **kw):
+        said.append(message)
+        return answer
+
+    monkeypatch.setattr(gui.messagebox, "askokcancel", ask)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: errors.append(a))
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.v_frames.set(frames)
+    app.v_startat.set(start_at)
+    app.v_dryrun.set(True)
+    app.on_roll()
+    return said, jobs, errors
+
+
+def test_the_roll_pace_is_timed_from_where_the_seek_landed(window,
+                                                           monkeypatch):
+    """The Roll button winds the film to its first frame inside the job, and
+    the clock started at the press -- so a minute's wind back became frame
+    1's time, and "left" read about 19 minutes on a 15-frame walk that had
+    about five. It restarts when the session says where the seek put the
+    film, which it does before the first frame."""
+    from rps7200.session import Event
+
+    app, root = window
+    _press_roll(app, monkeypatch, frames="15")
+    app._roll_wall_start -= 60.0                      # the wind back
+    app._handle(Event(kind="transport", done=0))      # and where it landed
+    assert time.monotonic() - app._roll_wall_start < 5.0
+    later = app._roll_wall_start
+    app._handle(Event(kind="transport", done=1))      # a frame's own report
+    assert app._roll_wall_start == later, "only the seek restarts it"
+
+
+def test_an_unknown_position_replaces_the_one_before_it(window):
+    """After a report of "unknown" the readout said "film on frame ?" while
+    the Roll dialog went on forecasting a wind from the older value."""
+    from rps7200.session import Event
+
+    app, root = window
+    app._handle(Event(kind="transport", done=10))
+    assert app._transport == 10
+    app._handle(Event(kind="transport", done=-1))
+    assert app.v_position.get() == "film on frame ?"
+    assert app._transport is None
+    assert "has not heard" in gui.seek_note(app._transport, 1)[0]
+
+
+def test_a_results_counter_no_strip_has_is_not_a_forecast(window):
+    """A pass carries the counter it was taken at, and the window keeps it for
+    the Roll dialog. One that read 72 would have the dialog forecast a
+    72-frame wind back -- the filter `_report_position` and `_move` apply
+    holds here as well, and the frame heard before stands."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    app._handle(Event(kind="transport", done=10))
+    app._handle(Event(kind="result", result=Result(
+        seq=1, kind="prescan", label="frame 3 prescan",
+        image=np.zeros((8, 8, 3), np.uint8),
+        meta={"resolution_dpi": 300}, position=72, number=3)))
+    assert app._transport == 10
+
+
+def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
+                                                            monkeypatch):
+    """`start at` 45 was refused by the window, on the premise that the film
+    would otherwise be wound first. It would not: the seek refuses a frame no
+    strip has before it reads or moves anything, and says so on the
+    failed-job path. One refusal, in the backend."""
+    from conftest import StripScanner
+
+    from rps7200 import session
+    from rps7200.session import Event
+
+    app, root = window
+    app._handle(Event(kind="transport", done=0))
+    said, jobs, errors = _press_roll(app, monkeypatch, start_at="45")
+    assert errors == []
+    assert [job.start_at for job in jobs] == [45]
+    # And the dialog forecasts the refusal it will get, not "advances 44
+    # frames -- about 202 s" and "Roughly 4m 31s" for a wind and frames
+    # that never happen.
+    assert "refuse" in said[0] and "costs nothing" in said[0], said[0]
+    assert "advances" not in said[0] and "Roughly" not in said[0], said[0]
+    film = StripScanner(at=0)
+    with pytest.raises(session.FilmNotPlaced, match="frame 45 is past"):
+        session.seek(film, 44)
+    assert film.moves == [] and film.warmed == 0, "refused before anything"
+
+
+def test_a_roll_to_the_end_of_the_strip_gives_a_pace_not_a_total(
+        window, monkeypatch):
+    """"Every frame to the end of the strip", then a figure for six frames,
+    whatever the strip held."""
+    app, root = window
+    said, _jobs, _errors = _press_roll(app, monkeypatch, frames="0",
+                                       answer=False)
+    assert "every frame to the end of the strip" in said[0]
+    assert "a frame" in said[0] and "no count to add up" in said[0]
+    assert gui.roll_estimate(23.0, 6, 0.0) == "Roughly 2m 18s."
+    assert gui.roll_estimate(23.0, 0, 0.0).startswith("Roughly 23 s a frame")
 
 
 # -- the approved-offset helpers ---------------------------------------------

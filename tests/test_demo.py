@@ -289,6 +289,47 @@ def test_the_transport_law_is_the_drivers_own_and_not_a_copy():
     assert DemoScanner.MAX_CORRECTION_PARAM is DirectScanner.MAX_CORRECTION_PARAM
 
 
+def test_when_a_roll_ends_is_the_drivers_decision_and_not_a_copy():
+    """The demo's roll loop retyped the driver's end-of-roll rule, and the
+    copy drifted three ways -- a six-frame default, the end of `only`
+    ignored, walking past its own strip -- before it was retyped again. It
+    is taken now, as `param_for_mm` is, and so is what a frame is numbered
+    when the counter disagrees with the count."""
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    assert DemoScanner.roll_ends is DirectScanner.roll_ends
+    assert DemoScanner.place_on_strip is DirectScanner.place_on_strip
+
+
+def test_the_demo_answers_everything_the_seek_asks_of_the_scanner():
+    """`session.seek` runs above the seam and asks the scanner to wait for
+    its lamp before anything else. The demo answers it as the real one does
+    once warm, so the demo runs the seek with no branch of its own."""
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    for name in ("wait_warm", "position", "advance", "retreat"):
+        assert callable(getattr(DirectScanner, name)), name
+        assert callable(getattr(DemoScanner, name, None)), name
+    assert DemoScanner("library").wait_warm() is None
+
+
+def test_the_demo_roll_logs_distances_in_the_transports_units(tmp_path):
+    """As the real loop does. It said 'offset +0.00 mm' where the scanner's
+    own log says units, in lines a person reads beside each other."""
+    lines = []
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        s.log_hook = lines.append
+        list(s.scan_roll(frames=2, dry_run=True))
+    measured = [line for line in lines if "contrast" in line]
+    assert len(measured) == 2
+    for line in measured:
+        assert " mm" not in line, line
+        assert "units" in line, line
+    assert measured[0].startswith("frame 1:"), "counted from 1, as shown"
+
+
 def test_a_nudge_picks_the_same_param_the_scanner_would():
     """The distance the operator asks for becomes the same byte either way.
 
@@ -401,6 +442,136 @@ def test_a_library_with_no_prescans_still_walks_a_strip(tmp_path):
     with DemoScanner(root=tmp_path, speed=100000.0) as s:
         frames = list(s.scan_roll(frames=3, dry_run=True))
     assert len({f.prescan.tobytes() for f in frames}) == 3
+
+
+# --- a roll starts where the film is, in the demo as on the hardware --------
+#
+# The demo's roll used to put the film straight on frame `skip + i` whatever
+# it was on. The real one starts where the film is -- which is how a roll from
+# frame 10 was numbered 1 on the scanner while the demo, asked the same thing,
+# got it right and hid it. The stand-in now moves its film with its own
+# `advance`, so `session.seek` above the seam has something true to work on.
+
+
+class _Counting(DemoScanner):
+    """The demo, counting its own whole-frame moves."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.advances = self.retreats = 0
+
+    def advance(self, *a, **kw):
+        self.advances += 1
+        return super().advance(*a, **kw)
+
+    def retreat(self, *a, **kw):
+        self.retreats += 1
+        return super().retreat(*a, **kw)
+
+
+def _on_frame(s, position):
+    for _ in range(position):
+        s.advance()
+    assert s.position() == position
+
+
+def test_a_demo_roll_starts_where_its_film_is(tmp_path):
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        _on_frame(s, 5)
+        frames = list(s.scan_roll(frames=2, dry_run=True, first_index=5))
+    assert [f.position for f in frames] == [5, 6]
+    assert [f.index for f in frames] == [5, 6]
+
+
+def _end_of_strip(tmp_path):
+    """Where the demo's own `advance` stops, found by asking it."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        while s.advance() is not None:
+            pass
+        return s.position()
+
+
+def test_a_demo_roll_with_no_count_runs_to_the_end_of_its_strip(tmp_path):
+    """As the real one does, which has no count to stop at either. The demo's
+    used to stop after six whatever the strip held."""
+    end = _end_of_strip(tmp_path)
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        _on_frame(s, end - 2)
+        frames = list(s.scan_roll(dry_run=True, first_index=end - 2))
+    assert [f.position for f in frames] == [end - 2, end - 1, end]
+
+
+def test_a_demo_roll_never_walks_past_the_end_of_its_strip(tmp_path):
+    """It used to hand back frames at positions its own `advance` would have
+    refused to reach."""
+    end = _end_of_strip(tmp_path)
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        frames = list(s.scan_roll(frames=end + 5, dry_run=True))
+    assert len(frames) == end + 1
+    assert frames[-1].position == end
+
+
+def test_a_demo_roll_ends_after_its_last_chosen_frame(tmp_path):
+    """Not walked on to the end of the strip past frames nobody chose."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        frames = list(s.scan_roll(only=(1, 3), dry_run=True))
+        assert s.position() == 3
+    assert [f.index for f in frames] == [1, 3]
+
+
+def test_a_demo_roll_numbers_its_frames_by_where_its_film_is(tmp_path):
+    """The driver's `place_on_strip`, called by the demo's own loop -- which
+    nothing checked, only that the demo had it. Told it starts on 2 with its
+    film on 5, it files the pictures under 5 and 6 as the scanner would,
+    where counting would have filed the pictures on 8 and 9 there."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        _on_frame(s, 5)
+        frames = list(s.scan_roll(only=(5, 6), first_index=2, dry_run=True))
+    assert [(f.index, f.position) for f in frames] == [(5, 5), (6, 6)]
+
+
+def test_a_demo_roll_behind_its_count_ends_as_the_drivers_does(tmp_path):
+    """Film on 0, told it starts on 5, two frames: the counter reads behind
+    the count, so the roll ends before it takes anything and says which
+    frames it would have gone back over. Following it, the demo walked seven
+    frames, 0 to 6, for two asked."""
+    lines = []
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        s.log_hook = lines.append
+        frames = list(s.scan_roll(frames=2, first_index=5, dry_run=True))
+        assert s.position() == 0, "nothing moved"
+    assert frames == []
+    assert any("went back over frames 1, 2, 3, 4, 5" in line
+               for line in lines), lines
+
+
+def test_the_demo_is_wound_back_by_the_sessions_own_seek(tmp_path):
+    """The reported case, run through the whole of the real software with the
+    demo standing where the scanner stands: nine frames on, a roll from frame
+    1 winds back with the demo's own `retreat` and walks 1, 2, 3."""
+    import time
+
+    from rps7200.session import Roll, ScanSession
+
+    demo = _Counting(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    _on_frame(demo, 9)
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    s.submit(Roll(frames=3, start_at=1, dry_run=True, name="walk"))
+    s.shutdown()
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if any(e.kind == "closed" for e in s.poll()):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    survey = json.loads((tmp_path / "rolls" / "walk" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    assert [(f["number"], f["transport_position"])
+            for f in survey["frames"]] == [(1, 0), (2, 1), (3, 2)]
+    assert demo.retreats == 9
 
 
 # --- the stand-in has to behave like the thing it stands in for -------------
