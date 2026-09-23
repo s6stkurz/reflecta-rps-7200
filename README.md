@@ -230,6 +230,12 @@ holds every pass of the session; the channel selector switches between RGB and R
 is inverted by default so a negative can be judged by eye, and that inversion is display
 only — what reaches `library/` is the raw negative. Inverting for real is NegPy's job.
 
+The scanner sometimes reads a pass bottom-up, most often the prescan straight after an
+infrared scan. The pass's own first and last lines say so. It is turned upright when it is
+decoded, the caption under the picture says "read bottom-up, turned upright", and the
+library entry records which way it was read. Only the rows are ever reversed, never the
+columns, so where a frame sits along the strip is unaffected.
+
 Opening the window claims the device, asks it who it is and reads the transport's frame
 counter (`READ_STATE`) for the readout, and nothing else: no calibration, no lamp, and
 nothing moves until a button is pressed. Nothing is asked either, and every setting can be

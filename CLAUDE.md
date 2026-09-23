@@ -423,19 +423,25 @@ It needs a power cycle afterwards, so avoid these:
   `docs/protocol.md` §5 and `verify_protocol.py` stage 14.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
-- **MODE SELECT byte 14, bit 0, can reverse every row of a scan with no
-  signal that it happened.** Bit 0 clear re-homes the carriage before
-  scanning, always normal; bit 0 set skips re-homing, which is free
-  bidirectional speed *except* on a pass that immediately follows another
-  bit-0-set pass, where the read comes back top-and-bottom reversed. This
-  driver sends bit 0 set (`0x21`) on every RGBI scan, unconditionally.
-  `scan_roll` and `auto_exposure` avoid triggering it only because an RGB
-  pass always precedes the RGBI one -- not by design. Confirmed in real
-  prior use, not just on the test ladder: see `docs/byte14-plan.md`.
-  `framing.reversal_against` now catches it after the fact by comparing a
-  pass against the prescan of the same frame, and `ScanSession.match_prescan`
-  switches that off. It is a detector, so it refuses far more readily than it
-  corrects -- a frame with nothing to correlate is left exactly as it came.
+- **Some passes are read bottom-up, and the pass itself says so.** A pass's
+  MODE SELECT byte 14 bit 0 leaves the carriage at the far end, and the
+  *next* pass -- whatever its own bit -- may then read upward. On RGBI rolls
+  38 of 114 frame prescans came back that way, sometimes every other frame.
+  When the carriage goes home in between is not known, so **never infer the
+  direction from the command sequence**: the start of a roll, the end of one
+  and the pass after a calibration can each go either way.
+  - **The evidence is in the line tags.** A pass starting with R and ending
+    with B was read top-down; one starting with B and ending with R was read
+    bottom-up.
+  - `DirectScanner.decode_index` (`rps7200/direction.py`) turns a bottom-up
+    pass upright. Every library entry records `scan.read_direction`, and
+    `prescan.read_direction` for a frame's stored prescan.
+  - **Only rows ever reverse, never columns**, so transport direction, frame
+    edges and holds are unaffected.
+  - READ STATE byte 6 bit 7 predicted it 80/80 in the vendor captures. It is
+    recorded as `carriage_state` and acted on by nothing.
+  - `_note_reversal` never turns a pass whose own lines decided its
+    direction. See `docs/byte14-plan.md`.
 - **The gain field is a digital multiplier; it buys nothing.** Measured
   2026-09-10 on a blue ladder 21→39: signal ×1.484, random noise ×1.476, a
   shortfall of 0.53% where an analog gain would have given ~4%. It is safe to

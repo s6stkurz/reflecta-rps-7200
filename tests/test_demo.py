@@ -668,3 +668,89 @@ def test_one_frame_is_made_to_miss_on_purpose():
 
     assert out["outcome"] == "not_converged"
     assert out["moves"] == 3, "it tries, and stops at the cap"
+
+
+# --- the carriage: a pass after an RGBI scan comes back bottom-up ------------
+
+
+def picture_entry(root, channels=4, lines=10, width=8):
+    """An entry whose rows differ, so reading it bottom-up would show."""
+    from rps7200.direction import encode_index
+
+    rng = np.random.default_rng(3)
+    image = rng.integers(0, 65535, (lines, width, channels), dtype=np.uint16)
+    meta = {"resolution_dpi": 900, "channels": channels, "film": "negative",
+            "channel_order": list("RGBI"[:channels]), "width": width,
+            "height": lines, "bytes_per_line": width * 2, "depth": 16}
+    path = library.save(
+        image, meta, root=root, film=FilmNotes(frame="demo"),
+        raw=encode_index(image),
+        raw_layout={"format": "index", "bytes_per_line": width * 2,
+                    "line_stride": width * 2 + 2, "index_header": 2,
+                    "width": width, "lines": lines, "channels": channels})
+    return path, image
+
+
+def _read(meta):
+    return (meta.get("read_direction") or {}).get("direction")
+
+
+def test_the_pass_after_an_rgbi_scan_is_read_bottom_up_and_shown_upright(tmp_path):
+    _, truth = picture_entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    first, meta = s.scan(resolution=900, infrared=True)
+    second, again = s.scan(resolution=900, infrared=True)
+    third, last = s.scan(resolution=900, infrared=True)
+    s.close()
+    assert [_read(m) for m in (meta, again, last)] == ["forward", "reversed", "forward"]
+    for image in (first, second, third):
+        assert np.array_equal(image, truth), "every pass is shown upright"
+    assert again["carriage_state"]["far_end"] is True
+
+
+def test_an_rgb_pass_leaves_the_carriage_at_home(tmp_path):
+    picture_entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    s.scan(resolution=900, infrared=False)
+    s.prescan(film="negative")
+    assert _read(s.last_scan_meta) == "forward"
+    s.scan(resolution=900, infrared=True)
+    s.prescan(film="negative")
+    assert _read(s.last_scan_meta) == "reversed", "the prescan after an RGBI scan"
+    s.prescan(film="negative")
+    assert _read(s.last_scan_meta) == "forward", "and the one after that is home"
+    s.close()
+
+
+def test_the_carriage_takes_its_rule_from_the_driver(tmp_path, monkeypatch):
+    """`DirectScanner.byte14_for` decides whether a pass leaves the carriage
+    at the far end; the demo asks it rather than keeping its own copy."""
+    from rps7200.direct import DirectScanner
+
+    picture_entry(tmp_path)
+    monkeypatch.setattr(DirectScanner, "byte14_for", staticmethod(lambda passes: 0x10))
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    s.scan(resolution=900, infrared=True)
+    s.prescan(film="negative")
+    s.close()
+    assert _read(s.last_scan_meta) == "forward"
+
+
+def test_a_pass_read_bottom_up_files_bytes_that_agree_with_its_record(tmp_path):
+    """The stored bytes are reversed the way the carriage reverses them, so
+    the entry decodes to what was shown and its record matches its tags."""
+    picture_entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    s.scan(resolution=900, infrared=True)
+    image, meta = s.scan(resolution=900, infrared=True)
+    capture = s.capture_record()
+    s.close()
+    assert _read(meta) == "reversed" and capture["raw"] is not None
+    out = library.save(image, meta, root=tmp_path / "out", film=FilmNotes(),
+                       **capture)
+    _, verdict = library.reconstruct(out)
+    assert verdict.startswith("identical"), verdict

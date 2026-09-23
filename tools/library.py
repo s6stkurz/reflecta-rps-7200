@@ -6,6 +6,7 @@
     uv run python tools/library.py reconstruct        # re-decode every entry
     uv run python tools/library.py duplicates         # what is redundant, and why
     uv run python tools/library.py duplicates --delete
+    uv run python tools/library.py migrate-direction  # which way each pass was read
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
@@ -15,6 +16,12 @@ which entries no longer match what was saved.
 same protocol revision -- the scanner was driven identically, so one of them
 holds nothing the other does not. It only reports; `--delete` is what removes
 them, and `--keep N` leaves more than one of each behind.
+
+`migrate-direction` brings entries filed before passes were read upright from
+their own line tags up to date: every entry records which way the carriage
+read it, a scan stored bottom-up is turned upright from its raw bytes, and a
+stored `prescan.tif` is judged against its upright scan and turned only when
+that is decisive. A dry run unless given `--write`.
 """
 from __future__ import annotations
 
@@ -36,13 +43,13 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
-                             "duplicates", "migrate-raw"])
+                             "duplicates", "migrate-raw", "migrate-direction"])
     ap.add_argument("--root", default="library")
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
     ap.add_argument("--write", action="store_true",
-                    help="migrate-raw: actually rewrite the entries "
-                         "(default is a dry run)")
+                    help="migrate-raw, migrate-direction: actually rewrite "
+                         "the entries (default is a dry run)")
     ap.add_argument("--keep", type=int, default=1, metavar="N",
                     help="duplicates: how many of each group to keep (default 1). "
                          "Use 2 to retain a pair for pass-to-pass comparisons")
@@ -207,6 +214,32 @@ def main() -> int:
         if skipped:
             print(f"{len(skipped)} could not be decoded and were left alone")
         return 1 if failed else 0
+
+    elif args.action == "migrate-direction":
+        # One level deep, like every other command here: a library kept in
+        # subfolders is migrated one subfolder at a time.
+        turned = recorded = left = 0
+        for scan_json in sorted(root.glob("*/scan.json")):
+            path = scan_json.parent
+            try:
+                done = library.migrate_direction(path, write=args.write)
+            except (OSError, ValueError, KeyError) as exc:
+                print(f"! {path.name}: {exc}")
+                left += 1
+                continue
+            for line in done:
+                mark = "~" if "turned upright" in line else (
+                    "!" if "left alone" in line else " ")
+                turned += mark == "~"
+                left += mark == "!"
+                recorded += mark == " "
+                print(f"{mark} {path.name}: {line}")
+        verb = "" if args.write else "would be "
+        print(f"\n{turned} {verb}turned upright, {recorded} {verb}recorded as "
+              f"they are, {left} left alone"
+              + ("" if args.write else " -- pass --write"))
+        if args.write:
+            library.reindex(root)
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

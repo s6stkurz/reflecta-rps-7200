@@ -4120,3 +4120,58 @@ def test_a_walk_is_read_while_it_is_walked(window, monkeypatch):
     assert app.sheet.generation == progress.generation
     assert app.v_frame_status.get() == ""
     app.sheet.top.destroy()
+
+
+# -- a pass read bottom-up is shown upright, and nothing is turned by it ------
+
+
+def test_the_caption_says_when_a_pass_was_read_bottom_up():
+    assert gui.read_note({"direction": "reversed", "turned": True}) == (
+        "   ·   read bottom-up, turned upright")
+    assert "unknown" in gui.read_note({"direction": "unknown"})
+    assert gui.read_note({"direction": "forward"}) == ""
+    assert gui.read_note(None) == ""
+
+
+def test_prescan_scan_prescan_scan_shows_everything_upright(window, monkeypatch,
+                                                              tmp_path):
+    """The path that used to ship a correct scan upside down: a prescan taken
+    straight after an RGBI scan comes back bottom-up, and the scan after it
+    was then judged against it and turned. The demo's carriage reads that
+    prescan bottom-up the way the scanner does; the decode turns it, and the
+    scan is left as it came."""
+    import json as _json
+
+    app, root = window
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.v_film.set("negative")
+    app._sync_film()
+    app.v_ir.set(True)
+
+    def wait_for(count):
+        deadline = time.monotonic() + 60
+        while len(app.results) < count or app.busy:
+            root.update()
+            time.sleep(0.01)
+            assert time.monotonic() < deadline, "the demo never answered"
+
+    for press, count in ((app.on_prescan, 1), (app.on_scan, 2),
+                         (app.on_prescan, 3), (app.on_scan, 4)):
+        press()
+        wait_for(count)
+    prescans = [r for r in app.results if r.kind == "prescan"]
+    scans = [r for r in app.results if r.kind == "scan"]
+    assert [(r.meta.get("read_direction") or {}).get("direction")
+            for r in prescans] == ["forward", "reversed"]
+    assert all(not r.meta.get("reversal") for r in scans), "no scan was turned"
+    app._show(prescans[1])
+    assert "read bottom-up, turned upright" in app.v_caption.get()
+    # and the library says the same
+    app.session.shutdown()
+    app.session.join(timeout=10)
+    filed = [_json.loads(p.read_text()) for p in
+             sorted((tmp_path / "library").glob("*/scan.json"))]
+    directions = [(r["scan"].get("read_direction") or {}).get("direction")
+                  for r in filed if "prescan" in r.get("tags", [])]
+    assert directions == ["forward", "reversed"]

@@ -526,3 +526,121 @@ def test_only_the_explicit_sentinel_counts_as_a_choice(tmp_path):
     path = library.save(image, meta, root=tmp_path, film=FilmNotes(),
                         reference=None, raw=stream, raw_layout=layout)
     assert library.corrected(path)[1]["corrected"] == "deliberately raw"
+
+
+# --- which way each pass was read -------------------------------------------
+
+
+def bottom_up_entry(tmp_path, *, stored_as_read=False, prescan=None,
+                    prescan_meta=None):
+    """An entry of a pass read bottom-up: its raw bytes in the order the
+    scanner sent them, `scan.tif` upright -- or, with ``stored_as_read``, in
+    that order too, as every entry filed before the decode turned passes."""
+    from rps7200.direct import DirectScanner, ScanParameters
+    from rps7200.direction import encode_index
+
+    width, lines = 16, 8
+    image = np.random.default_rng(5).integers(0, 65535, (lines, width, 3),
+                                              dtype=np.uint16)
+    raw = encode_index(image, reversed=True)
+    params = ScanParameters(width=width, lines=lines, bytes_per_line=width * 2,
+                            filter_offset1=0, filter_offset2=0, available_lines=0)
+    upright, read = DirectScanner.decode_index(raw, params, 3)
+    layout = {"format": "index", "bytes_per_line": width * 2,
+              "line_stride": width * 2 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": width, "lines": lines, "channels": 3, "byte_order": "little"}
+    meta = {"resolution_dpi": 600, "channels": 3, "channel_order": ["R", "G", "B"],
+            "width": width, "height": lines, "depth": 16, "bytes_per_line": width * 2,
+            "film": "negative", "shading": None,
+            "read_direction": None if stored_as_read else read.as_record()}
+    path = library.save(upright[::-1] if stored_as_read else upright, meta,
+                        root=tmp_path, raw=raw, raw_layout=layout,
+                        prescan=prescan, prescan_meta=prescan_meta)
+    if stored_as_read:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+        record["scan"].pop("read_direction", None)
+        (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    return path, image
+
+
+def test_an_entry_says_which_way_its_pass_and_its_prescan_were_read(tmp_path):
+    prescan_read = {"direction": "reversed", "turned": True, "lead": "B"}
+    path, image = bottom_up_entry(
+        tmp_path, prescan=np.zeros((4, 4, 3), np.uint8),
+        prescan_meta={"read_direction": prescan_read,
+                      "carriage_state": {"far_end": True}})
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert record["scan"]["read_direction"]["direction"] == "reversed"
+    assert record["scan"]["read_direction"]["turned"] is True
+    assert record["prescan"]["read_direction"] == prescan_read
+    assert record["prescan"]["carriage_state"] == {"far_end": True}
+    # the raw bytes stay in the order the scanner sent them; the decode is upright
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert library.reconstruct(path)[1].startswith("identical")
+
+
+def test_an_entry_filed_bottom_up_is_named_not_called_a_regression(tmp_path):
+    path, _ = bottom_up_entry(tmp_path, stored_as_read=True)
+    _, verdict = library.reconstruct(path)
+    assert "bottom-up" in verdict and "migrate-direction" in verdict
+
+
+def test_migrating_turns_a_bottom_up_entry_upright_only_when_written(tmp_path):
+    path, image = bottom_up_entry(tmp_path, stored_as_read=True)
+    before = (path / "scan.tif").read_bytes()
+
+    planned = library.migrate_direction(path)
+    assert any("turned upright" in line for line in planned)
+    assert (path / "scan.tif").read_bytes() == before, "a dry run writes nothing"
+
+    library.migrate_direction(path, write=True)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert record["scan"]["read_direction"]["turned"] is True
+    assert record["image"]["sha256"] == library._sha256(path / "scan.tif")
+    assert library.reconstruct(path)[1].startswith("identical")
+    assert library.migrate_direction(path, write=True) == [], "and only once"
+
+
+def test_a_stored_prescan_is_turned_only_when_the_picture_is_decisive(tmp_path):
+    """No bytes of its own, so it is judged against its upright scan -- and
+    left alone, recorded unknown, when the picture cannot say."""
+    rng = np.random.default_rng(9)
+    # A top and a bottom, and a left and a right: a picture the same both
+    # ways across could not tell rows reversed from a half turn.
+    down = np.linspace(0, 40000, 40)[:, None, None]
+    across = np.linspace(0, 20000, 16)[None, :, None]
+    scene = (down + across + rng.random((40, 16, 3)) * 3000).astype(np.uint16)
+    upside_down = np.ascontiguousarray(scene[::-1])
+
+    path, _ = entry_with_prescan(tmp_path / "a", scene, upside_down)
+    library.migrate_direction(path, write=True)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert record["prescan"]["read_direction"]["direction"] == "reversed"
+    assert np.array_equal(tiff.read(str(path / "prescan.tif")), scene)
+
+    flat = np.full((40, 16, 3), 1000, np.uint16)
+    path, _ = entry_with_prescan(tmp_path / "b", scene, flat)
+    library.migrate_direction(path, write=True)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert record["prescan"]["read_direction"]["direction"] == "unknown"
+    assert np.array_equal(tiff.read(str(path / "prescan.tif")), flat)
+
+
+def entry_with_prescan(root, scene, prescan):
+    """A top-down pass of ``scene`` filed the old way, with ``prescan`` beside it."""
+    from rps7200.direction import encode_index
+
+    h, w = scene.shape[:2]
+    layout = {"format": "index", "bytes_per_line": w * 2,
+              "line_stride": w * 2 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": w, "lines": h, "channels": 3, "byte_order": "little"}
+    meta = {"resolution_dpi": 600, "channels": 3, "channel_order": ["R", "G", "B"],
+            "width": w, "height": h, "depth": 16, "bytes_per_line": w * 2,
+            "film": "negative", "shading": None}
+    path = library.save(scene, meta, root=root, raw=encode_index(scene),
+                        raw_layout=layout, prescan=prescan)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record.pop("prescan", None)                       # filed before it existed
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    return path, record

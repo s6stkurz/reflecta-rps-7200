@@ -137,6 +137,7 @@ from .protocol import (
     locks_white_balance,
     supports_infrared,
 )
+from .direction import ReadDirection, read_direction
 from .shading import ShadingReference, apply_shading, calculate_shading
 from .usb_transport import CheckCondition, NoDataYet, Transport, UsbError
 
@@ -493,6 +494,14 @@ class DirectScanner:
         # it is what a caller files in the library, which stores raw.
         self.last_pixels_raw = None
         self.last_scan_meta = None
+        # Which way the last pass was read, from its own line tags. Same
+        # contract as `last_pixels_raw`: this pass, read it now.
+        self.last_read_direction: ReadDirection | None = None
+        # The last READ STATE, and whether a calibration has moved the
+        # carriage since it was read. Recorded with each pass as evidence of
+        # where the carriage was; nothing decides on it (see `scan`).
+        self.last_state: State | None = None
+        self._calibrated_since_state = False
         # What the last auto_exposure() probe actually measured, filed with the
         # scan by :meth:`scan`. See :meth:`auto_exposure`.
         self.last_metering: dict[str, Any] | None = None
@@ -857,13 +866,31 @@ class DirectScanner:
         d = self._query(
             _cmd(SCSI_READ_STATE, 13), 13, "read_state", retries=retries
         )
-        return State(
+        state = State(
             button=bool(d[0]),
             warming_up=bool(d[5]),
             scanning=d[6],
             busy=d[8],
             position=d[2],
+            raw=bytes(d),
         )
+        self.last_state = state
+        self._calibrated_since_state = False
+        return state
+
+    def carriage_record(self) -> dict[str, Any] | None:
+        """The last READ STATE before a pass, as evidence of where the carriage was.
+
+        Recorded, not acted on: the bit is tied to the carriage only by the
+        vendor captures. ``stale`` when a calibration ran after the read --
+        calibration moves the carriage, which is exactly why the captures'
+        three misses were each session's first pass.
+        """
+        state = self.last_state
+        if state is None or not state.raw:
+            return None
+        return {"read_state": state.raw.hex(), "far_end": state.carriage_far,
+                "stale": bool(self._calibrated_since_state)}
 
     def sense(self) -> bytes:
         return self.t.command(_cmd(SCSI_REQUEST_SENSE, 14), read_size=14)
@@ -1017,6 +1044,16 @@ class DirectScanner:
         self._log(f"scan frame {x0},{y0} -> {x1},{y1}")
         self.t.command(_cmd(SCSI_WRITE, 14), data=bytes(data))
 
+    @staticmethod
+    def byte14_for(passes: int) -> int:
+        """MODE SELECT byte 14 as this driver sends it, when not overridden.
+
+        Its bit 0 leaves the carriage at the far end after the pass, so the
+        pass after it may come back bottom-up. A static method so the demo's
+        carriage takes the decision from here rather than a copy.
+        """
+        return 0x21 if passes == ONE_PASS_RGBI else 0x10
+
     def set_mode(
         self,
         resolution: int,
@@ -1061,6 +1098,9 @@ class DirectScanner:
         data[12] = halftone_pattern if halftone_pattern else 0x02
         data[13] = line_threshold
         # Byte 14 was read as "0x21 for RGBI, 0x10 for RGB" from two captures.
+        # Bit 0 is now known to leave the carriage at the far end after the
+        # pass, so the next pass may be read bottom-up; `rps7200.direction`
+        # reads that from each pass's own lines rather than predicting it.
         # The full set of seven refutes that: RGB passes carry 0x21 twenty-six
         # times. What holds across all 71 MODE SELECTs is that *bit 0* tracks
         # the scan frame's y0 shifting by one line, which is bidirectional
@@ -1069,9 +1109,7 @@ class DirectScanner:
         #
         # The default is left alone until the hardware says what it should be;
         # `byte14` is how that gets asked.
-        data[14] = byte14 if byte14 is not None else (
-            0x21 if passes == ONE_PASS_RGBI else 0x10
-        )
+        data[14] = byte14 if byte14 is not None else self.byte14_for(passes)
 
         self._log(
             f"mode res={resolution} passes={passes:#04x} depth={depth:#04x} "
@@ -1492,12 +1530,43 @@ class DirectScanner:
                 "byte_order": "little",
                 "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
             }
-        return self._deinterleave(blob, params, channels)
+        image, direction = self.decode_index(blob, params, channels)
+        self.last_read_direction = direction
+        if direction.reversed:
+            self._log("this pass was read bottom-up (its first line is "
+                      f"{direction.lead}, its last {direction.trail or 'cut short'}); "
+                      "turned upright")
+        elif not direction.known:
+            self._log(f"which way this pass was read is unknown: {direction.why}; "
+                      "left as it came")
+        return image
 
     @staticmethod
     def _deinterleave(
         blob: bytes, params: ScanParameters, channels: int
     ) -> np.ndarray:
+        """The pass's pixels, upright. See :meth:`decode_index`."""
+        return DirectScanner.decode_index(blob, params, channels)[0]
+
+    @staticmethod
+    def decode_index(
+        blob: bytes, params: ScanParameters, channels: int
+    ) -> tuple[np.ndarray, ReadDirection]:
+        """Deinterleave index-format lines into ``(H, W, channels)``, upright.
+
+        Returns the image and the direction its own line tags say the pass was
+        read in (`rps7200.direction`). A pass read bottom-up comes back with
+        its rows in reverse order; they are turned here, in the decode, so
+        every path from bytes to pixels -- a scan, the library's re-decode,
+        the demo -- delivers the same upright picture and nothing downstream
+        has to know. The raw bytes are not touched.
+
+        Truncated to the planes' common height *before* turning: the lines
+        are aligned by their index from the start of the read, and a short
+        read loses its last lines -- the top of the picture, on a pass read
+        bottom-up. Turning each plane first would misalign the planes by
+        however many lines each one lost.
+        """
         bpl = params.bytes_per_line + INDEX_HEADER
         depth_bytes = params.bytes_per_line // params.width if params.width else 2
         dtype = np.dtype("<u2") if depth_bytes == 2 else np.dtype(np.uint8)
@@ -1524,7 +1593,11 @@ class DirectScanner:
             )
 
         height = min(len(planes[c]) for c in order)
-        return np.stack([np.array(planes[c][:height]) for c in order], axis=-1)
+        direction = read_direction(blob, bpl, lines=params.lines, channels=channels)
+        step = -1 if direction.reversed else 1
+        image = np.stack([np.array(planes[c][:height][::step]) for c in order],
+                         axis=-1)
+        return image, direction
 
     #: The widest shading reference this device will produce, in columns.
     #:
@@ -1885,6 +1958,9 @@ class DirectScanner:
                 f"{[round(self._shading.mean[c], 1) for c in self._shading.channels]}"
             )
 
+        # The calibration pass moved the carriage, so a READ STATE taken before
+        # it no longer says where the carriage is. See `carriage_record`.
+        self._calibrated_since_state = True
         return {
             "shading_calibration": True,
             "data": data if keep_data else None,
@@ -2571,6 +2647,10 @@ class DirectScanner:
         self.slide(SLIDE_INIT, param=slide_init_param)
         self.wait_ready()
 
+        # Taken at the last moment the carriage cannot have moved since: the
+        # READ STATE polled above, marked stale if a calibration ran after it.
+        carriage = self.carriage_record()
+        self.last_read_direction = None
         started = time.monotonic()
         self.start_scan()
         try:
@@ -2714,6 +2794,13 @@ class DirectScanner:
             # entry that does not say which side it came from is not evidence.
             "fast_infrared": bool(fast_infrared),
             "duration_s": round(time.monotonic() - started, 1),
+            # Which way the carriage read this pass, from its own line tags,
+            # and whether the rows were turned upright -- `decode_index`.
+            "read_direction": (self.last_read_direction.as_record()
+                               if self.last_read_direction is not None else None),
+            # The READ STATE taken before the pass, kept as evidence of where
+            # the carriage was. `carriage_record` says why nothing acts on it.
+            "carriage_state": carriage,
         }
         # Only for a scan that did its own metering. The probe passes inside
         # auto_exposure() are scans too, and attaching this to them would file

@@ -1,5 +1,88 @@
 # Byte 14 of MODE SELECT: does it change the line rate?
 
+## Status 2026-09-23: reopened, and answered by reading each pass
+
+The condition below for reopening this ("something automated depending on
+orientation") has been met twice.
+
+- **The hold loop.** It compared each frame's prescan against a reference and
+  refused the ones that came back reversed, until it learned to read both ways
+  up.
+- **`session._note_reversal`.** It blamed the *scan* whenever a reversed
+  prescan disagreed with it, and would have shipped correct frames upside
+  down.
+
+### The mechanism, corrected
+
+The trigger stated further down is wrong. It is not "a bit-0-set pass after a
+bit-0-set pass". **A pass's bit 0 decides whether the carriage waits at the
+far end after it; the next pass then reads bottom-up, whatever its own bit.**
+
+- **The ladder** fits both readings; it never sent a bit-0-clear pass straight
+  after a forward bit-0-set one.
+- **CyberView's captures** do. Its roll is 0x21 / 0x20 prescan pairs, and
+  every 0x20 pass came back reversed. It knows in advance: READ STATE byte 6
+  bit 7 and byte 11 were set before all 32 reversed passes and clear before
+  all 48 others (`docs/protocol.md` §7). It lowers the scan frame's y0 by one
+  line on exactly those passes.
+- **This driver's RGBI rolls:** 38 of 114 frame prescans came back reversed.
+  The RGB-only rolls had none.
+  - It was always the first prescan after an RGBI scan, and often every other
+    frame. CyberView's 600 dpi capture alternates the same way.
+  - Why the carriage sometimes goes home between passes is not known. The
+    advance does not reliably do it: the same `SLIDE 04 01 00 01` is followed
+    by both directions.
+- **What that means for a roll:**
+  - Nothing is sent after a roll's last frame, so the carriage waits wherever
+    the last RGBI pass left it. The next pass can come back reversed: a single
+    prescan, a walk's first frame, or a second roll's first frame.
+  - Calibration also moves the carriage. In all three vendor sessions, the
+    first pass after it came back reversed.
+
+### What is true of every reversed pass
+
+- **Only rows reverse; columns never do.** Checked by picture on CyberView's
+  own pairs: 0.72-0.98 with rows reversed, never with columns reversed. So
+  the transport's direction, frame edges and holds are unaffected, and the
+  edge detector reads a reversed prescan identically (77 prescans, 0.00
+  columns).
+- **The colour planes stay aligned.** R, G and B are 0 rows apart, as on a
+  forward pass, so turning the whole picture is the whole correction.
+- **The line tags say so.** A top-down pass starts with R and ends with B; a
+  bottom-up one starts with B and ends with R. This agrees with every known
+  case in the library and on the vendor pairs.
+- **Residual:** turned back, a reversed pass sits 3 rows and 1 column off a
+  forward pass of the same frame, at 600 dpi (measured twice, identical). It
+  is not corrected: it is far below the smallest move, and correcting it
+  would invent rows at one edge.
+
+### What was done (option A)
+
+- `rps7200/direction.py` reads each pass's direction from its line tags.
+  `DirectScanner.decode_index` turns a bottom-up pass upright, so every path
+  from bytes to pixels delivers it upright: the driver, the demo, `reconstruct`
+  and the tools.
+- Every library entry records `scan.read_direction`, and `prescan.read_direction`
+  for a frame's stored prescan. It also records `carriage_state`, the READ
+  STATE bytes before the pass, as evidence only.
+- `tools/library.py migrate-direction` brings older entries up to date: 4
+  scans and 38 stored prescans turned upright, and every other entry recorded.
+- `_note_reversal` never turns a pass whose own lines said which way it was
+  read.
+- The demo's carriage reads bottom-up the way the scanner does, so the path is
+  exercised without a device.
+- Nothing sent to the device changed; `PROTOCOL_REVISION` did not move.
+
+Still open:
+
+- whether READ STATE's bits hold for this driver's own passes (the carriage
+  record will show);
+- the offset at resolutions other than 600 dpi;
+- a reversed 7200 dpi pass, which has never been seen, so its stagger
+  realignment after turning is reasoned, not measured.
+
+---
+
 ## Status: run 2026-09-11. The question asked was answered "no" — and the
 ## ladder found something the question never anticipated.
 

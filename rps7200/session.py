@@ -46,6 +46,7 @@ import numpy as np
 
 from . import export, library, preview
 from .direct import METER_EACH, DirectScanner
+from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
@@ -1093,6 +1094,7 @@ class FrameWriter:
                 film=job["film"],
                 tags=job["tags"],
                 prescan=job["prescan"],
+                prescan_meta=job.get("prescan_meta"),
                 inquiry=job["inquiry"],
                 **job["capture"],
             )
@@ -1177,7 +1179,7 @@ class ScanSession:
         self.match_prescan = True
         #: The last framing pass and where the transport was for it, so a scan
         #: taken straight afterwards has something to be judged against.
-        self._last_prescan: tuple[Any, int | None] | None = None
+        self._last_prescan: tuple[Any, int | None, dict] | None = None
         #: What the output folder's copy is written as -- "tiff" or "jpeg".
         #: Only that copy: a roll's own files under `rolls/` stay TIFF whatever
         #: this says, because they are machinery rather than deliverables and
@@ -1414,9 +1416,12 @@ class ScanSession:
         label = f"prescan {job.resolution} dpi"
         # Kept so the scan taken next has something to be judged against. One
         # pass, ~370 KB at 300 dpi, replaced each time -- not a history.
-        self._last_prescan = (image, self._position())
+        self._last_prescan = (image, self._position(), meta)
         seq = self._deliver(
-            "prescan", label, image, {"resolution_dpi": job.resolution}
+            "prescan", label, image, {
+                "resolution_dpi": job.resolution,
+                # So the window can say a pass was read bottom-up and turned.
+                "read_direction": meta.get("read_direction")}
         )
         # Filed like everything else. A prescan is ~370 KB and it is the
         # evidence about framing that went missing the last time it was not
@@ -1445,7 +1450,8 @@ class ScanSession:
             keep_raw=True,
         )
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
-        meta = self._note_reversal(meta, image, self._prescan_here())
+        here = self._prescan_here()
+        meta = self._note_reversal(meta, image, *(here or (None, None)))
         seq = self._deliver("scan", label, image, meta)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
                    mono=wants_mono(job.mono, job.film),
@@ -1469,10 +1475,11 @@ class ScanSession:
         """
         if not self._last_prescan:
             return None
-        image, where = self._last_prescan
-        return image if where == self._position() else None
+        image, where, meta = self._last_prescan
+        return (image, meta) if where == self._position() else None
 
-    def _note_reversal(self, meta, image, reference, prescan_reversed=False):
+    def _note_reversal(self, meta, image, reference, reference_meta=None,
+                       prescan_reversed=False):
         """Record any half turn this pass needs to read like its prescan.
 
         Written into the meta rather than applied to the pixels here, which is
@@ -1484,21 +1491,33 @@ class ScanSession:
         `_file` and the window both read it from here, so the picture on
         screen and the file on disk cannot end up disagreeing about which way
         up a photograph is.
+
+        **A pass whose own lines said which way it was read is never turned
+        here.** The decode has already put it upright (`rps7200.direction`),
+        and so has its prescan's, so a picture that still disagrees with its
+        prescan is not the carriage -- and `reversal_against` cannot tell
+        which of the two is the odd one out. It blamed the scan on all five
+        reversed prescans of one roll, at margins of 0.32 to 1.21 against a
+        threshold of 0.25; acted on, five correct frames would have shipped
+        upside down. Such a disagreement is said, and the scan is left.
+
+        Only a pass whose direction is unknown is still judged by picture, as
+        before -- and ``prescan_reversed``, the hold loop's word that the
+        prescan was the one that disagreed, still spares it.
         """
         if not self.match_prescan or reference is None:
             return meta
+        if _read_known(meta):
+            extra, detail = reversal_against(reference, image)
+            if extra != (0, False):
+                self._emit("log", text=(
+                    f"this pass reads {extra[0]}\u00b0"
+                    f"{' mirrored' if extra[1] else ''} against its own prescan "
+                    f"(by {detail['margin']:+.2f}), but both were read upright "
+                    "from their own lines, so it is not the carriage; the scan "
+                    "is left as it came -- check this frame"))
+            return meta
         if prescan_reversed:
-            # The reference is the pass that came back reversed, not this one.
-            # `reversal_against` cannot tell those apart -- both give the same
-            # relative mismatch -- so on a roll where five of fifteen prescans
-            # reversed it blamed the scan every time, at margins of 0.32 to
-            # 1.21 against a threshold of 0.25. Confidently wrong, and acted
-            # on: every file that leaves is turned by what this writes, so
-            # five correct frames would have shipped upside down.
-            #
-            # Something else has already settled it. The hold loop compared
-            # that prescan against a third picture, the approved reference,
-            # and said which way up it read.
             self._emit("log", text=(
                 "this frame's prescan came back with its rows reversed, so it "
                 "is not evidence about which way up the scan is; the scan is "
@@ -1510,7 +1529,8 @@ class ScanSession:
         self._emit("log", text=(
             f"this pass came back {extra[0]}\u00b0"
             f"{' mirrored' if extra[1] else ''} against its own prescan "
-            f"(by {detail['margin']:+.2f}); turned to match it"))
+            f"(by {detail['margin']:+.2f}); which way it was read is unknown, "
+            "so it is turned to match"))
         return dict(meta, reversal=[extra[0], bool(extra[1])])
 
     def _move(self, job: Move) -> str | None:
@@ -1775,7 +1795,9 @@ class ScanSession:
                 if rf.prescan is not None:
                     seq = self._deliver(
                         "prescan", f"frame {number} prescan", rf.prescan,
-                        {"resolution_dpi": job.prescan_resolution},
+                        {"resolution_dpi": job.prescan_resolution,
+                         "read_direction": (rf.prescan_meta or {})
+                         .get("read_direction")},
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
@@ -1845,7 +1867,7 @@ class ScanSession:
                     # frame a minute earlier, which is the only evidence there
                     # is that the carriage reversed: see `_note_reversal`.
                     frame_meta = self._note_reversal(
-                        rf.meta, rf.image, rf.prescan,
+                        rf.meta, rf.image, rf.prescan, rf.prescan_meta,
                         prescan_reversed=bool(
                             ((rf.registration or {}).get("approved") or {})
                             .get("row_reversed")))
@@ -1863,6 +1885,7 @@ class ScanSession:
                         tuple(job.tags) + ("gui", "roll", name),
                         raw_image=rf.raw_image,
                         prescan=rf.prescan,
+                        prescan_meta=rf.prescan_meta,
                         path=out / f"frame{number:02d}.tif",
                         roll=name,
                         mono=wants_mono(job.mono, job.film),
@@ -2017,6 +2040,7 @@ class ScanSession:
         raw_image: np.ndarray | None = None,
         path: Path | None = None,
         kind: str = "scan",
+        prescan_meta: dict[str, Any] | None = None,
         roll: str = "",
         mono: bool = False,
         mono_channel: str = MONO_CHANNEL,
@@ -2109,6 +2133,7 @@ class ScanSession:
             film=notes,
             tags=list(tags),
             prescan=prescan,
+            prescan_meta=prescan_meta,
             inquiry=getattr(self._scanner, "_inquiry", None),
             capture=capture,
             mono=mono,
@@ -2177,6 +2202,12 @@ def _unclaimed(wanted: Path) -> Path:
         if not candidate.exists():
             return candidate
     return wanted
+
+
+def _read_known(meta: dict[str, Any] | None) -> bool:
+    """Whether a pass's own line tags said which way it was read."""
+    read = (meta or {}).get("read_direction") or {}
+    return read.get("direction") in (FORWARD, REVERSED)
 
 
 def _describe(job: Job) -> str:
