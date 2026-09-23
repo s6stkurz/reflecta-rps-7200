@@ -857,6 +857,45 @@ def test_a_move_reports_a_counter_no_strip_has_as_unknown(tmp_path, job):
     _, _, events = run(job, tmp_path, scanner=scanner)
     reported = [e.done for e in kinds(events, "transport")]
     assert reported and all(done == -1 for done in reported), reported
+    # And the job's own words, which the window shows beside that readout:
+    # "on frame 74 of the strip -- done" next to "film on frame ?".
+    finished = kinds(events, "finished")[0].text
+    assert "of the strip" not in finished, finished
+    for impossible in (72, 73, 74):
+        assert f"frame {impossible}" not in finished, finished
+    if job.frames:
+        assert "no strip has" in finished, finished
+
+
+def test_a_nudge_does_not_forget_which_frame_the_film_is_on(tmp_path):
+    """The READ_STATE straight after a SLIDE comes back empty, and the nudge
+    asked it at once -- so every nudge reported "unknown", and the window,
+    which now believes that, forgot the frame and lost the Roll dialog's
+    forecast. A nudge cannot change the counter; hearing nothing says
+    nothing, so nothing is reported."""
+    class EmptyAfterSlide(FakeTransportScanner):
+        """READ_STATE empty once after any move, modelled on what
+        `DirectScanner._whole_frames` says of a whole-frame one."""
+
+        slid = False
+
+        def nudge(self, millimetres):
+            self.slid = True
+            return super().nudge(millimetres)
+
+        def position(self):
+            if self.slid:
+                self.slid = False
+                return None
+            return super().position()
+
+    from rps7200.direct import DirectScanner
+
+    three_units = 3 * DirectScanner.STEP_MM      # one command, param 1
+    _, scanner, events = run(Move(millimetres=three_units), tmp_path,
+                             scanner=EmptyAfterSlide(position=10))
+    assert [way for way, _ in scanner.moves] == ["nudge"]
+    assert [e.done for e in kinds(events, "transport")] == [10]
 
 
 def test_moving_several_frames_steps_one_at_a_time(tmp_path):

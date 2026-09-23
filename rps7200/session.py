@@ -1346,6 +1346,13 @@ class ScanSession:
                            else -1)
             if landed is None:
                 return "the film did not move -- it may be at the end of the strip"
+            if not plausible(landed):
+                # Beside a readout of "film on frame ?", which is what the
+                # emit above made of it, "on frame 74 of the strip" named a
+                # place nobody could find.
+                return (f"the film moved, and the transport's counter reads "
+                        f"{landed}, which no strip has -- which frame it is "
+                        "on is not known")
             return f"on frame {_frame(landed)} of the strip"
 
         if job.millimetres:
@@ -1377,9 +1384,19 @@ class ScanSession:
             # The frame counter does not see a sub-frame move, so the position
             # is reported as whatever it still says rather than pretending it
             # changed. Only a prescan can confirm a nudge landed.
+            #
+            # And nothing at all when it says nothing. The READ_STATE straight
+            # after a whole-frame SLIDE comes back empty every time
+            # (`DirectScanner._whole_frames`); after a sub-frame one that is
+            # inferred, not measured, and this read follows the last SLIDE at
+            # once. Reported as unknown, it made every nudge forget which
+            # frame the film was on, and the Roll dialog lost a forecast the
+            # nudge cannot have changed. A counter that answers with a number
+            # no strip has is still unknown, as everywhere else.
             position = self._scanner.position()
-            self._emit("transport",
-                       done=position if plausible(position) else -1)
+            if position is not None:
+                self._emit("transport",
+                           done=position if plausible(position) else -1)
             how = f" in {done} moves" if done > 1 else ""
             return (f"moved {say_units(sign * moved)}{how} -- the frame counter "
                     "does not see this; prescan to check it landed")
