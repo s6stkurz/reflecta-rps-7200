@@ -1,0 +1,156 @@
+{
+ "split": "dev",
+ "side": {
+  "n": 152,
+  "correct": 149,
+  "accuracy": 0.98,
+  "false_base": 0,
+  "missed": 3,
+  "refused": 0,
+  "edge_n": 59,
+  "edge_mae_cols": 0.175,
+  "edge_p90_cols": 0.347,
+  "edge_max_cols": 0.794,
+  "edge_bias_cols": 0.087,
+  "edge_mae_units": 0.141,
+  "confusion": {
+   "edge": {
+    "edge": 59,
+    "picture_to_border": 3,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 0,
+    "picture_to_border": 79,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 11,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 63,
+  "ok": 60,
+  "bad": 3,
+  "refused": 0,
+  "sign_errors": 0,
+  "accuracy": 0.952,
+  "du_mae_units": 2.05,
+  "du_p90_units": 0.451
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.98,
+   "edge_mae_cols": 0.175,
+   "n": 152
+  }
+ },
+ "per_roll": {
+  "b0920": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.112,
+   "n": 7
+  },
+  "b0921a": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.172,
+   "n": 21
+  },
+  "b0921b": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.163,
+   "n": 26
+  },
+  "b0921c": {
+   "accuracy": 0.98,
+   "edge_mae_cols": 0.181,
+   "n": 51
+  },
+  "b0922b": {
+   "accuracy": 0.964,
+   "edge_mae_cols": 0.236,
+   "n": 28
+  },
+  "b0922s": {
+   "accuracy": 0.947,
+   "edge_mae_cols": 0.093,
+   "n": 19
+  }
+ },
+ "worst": [
+  "b0921c_57 move none (+0.0 u) vs truth -56.6 u <-",
+  "b0922b_06 move none (+0.0 u) vs truth -54.4 u <-",
+  "b0921c_57 left missed 65.2 cols of base",
+  "b0922b_06 left missed 63.8 cols of base",
+  "b0922s_08 move none (+0.0 u) vs truth -9.8 u <-",
+  "b0922s_08 left missed 7.2 cols of base"
+ ],
+ "label_free": {
+  "pairs": {
+   "n": 358,
+   "both_edge": 98,
+   "state_changes": 28,
+   "mae_cols": 0.266,
+   "p90_cols": 0.484,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 90,
+   "state_changes": 0,
+   "mae_cols": 0.151,
+   "over_1": 0
+  },
+  "ladder": {
+   "left": {
+    "found": 0,
+    "of": 0
+   },
+   "right": {
+    "found": 0,
+    "of": 0
+   }
+  },
+  "mirror": {
+   "state_changes": 0,
+   "mae_cols": 0.0,
+   "over_0_5": 0
+  }
+ },
+ "seconds_per_frame": 0.2675
+}

@@ -1,0 +1,26 @@
+{
+  "id": "x0920_10",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and man run to col 0; black patch at bottom-left (b4 ~92) is dark clothing with a curved boundary and wall below it, not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.9,
+    "lo": 426.5,
+    "hi": 427.5,
+    "outer": null,
+    "x_top": 427.9,
+    "x_bottom": 426.6,
+    "note": "1-2 col sliver, tilted: col 427 = 21/91/102/102 and col 426 = 15/17/36/46 vs wall ~12, base ~100; black in B only from ~1/4 height down. The grey full-height line at col 412 is a wall seam in the scene (37-46), not base"
+  },
+  "frame_note": ""
+}

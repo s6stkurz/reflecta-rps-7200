@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_32", "labeller": "L2", "view": "A",
+  "left":  {"state": "edge", "x": 0.2, "lo": 0.0, "hi": 0.6,
+            "outer": null, "x_top": 0.8, "x_bottom": 2.0,
+            "note": "curved base sliver at column 0: base here reads only ~(55,25,14) (R/G 2.2, B/G 0.56), backdrop picture ~(41,20,12). Col 0 is ~90% base in the top rows, ~10-25% at mid-height, fully base below row ~200; cols 0-1 both base in the bottom ~25 rows. Rounded-corner shape; mid-height value is the least certain"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "backdrop and trousers run to 427, no brightening at the border"},
+  "frame_note": "hairline vertical scratch near col 215 is not base (one column, not base-bright)"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_25", "labeller": "L1", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop/hat to col 0"},
+  "right": {"state": "edge", "x": 315.4, "lo": 314.9, "hi": 315.9,
+            "outer": 332.4, "x_top": 315.5, "x_bottom": 314.5,
+            "note": "internal gap: base cols 316-330 (92-96, R/G 2.25 B/G 0.53). Frame edge irregular: ~315.9 in bands 2-3, ~315.5 at mid-height, ~314.5 at the bottom; the top eighth reads ~315.1 (light picture there). Neighbour picture from ~332.4 (331.1 in the top eighth, 332.0-332.9 below)"},
+  "frame_note": "gap inside the frame at 315-332; frame is the left part (315 cols vs 96)"
+}

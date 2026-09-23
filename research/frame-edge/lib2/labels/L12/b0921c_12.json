@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_12",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 95.4,
+    "lo": 95.1,
+    "hi": 95.9,
+    "outer": 78.3,
+    "x_top": 95.1,
+    "x_bottom": 96.0,
+    "note": "interior gap deeper than the crop: base cols 79-94 (G 30-31, R/G 2.23, B/G 0.55), neighbour picture 0-78. Inner edge tilted: col 95 ~10% base in rows 0-140, ~35% at 140-160, ~80-90% at 160-240, base at 240-260; bottom corner rows 260+ reach 96.5-97. Outer edge 79.0 in rows 0-60, ~78.5 at rows 80-120, 78.0 at rows 180-260"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dress/table run to 428"
+  },
+  "frame_note": "frame = right part (~332 cols) vs neighbour ~78"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_10", "labeller": "L3", "view": "B",
+  "left":  {"state": "edge", "x": 59.0, "lo": 58.7, "hi": 59.6,
+            "outer": 38.1, "x_top": null, "x_bottom": null,
+            "note": "base cols 40-58 reads only 81-84 (R/G 2.2, B/G 0.55); the dark woods beside it read almost the same (79-84) below the top fifth, so the step is only numeric in the top two bands (col 59 at picture level there). In view B the line at 59 is straight and full height: foliage highlights start at 59-60 at every height. Neighbour (stone wall) edge is tilted: ~39.7 in the top tenth, ~39.0 at 20-30%, 38.0 from mid-height down, ~38.5 in the bottom tenth"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figures, foliage and building run to col 427, no plateau"},
+  "frame_note": "gap at cols ~38-59, straddling the crop's right side; frame is the right part (59-427)"
+}

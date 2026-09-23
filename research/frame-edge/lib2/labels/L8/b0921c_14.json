@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_14", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 105.4, "lo": 104.9, "hi": 106.0,
+            "outer": 88.4, "x_top": 105.0, "x_bottom": 105.9,
+            "note": "DEEP gap, beyond the crop: base cols 89-104 (R/G 2.2, B/G 0.55, full height). This frame (cols 105-427, ~322 cols) lies right of it; neighbour picture cols 0-88 (outer ~88.4, top ~89.0, bottom ~88.2). Both boundaries lean ~1 col (top further right)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/table run off the right border"},
+  "frame_note": "gap at cols 89-104, invisible in the 64-col crops; found in the 1:1 thumbnail"
+}

@@ -1,0 +1,871 @@
+{
+ "about": "Decided by eye from crops/triage/*.png and by registration of neighbours (rps7200.uniformity.register, conf>100 at dx=dy=0 = same position). kind=film is labelled; kind=dup shares its rep's position (exposure / bit depth / file type differ) and is a label-free invariance check.",
+ "excluded": {
+  "c125": "slide (positive), 2026-09-16",
+  "c126": "slide (positive), 2026-09-16"
+ },
+ "rolls": [
+  {
+   "name": "gold200",
+   "split": "test",
+   "film_type": "c41",
+   "note": "Kodak Gold 200, 17 consecutive frames; prescan.tif beside 3600 dpi IR scans",
+   "frames": [
+    {
+     "cid": "c009"
+    },
+    {
+     "cid": "c010"
+    },
+    {
+     "cid": "c011"
+    },
+    {
+     "cid": "c012"
+    },
+    {
+     "cid": "c013"
+    },
+    {
+     "cid": "c014"
+    },
+    {
+     "cid": "c015"
+    },
+    {
+     "cid": "c016"
+    },
+    {
+     "cid": "c017"
+    },
+    {
+     "cid": "c018"
+    },
+    {
+     "cid": "c019"
+    },
+    {
+     "cid": "c020"
+    },
+    {
+     "cid": "c021"
+    },
+    {
+     "cid": "c022"
+    },
+    {
+     "cid": "c023"
+    },
+    {
+     "cid": "c024"
+    },
+    {
+     "cid": "c025"
+    }
+   ]
+  },
+  {
+   "name": "hwcheck",
+   "split": "test",
+   "film_type": "c41",
+   "note": "the Gold 200 strip again at another position (c006~c014 dx-4, c008~c016 dx-5) -- test, to keep physical frames on one side",
+   "frames": [
+    {
+     "cid": "c006"
+    },
+    {
+     "cid": "c007"
+    },
+    {
+     "cid": "c008"
+    }
+   ]
+  },
+  {
+   "name": "strip6",
+   "split": "dev",
+   "film_type": "c41",
+   "note": "fstrip6-01..03, prescan.tif beside 1800 dpi",
+   "frames": [
+    {
+     "cid": "c000"
+    },
+    {
+     "cid": "c001"
+    },
+    {
+     "cid": "c002"
+    }
+   ]
+  },
+  {
+   "name": "strip3",
+   "split": "dev",
+   "film_type": "c41",
+   "note": "fstrip3-01..03, prescan.tif beside 1800 dpi",
+   "frames": [
+    {
+     "cid": "c003"
+    },
+    {
+     "cid": "c004"
+    },
+    {
+     "cid": "c005"
+    }
+   ]
+  },
+  {
+   "name": "r0909",
+   "split": "dev",
+   "film_type": "c41",
+   "note": "2026-09-09; c026-c030 one frame at three positions; c038 strip end with empty gate",
+   "frames": [
+    {
+     "cid": "c026"
+    },
+    {
+     "cid": "c027",
+     "kind": "dup",
+     "same_as": "c026"
+    },
+    {
+     "cid": "c028",
+     "kind": "dup",
+     "same_as": "c026"
+    },
+    {
+     "cid": "c029"
+    },
+    {
+     "cid": "c030"
+    },
+    {
+     "cid": "c031"
+    },
+    {
+     "cid": "c032"
+    },
+    {
+     "cid": "c033"
+    },
+    {
+     "cid": "c034"
+    },
+    {
+     "cid": "c035"
+    },
+    {
+     "cid": "c036"
+    },
+    {
+     "cid": "c037",
+     "kind": "dup",
+     "same_as": "c036"
+    },
+    {
+     "cid": "c038",
+     "note": "film at left, empty gate at right"
+    }
+   ]
+  },
+  {
+   "name": "stage3",
+   "split": "dev",
+   "film_type": "c41",
+   "note": "stage3-check 2026-09-10, three frames, uint8 + uint16 + prescan.tif of each",
+   "frames": [
+    {
+     "cid": "c039"
+    },
+    {
+     "cid": "c040"
+    },
+    {
+     "cid": "c041"
+    },
+    {
+     "cid": "c042",
+     "kind": "dup",
+     "same_as": "c039"
+    },
+    {
+     "cid": "c043",
+     "kind": "dup",
+     "same_as": "c039"
+    },
+    {
+     "cid": "c044",
+     "kind": "dup",
+     "same_as": "c041"
+    },
+    {
+     "cid": "c045",
+     "kind": "dup",
+     "same_as": "c041"
+    }
+   ]
+  },
+  {
+   "name": "bw0910",
+   "split": "dev",
+   "film_type": "bw",
+   "note": "2026-09-10 black and white negative (output folder '10.09.2026 BW'), repeats at shifted positions",
+   "frames": [
+    {
+     "cid": "c046"
+    },
+    {
+     "cid": "c047",
+     "kind": "dup",
+     "same_as": "c046"
+    },
+    {
+     "cid": "c048",
+     "kind": "dup",
+     "same_as": "c046"
+    },
+    {
+     "cid": "c049"
+    },
+    {
+     "cid": "c050"
+    },
+    {
+     "cid": "c051"
+    },
+    {
+     "cid": "c052"
+    },
+    {
+     "cid": "c053"
+    },
+    {
+     "cid": "c054"
+    },
+    {
+     "cid": "c055",
+     "kind": "dup",
+     "same_as": "c054"
+    },
+    {
+     "cid": "c056"
+    },
+    {
+     "cid": "c057",
+     "kind": "dup",
+     "same_as": "c056"
+    }
+   ]
+  },
+  {
+   "name": "r0911",
+   "split": "dev",
+   "film_type": "c41",
+   "note": "2026-09-11 walk 01-21 plus session prescans and prescan.tif beside 600/900 dpi",
+   "frames": [
+    {
+     "cid": "c058"
+    },
+    {
+     "cid": "c059"
+    },
+    {
+     "cid": "c060"
+    },
+    {
+     "cid": "c061"
+    },
+    {
+     "cid": "c062"
+    },
+    {
+     "cid": "c063"
+    },
+    {
+     "cid": "c064"
+    },
+    {
+     "cid": "c065"
+    },
+    {
+     "cid": "c066"
+    },
+    {
+     "cid": "c067"
+    },
+    {
+     "cid": "c068"
+    },
+    {
+     "cid": "c069"
+    },
+    {
+     "cid": "c070"
+    },
+    {
+     "cid": "c071"
+    },
+    {
+     "cid": "c072"
+    },
+    {
+     "cid": "c073"
+    },
+    {
+     "cid": "c074"
+    },
+    {
+     "cid": "c075"
+    },
+    {
+     "cid": "c076"
+    },
+    {
+     "cid": "c077"
+    },
+    {
+     "cid": "c078"
+    },
+    {
+     "cid": "c079"
+    },
+    {
+     "cid": "c080"
+    },
+    {
+     "cid": "c081"
+    },
+    {
+     "cid": "c082"
+    },
+    {
+     "cid": "c083"
+    },
+    {
+     "cid": "c084"
+    },
+    {
+     "cid": "c085"
+    },
+    {
+     "cid": "c086"
+    },
+    {
+     "cid": "c087",
+     "kind": "dup",
+     "same_as": "c086"
+    },
+    {
+     "cid": "c088",
+     "kind": "dup",
+     "same_as": "c086"
+    }
+   ]
+  },
+  {
+   "name": "r0914",
+   "split": "dev",
+   "film_type": "c41",
+   "note": "2026-09-14 walk 01-17 plus re-prescans of 01-03 at shifted positions",
+   "frames": [
+    {
+     "cid": "c089"
+    },
+    {
+     "cid": "c090",
+     "kind": "dup",
+     "same_as": "c089"
+    },
+    {
+     "cid": "c091",
+     "kind": "dup",
+     "same_as": "c089"
+    },
+    {
+     "cid": "c092",
+     "kind": "dup",
+     "same_as": "c093"
+    },
+    {
+     "cid": "c093"
+    },
+    {
+     "cid": "c094"
+    },
+    {
+     "cid": "c095"
+    },
+    {
+     "cid": "c096"
+    },
+    {
+     "cid": "c097"
+    },
+    {
+     "cid": "c098"
+    },
+    {
+     "cid": "c099"
+    },
+    {
+     "cid": "c100"
+    },
+    {
+     "cid": "c101"
+    },
+    {
+     "cid": "c102"
+    },
+    {
+     "cid": "c103"
+    },
+    {
+     "cid": "c104"
+    },
+    {
+     "cid": "c105"
+    },
+    {
+     "cid": "c106"
+    },
+    {
+     "cid": "c107"
+    },
+    {
+     "cid": "c108"
+    },
+    {
+     "cid": "c109",
+     "note": "strip end: empty gate in view"
+    },
+    {
+     "cid": "c110",
+     "kind": "dup",
+     "same_as": "c109",
+     "note": "strip end: empty gate in view"
+    },
+    {
+     "cid": "c111"
+    },
+    {
+     "cid": "c112"
+    },
+    {
+     "cid": "c113"
+    },
+    {
+     "cid": "c114",
+     "kind": "dup",
+     "same_as": "c113"
+    },
+    {
+     "cid": "c115"
+    },
+    {
+     "cid": "c116"
+    },
+    {
+     "cid": "c117"
+    },
+    {
+     "cid": "c118",
+     "kind": "dup",
+     "same_as": "c117"
+    },
+    {
+     "cid": "c119"
+    },
+    {
+     "cid": "c120",
+     "kind": "dup",
+     "same_as": "c119"
+    },
+    {
+     "cid": "c121"
+    },
+    {
+     "cid": "c122"
+    },
+    {
+     "cid": "c123",
+     "kind": "dup",
+     "same_as": "c122"
+    },
+    {
+     "cid": "c124",
+     "kind": "dup",
+     "same_as": "c122"
+    }
+   ]
+  },
+  {
+   "name": "x0920",
+   "split": "dev",
+   "film_type": "c41",
+   "note": "2026-09-20 uint16 exposure ladders of 09-14 frames; one representative per position",
+   "frames": [
+    {
+     "cid": "c127",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c128",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c129",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c130",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c131",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c132",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c133",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c134",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c135",
+     "kind": "slide",
+     "note": "slide (reversal film), 2026-09-20 dpi-probe / meter-check: not a negative"
+    },
+    {
+     "cid": "c136"
+    },
+    {
+     "cid": "c137",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c138",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c139",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c140",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c141",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c142",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c143",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c144",
+     "kind": "dup",
+     "same_as": "c136"
+    },
+    {
+     "cid": "c145"
+    },
+    {
+     "cid": "c146",
+     "kind": "dup",
+     "same_as": "c145"
+    },
+    {
+     "cid": "c147",
+     "kind": "dup",
+     "same_as": "c145"
+    },
+    {
+     "cid": "c148"
+    },
+    {
+     "cid": "c149",
+     "kind": "dup",
+     "same_as": "c148"
+    },
+    {
+     "cid": "c150",
+     "kind": "dup",
+     "same_as": "c148"
+    },
+    {
+     "cid": "c151"
+    },
+    {
+     "cid": "c152",
+     "kind": "dup",
+     "same_as": "c151"
+    },
+    {
+     "cid": "c153",
+     "kind": "dup",
+     "same_as": "c151"
+    },
+    {
+     "cid": "c154"
+    },
+    {
+     "cid": "c155",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c156",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c157",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c158",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c159",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c160",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c161",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c162",
+     "kind": "dup",
+     "same_as": "c154"
+    },
+    {
+     "cid": "c163"
+    },
+    {
+     "cid": "c164",
+     "kind": "dup",
+     "same_as": "c163"
+    },
+    {
+     "cid": "c165",
+     "kind": "dup",
+     "same_as": "c163"
+    },
+    {
+     "cid": "c166"
+    },
+    {
+     "cid": "c167",
+     "kind": "dup",
+     "same_as": "c166"
+    },
+    {
+     "cid": "c168",
+     "kind": "dup",
+     "same_as": "c166"
+    },
+    {
+     "cid": "c169"
+    },
+    {
+     "cid": "c170",
+     "kind": "dup",
+     "same_as": "c169"
+    },
+    {
+     "cid": "c171",
+     "kind": "dup",
+     "same_as": "c169"
+    },
+    {
+     "cid": "c172"
+    },
+    {
+     "cid": "c173",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c174",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c175",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c176",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c177",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c178",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c179",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c180",
+     "kind": "dup",
+     "same_as": "c172"
+    },
+    {
+     "cid": "c181"
+    },
+    {
+     "cid": "c182",
+     "kind": "dup",
+     "same_as": "c181"
+    },
+    {
+     "cid": "c183",
+     "kind": "dup",
+     "same_as": "c181"
+    },
+    {
+     "cid": "c184"
+    },
+    {
+     "cid": "c185",
+     "kind": "dup",
+     "same_as": "c184"
+    },
+    {
+     "cid": "c186",
+     "kind": "dup",
+     "same_as": "c184"
+    },
+    {
+     "cid": "c187"
+    },
+    {
+     "cid": "c188",
+     "kind": "dup",
+     "same_as": "c187"
+    },
+    {
+     "cid": "c189",
+     "kind": "dup",
+     "same_as": "c187"
+    },
+    {
+     "cid": "c190"
+    },
+    {
+     "cid": "c191",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c192",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c193",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c194",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c195",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c196",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c197",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c198",
+     "kind": "dup",
+     "same_as": "c190"
+    },
+    {
+     "cid": "c199"
+    },
+    {
+     "cid": "c200",
+     "kind": "dup",
+     "same_as": "c199"
+    },
+    {
+     "cid": "c201",
+     "kind": "dup",
+     "same_as": "c199"
+    },
+    {
+     "cid": "c202"
+    },
+    {
+     "cid": "c203",
+     "kind": "dup",
+     "same_as": "c202"
+    },
+    {
+     "cid": "c204",
+     "kind": "dup",
+     "same_as": "c202"
+    }
+   ]
+  }
+ ]
+}

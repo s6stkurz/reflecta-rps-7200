@@ -1,0 +1,26 @@
+{
+  "id": "x0920_03",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 1-18 are an OPAQUE strip (base-likeness ~1: black in A, white in B), uniform, full height, sharp straight boundary at ~19.4 (top ~19.7, bottom ~19.2) where picture starts. It is not base: base on this roll reads clear/~100 (see x0920_10 right). Could be an obstruction/mask hiding the true edge, or scene; col 0 partly lighter in top band (43). No clear base visible on this side"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright (clear on film) region with tree silhouettes to col 427 (~88-91, tree detail in b3), no vertical line"
+  },
+  "frame_note": "left 19 columns opaque rather than clear; frame looks like a night/snow scene"
+}

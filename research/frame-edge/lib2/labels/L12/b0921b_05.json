@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_05",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 13.8,
+    "lo": 13.4,
+    "hi": 14.2,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base 0-12 (R/G 2.3, B/G 0.53), dense sky from 14. Edge slightly bowed: ~14.0 at top, ~13.4 around rows 100-140, ~14.0 again, and the bottom-corner rows 260-286 reach 14.6-15.0 (corner rounding)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage runs to 428"
+  },
+  "frame_note": "vertical (rotated) picture; no interior gap"
+}

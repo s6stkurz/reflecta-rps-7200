@@ -1,0 +1,26 @@
+{
+  "id": "r0914_16",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark blue area outside the round mirror runs to col 0 (~60, far below base 97); curved scene boundary, no straight line"
+  },
+  "right": {
+    "state": "edge",
+    "x": 417.8,
+    "lo": 417.4,
+    "hi": 418.1,
+    "outer": null,
+    "x_top": 418.1,
+    "x_bottom": 416.8,
+    "note": "clean sharp edge; base 418-427 ~97; crossing ~418.0/417.8/417.7 (b1-b3), ~416.9 in b4 where the adjacent picture is the dark-blue mirror rim: tilt, base starts further left at the bottom"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_54",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 104.0,
+    "lo": 103.7,
+    "hi": 104.7,
+    "outer": 84.8,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "interior gap deeper than the crop: base cols 85-103 (G 30, R/G 2.2, B/G 0.55). Both boundaries are sharp and straight in the top third (dense sky either side). Below row ~100 the right picture (lawn) reads exactly base level, so the inner edge is measured only in rows 0-100 (at 104.0); unmeasurable lower. Outer: 85.0 in the sky rows, ~84.0 in rows 160-260 where the neighbour lawn is darker"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair/sky run to 428"
+  },
+  "frame_note": "two parts: neighbour 0-84 (~85 cols) and frame 104-427 (~324 cols). Faint vertical scanner line near col ~235 is not base"
+}

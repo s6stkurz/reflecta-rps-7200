@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_44", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 203.4, "lo": 203.0, "hi": 203.9,
+            "outer": 182.0, "x_top": 203.0, "x_bottom": 203.8,
+            "note": "MID-FRAME gap: black base cols 182-202 (G~33-34, R/G 2.2, B/G 0.55, full height). This frame (girl in hat on grey backdrop, cols 203-427, ~225 cols) lies right of it. Neighbour picture cols 0-181 (woman + an overexposed white area that reads very dense on the negative), outer ~182.0 (top band ~182.7)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hat/arm and backdrop run off the right border"},
+  "frame_note": "two partial pictures: left 0-181 (~182 cols) vs right 203-427 (~225 cols); right has more picture columns, so it is the frame and the gap goes on its left side"
+}

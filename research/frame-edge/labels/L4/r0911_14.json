@@ -1,0 +1,26 @@
+{
+  "id": "r0911_14",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 0.2,
+    "lo": 0.0,
+    "hi": 0.5,
+    "outer": null,
+    "x_top": 0.7,
+    "x_bottom": 0.15,
+    "note": "sub-column sliver: only col 0 is lighter in A in every band (b1 ~74% base, b2 ~19%, b3 ~10%, b4 ~17%); dark in B at top, faint below; leans wider at top like r0911_20; alternative reading picture_to_border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and label card reach 428; no plateau"
+  },
+  "frame_note": ""
+}

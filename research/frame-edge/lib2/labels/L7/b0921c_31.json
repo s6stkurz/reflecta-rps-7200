@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_31", "labeller": "L7", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grey backdrop with a diagonal fold runs to col 0 (counts 39/18/11 against base 60/26/14): picture"},
+  "right": {"state": "edge", "x": 419.0, "lo": 418.6, "hi": 419.4,
+            "outer": null, "x_top": 419.2, "x_bottom": 418.1,
+            "note": "base cols 419-427 to the aperture (likeness ~80, not the top of the table; R/G 2.3, B/G 0.53), no neighbour. Tilted: col 418 reads 56/29/48/82 and col 419 80/63/81/81, so the top meets base at ~419.1-419.3 and the bottom band at ~418.0."},
+  "frame_note": "whole thumbnail checked: no interior gap"
+}

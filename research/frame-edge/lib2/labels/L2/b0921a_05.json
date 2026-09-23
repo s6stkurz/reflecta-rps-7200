@@ -1,0 +1,9 @@
+{
+  "id": "b0921a_05", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 25.7, "lo": 25.4, "hi": 26.1,
+            "outer": 4.3, "x_top": 25.5, "x_bottom": 26.4,
+            "note": "black base cols 5-24 (R/G 2.3, B/G 0.54). Studio backdrop beside it is fairly pale on the negative (~70 vs base 95) but the step is clean; edge 25.5 at top, ~26.0 lower, ~26.4 in the bottom rows. Neighbour's bright backdrop cols 0-3; outer 5.4 at top, 4.0-4.3 over the middle, ~4.5 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "backdrop/trousers run to 427"},
+  "frame_note": ""
+}

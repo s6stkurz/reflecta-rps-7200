@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_07",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 0.3,
+    "lo": 0.0,
+    "hi": 1.0,
+    "outer": null,
+    "x_top": 1.3,
+    "x_bottom": 0.4,
+    "note": "thin sliver, irregular: col 0 is base in b1 (93) with col 1 ~27% base there (black in B top ~30% of height); in b2/b3/b4 col 0 only ~20-45% base. Not a straight line; possibly borderline picture_to_border below the top quarter"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "gallery wall/person run to 428; drop in b3/b4 at 422+ is scene (dark artwork), not base"
+  },
+  "frame_note": "left sliver sub-column in most rows"
+}

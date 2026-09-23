@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_06",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 3.5,
+    "lo": 3.1,
+    "hi": 4.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base 0-2 (b1 96-97, b4 ~72: base reads lower in bottom band on this roll); col 3 partial (~30% in b2/b3, ~70% in b4), col 4 still ~36% base in b1 -> edge ragged between 3.2 and 4.4"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "figure/wall to col 427; b3 col 427 = 63 only mid-height, not a plateau"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "gold200_09",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark foliage (near-white on negative) with leaf detail reaching col 0; no flat plateau, table ~65-75"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "leaf features at cols 420-427; table smoothly declining 80->73, no plateau"
+  },
+  "frame_note": ""
+}

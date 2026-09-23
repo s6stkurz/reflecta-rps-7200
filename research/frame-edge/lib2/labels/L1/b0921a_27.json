@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_27", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 16.9, "lo": 16.6, "hi": 17.2,
+            "outer": null, "x_top": 16.2, "x_bottom": 17.8,
+            "note": "base cols 0-15 (~93-98, R/G 2.3 B/G 0.55). Edge sharp but visibly leaning: ~16.2 at top, 17.0 at mid-height, ~17.8 at the bottom (8-band read)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark trees/foliage to col 427; reads up to 88 but R/G 2.5-2.6, textured, not base"},
+  "frame_note": ""
+}

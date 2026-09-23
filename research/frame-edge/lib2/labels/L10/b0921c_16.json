@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_16",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 115.3,
+    "lo": 114.9,
+    "hi": 115.8,
+    "outer": 98.4,
+    "x_top": 115.05,
+    "x_bottom": 116.2,
+    "note": "gap deep inside the frame at cols ~98-114 (raw 68-71/31/17, R/G 2.2, B/G 0.55), sharp both sides. This frame starts at ~115.05 top / ~116.2 bottom (tilted). Neighbour edge ~99.0 top, ~98.1 bottom; gap widens slightly downward."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "picture runs to column 427"
+  },
+  "frame_note": "Interior gap at 98-114: neighbour part 98 cols on the left, this frame ~313 cols on the right. Not visible in the 64-col crops."
+}

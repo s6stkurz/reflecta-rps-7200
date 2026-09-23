@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_47", "labeller": "L11", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "party scene runs to column 0"},
+  "right": {"state": "edge", "x": 302.6, "lo": 301.9, "hi": 302.9,
+            "outer": 323.9, "x_top": 302.9, "x_bottom": 301.9,
+            "note": "gap inside the frame: base columns 303-322 (R/G 2.24, B/G 0.54), sharp. This frame's white wall ends ~302.9 in the upper half (column 302 ~10% base) and ~302.0 at the bottom (column 302 fully base in band 4). Neighbour's grey backdrop starts at 324.0, ~323.1 in the top band"},
+  "frame_note": "two partial pictures: this frame 0-302 (~303 cols), neighbour 324-427 (~104 cols); frame is the left one"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_22", "labeller": "L8", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage and statue/person run to column 0"},
+  "right": {"state": "edge", "x": 339.0, "lo": 338.6, "hi": 339.6,
+            "outer": 359.2, "x_top": null, "x_bottom": null,
+            "note": "DEEP gap beyond the crop: base cols 339-358 (G~31, R/G 2.23, B/G 0.53, full height, ~88 on the table). This frame (cols 0-338) ends at ~339.0: sharp in the top half (bright foliage); in the lower half the scene is dark and within ~2 points of base, the boundary there only visible as a faint colour change in a locally stretched view B. Neighbour (bright garden/house) starts at outer ~359.2 (358.0 at top, ~359.6 lower)."},
+  "frame_note": "thin negative; gap at 339-358 not visible in the 64-col right crop, which shows only the neighbour"
+}

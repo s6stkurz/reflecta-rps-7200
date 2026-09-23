@@ -1,0 +1,26 @@
+{
+  "id": "r0911_04",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark navy wall to col 0, table flat 87-91 all bands with no step or line; wall is near base-bright so a sliver could hide, but none visible"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall to col 427, flat 87-90, no step or line"
+  },
+  "frame_note": "dark scene wall nearly as clear as base on the negative"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "b0921a_29", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 17.0, "lo": 16.4, "hi": 17.7,
+            "outer": null, "x_top": 16.5, "x_bottom": 17.3,
+            "note": "featureless black cols 0-15 at base ratio (R/G 2.3, B/G 0.53; a few dust specks). Foliage texture starts on one straight line at ~17 in the top and bottom bands (16.5 at the very top). The middle rows are dark foliage at base density, so the boundary there is inferred from the line above and below; wider interval for that"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "building/foliage/figure run to 427"},
+  "frame_note": "underexposed forest scene; dark picture has the same value as base in mid-height rows"
+}

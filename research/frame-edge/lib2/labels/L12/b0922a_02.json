@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_02",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 19.4,
+    "lo": 19.0,
+    "hi": 20.1,
+    "outer": null,
+    "x_top": 19.0,
+    "x_bottom": 20.0,
+    "note": "cols 0-18 featureless (row std 1.1-1.5 vs picture 4-6), R/G 2.2, B/G 0.55, G 25-27 (dimmer than base elsewhere on this walk, with a 25->27 ramp over cols 0-9 that stays at the aperture in b0922a_14). Confirmed as the inter-frame gap by b0922a_04 (same film shifted 34 cols), where it shows as a dark strip with a different neighbour picture to its left. Edge where texture starts: 19.0 in rows 10-60, ~20.0 in rows 220-260; rows 60-220 picture shadows equal base, no contrast"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "figures/foliage run to 428"
+  },
+  "frame_note": "low-contrast left edge: thin shadowy forest frame"
+}

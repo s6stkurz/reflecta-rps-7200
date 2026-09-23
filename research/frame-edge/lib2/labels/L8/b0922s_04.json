@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_04", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 14.0, "lo": 13.4, "hi": 14.5,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "cols 0-13 uniform base (94-97 in all bands, R/G 2.28, B/G 0.55). The dim room beside it is within a few points of base; the edge is set by the bench (bottom band) and a mid-height highlight that both start on a straight line at col 14, plus a faint tone change in the upper half seen in a locally stretched view B."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "cols ~336-427 are a very dense, overexposed white area of the scene (G 3-5, B/G ~0) with a ragged left boundary -- scene content, not base or gate; it runs off the right border"},
+  "frame_note": "same party-room scene as the neighbour in b0921c_50, where the bench likewise starts right at the gap"
+}

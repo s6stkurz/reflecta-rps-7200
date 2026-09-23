@@ -1,0 +1,26 @@
+{
+  "id": "gold200_04",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "picture (pale leaves) runs to column 0; no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "picture incl. dark lower half runs to 428; no plateau"
+  },
+  "frame_note": ""
+}

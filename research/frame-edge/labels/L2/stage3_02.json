@@ -1,0 +1,26 @@
+{
+  "id": "stage3_02",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 1.4,
+    "lo": 1.0,
+    "hi": 2.6,
+    "outer": null,
+    "x_top": 2.4,
+    "x_bottom": 2.5,
+    "note": "narrow base sliver; col 0 base all bands; col 1 = 95/42/67/95, col 2 = 52/26/29/70: edge ~2.4 in top and bottom quarters, ~1.3-1.6 in middle (bowed, not a straight tilt). Dark rails (in B) at top/bottom of picture abut the base and may inflate b1/b4"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wooden wall/rack runs to 428; vertical feature at ~373-375 is scene (rack post), not base; no plateau"
+  },
+  "frame_note": "left edge bowed/irregular within ~1.2 col"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_68", "labeller": "L2", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "hydrangeas/fence run to column 0"},
+  "right": {"state": "edge", "x": 302.7, "lo": 302.2, "hi": 303.1,
+            "outer": 321.6, "x_top": 303.0, "x_bottom": 302.1,
+            "note": "interior gap deeper than the crop: base cols 303-320 (R/G 2.24, B/G 0.53). This frame's picture ends 303.0 in the top half, ~302.4 lower (pale wall near base in bands 6-7 makes it low-contrast), ~302.1 at bottom. Neighbour (car/girl) starts ~320.2 in the top band, ~321.5-321.9 below"},
+  "frame_note": "gap at ~303-321; frame = left part (~303 cols) vs neighbour right part (~107 cols)"
+}

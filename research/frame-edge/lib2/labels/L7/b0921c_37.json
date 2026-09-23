@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_37", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 84.5, "lo": 84.1, "hi": 85.0,
+            "outer": 63.2, "x_top": 84.2, "x_bottom": 85.0,
+            "note": "interior gap cols 63-83 (likeness ~90, R/G 2.2, B/G 0.53), deeper than the crop. Neighbour 0-62 is dense picture (R/G 3.0). This frame starts on a pale grey wall at likeness ~68 (counts 49/23/13 vs base 65/30/16), so contrast is low; col 84 reads 75/74/85/91 by band. Outer ~63.9 at top, 63.0 in the lower half."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grey wall/shadow runs to col 427, likeness ~25"},
+  "frame_note": "gap at 63-84 found on the 1:1 thumbnail; frame is the right part (344 cols vs 63)"
+}

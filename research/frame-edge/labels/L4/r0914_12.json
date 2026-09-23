@@ -1,0 +1,26 @@
+{
+  "id": "r0914_12",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor picture reaches column 0; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 415.5,
+    "lo": 415.1,
+    "hi": 415.8,
+    "outer": null,
+    "x_top": 415.6,
+    "x_bottom": 415.15,
+    "note": "clean sharp edge, 12-col base plateau to 428; col 415 base fraction b1 38%, b2 42%, b3 55%, b4 76% -> slight lean at bottom"
+  },
+  "frame_note": ""
+}

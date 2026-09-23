@@ -1,0 +1,26 @@
+{
+  "id": "b0921a_01",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 18.8,
+    "lo": 18.5,
+    "hi": 19.2,
+    "outer": 3.2,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols 4-17 (G 29, R/G 2.3, B/G 0.55), neighbour sliver 0-2/3. Inner edge: col 18 ~70-90% base in rows 0-160, base at rows 160-200 (x 19.0); rows 200-280 picture at base level (no contrast); bottom corner rows 280+ at 20.0. Outer edge bowed: 4.0 at top and bottom rows, 3.0-3.2 through the middle"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and shadow diagonal run to 428"
+  },
+  "frame_note": ""
+}

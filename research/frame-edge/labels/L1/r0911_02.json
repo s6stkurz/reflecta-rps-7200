@@ -1,0 +1,26 @@
+{
+  "id": "r0911_02",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark museum wall is near-base on the negative (68-80, uniform across bands) but grades smoothly to col 0 with no step or line; blue wall in positive"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "same dark wall right of the doorway (tilted, soft door edge ~375-381 is scene); smooth 81->71 falloff to col 427, no step"
+  },
+  "frame_note": ""
+}

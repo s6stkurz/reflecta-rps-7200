@@ -1,0 +1,26 @@
+{
+  "id": "r0909_06",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 5.9,
+    "lo": 5.4,
+    "hi": 6.5,
+    "outer": null,
+    "x_top": 5.4,
+    "x_bottom": 6.8,
+    "note": "base 0-4 ~98 all bands, black in B. per band 50% crossing: b1 5.5, b2 5.7, b3 6.1, b4 6.7 -> edge leans right toward the bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "stone wall and white wall to col 427, no black strip"
+  },
+  "frame_note": ""
+}

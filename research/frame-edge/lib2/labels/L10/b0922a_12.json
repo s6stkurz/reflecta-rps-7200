@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_12",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 43.5,
+    "lo": 42.8,
+    "hi": 44.3,
+    "outer": 22.6,
+    "x_top": 43.0,
+    "x_bottom": 44.0,
+    "note": "base gap ~22-43 (raw 62-64/28-29/15-16, R/G 2.2, B/G 0.55; reads ~80 on the table, picture highlights brighter). This frame's edge is visible only where the picture is dense: top rows (sharp at 43.0) and rows ~205-240 (44.0); in the middle rows the adjacent forest shadow is at base density and the edge cannot be seen. Neighbour edge ~23.5 at top, ~22.0 in the lower half."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "figures run to column 427"
+  },
+  "frame_note": "Left gap at 22-43; neighbour 22 cols on the left, this frame ~385 cols."
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0909_05",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 0.7,
+    "lo": 0.0,
+    "hi": 1.0,
+    "outer": null,
+    "x_top": 0.1,
+    "x_bottom": 1.0,
+    "note": "one-column sliver: col 0 is base-bright (b3 98, b4 100; black in B) in the lower ~2/3, but picture-like in the top band (b1 31 vs 29). Read as a tilted gap edge just grazing column 0; col 1 shows no base. Could also be called picture_to_border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building/terrace runs to 428 in every band; all-rows column rises at 412+ only because the dark roofline shifts, not base"
+  },
+  "frame_note": "left sliver ambiguous"
+}

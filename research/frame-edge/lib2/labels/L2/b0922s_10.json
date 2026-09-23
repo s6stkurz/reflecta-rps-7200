@@ -1,0 +1,9 @@
+{
+  "id": "b0922s_10", "labeller": "L2", "view": "A",
+  "left":  {"state": "edge", "x": 6.8, "lo": 6.5, "hi": 7.2,
+            "outer": null, "x_top": 6.7, "x_bottom": 7.8,
+            "note": "clean featureless base cols 0-5 (R/G 2.3, B/G 0.55, row std ~1). Edge ~6.7 over the top half, ~6.9-7.0 lower, bottom ~15 rows bend out to ~7.8. Adjacent foliage is pale in A (~75-88 vs base 97) so the step is moderate-contrast"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "trousers/bench run to 427"},
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "x0920_61",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 5.0,
+    "lo": 4.8,
+    "hi": 5.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "clean base cols 0-4 (~93, all bands) against brown post ~60. Col 5 about half base in the top band only (b1 79), picture elsewhere"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "light shelf/wall (b1/b2 ~88) and dark stairs (b3/b4) run to 428: not uniform top to bottom, no base"
+  },
+  "frame_note": ""
+}

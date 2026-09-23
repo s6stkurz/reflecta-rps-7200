@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_19", "labeller": "L11", "view": "B",
+  "left":  {"state": "edge", "x": 8.3, "lo": 8.2, "hi": 9.9,
+            "outer": null, "x_top": 8.95, "x_bottom": 9.9,
+            "note": "base columns 0-7 (R/G 2.28, B/G 0.51). Sharp edge, but bowed rather than straight, read row by row against the wall: ~8.95 at the top, ~8.25 at rows 100-140 (mid-height), ~8.9 at row 185, and ~9.9 in the last rows where column 9 is almost all base. Rows 197-260 cannot be read: the dark floor there has base's value. The bow has the same shape as in b0921b_04/_52"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "wall, ceiling slope and table run to column 427"},
+  "frame_note": ""
+}

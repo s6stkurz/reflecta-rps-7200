@@ -1,0 +1,26 @@
+{
+  "id": "x0920_19",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-8 form a straight-edged lighter strip (~30 vs wall ~18) but far below base level (the clearest scene area in this frame reads ~100): a wall surface/corner in the scene, not base"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall to col 427; curved light line 411-419 is a scene edge; col 427 only slightly raised (b4 36, bottom corner)"
+  },
+  "frame_note": "left strip is straight and uniform but much denser than base"
+}

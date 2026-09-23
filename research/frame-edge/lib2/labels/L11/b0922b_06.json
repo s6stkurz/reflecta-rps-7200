@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_06", "labeller": "L11", "view": "B",
+  "left":  {"state": "unreadable", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "a gap is present but this frame's edge cannot be placed. A neighbour's dusk picture (sky, tree silhouette, a lamp at columns 0-12) ends on a sharp vertical at ~41.7, visible in the top ~28 rows where its sky is. Right of it everything is featureless at base's value and ratio (R/G 2.25, B/G 0.53), and this frame's flash-lit grass fades out of darkness with no step: band means and texture change by at most ~1 unit anywhere from 42 to 100. With the usual ~17-21 column gap the edge would sit near 59-63, but nothing in the image shows it"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grass and bag run to column 427"},
+  "frame_note": "hard: same flash scene as b0920_06, where the left edge is also invisible; neighbour boundary ~41.7 recorded here in the note only"
+}

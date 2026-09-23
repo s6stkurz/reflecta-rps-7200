@@ -1,0 +1,19 @@
+{
+ "id": "r0914_20",
+ "labeller": "R1",
+ "view": "A+B+table+wide crop",
+ "left": {
+  "state": "edge",
+  "x": 103.3,
+  "lo": 102.8,
+  "hi": 103.8,
+  "outer": 85.5,
+  "x_top": null,
+  "x_bottom": null,
+  "note": "third look, raised by the changepoint and gapmodel detectors: columns 85.5-103.3 are full-height base at r0914's level (69,31,16), straight on both sides, between the neighbour's statue (0-85) and this frame's lamps. Outside the labellers' 64-column crop, so both missed it."
+ },
+ "right": {
+  "state": null
+ },
+ "frame_note": "labels were wrong here; the gap lies deeper than the labelling crops showed"
+}

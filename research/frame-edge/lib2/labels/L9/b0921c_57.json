@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_57", "labeller": "L9", "view": "B",
+  "left":  {"state": "edge", "x": 65.3, "lo": 64.9, "hi": 65.8,
+            "outer": 44.7, "x_top": null, "x_bottom": null,
+            "note": "base 45-64 (81-85, R/G 2.2, B/G 0.55, sd 1-2): shows as dark slate in view B, not black, and the magnified crop hides it inside the left 64 columns. The frame's picture beside it (street, cars) is near base in the lower half, so the straight full-height line at 65 is clearest in the top rows and in a tight stretch; col 65 ~30% base. Neighbour 0-44 is dark foliage whose thin background (70-80) grades towards base; outer placed where its speck texture stops (sd 7 -> 2 at 44/45), soft"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "building facade runs to 428"},
+  "frame_note": "left gap sits inside the left crop but reads as dark picture there; confirmed with the raw ratio and a tight stretch"
+}

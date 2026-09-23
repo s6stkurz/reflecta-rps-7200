@@ -1,0 +1,26 @@
+{
+  "id": "r0914_18",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "mosaic tiles reach column 0 in every band; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 422.8,
+    "lo": 422.0,
+    "hi": 423.2,
+    "outer": null,
+    "x_top": 422.9,
+    "x_bottom": 422.1,
+    "note": "black grout between tiles reads ~90 like the base, so the edge shows only where tiles touch it: three separate tiles (top, middle, bottom) all end in a straight vertical cut at 422-423 (b1 crossing ~422.9, b2 ~422.8, bottom tile ~422.0 by eye); cols 423-427 ~88-91 in all bands. Lean matches the other r0914 frames"
+  },
+  "frame_note": "hard: base indistinguishable from the black grout; edge inferred from tiles being cut"
+}

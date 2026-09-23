@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_43", "labeller": "L11", "view": "A",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate at columns 0-11 (raw ~178 neutral, R/G 1.0); the film's cut end is slanted, ~12.0 at the top to ~10.0 at the bottom. Between gate and picture is a clean base strip, columns 12-33 (R/G 2.28, B/G 0.53); base-to-picture edge at ~33.5 mid-height, tilted from ~33.0 at the top to ~34.0 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark path/foliage runs to column 427 (R/G ~2.5, below base level)"},
+  "frame_note": "strip end: gate, then ~22 columns of base, then the frame's picture"
+}

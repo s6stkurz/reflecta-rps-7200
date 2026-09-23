@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_31", "labeller": "L3", "view": "B",
+  "left":  {"state": "edge", "x": 16.0, "lo": 15.8, "hi": 16.4,
+            "outer": 2.0, "x_top": null, "x_bottom": null,
+            "note": "black base cols 3-15 (R/G 2.23-2.31, B/G 0.53) against dense sky at ~13: very sharp at 16.0; only the bottom tenth leans to ~16.6. Neighbour sliver cols 0-1 is pale (66-85), outer soft: ~3.1 in the top fifth, ~1.7-2.0 mid and lower, ~2.6 in the bottom tenth"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hedge leaves run to col 427, likeness 50-80, textured, no plateau"},
+  "frame_note": ""
+}

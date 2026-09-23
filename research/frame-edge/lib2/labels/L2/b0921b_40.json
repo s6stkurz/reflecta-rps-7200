@@ -1,0 +1,9 @@
+{
+  "id": "b0921b_40", "labeller": "L2", "view": "B",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate at cols 0-1 (~175 neutral, R/G 1.0); the strip's end is ragged, reaching ~2-3 in places and ~1 at the bottom. BASE lies between gate and picture: cols ~3-22 (R/G 2.28, B/G 0.55). Base-to-picture edge at ~23.0 at the top, ~23.5 at 3/8 height, 24.0 over the lower half, ~24.1 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "trees/path run to 427"},
+  "frame_note": "strip end: gate + base + picture on the left"
+}

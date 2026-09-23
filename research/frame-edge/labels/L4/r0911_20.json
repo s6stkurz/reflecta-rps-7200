@@ -1,0 +1,26 @@
+{
+  "id": "r0911_20",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 0.45,
+    "lo": 0.1,
+    "hi": 0.9,
+    "outer": null,
+    "x_top": 0.8,
+    "x_bottom": 0.15,
+    "note": "sub-column sliver: col 0 is a dark full-height stripe in B; base fraction of col 0 b1 ~71% (+col 1 10%), b2 ~74%, b3 ~20%, b4 ~14% -> edge leans, wider at top (same lean as r0911_14/_17)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair/ear/wall picture reaches 428; no plateau"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_25",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark gallery wall runs to col 0, smooth gradient 67->76, no vertical line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "slanted doorway edge 381-388 is scene; beyond it the wall (gradient 81->69) with faint diagonal line near bottom, no sharp vertical line"
+  },
+  "frame_note": "same scene as r0911_01"
+}

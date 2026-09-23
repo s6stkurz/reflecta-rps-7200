@@ -1,0 +1,26 @@
+{
+  "id": "r0914_07",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white gallery wall/floor (dense in neg, ~10) runs to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.7,
+    "lo": 423.3,
+    "hi": 424.0,
+    "outer": null,
+    "x_top": 423.9,
+    "x_bottom": 423.1,
+    "note": "clean sharp edge; base 424-427 ~99; col 423 = 23/28/44/76 -> crossing 423.88/423.81/423.63/423.24 top to bottom: slight tilt, base starts further left at the bottom"
+  },
+  "frame_note": ""
+}

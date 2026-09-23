@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_20", "labeller": "L2", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "legs/jeans picture runs to column 0"},
+  "right": {"state": "edge", "x": 231.5, "lo": 231.0, "hi": 232.1,
+            "outer": 248.6, "x_top": 232.0, "x_bottom": 231.0,
+            "note": "interior gap deeper than the crop: base cols ~232-248 (R/G 2.23, B/G 0.54). This frame's picture ends ~232.0 at top, ~231.0 at bottom (slightly tilted). Neighbour picture starts ~248.0 at top, ~249.0 at bottom (outer given at mid-height)"},
+  "frame_note": "gap at ~231-249; frame = left part (~231 cols) vs neighbour right part (~179 cols)"
+}

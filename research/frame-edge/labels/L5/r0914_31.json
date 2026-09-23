@@ -1,0 +1,26 @@
+{
+  "id": "r0914_31",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark arc outside the round mirror (white wall in B) and the mirror image run to column 0; nothing near base level (~108)"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.8,
+    "lo": 425.8,
+    "hi": 427.1,
+    "outer": null,
+    "x_top": 426.9,
+    "x_bottom": 426.0,
+    "note": "thin sliver: col 427 is base (~108) in all bands, col 426 ~15% base in b1-b3 but full in b4. Bottom band edge ~425.7-426 where bright orange picture meets it, so bottom less certain"
+  },
+  "frame_note": "one-column right sliver"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_38", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 100.8, "lo": 100.4, "hi": 101.2,
+            "outer": 79.5, "x_top": null, "x_bottom": null,
+            "note": "DEEP gap beyond the crop: base cols 80-100 (R/G 2.2, B/G 0.55, G~30, full height). This frame (cols 101-427, ~327 cols; grey backdrop at likeness ~71, G~24) lies right of it. Cols 0-78 are a very dense, featureless region (G 4-6, R/G ~3, B/G 0.25): not base, not gate -- read as the neighbour's picture (overexposed/white), outer ~79.5 (80.2 at top, 79.2 at bottom)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figure and backdrop run off the right border"},
+  "frame_note": "left 64-col crop shows only the dense featureless neighbour region; the gap is at 80-100"
+}

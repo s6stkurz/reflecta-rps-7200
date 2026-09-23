@@ -1,0 +1,26 @@
+{
+  "id": "r0914_23",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor/people run to col 0; table flat ~36"
+  },
+  "right": {
+    "state": "edge",
+    "x": 409.8,
+    "lo": 409.5,
+    "hi": 410.1,
+    "outer": null,
+    "x_top": 409.9,
+    "x_bottom": 409.4,
+    "note": "clean sharp edge; base 410-427 ~95 all bands; col 409 = 38/32/36/57 -> crossing ~409.8 in b1-b3, ~409.55 in b4: very slight tilt at the bottom"
+  },
+  "frame_note": ""
+}

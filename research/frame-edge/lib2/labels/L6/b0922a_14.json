@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_14", "labeller": "L6", "view": "B",
+  "left":  {"state": "edge", "x": 9.5, "lo": 9.0, "hi": 10.1,
+            "outer": null, "x_top": 9.1, "x_bottom": 10.0,
+            "note": "base cols 0-8: featureless (G std ~1), R/G 2.15-2.28, B/G 0.54-0.56, but only ~71-74 on the table and dark slate in B, because the brightest picture reads 84. Readable only where the adjacent picture has texture: col 9 is picture over rows ~10-40 (x~9.0-9.5), col 9 base and col 10 textured over rows ~180-250 (x=10.0). Rows ~60-170 the adjacent picture is deep shadow at base density with no contrast"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "textured foliage/figure to col 427; no plateau"},
+  "frame_note": "same scene as b0922a_02 and b0922a_20; thin (dark) negative, base is not the brightest thing"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_18",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage texture (dark specks) in cols 0-5; no flat plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 419.1,
+    "lo": 418.6,
+    "hi": 419.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base sliver cols ~419-427 (flat, G std ~1, R/G 2.26, B/G 0.52; reads ~76 because brighter picture elsewhere). Edge clear in the upper half (~418.9-419.0); lower half the forest shadow is near base value so the line is faint there"
+  },
+  "frame_note": ""
+}

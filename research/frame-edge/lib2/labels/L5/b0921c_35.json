@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_35",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 51.1,
+    "lo": 50.8,
+    "hi": 52.0,
+    "outer": 29.6,
+    "x_top": 51.0,
+    "x_bottom": 51.9,
+    "note": "base cols 30-50 reads only ~84 on the table (R/G 2.22, B/G 0.56 -> base); the grey backdrop beside it reads ~65, R/G 2.05. Edge sharp at 51.0 over most of the height, bending out to ~52 in the lowest ~40 rows. Neighbour (dense, reads ~5) ends at ~30.7 top, ~29.1 mid, ~29.9 bottom - slightly curved."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop/trousers run to 427"
+  },
+  "frame_note": ""
+}

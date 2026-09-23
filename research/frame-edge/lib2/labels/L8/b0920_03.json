@@ -1,0 +1,10 @@
+{
+  "id": "b0920_03", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 7.0, "lo": 6.6, "hi": 7.5,
+            "outer": null, "x_top": 6.8, "x_bottom": 7.4,
+            "note": "black base strip cols 0-6 (R/G 2.2-2.3, B/G 0.53, ~97), sharp straight edge against the bright white window/wall; slight lean, bottom further right"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "chair and table run off the right border"},
+  "frame_note": "no deep gap in the thumbnail or column overview"
+}

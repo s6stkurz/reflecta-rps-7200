@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_29", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 16.9, "lo": 16.4, "hi": 17.4,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "cols 0-16 featureless, full height, R/G 2.3 B/G 0.53; branches stop on a straight vertical line at col 17 in top and bottom bands. Scene is very thin (underexposed forest) so the middle bands barely differ from base; boundary placed from the textured bands."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hair/shoulder and foliage run off the right border"},
+  "frame_note": "thin negative: much of the scene reads near base-likeness 85-90; no full-height uniform strip anywhere inside"
+}

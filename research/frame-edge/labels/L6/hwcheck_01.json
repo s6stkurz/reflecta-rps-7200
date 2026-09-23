@@ -1,0 +1,26 @@
+{
+  "id": "hwcheck_01",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "picture (window/wall) to col 0; bands differ strongly, no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 424.0,
+    "lo": 423.6,
+    "hi": 424.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|4-col base sliver 424-427, uniform 75-77 in all bands, sharp vertical line; base only ~76 because deep shadows in the flowers are nearly as clear"
+  },
+  "frame_note": ""
+}

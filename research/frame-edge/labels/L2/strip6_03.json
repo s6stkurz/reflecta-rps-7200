@@ -1,0 +1,26 @@
+{
+  "id": "strip6_03",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 10.0,
+    "lo": 9.7,
+    "hi": 10.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "clean sharp edge: base 0-9 (~75-79, uniform all bands), col 10 picture (~20); only b1 col 10 is ~23% base (top rows slightly wider)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white curtain runs to 428; table flat ~21, faint vertical band ~378-380 is scene/sensor, not base"
+  },
+  "frame_note": ""
+}

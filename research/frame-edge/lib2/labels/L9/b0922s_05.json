@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_05", "labeller": "L9", "view": "A",
+  "left":  {"state": "unreadable", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "the scene's left third is flash fall-off: unexposed-looking film that fades smoothly into the grass from ~col 60 to ~120. Cols 0-60 have base's ratio (R/G 2.26, B/G 0.54), base's level (table 87-93) and base's grain (row-noise equal to a pure-base strip on b0921a_07), with no straight line anywhere. Faint candidate only: cols 0-4 sit ~1.5% above cols 7-14 in all four bands (a step at ~5-7 not seen in pure base elsewhere), which would make a base sliver x~5.5 -- too weak to call"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grass and the bag run to 428"},
+  "frame_note": "no base visible with confidence; the left edge of the frame is lost in unexposed shadow"
+}

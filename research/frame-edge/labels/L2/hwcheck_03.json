@@ -1,0 +1,26 @@
+{
+  "id": "hwcheck_03",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "legs/pavement run to col 0; table ~30 flat"
+  },
+  "right": {
+    "state": "edge",
+    "x": 424.5,
+    "lo": 424.0,
+    "hi": 425.0,
+    "outer": null,
+    "x_top": 424.0,
+    "x_bottom": 425.1,
+    "note": "narrow base sliver ~3 cols, uniform ~86 all bands from 425; col 424 is base in b1 (84) and picture in b4 (63): slight tilt, edge moves right going down"
+  },
+  "frame_note": ""
+}

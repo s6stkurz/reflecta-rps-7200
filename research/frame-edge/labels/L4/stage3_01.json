@@ -1,0 +1,26 @@
+{
+  "id": "stage3_01",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "pale floor/tile picture reaches column 0; col 0 is base-like only in the bottom quarter (b4 77 vs 24, dark in B there) - a gate corner, not a full-height strip"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor with wrought-iron pattern reaches 428; no plateau"
+  },
+  "frame_note": ""
+}

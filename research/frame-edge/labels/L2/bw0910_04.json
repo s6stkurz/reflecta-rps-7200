@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_04",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 6.9,
+    "lo": 5.8,
+    "hi": 7.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "AMBIGUOUS: night-sky background reads the same as base in all bands (80/80/78/64 left of line vs 80/81/77/60 background on the right; roll base also dips in b4), so no level contrast. Edge placed where lamp (row ~40%, starts col 6), rail (~60%, col 7) and wall (b4 50% crossing ~7.1) are all cut on one near-vertical line; bw0910_01 shows the same cut at ~3. Could instead be a dark scene region -> picture_to_border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night background and wall run to 428; no distinguishable plateau"
+  },
+  "frame_note": "left: base indistinguishable in level from night sky; edge inferred from feature cut-off only"
+}

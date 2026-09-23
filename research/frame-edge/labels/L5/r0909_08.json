@@ -1,0 +1,26 @@
+{
+  "id": "r0909_08",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 1.1,
+    "lo": 0.4,
+    "hi": 1.4,
+    "outer": null,
+    "x_top": 0.4,
+    "x_bottom": 1.4,
+    "note": "one-column black sliver, sharp. Col 0 base (~118) in b2-b4 but only ~40% in b1; col 1 3% (b2) rising to 37% (b4): tilted edge from ~0.4 at top to ~1.4 at bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor and cabinet run to 428, no black band"
+  },
+  "frame_note": "thin tilted left sliver (same roll as r0909_05, same tilt direction)"
+}

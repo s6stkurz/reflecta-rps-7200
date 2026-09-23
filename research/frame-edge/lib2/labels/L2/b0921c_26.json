@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_26", "labeller": "L2", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "backdrop/hat run to column 0"},
+  "right": {"state": "edge", "x": 333.7, "lo": 333.2, "hi": 334.1,
+            "outer": 350.9, "x_top": 334.0, "x_bottom": 333.0,
+            "note": "interior gap deeper than the crop: black base cols 334-349 (R/G 2.22, B/G 0.54). This frame's backdrop ends ~334.0 in the upper half (333.5 in the top rows), ~333.3 at 5/8 height, 333.0 in the bottom quarter. Neighbour (window/plant) starts ~349.5 at the top, ~351.0 mid, ~350.7 at bottom"},
+  "frame_note": "gap at ~334-350; frame = left part (~334 cols) vs neighbour (~77 cols)"
+}

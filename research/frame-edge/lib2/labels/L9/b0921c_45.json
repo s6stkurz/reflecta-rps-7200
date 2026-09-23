@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_45", "labeller": "L9", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "people/wall/pillar run to column 0"},
+  "right": {"state": "edge", "x": 199.0, "lo": 198.7, "hi": 199.8,
+            "outer": 220.3, "x_top": 199.3, "x_bottom": 198.8,
+            "note": "mid-frame gap: base 199-219 (93-99, R/G 2.2, B/G 0.55; cols 214-215 are a darker sensor line inside the base). Edge wavers 199.2-199.8 in the top third, ~199.0 mid-height, ~198.8 at the bottom. Outer ~220.0-220.3 in the upper half, 220.6-221.0 in the lower half; the neighbour's backdrop is only ~22% denser than base so outer is soft"},
+  "frame_note": "TIE RULE APPLIED: left part 0-198 is ~199.0 columns, right part 220.3-427 is ~207.7 columns, within 10 of equal, so the LEFT part is the frame and the gap is recorded on the right side"
+}

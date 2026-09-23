@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_10",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate (~178 neutral) at cols 0-3, film end cut on a slant: gate reaches ~3.9 at the top, ~1.1 at the bottom. BASE lies between gate and picture: cols ~4-24 (R/G 2.26, B/G 0.53), and the base/picture boundary is sharp at x~25.0 (top ~24.4, bottom ~25.6)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees/sky run to 427"
+  },
+  "frame_note": "strip end: gate, then ~21 columns of base, then picture"
+}

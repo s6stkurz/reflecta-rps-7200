@@ -1,0 +1,26 @@
+{
+  "id": "r0914_18",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tiles cut at col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 422.85,
+    "lo": 422.3,
+    "hi": 423.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base 423-427 reads 88-91, the same as the black wall between tiles, so no contrast in b3/b4; placed by three separate tiles (b1 top, b2 blue tile 409-422, bottom object) all cut by the same straight vertical at ~422.8-422.9 (b1/b2 crossings); the 3-col tile stub at 419-422 top only makes sense as a frame cut"
+  },
+  "frame_note": "right: base indistinguishable from the scene's black wall by level; edge inferred from where picture objects are cut"
+}

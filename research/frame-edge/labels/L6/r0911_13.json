@@ -1,0 +1,26 @@
+{
+  "id": "r0911_13",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark side wall (brown in B, 73-80) runs to col 0; soft brown->purple shading at ~46-50 is the wall, not a frame line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "AMBIGUOUS: fairly uniform zone 399-427 (86-91 all bands) after a soft 3-4 col step at ~396-399, but it is dark purple in B (not black), reads below the ~98-100 that base reaches on this roll (r0911_10/19), and matches the dark wall tone; scratches cross it; read as dark wall"
+  },
+  "frame_note": "gallery with dark side walls on both sides"
+}

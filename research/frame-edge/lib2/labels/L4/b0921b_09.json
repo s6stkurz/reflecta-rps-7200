@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_09",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 26.9,
+    "lo": 26.5,
+    "hi": 27.5,
+    "outer": 13.2,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base gap cols ~13-26 (R/G 2.3, B/G 0.53); neighbour picture sliver cols 0-12 beyond it. Frame edge sharp; slight bulge of base into col 27 at the very bottom. Outer boundary soft because the neighbour sliver is a thin (bright-in-A) area close to base value"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hedge runs to column 428"
+  },
+  "frame_note": ""
+}

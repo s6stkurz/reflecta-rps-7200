@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_10", "labeller": "L3", "view": "B",
+  "left":  {"state": "edge", "x": 61.5, "lo": 58.0, "hi": 62.5,
+            "outer": 42.1, "x_top": null, "x_bottom": null,
+            "note": "HARD. Base begins at the neighbour's edge (outer ~43.35 in the top fifth, 42.0 from mid-height down, ~42.7 in the bottom tenth; the neighbour, jeans on a pale floor, is clear). But this frame is an almost unexposed foliage shot whose background is itself at base density and ratio (91-93 vs 92-95, R/G 2.23, B/G 0.53), so no straight line marks where base ends. Cols 44-61 are clean; the sky-through-leaf specks begin at 62 (count of dark pixels jumps from 0-3 to 5-21 per column from 62). x is put just before the first specks. hi is firm (62.5); lo 58 rests on the usual 16-21-column gap width on this strip, not on anything visible"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage specks run to col 427; background at base level throughout, no edge"},
+  "frame_note": "same nearly blank foliage frame as seen in b0921c_57/58/59; base/picture boundary on the left inferred from where specks begin"
+}

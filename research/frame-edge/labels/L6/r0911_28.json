@@ -1,0 +1,26 @@
+{
+  "id": "r0911_28",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white floor runs to col 0, flat, no line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark diagonal line from ~411 (top) to ~426 (bottom) is a scene edge (15-col slant); beyond it light grey wall (~25-28), not black; trousers cross to col 427"
+  },
+  "frame_note": ""
+}

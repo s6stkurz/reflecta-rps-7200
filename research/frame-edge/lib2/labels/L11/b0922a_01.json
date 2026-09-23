@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_01", "labeller": "L11", "view": "B",
+  "left":  {"state": "edge", "x": 3.6, "lo": 3.1, "hi": 4.2,
+            "outer": null, "x_top": 3.3, "x_bottom": 4.0,
+            "note": "sliver of base at columns 0-2 (R/G 2.26, B/G 0.56, featureless). The dark foliage beside it has base's value (~70), so the edge shows only where bright leaves meet it: a straight vertical at ~3.3 in the top ~50 rows, and a step at 4.0 around rows 220-250. The same frame as b0922a_13 shifted ~23 columns left, and its edge shows the same shape there (26.3 at the top, 27 at rows 220-250), which supports reading this as the frame edge"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figure and foliage run to column 427"},
+  "frame_note": "hard: dark forest reads like base; edge placed from the rows with bright leaves"
+}

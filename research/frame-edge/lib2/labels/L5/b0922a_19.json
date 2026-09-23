@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_19",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "thin forest negative reads ~66-70 but is textured (foliage) right to column 0; no featureless strip"
+  },
+  "right": {
+    "state": "edge",
+    "x": 406.5,
+    "lo": 406.0,
+    "hi": 407.0,
+    "outer": 427.3,
+    "x_top": 406.9,
+    "x_bottom": 406.1,
+    "note": "base 407-424 featureless (sdG 1.0, R/G 2.27, B/G 0.53). Edge sharp in the upper half (foliage, col 406 ~13-50% base), low contrast in the lower half where the picture is nearly base-bright. Neighbour picture (dense) enters at the far right on a slant: ~425.1 in the top band, ~426.0-426.7 in bands 2-3, ~427.3-427.6 at mid-height and below."
+  },
+  "frame_note": ""
+}

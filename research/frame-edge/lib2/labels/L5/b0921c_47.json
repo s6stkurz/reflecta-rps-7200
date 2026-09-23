@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_47",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "people/pergola run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 302.6,
+    "lo": 301.9,
+    "hi": 303.0,
+    "outer": 323.8,
+    "x_top": 302.8,
+    "x_bottom": 301.9,
+    "note": "interior gap, base cols 303-322 (R/G 2.24, B/G 0.54). Frame = left part (0-302) vs neighbour 324-428 (a pale curtain, reads ~70 so it is near base in view A). Edge sharp; ~302.9 over the upper half, ~301.9 in the bottom quarter. Neighbour starts ~323.2 at the top, 324.0 below."
+  },
+  "frame_note": "gap inside the frame at 302-324; frame = left part"
+}

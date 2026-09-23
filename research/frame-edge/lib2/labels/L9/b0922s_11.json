@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_11", "labeller": "L9", "view": "B",
+  "left":  {"state": "edge", "x": 6.1, "lo": 5.9, "hi": 6.4,
+            "outer": null, "x_top": 6.1, "x_bottom": 7.0,
+            "note": "clean: base 0-5 (97-99, R/G 2.25, B/G 0.54), picture from col 6. Edge 6.0-6.25 from the top to row ~235, then steps to 7.0 over the bottom ~40 rows (corner)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark tree canopy reads 75-87 in the upper bands but the street below reads ~40, and there is texture throughout: not base, runs to 428"},
+  "frame_note": ""
+}

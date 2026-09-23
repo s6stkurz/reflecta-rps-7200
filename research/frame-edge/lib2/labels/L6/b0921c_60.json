@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_60", "labeller": "L6", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "tree/bookcase picture to col 0; no plateau"},
+  "right": {"state": "edge", "x": 347.0, "lo": 346.6, "hi": 347.5,
+            "outer": null, "x_top": 347.6, "x_bottom": 346.3,
+            "note": "wide base cols 348-427 (98 falling to 80 toward the right, R/G 2.2-2.3, B/G 0.55, dust specks), no neighbour picture visible. Edge ~347.6 over rows 40-108, 347.0 over rows 143-212, ~346.3 over the bottom 70 rows; top ~35 rows at ~347.0 (corner). x_top from the straight part below the corner"},
+  "frame_note": "no internal gap; 80 columns of base on the right, likely the strip end"
+}

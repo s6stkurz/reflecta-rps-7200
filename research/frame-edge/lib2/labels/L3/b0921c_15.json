@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_15", "labeller": "L3", "view": "B",
+  "left":  {"state": "edge", "x": 110.2, "lo": 109.9, "hi": 110.8,
+            "outer": 93.1, "x_top": 110.0, "x_bottom": 111.2,
+            "note": "gap deeper than the crop: black base cols 94-109 (R/G 2.2, B/G 0.55). This frame's bright wall/window starts at 110.0 over the top half, curving to ~110.45 at 60-70% height and ~111.2 in the bottom tenth. Neighbour picture cols 0-92; outer ~93.95 in the top 30%, 93.0-93.1 lower down"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/table scene to col 427, no plateau"},
+  "frame_note": "internal gap at cols ~93-110; frame is the right part (110-427, ~318 cols) vs neighbour 0-93"
+}

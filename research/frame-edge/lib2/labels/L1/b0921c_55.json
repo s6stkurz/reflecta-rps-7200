@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_55", "labeller": "L1", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky/courtyard to col 0"},
+  "right": {"state": "edge", "x": 331.0, "lo": 330.5, "hi": 331.6,
+            "outer": 350.2, "x_top": null, "x_bottom": null,
+            "note": "internal gap: base cols 331-349 (88-93, R/G 2.2-2.3 B/G 0.52-0.57), sharp against the sky in the top band. Lower half of the frame is thin (~84-90) so the boundary there rests on 1-2 points of contrast; 8-band estimates range 330.4-331.7. Neighbour from ~350.2, located only in the top band (its lower part is near-base night scene with two lights)"},
+  "frame_note": "gap inside the frame at 331-350; frame is the left part (331 cols vs 78)"
+}

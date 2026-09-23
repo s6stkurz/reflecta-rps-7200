@@ -1,0 +1,26 @@
+{
+  "id": "x0920_46",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor/people run to col 0; bright b1 at 0-8 is a scene shape (top-left), not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.1,
+    "lo": 425.7,
+    "hi": 426.5,
+    "outer": null,
+    "x_top": 426.1,
+    "x_bottom": 425.7,
+    "note": "thin base sliver: col 427 = 113 all bands, col 426 = 93/72/83/113, col 425 = 39/28/29/54, picture ~25. Crossing per band 426.1/426.4/426.3/425.7; slightly ragged, base widest at bottom"
+  },
+  "frame_note": "same scene as r0914_23 (other roll scan)"
+}

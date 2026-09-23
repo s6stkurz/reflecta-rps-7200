@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_44", "labeller": "L2", "view": "A",
+  "left":  {"state": "edge", "x": 203.4, "lo": 202.9, "hi": 203.9,
+            "outer": 182.0, "x_top": 202.7, "x_bottom": 204.0,
+            "note": "interior gap deeper than the crop: base cols 182-202 (R/G 2.2, B/G 0.55). This frame (studio backdrop, right part) starts ~202.7 at top, ~203.5 mid, ~204.0 at bottom. Backdrop picture is fairly bright (~72 vs base 94) but the step is clean. Neighbour picture ends ~182.6 at top, ~181.8 at bottom (outer at mid-height)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "backdrop/woman runs to 427"},
+  "frame_note": "gap at ~182-203; frame = right part (~224 cols) vs neighbour left part (~182 cols). Hairline sensor line at col 214-215 is not base"
+}

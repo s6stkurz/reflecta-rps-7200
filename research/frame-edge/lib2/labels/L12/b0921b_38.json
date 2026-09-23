@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_38",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 17.2,
+    "lo": 16.8,
+    "hi": 17.5,
+    "outer": null,
+    "x_top": 16.2,
+    "x_bottom": 17.3,
+    "note": "base cols 0-15 (G 28-29, R/G 2.3, B/G 0.54). Edge tilted: col 16 mostly picture in rows 0-60 (~16.2), ~85% base at rows 60-100, fully base below with col 17 15-50% base (x ~17.2-17.4)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage/path run to 428"
+  },
+  "frame_note": ""
+}

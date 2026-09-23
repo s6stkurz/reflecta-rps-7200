@@ -1,0 +1,26 @@
+{
+  "id": "r0914_06",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dense white wall (~7) reaches column 0; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 419.8,
+    "lo": 419.4,
+    "hi": 420.0,
+    "outer": null,
+    "x_top": 419.85,
+    "x_bottom": 419.5,
+    "note": "clean sharp edge; col 419 base fraction b1 18%, b2 15%, b3 25%, b4 44% -> slight lean at bottom (as r0914_09)"
+  },
+  "frame_note": ""
+}

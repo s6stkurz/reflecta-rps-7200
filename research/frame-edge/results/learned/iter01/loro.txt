@@ -1,0 +1,30 @@
+174 images, 2463576 pixels, 28 features, 0.012 base  [31.0 s]
+  hold out bw0910   px  214646  base 0.642  pic 1.000  | sides 12/16  refused 3 false-base 0 missed 1 edge MAE 0.02
+       bw0910_01 left: refuse vs edge 3.5
+       bw0910_04 left: picture_to_border vs edge 7.0
+       bw0910_05 left: refuse vs edge 1.8
+       bw0910_07 left: refuse vs edge 0.3
+  hold out r0909    px  224808  base 0.995  pic 1.000  | sides 19/20  refused 1 false-base 0 missed 0 edge MAE 0.014
+       r0909_10 left: refuse vs edge 1.2
+  hold out r0911    px  577024  base 0.970  pic 0.977  | sides 48/55  refused 5 false-base 0 missed 1 edge MAE 3.235
+       r0911_07 left: picture_to_border vs edge 2.4
+       r0911_08 right: refuse vs picture_to_border
+       r0911_17 left: edge 1.2 vs edge 14.1
+       r0911_18 right: refuse vs picture_to_border
+       r0911_21 left: refuse vs picture_to_border
+       r0911_21 right: refuse vs picture_to_border
+       r0911_28 right: refuse vs picture_to_border
+  hold out r0914    px  654523  base 0.968  pic 0.996  | sides 50/54  refused 3 false-base 0 missed 1 edge MAE 0.007
+       r0914_17 right: picture_to_border vs edge 418.3
+       r0914_18 right: refuse vs edge 423.0
+       r0914_29 left: refuse vs picture_to_border
+       r0914_31 right: refuse vs edge 426.9
+  hold out stage3   px   82248  base 1.000  pic 0.998  | sides 6/6  refused 0 false-base 0 missed 0 edge MAE 0.004
+  hold out strip3   px   61900  base 1.000  pic 1.000  | sides 6/6  refused 0 false-base 0 missed 0 edge MAE 0.0
+  hold out strip6   px   61272  base 0.694  pic 1.000  | sides 4/6  refused 1 false-base 0 missed 1 edge MAE 0.001
+       strip6_01 left: refuse vs edge 11.0
+       strip6_02 left: picture_to_border vs edge 11.8
+  hold out x0920    px  587155  base 1.000  pic 0.991  | sides 29/30  refused 1 false-base 0 missed 0 edge MAE 0.002
+       x0920_10 right: refuse vs edge 426.9
+  LORO total {'sides': 193, 'correct': 174, 'refused': 14, 'false_base': 0, 'missed': 4, 'acc': 0.902}
+final {'base_recall': 0.9998, 'picture_recall': 0.9965, 'balanced': 0.9981} -> /Users/stefan.kurzella/github/reflecta-rps-7200-1/research/frame-edge/algos/learned_weights.json

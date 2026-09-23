@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_07", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 77.1, "lo": 76.8, "hi": 77.6,
+            "outer": 60.0, "x_top": 76.9, "x_bottom": 77.5,
+            "note": "interior gap cols 60-76 (R/G 2.2, B/G 0.53), inner edge deeper than the crop. Neighbour picture 0-59 (60 cols) vs this frame 77-427 (351 cols). Col 76 reads 91/91/100/99, col 77 17/8/24/52: bottom ~0.6 col further right. Outer ~60.0 in bands 2-4, ~60.8 in the top band."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427, likeness ~35"},
+  "frame_note": "gap at 60-77 found on the 1:1 thumbnail; frame is the right part"
+}

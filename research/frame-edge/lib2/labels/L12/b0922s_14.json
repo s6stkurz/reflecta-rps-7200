@@ -1,0 +1,26 @@
+{
+  "id": "b0922s_14",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 5.5,
+    "lo": 5.1,
+    "hi": 5.9,
+    "outer": null,
+    "x_top": 5.05,
+    "x_bottom": 6.0,
+    "note": "base cols 0-4 (G 29-30, R/G 2.23-2.3, B/G 0.53, row std 1.0-1.5), col 0 still base. Edge tilted: col 5 ~5-10% base in rows 0-100, ~50% at rows 140-160, ~85% at 160-180, base at 180-260 (x 6.0); bottom-corner rows 260+ step to 6.6-7.0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage runs to 428: textured (row std ~3 vs 1-1.5 for base), R/G 2.4-2.5 and G 24-28, not base, although the table reads 80-90 there"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "x0920_07",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 22.95,
+    "lo": 22.6,
+    "hi": 23.5,
+    "outer": 3.6,
+    "x_top": 23.4,
+    "x_bottom": 22.85,
+    "note": "INVERTED POLARITY: the inter-frame strip cols ~4-22 is OPAQUE (reads 1 in every band, black in A, white in B), full height, straight sharp lines both sides; view A of this frame looks like a positive (dark figure, white sky), i.e. reversal-type processing, so this is the frame gap. Inner edge 50% crossings b1 23.4, b2 22.9, b3 22.9, b4 22.85; outer (neighbour picture cols 0-3) b1 4.1, b2 3.7, b3 3.5"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/buildings reach 428 (86-90 in b1/b2/b4); no opaque or clear strip"
+  },
+  "frame_note": "hard: gap is opaque rather than clear - polarity opposite to the instructions; labelled as the frame gap. Check film type of roll x0920"
+}

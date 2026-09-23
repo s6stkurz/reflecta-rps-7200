@@ -1,0 +1,195 @@
+{
+ "split": "dev",
+ "side": {
+  "n": 193,
+  "correct": 175,
+  "accuracy": 0.907,
+  "false_base": 4,
+  "missed": 9,
+  "refused": 5,
+  "edge_n": 42,
+  "edge_mae_cols": 0.162,
+  "edge_p90_cols": 0.331,
+  "edge_max_cols": 0.586,
+  "edge_bias_cols": -0.07,
+  "edge_mae_units": 0.13,
+  "confusion": {
+   "edge": {
+    "edge": 42,
+    "picture_to_border": 16,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 4,
+    "picture_to_border": 124,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 5,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 2,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 94,
+  "ok": 71,
+  "bad": 20,
+  "refused": 3,
+  "sign_errors": 0,
+  "accuracy": 0.755,
+  "du_mae_units": 3.358,
+  "du_p90_units": 6.387
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.932,
+   "edge_mae_cols": 0.162,
+   "n": 177
+  },
+  "bw": {
+   "accuracy": 0.625,
+   "edge_mae_cols": null,
+   "n": 16
+  }
+ },
+ "per_roll": {
+  "strip6": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.124,
+   "n": 6
+  },
+  "strip3": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.119,
+   "n": 6
+  },
+  "r0909": {
+   "accuracy": 0.95,
+   "edge_mae_cols": 0.21,
+   "n": 20
+  },
+  "stage3": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.111,
+   "n": 6
+  },
+  "bw0910": {
+   "accuracy": 0.625,
+   "edge_mae_cols": null,
+   "n": 16
+  },
+  "r0911": {
+   "accuracy": 0.873,
+   "edge_mae_cols": 0.053,
+   "n": 55
+  },
+  "r0914": {
+   "accuracy": 0.981,
+   "edge_mae_cols": 0.177,
+   "n": 54
+  },
+  "x0920": {
+   "accuracy": 0.9,
+   "edge_mae_cols": 0.169,
+   "n": 30
+  }
+ },
+ "worst": [
+  "r0914_19 move -90.6 u <- vs truth none (+0.0 u)",
+  "r0914_19 left false base 106.5 cols",
+  "x0920_73 move -62.3 u <- vs truth none (+0.0 u)",
+  "x0920_73 left false base 71.4 cols",
+  "x0920_55 move -22.9 u <- vs truth none (+0.0 u)",
+  "x0920_55 left false base 22.4 cols",
+  "r0911_17 move none (+0.0 u) vs truth -16.3 u <-",
+  "r0911_06 move -12.5 u <- vs truth none (+0.0 u)",
+  "r0911_17 left missed 14.1 cols of base",
+  "bw0910_04 move none (+0.0 u) vs truth -10.5 u <-",
+  "bw0910_11 move none (+0.0 u) vs truth -9.0 u <-",
+  "bw0910_01 move none (+0.0 u) vs truth -7.7 u <-",
+  "bw0910_06 move none (+0.0 u) vs truth -7.7 u <-",
+  "r0911_06 left false base 9.5 cols",
+  "bw0910_09 move none (+0.0 u) vs truth -6.4 u <-",
+  "bw0910_05 move none (+0.0 u) vs truth -6.3 u <-",
+  "x0920_10 move none (+0.0 u) vs truth +5.8 u ->",
+  "r0909_08 move none (+0.0 u) vs truth -5.7 u <-",
+  "bw0910_04 left missed 7.0 cols of base",
+  "r0909_05 move none (+0.0 u) vs truth -5.5 u <-",
+  "r0914_08 move none (+0.0 u) vs truth +5.3 u ->",
+  "r0911_20 move none (+0.0 u) vs truth -5.3 u <-",
+  "bw0910_07 move none (+0.0 u) vs truth -5.1 u <-",
+  "r0911_16 move none (+0.0 u) vs truth -5.1 u <-",
+  "r0911_14 move none (+0.0 u) vs truth -5.1 u <-"
+ ],
+ "label_free": {
+  "pairs": {
+   "n": 78,
+   "both_edge": 14,
+   "state_changes": 15,
+   "mae_cols": 0.451,
+   "p90_cols": 0.982,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 152,
+   "state_changes": 2,
+   "mae_cols": 0.274,
+   "over_1": 2
+  },
+  "ladder": {
+   "left": {
+    "found": 12,
+    "of": 21,
+    "slope_cols": 7.251,
+    "resid_mad": 0.301,
+    "resid_max": 0.794
+   },
+   "right": {
+    "found": 8,
+    "of": 21,
+    "slope_cols": -0.821,
+    "resid_mad": 13.781,
+    "resid_max": 25.715
+   }
+  },
+  "mirror": {
+   "state_changes": 0,
+   "mae_cols": 0.0,
+   "over_0_5": 0
+  }
+ }
+}

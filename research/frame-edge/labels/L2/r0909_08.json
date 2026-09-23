@@ -1,0 +1,26 @@
+{
+  "id": "r0909_08",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 1.0,
+    "lo": 0.6,
+    "hi": 1.5,
+    "outer": null,
+    "x_top": 0.3,
+    "x_bottom": 1.7,
+    "note": "1-2 col base sliver; col 0 ~118 in b2-b4 (63 in b1), col 1 base-ish only in b4 (62) -> tilted, edge moves right going down. Black in B. Read as base (not no_film): mid-strip frame, roll shows 1-5 col left slivers elsewhere"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor/cabinet run to 428; table flat ~23"
+  },
+  "frame_note": ""
+}

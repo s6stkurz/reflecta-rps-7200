@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_39", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 20.6, "lo": 20.2, "hi": 21.0,
+            "outer": null, "x_top": 20.0, "x_bottom": 20.9,
+            "note": "base cols 0-19 to the aperture (R/G 2.3, B/G 0.53), no neighbour. Slight tilt: col 20 reads 19/63/94/87 by band."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bright foliage/sky runs to col 427, textured, likeness ~76"},
+  "frame_note": "whole thumbnail checked: no interior gap"
+}

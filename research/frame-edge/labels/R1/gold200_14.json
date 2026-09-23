@@ -1,0 +1,19 @@
+{
+ "id": "gold200_14",
+ "labeller": "R1",
+ "view": "A+B+table",
+ "left": {
+  "state": null
+ },
+ "right": {
+  "state": "edge",
+  "x": 423.1,
+  "lo": 422.6,
+  "hi": 423.6,
+  "outer": null,
+  "x_top": null,
+  "x_bottom": null,
+  "note": "third look: the ceiling band and highlights all stop on one vertical line at 423; 423-427 featureless at base colour (59,27,14, R/G 2.19); gold200_15 sits at 423.0"
+ },
+ "frame_note": "third look by the orchestrator on a labeller disagreement"
+}

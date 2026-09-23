@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_07", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 20.0, "lo": 19.7, "hi": 20.4,
+            "outer": 6.1, "x_top": null, "x_bottom": null,
+            "note": "black base strip cols 7-19 (R/G 2.3, B/G 0.52, ~95), clean straight edge against the bright sky at 20.0 (bottom band ~20.2). Neighbour picture (dark trees with a blue patch) cols 0-5, outer ~6.1 (top band ~7.0)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hedge runs off the right border"},
+  "frame_note": ""
+}

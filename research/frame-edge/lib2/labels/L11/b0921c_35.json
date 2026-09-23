@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_35", "labeller": "L11", "view": "B",
+  "left":  {"state": "edge", "x": 51.1, "lo": 50.9, "hi": 51.7,
+            "outer": 29.8, "x_top": 51.0, "x_bottom": 51.7,
+            "note": "gap inside the frame: base columns 31-50 (reads ~84 on the table, raw ~[62,28,16], R/G 2.2, B/G 0.55). This frame's grey backdrop (~64) starts at 51.0 over most of the height; in the bottom band column 51 is ~65% base, so the edge leans to ~51.7 at the bottom. Neighbour's picture (dark on the negative) ends ~30.5 at the top, ~29.1-29.8 lower down"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figure and backdrop run to column 427"},
+  "frame_note": "two partial pictures: neighbour 0-29 (~30 cols), this frame 51-427 (~377 cols)"
+}

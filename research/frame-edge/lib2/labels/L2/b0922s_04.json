@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_04", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 13.4, "lo": 13.0, "hi": 14.2,
+            "outer": null, "x_top": 13.1, "x_bottom": 14.2,
+            "note": "featureless black base cols 0-12 (R/G 2.28, B/G 0.54, row std ~1). The dark pub interior beside it is almost at base density: a small full-height step (~2 counts summed RGB) at col 13 in bands 1-7, so the edge is ~13.1 at the top and ~13.4 at mid-height. The bench in the bottom rows starts sharply at 14, so ~14.2 there. Low contrast above the bench, hence the wide interval"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "cols ~345-427 are a featureless blown-out area, very dense on the negative (~13,4,0, R/G 3.3, B/G 0). That is not base (~66,29,16) and not the gate (~175): it is scene content with a jagged boundary to the pub scene, running to 427. No black strip in B anywhere across the width"},
+  "frame_note": ""
+}

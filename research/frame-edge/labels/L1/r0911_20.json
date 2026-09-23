@@ -1,0 +1,26 @@
+{
+  "id": "r0911_20",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 0.45,
+    "lo": 0.0,
+    "hi": 1.0,
+    "outer": null,
+    "x_top": 0.8,
+    "x_bottom": 0.15,
+    "note": "sub-column sliver: col 0 is a full-height dark line in B / pale in A, raised in every band over the white wall beside it (b1 71 vs 6, b3 37 vs 22, b4 23 vs 11) -> ~0.7 col of base at top, ~0.15 at bottom; no plateau, borderline picture_to_border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair/ear/wall to col 427"
+  },
+  "frame_note": "left borderline: partial single column"
+}

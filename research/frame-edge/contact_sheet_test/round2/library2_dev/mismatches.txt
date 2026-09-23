@@ -1,0 +1,3 @@
+b0921c_57: L picture_to_border vs edge; move off +57.3 u
+b0922b_06: L picture_to_border vs edge; move off +56.2 u
+b0922s_08: L picture_to_border vs edge; move off +10.6 u

@@ -1,0 +1,26 @@
+{
+  "id": "r0914_07",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white gallery wall runs to column 0 (~11), no black band"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.7,
+    "lo": 423.3,
+    "hi": 424.0,
+    "outer": null,
+    "x_top": 423.9,
+    "x_bottom": 423.3,
+    "note": "clean black base 424-427 (~99) against white wall ~12. Col 423 12% base at top rising to 72% at bottom: slight tilt"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,9 @@
+{
+  "id": "b0922b_15", "labeller": "L2", "view": "A",
+  "left":  {"state": "edge", "x": 59.9, "lo": 59.5, "hi": 60.4,
+            "outer": 39.3, "x_top": 59.2, "x_bottom": 60.8,
+            "note": "clean base cols 40-58 (R/G 2.27, B/G 0.53). Edge 59.2 at top, 60.0 mid, ~60.8 at bottom: visibly slightly tilted. Neighbour picture ends ~40.0 in the top quarter, ~39.0-39.4 lower; in the bottom third the neighbour picture is nearly base-bright so outer is less certain there"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "trees/lotus leaves run to 427"},
+  "frame_note": ""
+}

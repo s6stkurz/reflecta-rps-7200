@@ -1,0 +1,26 @@
+{
+  "id": "r0914_33",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor/figures run to col 0; bright curved patch top-left (b1 ~60-66) is picture"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.75,
+    "lo": 423.4,
+    "hi": 424.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|clean sharp edge, base 424-427 at ~100; col 423 ~22% base in b1-b3, 44% in b4 (bottom rows slightly further left)"
+  },
+  "frame_note": ""
+}

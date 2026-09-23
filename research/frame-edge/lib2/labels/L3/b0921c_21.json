@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_21", "labeller": "L3", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "wall and figure run to col 0, likeness 20-45, no plateau"},
+  "right": {"state": "edge", "x": 247.5, "lo": 247.0, "hi": 248.0,
+            "outer": 264.8, "x_top": 248.0, "x_bottom": 247.0,
+            "note": "gap deeper than the crop: base cols 248-263 (R/G 2.24, B/G 0.55; faint slightly darker line at 259-261 inside it). Col 247 is picture in the top half, base in the bottom third; mid-height rows have a pale wall beside the gap (~93) so the crossing there is uncertain. Neighbour picture starts ~264.0 at top, 265.0 lower down"},
+  "frame_note": "internal gap at cols ~247-265; frame is the left part (0-247, ~247 cols) vs neighbour 265-427 (~163 cols)"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_10", "labeller": "L9", "view": "A",
+  "left":  {"state": "edge", "x": 62.0, "lo": 61.4, "hi": 62.9,
+            "outer": 42.2, "x_top": null, "x_bottom": null,
+            "note": "HARD. The frame is a very dark forest (thin negative) whose level and ratio equal base (67/30/16 on both sides), so no step in level exists. Base 43/44-61 is featureless (sd 1-2); the forest's bright sky specks all stop at a common line: in rows 97-99, 161 and 222 a speck starts at col 62 with col 61 at full base (e.g. row 98: 92 -> 42). Edge placed there. Neighbour 0-41; outer ~43.5 in the top quarter, ~42.0 mid-height, ~42.5 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "forest specks continue to 427; no featureless strip"},
+  "frame_note": "left edge placed from where picture detail begins, not from a level change; treat with the wider interval"
+}

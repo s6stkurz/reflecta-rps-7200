@@ -1,0 +1,184 @@
+{
+ "split": "dev",
+ "side": {
+  "n": 193,
+  "correct": 172,
+  "accuracy": 0.891,
+  "false_base": 0,
+  "missed": 3,
+  "refused": 18,
+  "edge_n": 46,
+  "edge_mae_cols": 0.181,
+  "edge_p90_cols": 0.427,
+  "edge_max_cols": 0.683,
+  "edge_bias_cols": -0.055,
+  "edge_mae_units": 0.145,
+  "confusion": {
+   "edge": {
+    "edge": 46,
+    "picture_to_border": 10,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 1,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 0,
+    "picture_to_border": 117,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 17,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 2,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 94,
+  "ok": 72,
+  "bad": 10,
+  "refused": 12,
+  "sign_errors": 3,
+  "accuracy": 0.766,
+  "du_mae_units": 0.975,
+  "du_p90_units": 7.011
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.887,
+   "edge_mae_cols": 0.188,
+   "n": 177
+  },
+  "bw": {
+   "accuracy": 0.938,
+   "edge_mae_cols": 0.132,
+   "n": 16
+  }
+ },
+ "per_roll": {
+  "strip6": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.092,
+   "n": 6
+  },
+  "strip3": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.089,
+   "n": 6
+  },
+  "r0909": {
+   "accuracy": 0.95,
+   "edge_mae_cols": 0.23,
+   "n": 20
+  },
+  "stage3": {
+   "accuracy": 0.833,
+   "edge_mae_cols": 0.128,
+   "n": 6
+  },
+  "bw0910": {
+   "accuracy": 0.938,
+   "edge_mae_cols": 0.132,
+   "n": 16
+  },
+  "r0911": {
+   "accuracy": 0.745,
+   "edge_mae_cols": 0.405,
+   "n": 55
+  },
+  "r0914": {
+   "accuracy": 0.963,
+   "edge_mae_cols": 0.172,
+   "n": 54
+  },
+  "x0920": {
+   "accuracy": 0.933,
+   "edge_mae_cols": 0.088,
+   "n": 30
+  }
+ },
+ "worst": [
+  "x0920_10 move +0.0 u <- vs truth +7.8 u ->",
+  "r0914_31 move +0.0 u <- vs truth +7.8 u ->",
+  "r0909_08 move +0.0 u <- vs truth -7.7 u <-",
+  "r0909_05 move +0.0 u <- vs truth -7.5 u <-",
+  "r0914_08 move +0.0 u <- vs truth +7.3 u ->",
+  "r0911_20 move +0.0 u <- vs truth -7.2 u <-",
+  "bw0910_07 move +0.0 u <- vs truth -7.1 u <-",
+  "r0911_16 move +0.0 u <- vs truth -7.0 u <-",
+  "r0911_14 move +0.0 u <- vs truth -7.0 u <-",
+  "r0911_27 move +0.0 u <- vs truth -7.0 u <-",
+  "x0920_10 right missed 1.1 cols of base",
+  "r0914_31 right missed 1.1 cols of base",
+  "r0909_08 left missed 1.0 cols of base"
+ ],
+ "label_free": {
+  "pairs": {
+   "n": 78,
+   "both_edge": 16,
+   "state_changes": 25,
+   "mae_cols": 0.438,
+   "p90_cols": 0.965,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 152,
+   "state_changes": 25,
+   "mae_cols": 0.264,
+   "over_1": 0
+  },
+  "ladder": {
+   "left": {
+    "found": 12,
+    "of": 21,
+    "slope_cols": 7.249,
+    "resid_mad": 0.314,
+    "resid_max": 0.647
+   },
+   "right": {
+    "found": 8,
+    "of": 21,
+    "slope_cols": -0.822,
+    "resid_mad": 13.762,
+    "resid_max": 25.732
+   }
+  },
+  "mirror": {
+   "state_changes": 0,
+   "mae_cols": 0.003,
+   "over_0_5": 0
+  }
+ },
+ "seconds_per_frame": 0.103
+}

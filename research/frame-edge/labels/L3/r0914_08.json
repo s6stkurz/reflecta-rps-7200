@@ -1,0 +1,26 @@
+{
+  "id": "r0914_08",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark painting (bright on negative) and white wall above/below it run to col 0; wall strips top and bottom are dark on the negative, so no base"
+  },
+  "right": {
+    "state": "edge",
+    "x": 427.5,
+    "lo": 427.0,
+    "hi": 428.0,
+    "outer": null,
+    "x_top": 427.9,
+    "x_bottom": 426.9,
+    "note": "one-column sliver, tilted: col 427 = 25/40/73/106 top->bottom vs wall ~10 (17/33/70/100% base), col 426 b4 =19 (~7%). Base only fully present in the bottom quarter"
+  },
+  "frame_note": ""
+}

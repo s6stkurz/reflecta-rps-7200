@@ -1,0 +1,6605 @@
+{
+ "about": {
+  "what": "Edge anchors: each frame's base/picture boundary read off the higher-resolution scan of the same aperture, mapped into the prescan's boundary columns (common.py coordinates: left x = columns of base; right: base is [x, W)). x is set only for state 'edge'; any other verdict that still found a line keeps it as 'candidate'.",
+  "registration": "scan box-averaged onto the prescan grid; integer start from uniformity.register at framing.SEARCH_MM reach (conf is on the driver's scale; a frame would be refused below 50 -- none was), tried with the scan's rows both ways round (subpixel.flipped); then a forward model -- each prescan pixel the mean of the scan over its footprint, footprint x = n (x_p + c0 + c1 t + c2 t^2 + c3 t^3 + shear v), y = ky y_p + oy, t and v the prescan position scaled to -1..1 -- fitted by maximising the channel-mean Pearson correlation (corr; corr_linear: c2 = c3 = shear = 0). k = the local scale at mid-frame, k_left/k_right at 10 columns in. band_offsets: per 27-column band, the model's residual offset [all rows, top half, bottom half].",
+  "edge": "base = a run of columns at >= 0.90 of the frame's brightest and uniform down the frame ((p90-p10)/median <= 0.15), starting nearest the aperture and ending no more than 40 prescan columns in (a gap between frames is ~30; wider is scene); a narrower run at base level against the border is taken as a sliver. Per prescan-row band of the scan, the 50% crossing between that row's base level and its picture level just inside, over rows 10-90% of the height, where the contrast is >= 5%.",
+  "mapping": "each row's crossing goes through the global model (x_global), then the whole edge moves by d_edge, the model's offset refitted on a window holding the edge (6 columns of base, 18 of picture): the global model is up to ~0.4 column out at the ends of the frame, and not the same way on every frame. d_picture is the same refit on picture only (2-26 columns in), for comparison. x is the median of the rows; x_top/x_bottom the medians of the top and bottom thirds.",
+  "states": "edge: straight (residual <= 0.5 col), read in >= 35% of rows, inside the prescan. picture_to_border: no base plateau, or a clean edge that maps outside the prescan (the scan sees ~1.3 columns past the left border and ~3 past the right). unreadable: base-level everywhere, a line in too few rows, or base wider than a gap.",
+  "interval": "lo/hi = x -/+ hypot(max(0.05, |d_edge_top - d_edge_bottom|/2), |d_edge - d_picture|/2, standard error of the row median). row_iqr is the edge's own bow and tilt, not an error.",
+  "prescan_50": "the same 50% crossing read on the prescan alone near x (needs two whole columns of base): a sanity check, not an input.",
+  "pair_checks": "anchored frames that register as the same picture (conf >= framing.CONFIDENCE_FLOOR): one's x or candidate carried into the other through a prescan-to-prescan fit. diff = carried - other.",
+  "checked": "every frame drawn to crops/anchors/<id>.png and looked at."
+ },
+ "anchors": {
+  "gold200_01": {
+   "kind": "film",
+   "hires_entry": "20260903T232621Z_kodak-gold-200_f2026-09-04-gold200-01_3600dpi_ir",
+   "dpi": 3600,
+   "k": 11.95948,
+   "k_left": 11.99738,
+   "k_right": 11.91145,
+   "reg": {
+    "dy": 0,
+    "dx": -1,
+    "conf": 97.6,
+    "conf_rows_reversed": 5.6,
+    "corr": 0.9555,
+    "corr_linear": 0.9546,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.5582,
+      -0.7227,
+      -0.4019,
+      -0.0331
+     ],
+     "shear": -0.0098,
+     "ky": 12.00361,
+     "oy": 3.629,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.056,
+      -0.034,
+      -0.062
+     ],
+     [
+      -0.016,
+      0.002,
+      -0.023
+     ],
+     [
+      -0.006,
+      -0.01,
+      -0.006
+     ],
+     [
+      -0.001,
+      -0.01,
+      -0.0
+     ],
+     [
+      0.013,
+      0.048,
+      0.006
+     ],
+     [
+      -0.007,
+      0.007,
+      -0.013
+     ],
+     [
+      0.005,
+      0.022,
+      0.001
+     ],
+     [
+      -0.009,
+      -0.01,
+      -0.009
+     ],
+     [
+      -0.02,
+      -0.037,
+      -0.009
+     ],
+     [
+      -0.002,
+      0.008,
+      -0.004
+     ],
+     [
+      -0.01,
+      0.001,
+      -0.011
+     ],
+     [
+      -0.005,
+      0.007,
+      -0.009
+     ],
+     [
+      0.011,
+      -0.016,
+      0.026
+     ],
+     [
+      -0.001,
+      -0.069,
+      0.02
+     ],
+     [
+      -0.001,
+      -0.073,
+      0.012
+     ],
+     [
+      -0.097,
+      -0.186,
+      -0.065
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.86 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.99,
+    "lo": 425.921,
+    "hi": 426.059,
+    "x_top": 425.947,
+    "x_bottom": 426.349,
+    "scan_x": 5103.72,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.142,
+    "row_iqr": 0.382,
+    "width_10_90": 0.564,
+    "reg_err": 0.067,
+    "contrast": 0.544,
+    "prescan_50": null,
+    "x_global": 425.892,
+    "candidate": null,
+    "d_edge": -0.098,
+    "d_edge_top": -0.18,
+    "d_edge_bottom": -0.069,
+    "d_picture": -0.025,
+    "note": ""
+   }
+  },
+  "gold200_02": {
+   "kind": "film",
+   "hires_entry": "20260903T233056Z_kodak-gold-200_f2026-09-04-gold200-02_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01595,
+   "k_left": 12.01034,
+   "k_right": 11.98442,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 118.7,
+    "conf_rows_reversed": 6.9,
+    "corr": 0.9688,
+    "corr_linear": 0.9688,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4858,
+      0.2845,
+      -0.1212,
+      -0.1215
+     ],
+     "shear": -0.0384,
+     "ky": 12.00215,
+     "oy": -1.369,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.003,
+      0.016,
+      -0.009
+     ],
+     [
+      -0.009,
+      -0.006,
+      -0.014
+     ],
+     [
+      0.0,
+      -0.009,
+      0.01
+     ],
+     [
+      -0.017,
+      -0.014,
+      -0.022
+     ],
+     [
+      -0.012,
+      -0.031,
+      0.004
+     ],
+     [
+      0.002,
+      -0.031,
+      0.01
+     ],
+     [
+      0.007,
+      -0.02,
+      0.016
+     ],
+     [
+      0.01,
+      -0.007,
+      0.009
+     ],
+     [
+      0.001,
+      -0.029,
+      0.004
+     ],
+     [
+      -0.004,
+      0.003,
+      -0.004
+     ],
+     [
+      -0.003,
+      -0.002,
+      -0.003
+     ],
+     [
+      -0.001,
+      0.0,
+      0.0
+     ],
+     [
+      0.009,
+      0.051,
+      0.004
+     ],
+     [
+      -0.0,
+      0.104,
+      -0.004
+     ],
+     [
+      0.011,
+      0.023,
+      0.01
+     ],
+     [
+      -0.023,
+      0.094,
+      -0.017
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.78 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.23 of the frame's brightest"
+   }
+  },
+  "gold200_03": {
+   "kind": "film",
+   "hires_entry": "20260903T233524Z_kodak-gold-200_f2026-09-04-gold200-03_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.00704,
+   "k_left": 12.0194,
+   "k_right": 12.00349,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 133.3,
+    "conf_rows_reversed": 6.3,
+    "corr": 0.9375,
+    "corr_linear": 0.9372,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      -0.0004,
+      0.1256,
+      -0.0744,
+      0.0288
+     ],
+     "shear": 0.1024,
+     "ky": 12.00505,
+     "oy": 26.955,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      0.011,
+      0.009,
+      0.004
+     ],
+     [
+      -0.019,
+      -0.017,
+      -0.058
+     ],
+     [
+      -0.025,
+      -0.005,
+      -0.107
+     ],
+     [
+      -0.001,
+      0.006,
+      -0.121
+     ],
+     [
+      -0.0,
+      0.003,
+      -0.033
+     ],
+     [
+      0.003,
+      0.004,
+      -0.167
+     ],
+     [
+      -0.001,
+      0.003,
+      -0.033
+     ],
+     [
+      0.002,
+      0.002,
+      -0.003
+     ],
+     [
+      0.009,
+      0.01,
+      0.019
+     ],
+     [
+      -0.007,
+      0.002,
+      -0.038
+     ],
+     [
+      -0.015,
+      0.022,
+      -0.046
+     ],
+     [
+      -0.01,
+      -0.001,
+      -0.024
+     ],
+     [
+      -0.012,
+      -0.016,
+      0.042
+     ],
+     [
+      0.002,
+      -0.031,
+      0.068
+     ],
+     [
+      -0.003,
+      -0.038,
+      0.045
+     ],
+     [
+      -0.011,
+      -0.018,
+      0.004
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.87 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.92 of the frame's brightest"
+   }
+  },
+  "gold200_04": {
+   "kind": "film",
+   "hires_entry": "20260903T233959Z_kodak-gold-200_f2026-09-04-gold200-04_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01154,
+   "k_left": 12.01082,
+   "k_right": 12.00811,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 119.6,
+    "conf_rows_reversed": 6.2,
+    "corr": 0.9771,
+    "corr_linear": 0.9771,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4691,
+      0.2058,
+      -0.0127,
+      -0.0136
+     ],
+     "shear": 0.0243,
+     "ky": 12.00555,
+     "oy": -2.323,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.021,
+      0.017,
+      -0.051
+     ],
+     [
+      -0.004,
+      -0.013,
+      -0.003
+     ],
+     [
+      0.008,
+      -0.02,
+      0.014
+     ],
+     [
+      -0.028,
+      -0.006,
+      -0.039
+     ],
+     [
+      -0.004,
+      0.027,
+      -0.023
+     ],
+     [
+      -0.005,
+      0.013,
+      -0.017
+     ],
+     [
+      0.001,
+      -0.005,
+      0.004
+     ],
+     [
+      0.003,
+      0.029,
+      -0.019
+     ],
+     [
+      -0.011,
+      -0.018,
+      -0.012
+     ],
+     [
+      0.019,
+      0.043,
+      0.005
+     ],
+     [
+      0.003,
+      0.02,
+      -0.004
+     ],
+     [
+      0.012,
+      0.032,
+      -0.015
+     ],
+     [
+      0.005,
+      0.029,
+      -0.018
+     ],
+     [
+      -0.005,
+      0.006,
+      -0.013
+     ],
+     [
+      -0.021,
+      -0.007,
+      -0.041
+     ],
+     [
+      -0.046,
+      -0.044,
+      -0.048
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.88 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.59 of the frame's brightest"
+   }
+  },
+  "gold200_05": {
+   "kind": "film",
+   "hires_entry": "20260903T234427Z_kodak-gold-200_f2026-09-04-gold200-05_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01413,
+   "k_left": 12.00037,
+   "k_right": 11.99571,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 133.5,
+    "conf_rows_reversed": 8.2,
+    "corr": 0.9697,
+    "corr_linear": 0.9697,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.0323,
+      0.252,
+      -0.0218,
+      -0.1053
+     ],
+     "shear": -0.0142,
+     "ky": 11.96005,
+     "oy": 34.582,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      -0.02,
+      -0.037,
+      -0.015
+     ],
+     [
+      -0.017,
+      -0.026,
+      -0.013
+     ],
+     [
+      0.005,
+      -0.014,
+      0.007
+     ],
+     [
+      -0.002,
+      -0.011,
+      -0.002
+     ],
+     [
+      -0.005,
+      -0.009,
+      -0.005
+     ],
+     [
+      0.003,
+      -0.019,
+      0.003
+     ],
+     [
+      0.019,
+      0.03,
+      0.016
+     ],
+     [
+      0.009,
+      0.022,
+      0.007
+     ],
+     [
+      0.002,
+      0.01,
+      -0.005
+     ],
+     [
+      -0.014,
+      -0.015,
+      -0.016
+     ],
+     [
+      -0.005,
+      -0.077,
+      0.007
+     ],
+     [
+      -0.016,
+      0.001,
+      -0.028
+     ],
+     [
+      0.001,
+      -0.024,
+      0.003
+     ],
+     [
+      -0.006,
+      -0.006,
+      -0.005
+     ],
+     [
+      -0.01,
+      -0.087,
+      0.003
+     ],
+     [
+      0.01,
+      -0.028,
+      0.023
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.76 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.46 of the frame's brightest; but the outermost scan column reads 0.75 against 0.38 beside it: base may show under part of a column (in the corners?)"
+   }
+  },
+  "gold200_06": {
+   "kind": "film",
+   "hires_entry": "20260903T234901Z_kodak-gold-200_f2026-09-04-gold200-06_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.00965,
+   "k_left": 12.00084,
+   "k_right": 11.99587,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 132.5,
+    "conf_rows_reversed": 5.3,
+    "corr": 0.9629,
+    "corr_linear": 0.9628,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4657,
+      0.1721,
+      -0.0232,
+      -0.0739
+     ],
+     "shear": -0.0366,
+     "ky": 11.99904,
+     "oy": -0.908,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.081,
+      -0.078,
+      -0.096
+     ],
+     [
+      -0.023,
+      -0.026,
+      -0.032
+     ],
+     [
+      -0.038,
+      -0.028,
+      -0.064
+     ],
+     [
+      -0.012,
+      -0.026,
+      -0.004
+     ],
+     [
+      0.009,
+      -0.017,
+      0.036
+     ],
+     [
+      0.0,
+      -0.019,
+      0.025
+     ],
+     [
+      0.013,
+      -0.003,
+      0.031
+     ],
+     [
+      -0.013,
+      -0.014,
+      -0.011
+     ],
+     [
+      0.011,
+      -0.02,
+      0.025
+     ],
+     [
+      -0.012,
+      -0.035,
+      -0.005
+     ],
+     [
+      0.0,
+      -0.001,
+      0.0
+     ],
+     [
+      -0.015,
+      -0.011,
+      -0.015
+     ],
+     [
+      -0.001,
+      0.003,
+      -0.007
+     ],
+     [
+      0.001,
+      0.011,
+      -0.011
+     ],
+     [
+      0.011,
+      0.029,
+      -0.015
+     ],
+     [
+      0.022,
+      0.021,
+      0.02
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.52 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 5153.955,
+    "outer": null,
+    "coverage": 0.668,
+    "residual": 0.232,
+    "row_iqr": 0.603,
+    "width_10_90": 0.707,
+    "reg_err": 0.05,
+    "contrast": 0.202,
+    "prescan_50": null,
+    "x_global": 428.962,
+    "candidate": 428.937,
+    "d_edge": 0.025,
+    "d_edge_top": 0.026,
+    "d_edge_bottom": 0.023,
+    "d_picture": 0.031,
+    "note": "base shows in the scan only beyond the prescan's coverage: the edge maps to 428.94 (read in 67% of rows)"
+   }
+  },
+  "gold200_07": {
+   "kind": "film",
+   "hires_entry": "20260903T235330Z_kodak-gold-200_f2026-09-04-gold200-07_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.00597,
+   "k_left": 12.0149,
+   "k_right": 12.00764,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 125.8,
+    "conf_rows_reversed": 5.9,
+    "corr": 0.9557,
+    "corr_linear": 0.9556,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      -0.0198,
+      0.1065,
+      -0.0339,
+      0.0347
+     ],
+     "shear": 0.0184,
+     "ky": 11.99244,
+     "oy": 29.171,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      0.007,
+      -0.02,
+      0.056
+     ],
+     [
+      0.01,
+      0.016,
+      -0.013
+     ],
+     [
+      0.006,
+      0.019,
+      -0.024
+     ],
+     [
+      -0.015,
+      0.0,
+      -0.031
+     ],
+     [
+      0.002,
+      0.013,
+      -0.027
+     ],
+     [
+      -0.008,
+      0.002,
+      -0.037
+     ],
+     [
+      -0.002,
+      0.009,
+      -0.024
+     ],
+     [
+      0.015,
+      0.021,
+      0.007
+     ],
+     [
+      -0.01,
+      -0.004,
+      -0.018
+     ],
+     [
+      0.001,
+      -0.006,
+      0.008
+     ],
+     [
+      -0.01,
+      -0.012,
+      0.005
+     ],
+     [
+      -0.012,
+      -0.022,
+      0.018
+     ],
+     [
+      0.013,
+      0.017,
+      -0.001
+     ],
+     [
+      -0.002,
+      0.026,
+      -0.033
+     ],
+     [
+      0.033,
+      0.028,
+      0.038
+     ],
+     [
+      -0.008,
+      0.017,
+      -0.028
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.79 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.64 of the frame's brightest"
+   }
+  },
+  "gold200_08": {
+   "kind": "film",
+   "hires_entry": "20260903T235804Z_kodak-gold-200_f2026-09-04-gold200-08_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.00622,
+   "k_left": 12.00611,
+   "k_right": 12.00647,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 116.0,
+    "conf_rows_reversed": 5.0,
+    "corr": 0.9703,
+    "corr_linear": 0.9703,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4778,
+      0.1109,
+      0.0017,
+      0.0005
+     ],
+     "shear": -0.0254,
+     "ky": 11.99828,
+     "oy": -2.003,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.048,
+      -0.016,
+      -0.046
+     ],
+     [
+      -0.038,
+      -0.007,
+      -0.051
+     ],
+     [
+      -0.027,
+      -0.019,
+      -0.034
+     ],
+     [
+      -0.022,
+      -0.014,
+      -0.028
+     ],
+     [
+      -0.009,
+      -0.007,
+      -0.01
+     ],
+     [
+      0.01,
+      0.004,
+      0.013
+     ],
+     [
+      0.01,
+      -0.004,
+      0.016
+     ],
+     [
+      0.023,
+      -0.028,
+      0.032
+     ],
+     [
+      0.003,
+      -0.012,
+      0.023
+     ],
+     [
+      -0.026,
+      -0.041,
+      -0.01
+     ],
+     [
+      -0.011,
+      -0.034,
+      -0.007
+     ],
+     [
+      -0.004,
+      -0.04,
+      -0.001
+     ],
+     [
+      0.001,
+      -0.039,
+      0.009
+     ],
+     [
+      0.013,
+      0.008,
+      0.016
+     ],
+     [
+      0.001,
+      0.007,
+      -0.003
+     ],
+     [
+      -0.009,
+      -0.004,
+      -0.014
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.41 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 5163.833,
+    "outer": null,
+    "coverage": 0.9,
+    "residual": 0.203,
+    "row_iqr": 0.429,
+    "width_10_90": 0.677,
+    "reg_err": 0.05,
+    "contrast": 0.176,
+    "prescan_50": null,
+    "x_global": 429.732,
+    "candidate": 429.742,
+    "d_edge": -0.01,
+    "d_edge_top": -0.007,
+    "d_edge_bottom": -0.014,
+    "d_picture": -0.01,
+    "note": "a sliver: base narrower than a plateau, its level read at the border; base shows in the scan only beyond the prescan's coverage: the edge maps to 429.74 (read in 90% of rows)"
+   }
+  },
+  "gold200_09": {
+   "kind": "film",
+   "hires_entry": "20260904T000233Z_kodak-gold-200_f2026-09-04-gold200-09_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01086,
+   "k_left": 12.01036,
+   "k_right": 11.99985,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 153.4,
+    "conf_rows_reversed": 6.0,
+    "corr": 0.9322,
+    "corr_linear": 0.9322,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      -0.0137,
+      0.1936,
+      -0.0492,
+      -0.0377
+     ],
+     "shear": -0.0104,
+     "ky": 11.98105,
+     "oy": 29.485,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      -0.013,
+      -0.033,
+      0.016
+     ],
+     [
+      -0.001,
+      0.002,
+      -0.017
+     ],
+     [
+      -0.007,
+      0.004,
+      -0.022
+     ],
+     [
+      0.003,
+      0.019,
+      -0.014
+     ],
+     [
+      0.0,
+      0.0,
+      0.001
+     ],
+     [
+      0.004,
+      0.004,
+      0.004
+     ],
+     [
+      0.002,
+      0.006,
+      -0.004
+     ],
+     [
+      0.003,
+      0.004,
+      0.0
+     ],
+     [
+      -0.018,
+      -0.021,
+      -0.003
+     ],
+     [
+      -0.006,
+      -0.004,
+      -0.009
+     ],
+     [
+      0.0,
+      -0.014,
+      0.009
+     ],
+     [
+      0.005,
+      0.01,
+      0.003
+     ],
+     [
+      -0.006,
+      -0.0,
+      -0.011
+     ],
+     [
+      0.001,
+      0.012,
+      -0.008
+     ],
+     [
+      -0.003,
+      0.002,
+      -0.001
+     ],
+     [
+      0.003,
+      0.003,
+      0.002
+     ]
+    ]
+   },
+   "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "a base-level uniform region reaches 47 columns in: wider than any gap between frames, so scene (or a leader)"
+   },
+   "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "a base plateau, but no row band falls off it into picture"
+   }
+  },
+  "gold200_10": {
+   "kind": "film",
+   "hires_entry": "20260904T000707Z_kodak-gold-200_f2026-09-04-gold200-10_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.00635,
+   "k_left": 11.98466,
+   "k_right": 11.98831,
+   "reg": {
+    "dy": 0,
+    "dx": -1,
+    "conf": 112.6,
+    "conf_rows_reversed": 6.1,
+    "corr": 0.9483,
+    "corr_linear": 0.9483,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4615,
+      0.1132,
+      0.0171,
+      -0.1299
+     ],
+     "shear": -0.0224,
+     "ky": 12.00186,
+     "oy": -1.72,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.243,
+      -0.27,
+      -0.232
+     ],
+     [
+      -0.039,
+      -0.123,
+      -0.019
+     ],
+     [
+      -0.08,
+      -0.054,
+      -0.087
+     ],
+     [
+      -0.035,
+      -0.057,
+      -0.031
+     ],
+     [
+      -0.019,
+      -0.02,
+      -0.02
+     ],
+     [
+      -0.014,
+      -0.034,
+      -0.008
+     ],
+     [
+      0.02,
+      -0.013,
+      0.026
+     ],
+     [
+      0.003,
+      -0.012,
+      0.028
+     ],
+     [
+      0.02,
+      0.002,
+      0.029
+     ],
+     [
+      0.005,
+      0.007,
+      0.005
+     ],
+     [
+      0.005,
+      -0.004,
+      0.007
+     ],
+     [
+      -0.014,
+      0.069,
+      -0.017
+     ],
+     [
+      -0.019,
+      0.028,
+      -0.027
+     ],
+     [
+      0.01,
+      0.039,
+      0.006
+     ],
+     [
+      0.005,
+      0.049,
+      -0.006
+     ],
+     [
+      -0.001,
+      0.008,
+      -0.003
+     ]
+    ]
+   },
+   "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 127.523,
+    "outer": 6.764,
+    "coverage": 0.205,
+    "residual": 0.077,
+    "row_iqr": 0.175,
+    "width_10_90": 1.167,
+    "reg_err": 0.082,
+    "contrast": 0.14,
+    "prescan_50": null,
+    "x_global": 10.162,
+    "candidate": 10.421,
+    "d_edge": -0.259,
+    "d_edge_top": -0.192,
+    "d_edge_bottom": -0.297,
+    "d_picture": -0.133,
+    "note": "read in only 21% of rows (candidate 10.42): the rest have picture at base level, or this is scene, not base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 5150.559,
+    "outer": null,
+    "coverage": 0.349,
+    "residual": 0.132,
+    "row_iqr": 0.404,
+    "width_10_90": 0.589,
+    "reg_err": 0.052,
+    "contrast": 0.084,
+    "prescan_50": null,
+    "x_global": 428.755,
+    "candidate": 428.793,
+    "d_edge": -0.039,
+    "d_edge_top": 0.0,
+    "d_edge_bottom": -0.046,
+    "d_picture": -0.011,
+    "note": "base shows in the scan only beyond the prescan's coverage: the edge maps to 428.79 (read in 35% of rows)"
+   }
+  },
+  "gold200_11": {
+   "kind": "film",
+   "hires_entry": "20260904T001134Z_kodak-gold-200_f2026-09-04-gold200-11_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.02154,
+   "k_left": 11.92068,
+   "k_right": 11.9228,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 127.2,
+    "conf_rows_reversed": 6.1,
+    "corr": 0.9822,
+    "corr_linear": 0.9821,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.044,
+      0.3842,
+      0.01,
+      -0.6529
+     ],
+     "shear": -0.031,
+     "ky": 11.95151,
+     "oy": 34.747,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      -0.374,
+      -0.435,
+      -0.405
+     ],
+     [
+      -0.194,
+      -0.256,
+      -0.164
+     ],
+     [
+      -0.054,
+      -0.048,
+      -0.053
+     ],
+     [
+      -0.025,
+      -0.052,
+      -0.024
+     ],
+     [
+      -0.014,
+      -0.018,
+      -0.015
+     ],
+     [
+      0.02,
+      0.03,
+      0.017
+     ],
+     [
+      0.013,
+      0.03,
+      0.012
+     ],
+     [
+      -0.006,
+      0.066,
+      -0.018
+     ],
+     [
+      -0.08,
+      0.047,
+      -0.083
+     ],
+     [
+      -0.044,
+      0.024,
+      -0.053
+     ],
+     [
+      -0.104,
+      -0.146,
+      -0.098
+     ],
+     [
+      -0.097,
+      -0.042,
+      -0.108
+     ],
+     [
+      -0.119,
+      -0.033,
+      -0.148
+     ],
+     [
+      -0.057,
+      -0.046,
+      -0.063
+     ],
+     [
+      0.026,
+      0.057,
+      0.02
+     ],
+     [
+      0.215,
+      0.252,
+      0.158
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.89 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 5159.539,
+    "outer": null,
+    "coverage": 0.939,
+    "residual": 0.093,
+    "row_iqr": 0.458,
+    "width_10_90": 0.482,
+    "reg_err": 0.052,
+    "contrast": 0.145,
+    "prescan_50": null,
+    "x_global": 430.191,
+    "candidate": 429.937,
+    "d_edge": 0.255,
+    "d_edge_top": 0.28,
+    "d_edge_bottom": 0.199,
+    "d_picture": 0.224,
+    "note": "base shows in the scan only beyond the prescan's coverage: the edge maps to 429.94 (read in 94% of rows)"
+   }
+  },
+  "gold200_12": {
+   "kind": "film",
+   "hires_entry": "20260904T001606Z_kodak-gold-200_f2026-09-04-gold200-12_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.0166,
+   "k_left": 11.95863,
+   "k_right": 11.9585,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 102.0,
+    "conf_rows_reversed": 5.0,
+    "corr": 0.9677,
+    "corr_linear": 0.9677,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.496,
+      0.2961,
+      -0.0006,
+      -0.3797
+     ],
+     "shear": -0.0006,
+     "ky": 11.99701,
+     "oy": -0.881,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.608,
+      -0.604,
+      -0.608
+     ],
+     [
+      -0.169,
+      -0.178,
+      -0.138
+     ],
+     [
+      -0.05,
+      -0.067,
+      -0.027
+     ],
+     [
+      0.049,
+      0.065,
+      0.033
+     ],
+     [
+      0.012,
+      0.031,
+      0.002
+     ],
+     [
+      -0.011,
+      -0.008,
+      -0.029
+     ],
+     [
+      0.013,
+      0.014,
+      -0.013
+     ],
+     [
+      -0.026,
+      -0.026,
+      -0.023
+     ],
+     [
+      -0.027,
+      -0.032,
+      -0.018
+     ],
+     [
+      -0.069,
+      -0.073,
+      -0.039
+     ],
+     [
+      -0.065,
+      -0.081,
+      -0.034
+     ],
+     [
+      0.032,
+      -0.045,
+      0.058
+     ],
+     [
+      -0.048,
+      -0.044,
+      -0.06
+     ],
+     [
+      0.017,
+      0.017,
+      0.047
+     ],
+     [
+      0.044,
+      0.052,
+      0.009
+     ],
+     [
+      0.001,
+      -0.003,
+      -0.014
+     ]
+    ]
+   },
+   "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 254.321,
+    "outer": null,
+    "coverage": 0.048,
+    "residual": 0.075,
+    "row_iqr": 0.562,
+    "width_10_90": 4.272,
+    "reg_err": 0.051,
+    "contrast": 0.146,
+    "prescan_50": null,
+    "x_global": 20.686,
+    "candidate": 20.859,
+    "d_edge": -0.173,
+    "d_edge_top": -0.179,
+    "d_edge_bottom": -0.168,
+    "d_picture": -0.158,
+    "note": "read in only 5% of rows (candidate 20.86): the rest have picture at base level, or this is scene, not base"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 5152.065,
+    "outer": null,
+    "coverage": 0.328,
+    "residual": 0.023,
+    "row_iqr": 0.177,
+    "width_10_90": 0.527,
+    "reg_err": 0.052,
+    "contrast": 0.503,
+    "prescan_50": null,
+    "x_global": 428.931,
+    "candidate": 428.945,
+    "d_edge": -0.014,
+    "d_edge_top": -0.01,
+    "d_edge_bottom": -0.087,
+    "d_picture": 0.014,
+    "note": "base shows in the scan only beyond the prescan's coverage: the edge maps to 428.95 (read in 33% of rows)"
+   }
+  },
+  "gold200_13": {
+   "kind": "film",
+   "hires_entry": "20260904T002033Z_kodak-gold-200_f2026-09-04-gold200-13_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01008,
+   "k_left": 12.0025,
+   "k_right": 11.98804,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 150.6,
+    "conf_rows_reversed": 6.0,
+    "corr": 0.9386,
+    "corr_linear": 0.9386,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      -0.0231,
+      0.1798,
+      -0.0676,
+      -0.0969
+     ],
+     "shear": 0.0005,
+     "ky": 11.98074,
+     "oy": 29.015,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      0.008,
+      0.003,
+      0.012
+     ],
+     [
+      -0.002,
+      -0.021,
+      0.018
+     ],
+     [
+      -0.001,
+      0.001,
+      -0.002
+     ],
+     [
+      0.001,
+      -0.004,
+      0.007
+     ],
+     [
+      0.008,
+      0.006,
+      0.012
+     ],
+     [
+      0.004,
+      0.009,
+      -0.001
+     ],
+     [
+      -0.015,
+      0.008,
+      -0.034
+     ],
+     [
+      -0.034,
+      -0.03,
+      -0.036
+     ],
+     [
+      -0.018,
+      -0.005,
+      -0.04
+     ],
+     [
+      -0.004,
+      0.02,
+      -0.043
+     ],
+     [
+      -0.023,
+      -0.024,
+      -0.02
+     ],
+     [
+      0.003,
+      0.014,
+      -0.011
+     ],
+     [
+      0.01,
+      0.013,
+      0.008
+     ],
+     [
+      -0.0,
+      -0.019,
+      0.035
+     ],
+     [
+      -0.013,
+      0.006,
+      -0.04
+     ],
+     [
+      0.031,
+      -0.015,
+      0.086
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.71 of the frame's brightest"
+   },
+   "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "a base-level uniform region reaches 76 columns in: wider than any gap between frames, so scene (or a leader)"
+   }
+  },
+  "gold200_14": {
+   "kind": "film",
+   "hires_entry": "20260904T002508Z_kodak-gold-200_f2026-09-04-gold200-14_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01593,
+   "k_left": 11.98139,
+   "k_right": 11.96164,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 121.2,
+    "conf_rows_reversed": 7.3,
+    "corr": 0.9892,
+    "corr_linear": 0.9892,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4896,
+      0.284,
+      -0.0924,
+      -0.2905
+     ],
+     "shear": 0.0119,
+     "ky": 11.99733,
+     "oy": -1.272,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.113,
+      -0.05,
+      -0.461
+     ],
+     [
+      -0.084,
+      -0.139,
+      -0.039
+     ],
+     [
+      -0.025,
+      0.167,
+      -0.039
+     ],
+     [
+      0.013,
+      0.057,
+      0.008
+     ],
+     [
+      0.027,
+      0.024,
+      0.033
+     ],
+     [
+      0.008,
+      0.021,
+      -0.0
+     ],
+     [
+      0.004,
+      0.01,
+      -0.001
+     ],
+     [
+      -0.029,
+      -0.01,
+      -0.032
+     ],
+     [
+      0.004,
+      -0.0,
+      0.0
+     ],
+     [
+      -0.044,
+      -0.024,
+      -0.055
+     ],
+     [
+      -0.013,
+      -0.034,
+      0.003
+     ],
+     [
+      -0.042,
+      -0.034,
+      -0.097
+     ],
+     [
+      -0.022,
+      -0.017,
+      -0.033
+     ],
+     [
+      0.01,
+      0.017,
+      -0.011
+     ],
+     [
+      0.07,
+      0.082,
+      0.046
+     ],
+     [
+      0.032,
+      0.057,
+      -0.043
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.19 of the frame's brightest"
+   },
+   "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 4981.934,
+    "outer": null,
+    "coverage": 0.131,
+    "residual": 0.319,
+    "row_iqr": 2.48,
+    "width_10_90": 3.794,
+    "reg_err": 0.069,
+    "contrast": 0.228,
+    "prescan_50": null,
+    "x_global": 414.731,
+    "candidate": 414.663,
+    "d_edge": 0.067,
+    "d_edge_top": 0.101,
+    "d_edge_bottom": -0.035,
+    "d_picture": 0.083,
+    "note": "read in only 13% of rows (candidate 414.66): the rest have picture at base level, or this is scene, not base"
+   }
+  },
+  "gold200_15": {
+   "kind": "film",
+   "hires_entry": "20260904T002935Z_kodak-gold-200_f2026-09-04-gold200-15_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01907,
+   "k_left": 11.93767,
+   "k_right": 11.90431,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 126.4,
+    "conf_rows_reversed": 6.8,
+    "corr": 0.9665,
+    "corr_linear": 0.9664,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.0481,
+      0.3401,
+      -0.156,
+      -0.6416
+     ],
+     "shear": -0.0127,
+     "ky": 11.97033,
+     "oy": 31.898,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      -0.268,
+      -0.311,
+      -0.221
+     ],
+     [
+      -0.204,
+      -0.258,
+      -0.142
+     ],
+     [
+      -0.145,
+      -0.172,
+      -0.09
+     ],
+     [
+      -0.044,
+      -0.045,
+      -0.014
+     ],
+     [
+      -0.027,
+      -0.032,
+      -0.014
+     ],
+     [
+      0.011,
+      0.016,
+      -0.01
+     ],
+     [
+      -0.058,
+      -0.092,
+      -0.011
+     ],
+     [
+      0.021,
+      0.01,
+      0.042
+     ],
+     [
+      -0.016,
+      -0.001,
+      -0.025
+     ],
+     [
+      -0.038,
+      -0.03,
+      -0.057
+     ],
+     [
+      -0.03,
+      -0.024,
+      -0.029
+     ],
+     [
+      -0.008,
+      -0.012,
+      0.086
+     ],
+     [
+      0.061,
+      0.064,
+      0.038
+     ],
+     [
+      0.105,
+      0.106,
+      0.122
+     ],
+     [
+      0.15,
+      0.391,
+      0.136
+     ],
+     [
+      0.359,
+      0.428,
+      0.307
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.52 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.095,
+    "lo": 422.982,
+    "hi": 423.208,
+    "x_top": 423.15,
+    "x_bottom": 422.684,
+    "scan_x": 5077.098,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.148,
+    "row_iqr": 0.371,
+    "width_10_90": 0.535,
+    "reg_err": 0.112,
+    "contrast": 0.215,
+    "prescan_50": 422.978,
+    "x_global": 423.459,
+    "candidate": null,
+    "d_edge": 0.365,
+    "d_edge_top": 0.431,
+    "d_edge_bottom": 0.315,
+    "d_picture": 0.173,
+    "note": ""
+   }
+  },
+  "gold200_16": {
+   "kind": "film",
+   "hires_entry": "20260904T003409Z_kodak-gold-200_f2026-09-04-gold200-16_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.01054,
+   "k_left": 12.00008,
+   "k_right": 11.99355,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 130.1,
+    "conf_rows_reversed": 6.2,
+    "corr": 0.9664,
+    "corr_linear": 0.9663,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4684,
+      0.188,
+      -0.0305,
+      -0.0898
+     ],
+     "shear": 0.022,
+     "ky": 11.99843,
+     "oy": -1.132,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.024,
+      -0.026,
+      -0.011
+     ],
+     [
+      0.003,
+      -0.006,
+      0.0
+     ],
+     [
+      0.009,
+      0.007,
+      0.009
+     ],
+     [
+      0.006,
+      0.009,
+      0.002
+     ],
+     [
+      0.005,
+      0.01,
+      0.004
+     ],
+     [
+      0.002,
+      0.023,
+      -0.009
+     ],
+     [
+      0.013,
+      0.021,
+      0.009
+     ],
+     [
+      -0.006,
+      0.03,
+      -0.015
+     ],
+     [
+      0.002,
+      -0.002,
+      -0.001
+     ],
+     [
+      -0.006,
+      -0.002,
+      -0.047
+     ],
+     [
+      -0.01,
+      -0.006,
+      -0.025
+     ],
+     [
+      -0.002,
+      0.003,
+      -0.009
+     ],
+     [
+      -0.001,
+      -0.006,
+      0.001
+     ],
+     [
+      -0.002,
+      -0.033,
+      0.0
+     ],
+     [
+      0.009,
+      0.004,
+      0.003
+     ],
+     [
+      -0.007,
+      0.061,
+      -0.073
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.45 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.439,
+    "lo": 425.342,
+    "hi": 425.535,
+    "x_top": 425.083,
+    "x_bottom": 425.489,
+    "scan_x": 5111.773,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.146,
+    "row_iqr": 0.394,
+    "width_10_90": 0.585,
+    "reg_err": 0.094,
+    "contrast": 0.819,
+    "prescan_50": null,
+    "x_global": 425.433,
+    "candidate": null,
+    "d_edge": -0.005,
+    "d_edge_top": 0.062,
+    "d_edge_bottom": -0.071,
+    "d_picture": -0.137,
+    "note": ""
+   }
+  },
+  "gold200_17": {
+   "kind": "film",
+   "hires_entry": "20260904T003839Z_kodak-gold-200_f2026-09-04-gold200-17_3600dpi_ir",
+   "dpi": 3600,
+   "k": 12.0083,
+   "k_left": 11.95787,
+   "k_right": 11.9861,
+   "reg": {
+    "dy": -1,
+    "dx": 0,
+    "conf": 136.4,
+    "conf_rows_reversed": 9.4,
+    "corr": 0.9788,
+    "corr_linear": 0.9787,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      -0.0327,
+      0.148,
+      0.132,
+      -0.2376
+     ],
+     "shear": -0.0399,
+     "ky": 11.97845,
+     "oy": 29.798,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      -0.249,
+      -0.268,
+      -0.212
+     ],
+     [
+      -0.126,
+      -0.242,
+      -0.08
+     ],
+     [
+      -0.102,
+      -0.145,
+      -0.097
+     ],
+     [
+      -0.056,
+      -0.014,
+      -0.064
+     ],
+     [
+      -0.013,
+      -0.023,
+      -0.012
+     ],
+     [
+      -0.014,
+      -0.013,
+      -0.012
+     ],
+     [
+      0.004,
+      0.004,
+      0.001
+     ],
+     [
+      0.007,
+      0.023,
+      0.003
+     ],
+     [
+      -0.002,
+      -0.061,
+      0.012
+     ],
+     [
+      0.018,
+      0.0,
+      0.045
+     ],
+     [
+      0.01,
+      0.02,
+      -0.056
+     ],
+     [
+      -0.004,
+      -0.003,
+      -0.017
+     ],
+     [
+      -0.034,
+      -0.041,
+      -0.029
+     ],
+     [
+      -0.081,
+      -0.144,
+      -0.078
+     ],
+     [
+      -0.003,
+      -0.01,
+      0.014
+     ],
+     [
+      -0.142,
+      -0.248,
+      -0.092
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.89 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 5147.073,
+    "outer": null,
+    "coverage": 0.799,
+    "residual": 0.126,
+    "row_iqr": 0.252,
+    "width_10_90": 0.531,
+    "reg_err": 0.155,
+    "contrast": 0.599,
+    "prescan_50": null,
+    "x_global": 428.912,
+    "candidate": 429.041,
+    "d_edge": -0.129,
+    "d_edge_top": -0.365,
+    "d_edge_bottom": -0.055,
+    "d_picture": -0.145,
+    "note": "base shows in the scan only beyond the prescan's coverage: the edge maps to 429.04 (read in 80% of rows)"
+   }
+  },
+  "hwcheck_01": {
+   "kind": "film",
+   "hires_entry": "20260903T230023Z_hardware-check_fhw-check-01_600dpi",
+   "dpi": 600,
+   "k": 2.00097,
+   "k_left": 1.99827,
+   "k_right": 1.99808,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 174.9,
+    "conf_rows_reversed": 5.6,
+    "corr": 0.97,
+    "corr_linear": 0.9699,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.2864,
+      0.1041,
+      -0.0055,
+      -0.1098
+     ],
+     "shear": 0.0026,
+     "ky": 1.99994,
+     "oy": 0.018,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.066,
+      -0.073,
+      -0.053
+     ],
+     [
+      -0.033,
+      -0.04,
+      -0.006
+     ],
+     [
+      -0.028,
+      -0.021,
+      -0.049
+     ],
+     [
+      -0.003,
+      -0.02,
+      0.015
+     ],
+     [
+      0.007,
+      -0.008,
+      0.022
+     ],
+     [
+      0.003,
+      0.007,
+      0.001
+     ],
+     [
+      0.017,
+      0.016,
+      0.016
+     ],
+     [
+      -0.012,
+      -0.014,
+      -0.01
+     ],
+     [
+      -0.004,
+      -0.019,
+      0.003
+     ],
+     [
+      -0.016,
+      -0.033,
+      -0.01
+     ],
+     [
+      -0.004,
+      -0.011,
+      -0.001
+     ],
+     [
+      -0.018,
+      -0.016,
+      -0.019
+     ],
+     [
+      -0.003,
+      0.0,
+      -0.008
+     ],
+     [
+      0.001,
+      0.002,
+      -0.002
+     ],
+     [
+      0.017,
+      0.014,
+      0.02
+     ],
+     [
+      -0.027,
+      -0.021,
+      -0.034
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.43 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.355,
+    "lo": 424.283,
+    "hi": 424.428,
+    "x_top": 424.143,
+    "x_bottom": 424.444,
+    "scan_x": 849.196,
+    "outer": null,
+    "coverage": 0.716,
+    "residual": 0.225,
+    "row_iqr": 0.56,
+    "width_10_90": 0.849,
+    "reg_err": 0.061,
+    "contrast": 0.207,
+    "prescan_50": 424.077,
+    "x_global": 424.319,
+    "candidate": null,
+    "d_edge": -0.036,
+    "d_edge_top": -0.028,
+    "d_edge_bottom": -0.048,
+    "d_picture": 0.033,
+    "note": ""
+   }
+  },
+  "hwcheck_02": {
+   "kind": "film",
+   "hires_entry": "20260903T230052Z_hardware-check_fhw-check-02_600dpi",
+   "dpi": 600,
+   "k": 2.00735,
+   "k_left": 1.9997,
+   "k_right": 1.99721,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 158.3,
+    "conf_rows_reversed": 5.0,
+    "corr": 0.9645,
+    "corr_linear": 0.9643,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.3316,
+      0.7865,
+      -0.0698,
+      -0.3492
+     ],
+     "shear": 0.0178,
+     "ky": 2.0,
+     "oy": -0.0,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.024,
+      -0.058,
+      -0.006
+     ],
+     [
+      0.028,
+      -0.063,
+      0.046
+     ],
+     [
+      0.028,
+      -0.04,
+      0.048
+     ],
+     [
+      0.009,
+      -0.028,
+      0.028
+     ],
+     [
+      0.009,
+      0.004,
+      0.01
+     ],
+     [
+      -0.025,
+      0.042,
+      -0.04
+     ],
+     [
+      -0.023,
+      0.0,
+      -0.035
+     ],
+     [
+      0.001,
+      0.025,
+      -0.014
+     ],
+     [
+      0.023,
+      0.034,
+      0.014
+     ],
+     [
+      -0.007,
+      0.01,
+      -0.008
+     ],
+     [
+      -0.034,
+      0.102,
+      -0.041
+     ],
+     [
+      -0.003,
+      0.061,
+      -0.061
+     ],
+     [
+      -0.003,
+      -0.03,
+      0.017
+     ],
+     [
+      0.018,
+      -0.007,
+      0.044
+     ],
+     [
+      0.033,
+      0.009,
+      0.061
+     ],
+     [
+      -0.068,
+      -0.048,
+      -0.082
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.72 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.768,
+    "lo": 425.696,
+    "hi": 425.839,
+    "x_top": 425.583,
+    "x_bottom": 425.899,
+    "scan_x": 852.804,
+    "outer": null,
+    "coverage": 0.987,
+    "residual": 0.089,
+    "row_iqr": 0.312,
+    "width_10_90": 0.785,
+    "reg_err": 0.069,
+    "contrast": 0.425,
+    "prescan_50": null,
+    "x_global": 425.699,
+    "candidate": null,
+    "d_edge": -0.068,
+    "d_edge_top": -0.041,
+    "d_edge_bottom": -0.089,
+    "d_picture": 0.028,
+    "note": ""
+   }
+  },
+  "hwcheck_03": {
+   "kind": "film",
+   "hires_entry": "20260903T230121Z_hardware-check_fhw-check-03_600dpi",
+   "dpi": 600,
+   "k": 2.00234,
+   "k_left": 1.99763,
+   "k_right": 1.99911,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 159.2,
+    "conf_rows_reversed": 6.8,
+    "corr": 0.9758,
+    "corr_linear": 0.9757,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.3159,
+      0.2505,
+      0.0415,
+      -0.1559
+     ],
+     "shear": -0.0237,
+     "ky": 2.00032,
+     "oy": -0.104,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.041,
+      -0.065,
+      -0.016
+     ],
+     [
+      -0.008,
+      -0.035,
+      0.012
+     ],
+     [
+      -0.02,
+      -0.052,
+      0.017
+     ],
+     [
+      0.002,
+      -0.036,
+      0.019
+     ],
+     [
+      -0.021,
+      -0.037,
+      -0.011
+     ],
+     [
+      0.012,
+      0.003,
+      0.015
+     ],
+     [
+      -0.007,
+      -0.024,
+      0.004
+     ],
+     [
+      0.007,
+      -0.05,
+      0.024
+     ],
+     [
+      -0.029,
+      -0.027,
+      -0.032
+     ],
+     [
+      -0.023,
+      -0.019,
+      -0.027
+     ],
+     [
+      -0.017,
+      -0.013,
+      -0.02
+     ],
+     [
+      -0.016,
+      -0.054,
+      -0.012
+     ],
+     [
+      -0.002,
+      -0.032,
+      0.004
+     ],
+     [
+      0.002,
+      -0.007,
+      0.009
+     ],
+     [
+      -0.005,
+      -0.006,
+      -0.005
+     ],
+     [
+      0.004,
+      0.006,
+      0.001
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.36 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.589,
+    "lo": 424.534,
+    "hi": 424.645,
+    "x_top": 424.351,
+    "x_bottom": 424.649,
+    "scan_x": 850.091,
+    "outer": null,
+    "coverage": 0.948,
+    "residual": 0.209,
+    "row_iqr": 0.375,
+    "width_10_90": 0.792,
+    "reg_err": 0.05,
+    "contrast": 0.193,
+    "prescan_50": 424.622,
+    "x_global": 424.594,
+    "candidate": null,
+    "d_edge": 0.005,
+    "d_edge_top": 0.006,
+    "d_edge_bottom": 0.002,
+    "d_picture": 0.005,
+    "note": ""
+   }
+  },
+  "r0909_09": {
+   "kind": "film",
+   "hires_entry": "20260909T112034Z_unknown-film_f2026-09-09-06_1800dpi",
+   "dpi": 1800,
+   "k": 5.99644,
+   "k_left": 5.99723,
+   "k_right": 5.99987,
+   "reg": {
+    "dy": 0,
+    "dx": -1,
+    "conf": 142.5,
+    "conf_rows_reversed": 5.6,
+    "corr": 0.9444,
+    "corr_linear": 0.9444,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.5927,
+      -0.1269,
+      0.0246,
+      0.0276
+     ],
+     "shear": 0.0051,
+     "ky": 6.00185,
+     "oy": -0.589,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.014,
+      0.004,
+      0.03
+     ],
+     [
+      -0.015,
+      -0.018,
+      -0.01
+     ],
+     [
+      -0.001,
+      -0.003,
+      0.002
+     ],
+     [
+      -0.007,
+      -0.004,
+      -0.009
+     ],
+     [
+      -0.002,
+      -0.012,
+      0.012
+     ],
+     [
+      -0.002,
+      -0.002,
+      -0.003
+     ],
+     [
+      0.011,
+      0.004,
+      0.025
+     ],
+     [
+      -0.004,
+      -0.003,
+      -0.002
+     ],
+     [
+      0.004,
+      0.01,
+      -0.002
+     ],
+     [
+      0.007,
+      0.005,
+      0.011
+     ],
+     [
+      0.006,
+      0.016,
+      -0.009
+     ],
+     [
+      0.01,
+      0.022,
+      -0.002
+     ],
+     [
+      -0.005,
+      -0.009,
+      0.011
+     ],
+     [
+      0.007,
+      0.023,
+      -0.012
+     ],
+     [
+      0.002,
+      0.009,
+      -0.016
+     ],
+     [
+      0.002,
+      0.011,
+      -0.031
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 1.787,
+    "lo": 1.725,
+    "hi": 1.85,
+    "x_top": 1.438,
+    "x_bottom": 2.091,
+    "scan_x": 15.095,
+    "outer": null,
+    "coverage": 0.974,
+    "residual": 0.096,
+    "row_iqr": 0.597,
+    "width_10_90": 0.675,
+    "reg_err": 0.051,
+    "contrast": 0.234,
+    "prescan_50": null,
+    "x_global": 1.8,
+    "candidate": null,
+    "d_edge": 0.012,
+    "d_edge_top": -0.001,
+    "d_edge_bottom": 0.035,
+    "d_picture": -0.007,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.53 of the frame's brightest"
+   }
+  },
+  "r0909_10": {
+   "kind": "film",
+   "hires_entry": "20260909T112251Z_unknown-film_f2026-09-09-07_1800dpi",
+   "dpi": 1800,
+   "k": 5.99838,
+   "k_left": 6.00197,
+   "k_right": 5.99672,
+   "reg": {
+    "dy": 0,
+    "dx": -1,
+    "conf": 151.6,
+    "conf_rows_reversed": 5.6,
+    "corr": 0.9609,
+    "corr_linear": 0.9608,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.6533,
+      -0.0579,
+      -0.0492,
+      0.0126
+     ],
+     "shear": 0.0013,
+     "ky": 6.00236,
+     "oy": -0.629,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.105,
+      0.072,
+      0.146
+     ],
+     [
+      0.019,
+      0.024,
+      0.012
+     ],
+     [
+      0.005,
+      0.0,
+      0.007
+     ],
+     [
+      -0.001,
+      -0.005,
+      0.006
+     ],
+     [
+      -0.002,
+      -0.004,
+      -0.001
+     ],
+     [
+      -0.01,
+      -0.014,
+      -0.008
+     ],
+     [
+      -0.015,
+      -0.02,
+      -0.01
+     ],
+     [
+      -0.009,
+      -0.006,
+      -0.012
+     ],
+     [
+      -0.008,
+      -0.013,
+      -0.005
+     ],
+     [
+      -0.016,
+      -0.021,
+      -0.012
+     ],
+     [
+      -0.019,
+      -0.027,
+      -0.011
+     ],
+     [
+      -0.025,
+      -0.008,
+      -0.041
+     ],
+     [
+      0.011,
+      0.022,
+      -0.006
+     ],
+     [
+      -0.0,
+      0.01,
+      -0.019
+     ],
+     [
+      0.02,
+      0.026,
+      0.006
+     ],
+     [
+      0.035,
+      0.026,
+      0.067
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 1.228,
+    "lo": 1.167,
+    "hi": 1.29,
+    "x_top": 0.819,
+    "x_bottom": 1.433,
+    "scan_x": 11.843,
+    "outer": null,
+    "coverage": 0.983,
+    "residual": 0.063,
+    "row_iqr": 0.481,
+    "width_10_90": 0.746,
+    "reg_err": 0.056,
+    "contrast": 0.302,
+    "prescan_50": null,
+    "x_global": 1.324,
+    "candidate": null,
+    "d_edge": 0.095,
+    "d_edge_top": 0.069,
+    "d_edge_bottom": 0.126,
+    "d_picture": 0.047,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.69 of the frame's brightest"
+   }
+  },
+  "r0909_11": {
+   "kind": "film",
+   "hires_entry": "20260909T112507Z_unknown-film_f2026-09-09-08_1800dpi",
+   "dpi": 1800,
+   "k": 5.99961,
+   "k_left": 5.96353,
+   "k_right": 5.98416,
+   "reg": {
+    "dy": 0,
+    "dx": -1,
+    "conf": 118.6,
+    "conf_rows_reversed": 5.7,
+    "corr": 0.959,
+    "corr_linear": 0.9589,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.5123,
+      -0.014,
+      0.193,
+      -0.337
+     ],
+     "shear": -0.0053,
+     "ky": 6.0012,
+     "oy": -0.528,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.353,
+      -0.476,
+      -0.249
+     ],
+     [
+      -0.221,
+      -0.216,
+      -0.228
+     ],
+     [
+      -0.161,
+      -0.191,
+      -0.127
+     ],
+     [
+      -0.044,
+      -0.055,
+      -0.044
+     ],
+     [
+      -0.008,
+      -0.026,
+      0.041
+     ],
+     [
+      0.02,
+      0.023,
+      0.014
+     ],
+     [
+      0.015,
+      0.024,
+      0.011
+     ],
+     [
+      0.005,
+      0.047,
+      -0.003
+     ],
+     [
+      0.022,
+      0.024,
+      0.023
+     ],
+     [
+      0.011,
+      0.002,
+      0.008
+     ],
+     [
+      0.0,
+      -0.004,
+      0.004
+     ],
+     [
+      -0.006,
+      0.006,
+      -0.008
+     ],
+     [
+      0.001,
+      0.001,
+      0.002
+     ],
+     [
+      0.015,
+      0.016,
+      0.012
+     ],
+     [
+      0.112,
+      0.086,
+      0.15
+     ],
+     [
+      0.175,
+      0.183,
+      0.172
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 4.991,
+    "lo": 4.868,
+    "hi": 5.113,
+    "x_top": 4.719,
+    "x_bottom": 5.335,
+    "scan_x": 33.978,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.036,
+    "row_iqr": 0.489,
+    "width_10_90": 0.596,
+    "reg_err": 0.119,
+    "contrast": 0.56,
+    "prescan_50": 5.029,
+    "x_global": 4.636,
+    "candidate": null,
+    "d_edge": -0.354,
+    "d_edge_top": -0.478,
+    "d_edge_bottom": -0.252,
+    "d_picture": -0.282,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.28 of the frame's brightest"
+   }
+  },
+  "r0911_01": {
+   "kind": "film",
+   "hires_entry": "20260911T094312Z_unknown-film_f2026-09-11-session-01_600dpi",
+   "dpi": 600,
+   "k": 1.99204,
+   "k_left": 1.9969,
+   "k_right": 1.98308,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 133.3,
+    "conf_rows_reversed": 8.6,
+    "corr": 0.969,
+    "corr_linear": 0.9687,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.2808,
+      -0.8522,
+      -0.3877,
+      -0.0802
+     ],
+     "shear": -0.0606,
+     "ky": 1.99958,
+     "oy": 0.349,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.02,
+      -0.016,
+      -0.025
+     ],
+     [
+      -0.009,
+      -0.024,
+      0.005
+     ],
+     [
+      0.012,
+      -0.004,
+      0.024
+     ],
+     [
+      -0.001,
+      0.01,
+      -0.017
+     ],
+     [
+      0.007,
+      0.024,
+      -0.001
+     ],
+     [
+      0.007,
+      0.029,
+      -0.001
+     ],
+     [
+      0.025,
+      0.01,
+      0.037
+     ],
+     [
+      -0.047,
+      -0.131,
+      0.007
+     ],
+     [
+      0.011,
+      -0.005,
+      0.021
+     ],
+     [
+      -0.009,
+      -0.02,
+      -0.008
+     ],
+     [
+      0.031,
+      0.032,
+      0.028
+     ],
+     [
+      0.021,
+      0.007,
+      0.027
+     ],
+     [
+      0.033,
+      0.028,
+      0.081
+     ],
+     [
+      -0.09,
+      0.077,
+      0.223
+     ],
+     [
+      0.071,
+      -0.007,
+      0.108
+     ],
+     [
+      0.149,
+      0.099,
+      0.169
+     ]
+    ]
+   },
+   "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "a base-level uniform region reaches 80 columns in: wider than any gap between frames, so scene (or a leader)"
+   },
+   "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 820.116,
+    "outer": null,
+    "coverage": 0.044,
+    "residual": 0.146,
+    "row_iqr": 0.192,
+    "width_10_90": 7.898,
+    "reg_err": 0.074,
+    "contrast": 0.063,
+    "prescan_50": null,
+    "x_global": 410.944,
+    "candidate": 410.833,
+    "d_edge": 0.11,
+    "d_edge_top": 0.046,
+    "d_edge_bottom": 0.192,
+    "d_picture": 0.087,
+    "note": "read in only 4% of rows (candidate 410.83): the rest have picture at base level, or this is scene, not base"
+   }
+  },
+  "r0911_02": {
+   "kind": "film",
+   "hires_entry": "20260911T094445Z_unknown-film_f2026-09-11-session-02_600dpi",
+   "dpi": 600,
+   "k": 2.00119,
+   "k_left": 1.99776,
+   "k_right": 1.99647,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 158.1,
+    "conf_rows_reversed": 9.2,
+    "corr": 0.9696,
+    "corr_linear": 0.9696,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.2575,
+      0.1269,
+      -0.0363,
+      -0.1597
+     ],
+     "shear": 0.004,
+     "ky": 2.00001,
+     "oy": -0.004,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.005,
+      0.007,
+      -0.013
+     ],
+     [
+      0.009,
+      0.005,
+      0.017
+     ],
+     [
+      0.039,
+      0.043,
+      0.036
+     ],
+     [
+      -0.039,
+      -0.08,
+      0.02
+     ],
+     [
+      0.023,
+      0.053,
+      0.007
+     ],
+     [
+      0.023,
+      0.014,
+      0.026
+     ],
+     [
+      -0.007,
+      0.011,
+      -0.025
+     ],
+     [
+      0.043,
+      0.016,
+      0.052
+     ],
+     [
+      0.069,
+      0.102,
+      -0.022
+     ],
+     [
+      0.01,
+      0.026,
+      -0.0
+     ],
+     [
+      -0.01,
+      -0.026,
+      0.001
+     ],
+     [
+      0.031,
+      0.056,
+      -0.015
+     ],
+     [
+      -0.02,
+      0.002,
+      -0.052
+     ],
+     [
+      -0.02,
+      -0.01,
+      -0.032
+     ],
+     [
+      0.073,
+      0.088,
+      0.068
+     ],
+     [
+      0.072,
+      0.105,
+      0.05
+     ]
+    ]
+   },
+   "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "a base-level uniform region reaches 64 columns in: wider than any gap between frames, so scene (or a leader)"
+   },
+   "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 793.201,
+    "outer": null,
+    "coverage": 0.031,
+    "residual": 0.406,
+    "row_iqr": 0.703,
+    "width_10_90": 10.651,
+    "reg_err": 0.052,
+    "contrast": 0.054,
+    "prescan_50": null,
+    "x_global": 396.358,
+    "candidate": 396.261,
+    "d_edge": 0.097,
+    "d_edge_top": 0.098,
+    "d_edge_bottom": 0.11,
+    "d_picture": 0.066,
+    "note": "read in only 3% of rows (candidate 396.26): the rest have picture at base level, or this is scene, not base"
+   }
+  },
+  "r0911_03": {
+   "kind": "film",
+   "hires_entry": "20260911T094612Z_unknown-film_f2026-09-11-session-03_600dpi",
+   "dpi": 600,
+   "k": 2.00219,
+   "k_left": 1.98998,
+   "k_right": 1.99512,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 152.8,
+    "conf_rows_reversed": 9.0,
+    "corr": 0.9581,
+    "corr_linear": 0.958,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.2172,
+      0.2347,
+      0.1443,
+      -0.3784
+     ],
+     "shear": 0.0024,
+     "ky": 2.00013,
+     "oy": -0.054,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.188,
+      -0.185,
+      -0.189
+     ],
+     [
+      -0.096,
+      -0.112,
+      -0.092
+     ],
+     [
+      -0.016,
+      -0.021,
+      -0.016
+     ],
+     [
+      0.013,
+      0.017,
+      0.008
+     ],
+     [
+      0.07,
+      0.067,
+      0.073
+     ],
+     [
+      0.069,
+      0.073,
+      0.074
+     ],
+     [
+      0.067,
+      0.061,
+      0.07
+     ],
+     [
+      -0.008,
+      -0.017,
+      -0.014
+     ],
+     [
+      0.033,
+      0.021,
+      0.045
+     ],
+     [
+      0.028,
+      0.05,
+      0.008
+     ],
+     [
+      -0.037,
+      -0.041,
+      -0.031
+     ],
+     [
+      -0.002,
+      0.01,
+      -0.008
+     ],
+     [
+      -0.058,
+      -0.078,
+      -0.045
+     ],
+     [
+      -0.055,
+      -0.035,
+      -0.074
+     ],
+     [
+      -0.039,
+      -0.031,
+      -0.045
+     ],
+     [
+      0.023,
+      0.035,
+      0.011
+     ]
+    ]
+   },
+   "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": 33.643,
+    "outer": null,
+    "coverage": 0.258,
+    "residual": 0.17,
+    "row_iqr": 0.404,
+    "width_10_90": 0.973,
+    "reg_err": 0.051,
+    "contrast": 0.097,
+    "prescan_50": null,
+    "x_global": 16.399,
+    "candidate": 16.551,
+    "d_edge": -0.152,
+    "d_edge_top": -0.152,
+    "d_edge_bottom": -0.153,
+    "d_picture": -0.128,
+    "note": "read in only 26% of rows (candidate 16.55): the rest have picture at base level, or this is scene, not base"
+   },
+   "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "base-level and uniform from scan column 0 to the end of the 90-column zone: no boundary (picture at base level?)"
+   }
+  },
+  "r0911_25": {
+   "kind": "film",
+   "hires_entry": "20260911T100615Z_unknown-film_f2026-09-11-01_900dpi",
+   "dpi": 900,
+   "k": 3.00279,
+   "k_left": 2.9998,
+   "k_right": 2.99389,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 149.1,
+    "conf_rows_reversed": 9.3,
+    "corr": 0.9683,
+    "corr_linear": 0.9682,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.2936,
+      0.1989,
+      -0.1106,
+      -0.1554
+     ],
+     "shear": 0.0249,
+     "ky": 2.99886,
+     "oy": -0.123,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.205,
+      0.038,
+      -0.213
+     ],
+     [
+      0.014,
+      0.028,
+      0.002
+     ],
+     [
+      -0.036,
+      0.001,
+      -0.062
+     ],
+     [
+      -0.003,
+      -0.011,
+      0.01
+     ],
+     [
+      -0.007,
+      0.001,
+      -0.009
+     ],
+     [
+      -0.01,
+      -0.008,
+      -0.012
+     ],
+     [
+      0.01,
+      0.011,
+      0.006
+     ],
+     [
+      -0.144,
+      -0.135,
+      -0.152
+     ],
+     [
+      0.014,
+      0.034,
+      0.003
+     ],
+     [
+      0.001,
+      0.011,
+      0.0
+     ],
+     [
+      0.026,
+      0.023,
+      0.031
+     ],
+     [
+      0.019,
+      -0.042,
+      0.025
+     ],
+     [
+      -0.038,
+      -0.014,
+      0.071
+     ],
+     [
+      0.13,
+      0.112,
+      0.173
+     ],
+     [
+      0.05,
+      0.058,
+      0.046
+     ],
+     [
+      0.024,
+      0.108,
+      -0.054
+     ]
+    ]
+   },
+   "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "a base-level uniform region reaches 75 columns in: wider than any gap between frames, so scene (or a leader)"
+   },
+   "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": 0.013,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "a plateau ends near scan column 1215 but only 3 rows have contrast >= 0.05"
+   }
+  },
+  "r0911_26": {
+   "kind": "film",
+   "hires_entry": "20260911T100811Z_unknown-film_f2026-09-11-08_900dpi",
+   "dpi": 900,
+   "k": 3.00873,
+   "k_left": 2.96775,
+   "k_right": 2.97796,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 126.0,
+    "conf_rows_reversed": 7.3,
+    "corr": 0.9415,
+    "corr_linear": 0.9413,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.365,
+      0.6227,
+      0.1909,
+      -0.9387
+     ],
+     "shear": -0.0484,
+     "ky": 3.00064,
+     "oy": -0.302,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.593,
+      -0.946,
+      -0.555
+     ],
+     [
+      -0.32,
+      -0.36,
+      -0.282
+     ],
+     [
+      -0.144,
+      -0.162,
+      -0.121
+     ],
+     [
+      -0.064,
+      -0.061,
+      -0.067
+     ],
+     [
+      -0.021,
+      -0.066,
+      0.014
+     ],
+     [
+      0.009,
+      -0.022,
+      0.044
+     ],
+     [
+      -0.01,
+      -0.065,
+      0.207
+     ],
+     [
+      0.027,
+      0.01,
+      0.032
+     ],
+     [
+      0.003,
+      0.011,
+      0.003
+     ],
+     [
+      -0.033,
+      -0.004,
+      -0.04
+     ],
+     [
+      -0.041,
+      -0.08,
+      -0.034
+     ],
+     [
+      -0.08,
+      -0.083,
+      -0.072
+     ],
+     [
+      -0.112,
+      -0.126,
+      -0.088
+     ],
+     [
+      -0.041,
+      -0.035,
+      -0.055
+     ],
+     [
+      -0.004,
+      -0.045,
+      0.044
+     ],
+     [
+      0.168,
+      0.18,
+      0.158
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.89 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.79 of the frame's brightest"
+   }
+  },
+  "r0911_27": {
+   "kind": "film",
+   "hires_entry": "20260911T101002Z_unknown-film_f2026-09-11-13_900dpi",
+   "dpi": 900,
+   "k": 3.00646,
+   "k_left": 2.99873,
+   "k_right": 2.99505,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 146.2,
+    "conf_rows_reversed": 5.9,
+    "corr": 0.967,
+    "corr_linear": 0.9669,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.3696,
+      0.4608,
+      -0.069,
+      -0.2504
+     ],
+     "shear": -0.0179,
+     "ky": 2.99917,
+     "oy": -0.088,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.09,
+      0.027,
+      -0.106
+     ],
+     [
+      -0.048,
+      -0.017,
+      -0.12
+     ],
+     [
+      0.005,
+      0.016,
+      -0.005
+     ],
+     [
+      0.026,
+      0.005,
+      0.041
+     ],
+     [
+      0.026,
+      0.024,
+      0.028
+     ],
+     [
+      -0.002,
+      -0.011,
+      0.002
+     ],
+     [
+      -0.007,
+      -0.037,
+      0.001
+     ],
+     [
+      0.042,
+      0.076,
+      0.029
+     ],
+     [
+      0.007,
+      -0.225,
+      -0.012
+     ],
+     [
+      -0.016,
+      -0.037,
+      -0.002
+     ],
+     [
+      0.015,
+      0.025,
+      0.003
+     ],
+     [
+      -0.009,
+      0.005,
+      -0.015
+     ],
+     [
+      -0.019,
+      -0.029,
+      -0.005
+     ],
+     [
+      0.076,
+      0.073,
+      0.08
+     ],
+     [
+      -0.064,
+      -0.081,
+      -0.044
+     ],
+     [
+      0.004,
+      0.257,
+      0.006
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.59 of the frame's brightest; but the outermost scan column reads 0.66 against 0.51 beside it: base may show under part of a column (in the corners?)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.58 of the frame's brightest"
+   }
+  },
+  "r0911_28": {
+   "kind": "film",
+   "hires_entry": "20260911T101145Z_unknown-film_f2026-09-11-15_900dpi",
+   "dpi": 900,
+   "k": 3.00593,
+   "k_left": 2.98449,
+   "k_right": 2.99107,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 124.7,
+    "conf_rows_reversed": 9.4,
+    "corr": 0.982,
+    "corr_linear": 0.9819,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.3636,
+      0.4231,
+      0.1231,
+      -0.4748
+     ],
+     "shear": 0.0319,
+     "ky": 2.99823,
+     "oy": 0.123,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.605,
+      -0.564,
+      -0.619
+     ],
+     [
+      -0.135,
+      -0.105,
+      -0.165
+     ],
+     [
+      -0.116,
+      -0.088,
+      -0.15
+     ],
+     [
+      -0.024,
+      -0.011,
+      -0.044
+     ],
+     [
+      -0.046,
+      -0.0,
+      -0.08
+     ],
+     [
+      -0.038,
+      -0.06,
+      -0.021
+     ],
+     [
+      0.036,
+      0.036,
+      0.117
+     ],
+     [
+      0.021,
+      0.017,
+      0.072
+     ],
+     [
+      0.029,
+      0.026,
+      0.036
+     ],
+     [
+      -0.043,
+      -0.049,
+      0.004
+     ],
+     [
+      -0.026,
+      -0.027,
+      -0.013
+     ],
+     [
+      -0.015,
+      -0.012,
+      -0.001
+     ],
+     [
+      -0.044,
+      -0.045,
+      -0.046
+     ],
+     [
+      -0.036,
+      -0.025,
+      -0.11
+     ],
+     [
+      -0.011,
+      -0.004,
+      -0.05
+     ],
+     [
+      0.069,
+      0.07,
+      0.081
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.28 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.47 of the frame's brightest"
+   }
+  },
+  "r0914_30": {
+   "kind": "dup",
+   "hires_entry": "20260914T140838Z_unknown-film_f2026-09-14-02_300dpi",
+   "dpi": 300,
+   "k": 1.00026,
+   "k_left": 1.00043,
+   "k_right": 1.00005,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 190.6,
+    "conf_rows_reversed": 18.7,
+    "corr": 0.983,
+    "corr_linear": 0.983,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.0225,
+      0.0549,
+      -0.0212,
+      -0.0015
+     ],
+     "shear": 0.0065,
+     "ky": 1.00029,
+     "oy": 0.125,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.035,
+      0.021,
+      0.111
+     ],
+     [
+      -0.048,
+      -0.032,
+      -0.066
+     ],
+     [
+      0.016,
+      0.02,
+      0.007
+     ],
+     [
+      0.041,
+      0.029,
+      -0.048
+     ],
+     [
+      0.001,
+      -0.002,
+      0.006
+     ],
+     [
+      0.006,
+      0.01,
+      0.002
+     ],
+     [
+      0.03,
+      -0.01,
+      0.086
+     ],
+     [
+      -0.011,
+      -0.008,
+      -0.015
+     ],
+     [
+      -0.015,
+      -0.014,
+      -0.016
+     ],
+     [
+      -0.004,
+      -0.012,
+      0.007
+     ],
+     [
+      0.016,
+      0.013,
+      0.025
+     ],
+     [
+      0.016,
+      0.007,
+      0.028
+     ],
+     [
+      -0.096,
+      -0.089,
+      -0.109
+     ],
+     [
+      0.002,
+      0.006,
+      -0.004
+     ],
+     [
+      0.0,
+      -0.009,
+      -0.187
+     ],
+     [
+      -0.009,
+      -0.108,
+      -0.112
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.90 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.71 of the frame's brightest"
+   }
+  },
+  "r0914_32": {
+   "kind": "dup",
+   "hires_entry": "20260914T141005Z_unknown-film_f2026-09-14-03_300dpi",
+   "dpi": 300,
+   "k": 1.00118,
+   "k_left": 1.00007,
+   "k_right": 1.00093,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 187.5,
+    "conf_rows_reversed": 12.6,
+    "corr": 0.9799,
+    "corr_linear": 0.9799,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.016,
+      0.253,
+      0.048,
+      -0.0534
+     ],
+     "shear": 0.0169,
+     "ky": 0.99979,
+     "oy": 0.174,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.177,
+      0.218,
+      0.163
+     ],
+     [
+      0.029,
+      -0.045,
+      0.047
+     ],
+     [
+      0.023,
+      0.282,
+      0.027
+     ],
+     [
+      -0.037,
+      0.265,
+      -0.042
+     ],
+     [
+      0.012,
+      0.136,
+      -0.035
+     ],
+     [
+      0.013,
+      0.015,
+      0.014
+     ],
+     [
+      0.037,
+      0.024,
+      0.099
+     ],
+     [
+      0.024,
+      -0.0,
+      0.031
+     ],
+     [
+      0.012,
+      0.025,
+      0.003
+     ],
+     [
+      -0.014,
+      0.03,
+      -0.032
+     ],
+     [
+      -0.034,
+      0.063,
+      -0.043
+     ],
+     [
+      0.099,
+      0.06,
+      0.087
+     ],
+     [
+      -0.39,
+      -0.416,
+      -0.394
+     ],
+     [
+      -0.415,
+      -0.45,
+      -0.362
+     ],
+     [
+      0.02,
+      0.047,
+      -0.002
+     ],
+     [
+      -0.321,
+      -0.325,
+      -0.32
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.26 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.96,
+    "lo": 426.876,
+    "hi": 427.045,
+    "x_top": 427.073,
+    "x_bottom": 426.191,
+    "scan_x": 426.906,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.191,
+    "row_iqr": 0.248,
+    "width_10_90": 1.202,
+    "reg_err": 0.083,
+    "contrast": 0.762,
+    "prescan_50": null,
+    "x_global": 426.642,
+    "candidate": null,
+    "d_edge": -0.318,
+    "d_edge_top": -0.324,
+    "d_edge_bottom": -0.317,
+    "d_picture": -0.452,
+    "note": "a sliver: base narrower than a plateau, its level read at the border"
+   }
+  },
+  "r0914_36": {
+   "kind": "dup",
+   "hires_entry": "20260914T141333Z_unknown-film_f2026-09-14-02_300dpi",
+   "dpi": 300,
+   "k": 1.00169,
+   "k_left": 0.9995,
+   "k_right": 0.99856,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 179.3,
+    "conf_rows_reversed": 17.7,
+    "corr": 0.9819,
+    "corr_linear": 0.9819,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.0528,
+      0.3618,
+      -0.053,
+      -0.2087
+     ],
+     "shear": 0.0006,
+     "ky": 0.99992,
+     "oy": 0.151,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.014,
+      0.026,
+      0.013
+     ],
+     [
+      0.301,
+      0.324,
+      0.287
+     ],
+     [
+      0.022,
+      0.284,
+      0.017
+     ],
+     [
+      0.044,
+      0.033,
+      0.055
+     ],
+     [
+      0.021,
+      0.173,
+      0.0
+     ],
+     [
+      -0.014,
+      -0.022,
+      -0.043
+     ],
+     [
+      0.083,
+      -0.042,
+      0.102
+     ],
+     [
+      -0.005,
+      -0.079,
+      0.02
+     ],
+     [
+      -0.051,
+      -0.051,
+      -0.01
+     ],
+     [
+      -0.001,
+      -0.009,
+      0.003
+     ],
+     [
+      -0.345,
+      0.032,
+      -0.366
+     ],
+     [
+      0.02,
+      0.007,
+      0.031
+     ],
+     [
+      -0.421,
+      -0.397,
+      -0.443
+     ],
+     [
+      0.02,
+      -0.452,
+      0.061
+     ],
+     [
+      0.035,
+      0.029,
+      0.038
+     ],
+     [
+      -0.224,
+      -0.224,
+      -0.224
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.74 of the frame's brightest"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.966,
+    "lo": 426.835,
+    "hi": 427.098,
+    "x_top": 427.121,
+    "x_bottom": 426.689,
+    "scan_x": 426.898,
+    "outer": null,
+    "coverage": 0.996,
+    "residual": 0.039,
+    "row_iqr": 0.316,
+    "width_10_90": 1.319,
+    "reg_err": 0.13,
+    "contrast": 0.532,
+    "prescan_50": null,
+    "x_global": 426.743,
+    "candidate": null,
+    "d_edge": -0.224,
+    "d_edge_top": -0.225,
+    "d_edge_bottom": -0.223,
+    "d_picture": 0.016,
+    "note": "a sliver: base narrower than a plateau, its level read at the border"
+   }
+  },
+  "stage3_05": {
+   "kind": "dup",
+   "hires_entry": "20260910T115107Z_unknown-film_fstage3-check-20260910-1349-01_300dpi",
+   "dpi": 300,
+   "k": 1.00018,
+   "k_left": 1.00324,
+   "k_right": 1.001,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 195.5,
+    "conf_rows_reversed": 9.8,
+    "corr": 0.9749,
+    "corr_linear": 0.9748,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.0227,
+      0.0379,
+      -0.1259,
+      0.1527
+     ],
+     "shear": -0.0059,
+     "ky": 1.0001,
+     "oy": 0.024,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.364,
+      0.391,
+      0.325
+     ],
+     [
+      0.02,
+      -0.01,
+      0.041
+     ],
+     [
+      0.033,
+      0.029,
+      0.037
+     ],
+     [
+      -0.005,
+      -0.002,
+      0.15
+     ],
+     [
+      0.092,
+      -0.045,
+      0.095
+     ],
+     [
+      0.026,
+      -0.06,
+      0.014
+     ],
+     [
+      -0.055,
+      -0.08,
+      -0.039
+     ],
+     [
+      -0.082,
+      -0.107,
+      -0.057
+     ],
+     [
+      -0.027,
+      -0.019,
+      -0.032
+     ],
+     [
+      0.07,
+      0.054,
+      0.077
+     ],
+     [
+      -0.107,
+      -0.12,
+      -0.083
+     ],
+     [
+      -0.097,
+      0.045,
+      -0.082
+     ],
+     [
+      -0.019,
+      -0.009,
+      -0.028
+     ],
+     [
+      -0.014,
+      -0.013,
+      -0.016
+     ],
+     [
+      -0.08,
+      -0.02,
+      -0.084
+     ],
+     [
+      -0.029,
+      -0.027,
+      -0.032
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.53 of the frame's brightest; but the outermost scan column reads 0.73 against 0.32 beside it: base may show under part of a column (in the corners?)"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.70 of the frame's brightest"
+   }
+  },
+  "stage3_07": {
+   "kind": "dup",
+   "hires_entry": "20260910T115136Z_unknown-film_fstage3-check-20260910-1349-03_300dpi",
+   "dpi": 300,
+   "k": 1.00057,
+   "k_left": 1.00131,
+   "k_right": 1.00159,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 204.4,
+    "conf_rows_reversed": 6.7,
+    "corr": 0.9842,
+    "corr_linear": 0.9842,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.0056,
+      0.1224,
+      0.0155,
+      0.0687
+     ],
+     "shear": -0.0068,
+     "ky": 0.99997,
+     "oy": 0.041,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      0.076,
+      0.066,
+      0.085
+     ],
+     [
+      0.075,
+      0.073,
+      0.077
+     ],
+     [
+      0.062,
+      0.065,
+      0.057
+     ],
+     [
+      0.057,
+      0.056,
+      0.057
+     ],
+     [
+      0.039,
+      0.042,
+      0.023
+     ],
+     [
+      0.023,
+      0.025,
+      0.02
+     ],
+     [
+      0.013,
+      0.005,
+      0.018
+     ],
+     [
+      0.018,
+      0.026,
+      0.013
+     ],
+     [
+      -0.009,
+      -0.009,
+      -0.009
+     ],
+     [
+      -0.01,
+      -0.012,
+      -0.007
+     ],
+     [
+      -0.001,
+      -0.007,
+      0.008
+     ],
+     [
+      0.031,
+      0.017,
+      -0.181
+     ],
+     [
+      -0.035,
+      -0.041,
+      -0.169
+     ],
+     [
+      -0.051,
+      -0.054,
+      -0.046
+     ],
+     [
+      -0.134,
+      -0.114,
+      -0.141
+     ],
+     [
+      -0.275,
+      -0.275,
+      -0.274
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.15 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.24 of the frame's brightest"
+   }
+  },
+  "strip3_01": {
+   "kind": "film",
+   "hires_entry": "20260829T231728Z_unknown-film_fstrip3-01_1800dpi_ir",
+   "dpi": 1800,
+   "k": 5.97863,
+   "k_left": 5.95253,
+   "k_right": 5.94057,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 93.7,
+    "conf_rows_reversed": 12.6,
+    "corr": 0.965,
+    "corr_linear": 0.9649,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.3938,
+      -0.7621,
+      -0.1119,
+      -0.4197
+     ],
+     "shear": 0.0788,
+     "ky": 6.00228,
+     "oy": 0.307,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.29,
+      -0.218,
+      -0.548
+     ],
+     [
+      -0.183,
+      -0.07,
+      -0.332
+     ],
+     [
+      -0.13,
+      -0.049,
+      -0.19
+     ],
+     [
+      -0.043,
+      0.096,
+      -0.085
+     ],
+     [
+      0.064,
+      0.182,
+      0.013
+     ],
+     [
+      0.065,
+      0.299,
+      0.052
+     ],
+     [
+      0.047,
+      0.116,
+      0.015
+     ],
+     [
+      0.111,
+      0.204,
+      0.103
+     ],
+     [
+      -0.001,
+      0.1,
+      -0.0
+     ],
+     [
+      0.025,
+      0.21,
+      0.005
+     ],
+     [
+      0.015,
+      0.084,
+      0.007
+     ],
+     [
+      0.035,
+      0.161,
+      0.036
+     ],
+     [
+      0.034,
+      -0.004,
+      0.036
+     ],
+     [
+      0.062,
+      0.033,
+      0.063
+     ],
+     [
+      0.086,
+      0.042,
+      0.106
+     ],
+     [
+      0.101,
+      0.109,
+      0.097
+     ]
+    ]
+   },
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.88 of the frame's brightest"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.65 of the frame's brightest; but the outermost scan column reads 0.80 against 0.64 beside it: base may show under part of a column (in the corners?)"
+   }
+  },
+  "strip3_02": {
+   "kind": "film",
+   "hires_entry": "20260829T232238Z_unknown-film_fstrip3-02_1800dpi_ir",
+   "dpi": 1800,
+   "k": 6.00348,
+   "k_left": 6.00299,
+   "k_right": 5.98932,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 94.8,
+    "conf_rows_reversed": 10.7,
+    "corr": 0.9443,
+    "corr_linear": 0.9442,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4417,
+      0.1242,
+      -0.1278,
+      -0.0959
+     ],
+     "shear": 0.0423,
+     "ky": 5.99783,
+     "oy": -0.151,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.06,
+      -0.113,
+      -0.004
+     ],
+     [
+      -0.017,
+      0.161,
+      -0.021
+     ],
+     [
+      -0.004,
+      0.111,
+      -0.006
+     ],
+     [
+      -0.001,
+      0.083,
+      -0.004
+     ],
+     [
+      -0.01,
+      -0.06,
+      -0.013
+     ],
+     [
+      0.02,
+      0.042,
+      0.015
+     ],
+     [
+      -0.0,
+      0.233,
+      -0.003
+     ],
+     [
+      -0.01,
+      0.161,
+      -0.012
+     ],
+     [
+      0.001,
+      -0.016,
+      0.001
+     ],
+     [
+      -0.014,
+      -0.039,
+      -0.016
+     ],
+     [
+      0.002,
+      -0.011,
+      -0.001
+     ],
+     [
+      -0.012,
+      0.31,
+      -0.014
+     ],
+     [
+      -0.036,
+      0.133,
+      -0.044
+     ],
+     [
+      0.004,
+      0.366,
+      0.001
+     ],
+     [
+      0.029,
+      0.383,
+      0.027
+     ],
+     [
+      0.019,
+      0.247,
+      0.02
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 1.782,
+    "lo": 1.714,
+    "hi": 1.85,
+    "x_top": 1.741,
+    "x_bottom": 2.258,
+    "scan_x": 11.916,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.099,
+    "row_iqr": 0.442,
+    "width_10_90": 0.506,
+    "reg_err": 0.066,
+    "contrast": 0.675,
+    "prescan_50": null,
+    "x_global": 1.712,
+    "candidate": null,
+    "d_edge": -0.07,
+    "d_edge_top": -0.116,
+    "d_edge_bottom": -0.01,
+    "d_picture": 0.009,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.26 of the frame's brightest"
+   }
+  },
+  "strip3_03": {
+   "kind": "film",
+   "hires_entry": "20260829T232739Z_unknown-film_fstrip3-03_1800dpi_ir",
+   "dpi": 1800,
+   "k": 6.00662,
+   "k_left": 6.0072,
+   "k_right": 5.9999,
+   "reg": {
+    "dy": -2,
+    "dx": 0,
+    "conf": 135.6,
+    "conf_rows_reversed": 10.8,
+    "corr": 0.9397,
+    "corr_linear": 0.9396,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      -0.0376,
+      0.2362,
+      -0.0683,
+      -0.0402
+     ],
+     "shear": 0.0701,
+     "ky": 5.99387,
+     "oy": 15.332,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      0.007,
+      -0.005,
+      0.021
+     ],
+     [
+      -0.008,
+      0.004,
+      -0.014
+     ],
+     [
+      -0.007,
+      0.031,
+      -0.027
+     ],
+     [
+      -0.013,
+      0.012,
+      -0.024
+     ],
+     [
+      -0.008,
+      0.024,
+      -0.029
+     ],
+     [
+      0.008,
+      -0.0,
+      0.016
+     ],
+     [
+      0.01,
+      0.02,
+      0.007
+     ],
+     [
+      0.037,
+      0.002,
+      0.039
+     ],
+     [
+      -0.002,
+      0.023,
+      -0.013
+     ],
+     [
+      -0.003,
+      0.008,
+      -0.005
+     ],
+     [
+      -0.011,
+      -0.003,
+      -0.014
+     ],
+     [
+      -0.013,
+      -0.006,
+      -0.017
+     ],
+     [
+      0.002,
+      -0.012,
+      0.012
+     ],
+     [
+      0.007,
+      -0.011,
+      0.021
+     ],
+     [
+      -0.004,
+      -0.028,
+      0.011
+     ],
+     [
+      0.011,
+      0.019,
+      0.005
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 6.695,
+    "lo": 6.641,
+    "hi": 6.749,
+    "x_top": 6.921,
+    "x_bottom": 6.528,
+    "scan_x": 38.44,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.05,
+    "row_iqr": 0.326,
+    "width_10_90": 0.424,
+    "reg_err": 0.05,
+    "contrast": 0.688,
+    "prescan_50": 6.943,
+    "x_global": 6.702,
+    "candidate": null,
+    "d_edge": 0.007,
+    "d_edge_top": -0.006,
+    "d_edge_bottom": 0.022,
+    "d_picture": 0.017,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.38 of the frame's brightest"
+   }
+  },
+  "strip6_01": {
+   "kind": "film",
+   "hires_entry": "20260829T225103Z_unknown-film_fstrip6-01_1800dpi_ir",
+   "dpi": 1800,
+   "k": 5.97744,
+   "k_left": 5.98667,
+   "k_right": 5.93171,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 93.0,
+    "conf_rows_reversed": 9.6,
+    "corr": 0.9751,
+    "corr_linear": 0.9749,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4214,
+      -0.8046,
+      -0.5141,
+      -0.2388
+     ],
+     "shear": 0.0009,
+     "ky": 6.00318,
+     "oy": 1.873,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.164,
+      -0.253,
+      -0.113
+     ],
+     [
+      0.269,
+      0.312,
+      -0.112
+     ],
+     [
+      0.093,
+      0.102,
+      -0.049
+     ],
+     [
+      -0.089,
+      -0.042,
+      -0.144
+     ],
+     [
+      -0.043,
+      -0.038,
+      -0.044
+     ],
+     [
+      -0.014,
+      -0.001,
+      -0.03
+     ],
+     [
+      -0.006,
+      0.021,
+      -0.018
+     ],
+     [
+      -0.029,
+      -0.015,
+      -0.034
+     ],
+     [
+      -0.019,
+      -0.017,
+      -0.028
+     ],
+     [
+      0.017,
+      -0.021,
+      0.037
+     ],
+     [
+      0.022,
+      0.006,
+      0.029
+     ],
+     [
+      0.031,
+      0.035,
+      0.032
+     ],
+     [
+      0.045,
+      -0.025,
+      0.126
+     ],
+     [
+      0.087,
+      0.074,
+      0.106
+     ],
+     [
+      0.048,
+      0.1,
+      -0.027
+     ],
+     [
+      0.252,
+      0.264,
+      0.222
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 10.915,
+    "lo": 10.726,
+    "hi": 11.105,
+    "x_top": 10.719,
+    "x_bottom": 11.037,
+    "scan_x": 70.143,
+    "outer": null,
+    "coverage": 0.895,
+    "residual": 0.04,
+    "row_iqr": 0.274,
+    "width_10_90": 0.565,
+    "reg_err": 0.189,
+    "contrast": 0.672,
+    "prescan_50": 11.001,
+    "x_global": 10.764,
+    "candidate": null,
+    "d_edge": -0.151,
+    "d_edge_top": -0.241,
+    "d_edge_bottom": -0.104,
+    "d_picture": 0.202,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.88 of the frame's brightest"
+   }
+  },
+  "strip6_02": {
+   "kind": "film",
+   "hires_entry": "20260829T225809Z_unknown-film_fstrip6-02_1800dpi_ir",
+   "dpi": 1800,
+   "k": 6.01336,
+   "k_left": 5.95863,
+   "k_right": 5.9413,
+   "reg": {
+    "dy": 0,
+    "dx": 0,
+    "conf": 104.8,
+    "conf_rows_reversed": 7.4,
+    "corr": 0.9734,
+    "corr_linear": 0.9732,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.4813,
+      0.4765,
+      -0.1621,
+      -0.8294
+     ],
+     "shear": 0.0186,
+     "ky": 6.00511,
+     "oy": -0.928,
+     "flipped": false
+    },
+    "band_offsets": [
+     [
+      -0.322,
+      -0.245,
+      -0.724
+     ],
+     [
+      -0.213,
+      -0.205,
+      -0.238
+     ],
+     [
+      -0.052,
+      -0.043,
+      -0.077
+     ],
+     [
+      0.03,
+      0.035,
+      -0.093
+     ],
+     [
+      -0.042,
+      -0.028,
+      -0.042
+     ],
+     [
+      -0.014,
+      -0.026,
+      -0.007
+     ],
+     [
+      -0.003,
+      -0.011,
+      0.001
+     ],
+     [
+      -0.034,
+      -0.02,
+      -0.04
+     ],
+     [
+      0.002,
+      0.003,
+      0.005
+     ],
+     [
+      0.002,
+      -0.027,
+      0.016
+     ],
+     [
+      0.028,
+      0.063,
+      0.011
+     ],
+     [
+      0.103,
+      0.1,
+      0.087
+     ],
+     [
+      0.045,
+      0.049,
+      0.199
+     ],
+     [
+      -0.049,
+      0.279,
+      -0.094
+     ],
+     [
+      0.287,
+      0.315,
+      0.239
+     ],
+     [
+      0.459,
+      0.415,
+      0.529
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 11.378,
+    "lo": 11.275,
+    "hi": 11.481,
+    "x_top": 11.244,
+    "x_bottom": 11.418,
+    "scan_x": 70.065,
+    "outer": null,
+    "coverage": 0.367,
+    "residual": 0.072,
+    "row_iqr": 0.158,
+    "width_10_90": 1.83,
+    "reg_err": 0.102,
+    "contrast": 0.102,
+    "prescan_50": 11.68,
+    "x_global": 11.08,
+    "candidate": null,
+    "d_edge": -0.298,
+    "d_edge_top": -0.239,
+    "d_edge_bottom": -0.424,
+    "d_picture": -0.383,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.76 of the frame's brightest"
+   }
+  },
+  "strip6_03": {
+   "kind": "film",
+   "hires_entry": "20260829T230504Z_unknown-film_fstrip6-03_1800dpi_ir",
+   "dpi": 1800,
+   "k": 6.01513,
+   "k_left": 5.9814,
+   "k_right": 5.98621,
+   "reg": {
+    "dy": -2,
+    "dx": 0,
+    "conf": 107.1,
+    "conf_rows_reversed": 5.7,
+    "corr": 0.9754,
+    "corr_linear": 0.9751,
+    "ok": true,
+    "why": "ok",
+    "subpixel": {
+     "c": [
+      0.0072,
+      0.5396,
+      0.045,
+      -0.4098
+     ],
+     "shear": 0.0053,
+     "ky": 5.99677,
+     "oy": 14.221,
+     "flipped": true
+    },
+    "band_offsets": [
+     [
+      -0.231,
+      -0.187,
+      -0.281
+     ],
+     [
+      -0.08,
+      -0.075,
+      -0.086
+     ],
+     [
+      -0.223,
+      -0.239,
+      -0.049
+     ],
+     [
+      -0.059,
+      -0.056,
+      -0.037
+     ],
+     [
+      -0.001,
+      0.004,
+      -0.005
+     ],
+     [
+      0.04,
+      0.054,
+      0.014
+     ],
+     [
+      0.05,
+      0.042,
+      0.065
+     ],
+     [
+      -0.022,
+      -0.024,
+      0.036
+     ],
+     [
+      -0.018,
+      0.002,
+      -0.043
+     ],
+     [
+      -0.015,
+      -0.016,
+      -0.058
+     ],
+     [
+      -0.009,
+      -0.036,
+      0.068
+     ],
+     [
+      -0.009,
+      0.024,
+      -0.029
+     ],
+     [
+      -0.019,
+      -0.041,
+      0.015
+     ],
+     [
+      0.073,
+      0.078,
+      -0.023
+     ],
+     [
+      -0.159,
+      0.011,
+      -0.203
+     ],
+     [
+      0.044,
+      0.033,
+      0.199
+     ]
+    ]
+   },
+   "left": {
+    "state": "edge",
+    "x": 9.932,
+    "lo": 9.844,
+    "hi": 10.02,
+    "x_top": 10.198,
+    "x_bottom": 9.881,
+    "scan_x": 57.582,
+    "outer": null,
+    "coverage": 1.0,
+    "residual": 0.05,
+    "row_iqr": 0.279,
+    "width_10_90": 0.598,
+    "reg_err": 0.087,
+    "contrast": 0.607,
+    "prescan_50": 10.017,
+    "x_global": 9.706,
+    "candidate": null,
+    "d_edge": -0.226,
+    "d_edge_top": -0.183,
+    "d_edge_bottom": -0.273,
+    "d_picture": -0.083,
+    "note": ""
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "x_top": null,
+    "x_bottom": null,
+    "scan_x": null,
+    "outer": null,
+    "coverage": null,
+    "residual": null,
+    "row_iqr": null,
+    "width_10_90": null,
+    "reg_err": null,
+    "contrast": null,
+    "prescan_50": null,
+    "x_global": null,
+    "candidate": null,
+    "d_edge": null,
+    "d_edge_top": null,
+    "d_edge_bottom": null,
+    "d_picture": null,
+    "note": "no uniform base plateau within 90 prescan columns; border at 0.40 of the frame's brightest"
+   }
+  }
+ },
+ "pair_checks": [
+  {
+   "a": "gold200_06",
+   "b": "hwcheck_01",
+   "side": "right",
+   "conf": 178.1,
+   "states": [
+    "picture_to_border",
+    "edge"
+   ],
+   "a_x": 428.937,
+   "b_x": 424.355,
+   "a_in_b": 424.325,
+   "diff": -0.03
+  },
+  {
+   "a": "gold200_08",
+   "b": "hwcheck_03",
+   "side": "right",
+   "conf": 170.3,
+   "states": [
+    "picture_to_border",
+    "edge"
+   ],
+   "a_x": 429.742,
+   "b_x": 424.589,
+   "a_in_b": 424.592,
+   "diff": 0.003
+  }
+ ]
+}

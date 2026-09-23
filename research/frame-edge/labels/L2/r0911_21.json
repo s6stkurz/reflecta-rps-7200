@@ -1,0 +1,26 @@
+{
+  "id": "r0911_21",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night sky (near base level) runs to col 0; railing/crowd in bottom quarter reach col 0-2 with no vertical boundary (b4 smooth 83->61)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night sky and crowd run to 428; b4 shows picture to the border"
+  },
+  "frame_note": "night sky reads ~90, almost base-level; any gap would be invisible in the top three bands"
+}

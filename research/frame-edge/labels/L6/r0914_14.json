@@ -1,0 +1,26 @@
+{
+  "id": "r0914_14",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "TV shelving and floor run to col 0; no black plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 420.9,
+    "lo": 420.5,
+    "hi": 421.1,
+    "outer": null,
+    "x_top": 421.0,
+    "x_bottom": 420.5,
+    "note": "base 421-427 ~95 (black-olive in B), sharp straight line; b1-b3 col 420 ~0-4% -> 421.0, b4 col 420 43% -> 420.6 (bench end at bottom); dark shelving (b1/b2 80-90) next to the edge at the top lowers contrast there"
+  },
+  "frame_note": ""
+}

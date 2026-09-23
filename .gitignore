@@ -37,6 +37,9 @@ previews/
 captures/
 calibration/
 library/
+# a second library unpacked beside the first, and the archive it came from
+library 2/
+*.rar
 
 # per-roll scan output
 rolls/

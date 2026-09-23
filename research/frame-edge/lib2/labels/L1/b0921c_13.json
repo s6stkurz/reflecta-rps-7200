@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_13", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 100.4, "lo": 100.1, "hi": 100.8,
+            "outer": 83.3, "x_top": 100.0, "x_bottom": 101.2,
+            "note": "internal gap, deeper than the crop: base cols 84-99 (95-99, R/G 2.2 B/G 0.55). Frame edge leans: ~100.0-100.2 in the upper half, ~100.6-100.9 below mid-height, ~101.2 at the bottom (8-band read). Neighbour picture cols 0-82, its edge ~84.0 top to ~83.0 lower"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/table scene to col 427"},
+  "frame_note": "gap inside the frame at 83-100; frame is the right part (328 cols vs 83)"
+}

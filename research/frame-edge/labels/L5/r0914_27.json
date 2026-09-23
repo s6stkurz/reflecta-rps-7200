@@ -1,0 +1,26 @@
+{
+  "id": "r0914_27",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark shelf (~90) at top and blue floor (~61) at bottom run to column 0; col 0 in b4 equals the floor, so no base"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.9,
+    "lo": 423.3,
+    "hi": 424.1,
+    "outer": null,
+    "x_top": 424.0,
+    "x_bottom": 423.4,
+    "note": "black base 424-427 (~93) with a straight line. Top bands low contrast against the dark shelf (~90) and a lighter post at 421-423; crossing ~424.0 there and against the bright stairs (b3). Bottom band ~423.4"
+  },
+  "frame_note": "right edge low contrast in the top half"
+}

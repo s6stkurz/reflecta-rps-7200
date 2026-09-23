@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_62", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 129.3, "lo": 128.9, "hi": 129.8,
+            "outer": 107.3, "x_top": 129.0, "x_bottom": 129.8,
+            "note": "interior gap deeper than the crop: black base cols 108-128 (R/G 2.18, B/G 0.55). This frame's foliage starts 129.0 in the top half, ~129.4-129.6 lower, ~129.8 at the bottom; foliage is moderately pale on the negative (~70-86 vs base 95). Neighbour street picture ends ~108.1 at the top, ~107.0-107.2 mid, ~107.9 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "figures/bench run to 427"},
+  "frame_note": "gap at ~107-129; frame = right part (~299 cols) vs neighbour (~107 cols)"
+}

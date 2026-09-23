@@ -1,0 +1,26 @@
+{
+  "id": "r0914_16",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall/shoulder run to column 0, no plateau (60-71)"
+  },
+  "right": {
+    "state": "edge",
+    "x": 417.8,
+    "lo": 417.2,
+    "hi": 418.1,
+    "outer": null,
+    "x_top": 418.0,
+    "x_bottom": 417.3,
+    "note": "sharp base from 418 (~97). Col 417 is a thin yellow fringe (b1-b3 20-32, b4 90) running full height; in the bottom band the lit orange picture (48-61) makes col 417 nearly base, so the crossing is ~417.2 there and ~418.0 at top"
+  },
+  "frame_note": ""
+}

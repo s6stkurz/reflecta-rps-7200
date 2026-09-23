@@ -1,0 +1,26 @@
+{
+  "id": "gold200_12",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark background (grey in B, not black) and bright bottom region both reach col 0; no line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark background and bright bottom region reach col 427; horizontal boundary crosses to the border, no vertical line"
+  },
+  "frame_note": "frame upside down"
+}

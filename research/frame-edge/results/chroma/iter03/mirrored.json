@@ -1,0 +1,8286 @@
+{
+ "about": {
+  "mirrored": true
+ },
+ "results": {
+  "strip6_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.84"
+   },
+   "right": {
+    "state": "edge",
+    "x": 416.938,
+    "lo": 416.6,
+    "hi": 417.276,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 417.113,
+    "x_bottom": 416.763,
+    "note": "run [0,10) rows 226/230 rmse 0.22"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     54.0,
+     26.0,
+     14.0
+    ],
+    "ref_cols": [
+     418,
+     428
+    ],
+    "sig": [
+     0.0287,
+     0.0422,
+     0.0699
+    ],
+    "source": "roll 2/2",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.17,
+      0.15,
+      0.16,
+      0.12,
+      0.16,
+      0.16,
+      0.15,
+      0.13,
+      0.17,
+      0.17,
+      0.18,
+      0.14
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.95,
+      0.97,
+      0.97,
+      0.96,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.82,
+      0.16
+     ],
+     "run": [
+      0,
+      10
+     ],
+     "at_level": true,
+     "cont_in": 0.156,
+     "fit": {
+      "x": 11.061977552850918,
+      "slope": 0.0012729204709826096,
+      "n_in": 226,
+      "n_ok": 230,
+      "frac_in": 0.9826086956521739,
+      "rmse": 0.22384864504224564,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "strip6_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.91"
+   },
+   "right": {
+    "state": "edge",
+    "x": 416.367,
+    "lo": 415.952,
+    "hi": 416.783,
+    "conf": 0.867,
+    "outer": null,
+    "x_top": 416.992,
+    "x_bottom": 415.743,
+    "note": "run [0,12) rows 92/99 rmse 0.39"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     54.0,
+     26.0,
+     14.0
+    ],
+    "ref_cols": [
+     416,
+     428
+    ],
+    "sig": [
+     0.0285,
+     0.0414,
+     0.0698
+    ],
+    "source": "roll 2/2",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.09,
+      0.09,
+      0.09,
+      0.08,
+      0.08,
+      0.09,
+      0.09,
+      0.09,
+      0.12,
+      0.11,
+      0.12,
+      0.13
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.91,
+      0.94,
+      0.97,
+      0.95,
+      1.0,
+      0.99,
+      1.0,
+      1.0,
+      1.0,
+      0.99,
+      1.0,
+      0.8
+     ],
+     "run": [
+      0,
+      12
+     ],
+     "at_level": true,
+     "cont_in": 0.493,
+     "fit": {
+      "x": 11.632526734421901,
+      "slope": 0.004544817101306124,
+      "n_in": 92,
+      "n_ok": 99,
+      "frac_in": 0.9292929292929293,
+      "rmse": 0.38599101246783407,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "strip6_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 417.865,
+    "lo": 417.545,
+    "hi": 418.185,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 417.551,
+    "x_bottom": 418.179,
+    "note": "run [0,10) rows 275/275 rmse 0.16"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     53.0,
+     26.0,
+     14.0
+    ],
+    "ref_cols": [
+     418,
+     428
+    ],
+    "sig": [
+     0.031,
+     0.0423,
+     0.0682
+    ],
+    "source": "roll 2/2",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.97,
+      0.99,
+      0.99,
+      0.97,
+      1.0,
+      0.99,
+      1.0,
+      0.99,
+      0.99,
+      0.93,
+      0.03,
+      0.0
+     ],
+     "run": [
+      0,
+      10
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 10.134822757922393,
+      "slope": -0.0022851373107350055,
+      "n_in": 275,
+      "n_ok": 275,
+      "frac_in": 1.0,
+      "rmse": 0.16452624286360237,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "strip3_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.72"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.681,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.47"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     55.0,
+     25.0,
+     14.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0663,
+     0.093,
+     0.1347
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.28,
+      0.28,
+      0.26,
+      0.26,
+      0.24,
+      0.24,
+      0.25,
+      0.25,
+      0.25,
+      0.25,
+      0.25,
+      0.25
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.55,
+      0.51,
+      0.5,
+      0.51,
+      0.49,
+      0.53,
+      0.5,
+      0.55,
+      0.55,
+      0.57,
+      0.56,
+      0.58
+     ]
+    }
+   }
+  },
+  "strip3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.94,
+    "lo": 425.612,
+    "hi": 426.269,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 426.407,
+    "x_bottom": 425.473,
+    "note": "run [0,1) rows 276/276 rmse 0.24"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     55.0,
+     25.0,
+     14.0
+    ],
+    "ref_cols": [
+     427,
+     428
+    ],
+    "sig": [
+     0.0268,
+     0.0421,
+     0.0643
+    ],
+    "source": "roll 1/1",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      1.0,
+      0.6,
+      0.1,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 2.0596871811513395,
+      "slope": 0.003384424387308006,
+      "n_in": 276,
+      "n_ok": 276,
+      "frac_in": 1.0,
+      "rmse": 0.23633546921088214,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "strip3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.95"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.154,
+    "lo": 420.815,
+    "hi": 421.492,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 420.573,
+    "x_bottom": 421.735,
+    "note": "run [0,6) rows 272/274 rmse 0.29"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     54.0,
+     25.0,
+     14.0
+    ],
+    "ref_cols": [
+     422,
+     428
+    ],
+    "sig": [
+     0.0301,
+     0.0424,
+     0.0677
+    ],
+    "source": "roll 1/1",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.04,
+      0.05,
+      0.05,
+      0.04,
+      0.04,
+      0.07,
+      0.06,
+      0.07,
+      0.04,
+      0.03,
+      0.03,
+      0.05
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.99,
+      0.99,
+      0.99,
+      0.98,
+      0.99,
+      0.99,
+      0.5,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      6
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 6.8463374473115355,
+      "slope": -0.00421076795712595,
+      "n_in": 272,
+      "n_ok": 274,
+      "frac_in": 0.9927007299270073,
+      "rmse": 0.28580261765066245,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "r0909_01": {
+   "left": {
+    "state": "edge",
+    "x": 12.55,
+    "lo": 12.17,
+    "hi": 12.93,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 11.075,
+    "x_bottom": 14.025,
+    "note": "run [0,11) rows 193/205 rmse 0.35"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     11
+    ],
+    "sig": [
+     0.0259,
+     0.0374,
+     0.0586
+    ],
+    "source": "roll 2/7",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.94,
+      0.91,
+      0.97,
+      0.98,
+      0.97,
+      0.96,
+      0.96,
+      0.98,
+      0.97,
+      0.98,
+      0.99,
+      0.74
+     ],
+     "run": [
+      0,
+      11
+     ],
+     "at_level": true,
+     "cont_in": 0.163,
+     "fit": {
+      "x": 12.549992168663605,
+      "slope": 0.010726153555056538,
+      "n_in": 193,
+      "n_ok": 205,
+      "frac_in": 0.9414634146341463,
+      "rmse": 0.35369902042153856,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.01,
+      0.0,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01
+     ]
+    }
+   }
+  },
+  "r0909_04": {
+   "left": {
+    "state": "edge",
+    "x": 9.719,
+    "lo": 9.337,
+    "hi": 10.101,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.66,
+    "x_bottom": 10.777,
+    "note": "run [0,9) rows 201/213 rmse 0.38"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.98"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     7
+    ],
+    "sig": [
+     0.0231,
+     0.045,
+     0.058
+    ],
+    "source": "roll 2/7",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.94,
+      0.96,
+      0.94,
+      0.97,
+      0.98,
+      0.98,
+      0.97,
+      0.97,
+      0.87,
+      0.48,
+      0.21,
+      0.17
+     ],
+     "run": [
+      0,
+      9
+     ],
+     "at_level": true,
+     "cont_in": 0.134,
+     "fit": {
+      "x": 9.718801238566048,
+      "slope": 0.007699366530193663,
+      "n_in": 201,
+      "n_ok": 213,
+      "frac_in": 0.9436619718309859,
+      "rmse": 0.38088068985754026,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.02,
+      0.01,
+      0.01,
+      0.01,
+      0.0,
+      0.01,
+      0.0,
+      0.01,
+      0.0,
+      0.01,
+      0.02,
+      0.02
+     ]
+    }
+   }
+  },
+  "r0909_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.60"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.68"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0867,
+     0.134,
+     0.3007
+    ],
+    "source": "roll level only (3 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.4,
+      0.4,
+      0.39,
+      0.4,
+      0.38,
+      0.37,
+      0.37,
+      0.39,
+      0.4,
+      0.41,
+      0.39,
+      0.36
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.5,
+      0.14,
+      0.17,
+      0.12,
+      0.16,
+      0.15,
+      0.16,
+      0.13,
+      0.13,
+      0.11,
+      0.12,
+      0.11
+     ]
+    }
+   }
+  },
+  "r0909_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.96"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.949,
+    "lo": 421.586,
+    "hi": 422.311,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 422.892,
+    "x_bottom": 421.005,
+    "note": "run [0,5) rows 256/263 rmse 0.39"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     423,
+     428
+    ],
+    "sig": [
+     0.0225,
+     0.0353,
+     0.0638
+    ],
+    "source": "roll 2/7",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.04,
+      0.04,
+      0.04,
+      0.04,
+      0.03,
+      0.03,
+      0.02,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.96,
+      0.97,
+      0.96,
+      0.96,
+      0.98,
+      0.6,
+      0.09,
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      5
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 6.051258003411621,
+      "slope": 0.006861786963759009,
+      "n_in": 256,
+      "n_ok": 263,
+      "frac_in": 0.973384030418251,
+      "rmse": 0.3941393000429562,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "r0909_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.98"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.493,
+    "lo": 423.17,
+    "hi": 423.817,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": 424.144,
+    "x_bottom": 422.842,
+    "note": "run [0,4) rows 268/268 rmse 0.19"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": [
+     424,
+     428
+    ],
+    "sig": [
+     0.0293,
+     0.036,
+     0.0569
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.03,
+      0.01,
+      0.0,
+      0.02,
+      0.01,
+      0.01,
+      0.02,
+      0.03,
+      0.03,
+      0.05,
+      0.04,
+      0.03
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.97,
+      0.99,
+      0.98,
+      0.98,
+      0.27,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      4
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 4.506717168482052,
+      "slope": 0.004735546760088788,
+      "n_in": 268,
+      "n_ok": 268,
+      "frac_in": 1.0,
+      "rmse": 0.19156176189193624,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "r0909_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.63"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0853,
+     0.1575,
+     0.3228
+    ],
+    "source": "roll level only (3 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.74,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0909_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.93"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.135,
+    "lo": 425.72,
+    "hi": 426.551,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": 426.553,
+    "x_bottom": 425.718,
+    "note": "run [0,1) rows 200/220 rmse 0.50"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     56.0,
+     26.0,
+     14.0
+    ],
+    "ref_cols": [
+     426,
+     428
+    ],
+    "sig": [
+     0.0449,
+     0.0613,
+     0.0936
+    ],
+    "source": "a border sliver only",
+    "trust": 0.6,
+    "fb": 0.7786956521739131,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.07,
+      0.07,
+      0.06,
+      0.08,
+      0.11,
+      0.08,
+      0.08,
+      0.09,
+      0.08,
+      0.09,
+      0.11,
+      0.1
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.99,
+      0.73,
+      0.16,
+      0.15,
+      0.11,
+      0.15,
+      0.13,
+      0.1,
+      0.12,
+      0.12,
+      0.1,
+      0.08
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.098,
+     "fit": {
+      "x": 1.8645592755224312,
+      "slope": 0.003035019463015057,
+      "n_in": 200,
+      "n_ok": 220,
+      "frac_in": 0.9090909090909091,
+      "rmse": 0.4967865912840449,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "r0909_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.81"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.708,
+    "lo": 426.341,
+    "hi": 427.075,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": 427.064,
+    "x_bottom": 426.351,
+    "note": "run [0,1) rows 221/228 rmse 0.38"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     56.0,
+     25.0,
+     14.0
+    ],
+    "ref_cols": [
+     427,
+     428
+    ],
+    "sig": [
+     0.0289,
+     0.0458,
+     0.0792
+    ],
+    "source": "a border sliver only",
+    "trust": 0.6,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.19,
+      0.17,
+      0.18,
+      0.18,
+      0.18,
+      0.18,
+      0.2,
+      0.19,
+      0.16,
+      0.2,
+      0.21,
+      0.19
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.94,
+      0.12,
+      0.07,
+      0.05,
+      0.07,
+      0.09,
+      0.09,
+      0.07,
+      0.08,
+      0.07,
+      0.09,
+      0.05
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.043,
+     "fit": {
+      "x": 1.292267743324959,
+      "slope": 0.0025921002071810383,
+      "n_in": 221,
+      "n_ok": 228,
+      "frac_in": 0.9692982456140351,
+      "rmse": 0.3839435294262196,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "r0909_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.901,
+    "lo": 422.578,
+    "hi": 423.224,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": 423.133,
+    "x_bottom": 422.669,
+    "note": "run [0,5) rows 263/263 rmse 0.19"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     56.0,
+     26.0,
+     15.0
+    ],
+    "ref_cols": [
+     423,
+     428
+    ],
+    "sig": [
+     0.0266,
+     0.041,
+     0.0707
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.95,
+      0.95,
+      0.97,
+      0.94,
+      0.86,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      5
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 5.098942125458181,
+      "slope": 0.0016883149607023254,
+      "n_in": 263,
+      "n_ok": 263,
+      "frac_in": 1.0,
+      "rmse": 0.18791731307285875,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "r0909_13": {
+   "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate at the border"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 278,
+    "ref": [
+     56.0,
+     26.0,
+     14.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0997,
+     0.1427,
+     0.1786
+    ],
+    "source": "roll level; the frame's brightest area is scene under it",
+    "trust": 0.6,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "stage3_01": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,18) but no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.637,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.84"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     38.0,
+     14.0,
+     5.0
+    ],
+    "ref_cols": [
+     0,
+     21
+    ],
+    "sig": [
+     0.1308,
+     0.1624,
+     0.2314
+    ],
+    "source": "brightest plateau only; ratios 2.71/0.36 off the C-41 base",
+    "trust": 0.6375,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.97,
+      0.97,
+      0.98,
+      0.98,
+      0.97,
+      0.97,
+      0.97,
+      0.97,
+      0.97,
+      0.97,
+      0.96,
+      0.93
+     ],
+     "run": [
+      0,
+      18
+     ],
+     "at_level": true,
+     "cont_in": 0.736,
+     "fit": {
+      "x": 18.65437968229965,
+      "slope": 0.0,
+      "n_in": 14,
+      "n_ok": 17,
+      "frac_in": 0.8235294117647058,
+      "rmse": 0.6489042995131206,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.22,
+      0.08,
+      0.07,
+      0.07,
+      0.07,
+      0.07,
+      0.07,
+      0.07,
+      0.07,
+      0.07,
+      0.07,
+      0.07
+     ]
+    }
+   }
+  },
+  "stage3_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.51,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.136,
+    "lo": 425.746,
+    "hi": 426.526,
+    "conf": 0.51,
+    "outer": null,
+    "x_top": 426.362,
+    "x_bottom": 425.911,
+    "note": "run [0,1) rows 260/270 rmse 0.58"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     57.0,
+     22.0,
+     9.0
+    ],
+    "ref_cols": [
+     427,
+     428
+    ],
+    "sig": [
+     0.0432,
+     0.0503,
+     0.198
+    ],
+    "source": "a border sliver only; ratios 2.59/0.41 off the C-41 base",
+    "trust": 0.51,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.98,
+      0.62,
+      0.13,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 1.863664899882878,
+      "slope": 0.0016387025352193759,
+      "n_in": 260,
+      "n_ok": 270,
+      "frac_in": 0.9629629629629629,
+      "rmse": 0.5764496396609398,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "stage3_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": "none"
+   }
+  },
+  "bw0910_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.302,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level area rejected: frame would be 387 cols"
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.499,
+    "lo": 424.086,
+    "hi": 424.913,
+    "conf": 0.503,
+    "outer": null,
+    "x_top": 423.302,
+    "x_bottom": 425.697,
+    "note": "run [0,3) rows 41/41 rmse 0.36"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     19.0,
+     18.0,
+     21.0
+    ],
+    "ref_cols": [
+     0,
+     40
+    ],
+    "sig": [
+     0.1209,
+     0.1393,
+     0.1456
+    ],
+    "source": "roll 3/5",
+    "trust": 0.7,
+    "fb": 0.7569565217391305,
+    "gb": 0.85,
+    "narrow": "left",
+    "left": {
+     "f_head": [
+      0.83,
+      0.84,
+      0.84,
+      0.8,
+      0.81,
+      0.84,
+      0.81,
+      0.84,
+      0.82,
+      0.83,
+      0.81,
+      0.8
+     ],
+     "run": [
+      0,
+      40
+     ],
+     "at_level": true,
+     "cont_in": 0.75,
+     "fit": {
+      "x": 37.82111428960469,
+      "slope": -0.009064582453992118,
+      "n_in": 20,
+      "n_ok": 20,
+      "frac_in": 1.0,
+      "rmse": 0.4011410926603897,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.87,
+      0.88,
+      0.88,
+      0.74,
+      0.72,
+      0.71,
+      0.71,
+      0.72,
+      0.71,
+      0.7,
+      0.71,
+      0.7
+     ],
+     "run": [
+      0,
+      3
+     ],
+     "at_level": true,
+     "cont_in": 0.714,
+     "fit": {
+      "x": 3.500543251076808,
+      "slope": -0.008710067137017422,
+      "n_in": 41,
+      "n_ok": 41,
+      "frac_in": 1.0,
+      "rmse": 0.3630012963367566,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "bw0910_04": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 62 cols wide from the border"
+   },
+   "right": {
+    "state": "edge",
+    "x": 421.171,
+    "lo": 420.705,
+    "hi": 421.636,
+    "conf": 0.489,
+    "outer": null,
+    "x_top": 420.569,
+    "x_bottom": 421.772,
+    "note": "run [0,7) rows 34/36 rmse 0.40"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     19.0,
+     18.0,
+     21.0
+    ],
+    "ref_cols": [
+     0,
+     36
+    ],
+    "sig": [
+     0.1204,
+     0.1303,
+     0.1391
+    ],
+    "source": "roll 3/5",
+    "trust": 0.7,
+    "fb": 0.7424637681159421,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.8,
+      0.82,
+      0.78,
+      0.8,
+      0.79,
+      0.81,
+      0.81,
+      0.8,
+      0.81,
+      0.83,
+      0.8,
+      0.83
+     ],
+     "run": [
+      0,
+      62
+     ],
+     "at_level": true
+    },
+    "right": {
+     "f_head": [
+      0.86,
+      0.86,
+      0.87,
+      0.86,
+      0.86,
+      0.86,
+      0.79,
+      0.71,
+      0.72,
+      0.72,
+      0.72,
+      0.71
+     ],
+     "run": [
+      0,
+      7
+     ],
+     "at_level": true,
+     "cont_in": 0.725,
+     "fit": {
+      "x": 6.829467347817082,
+      "slope": -0.00437581263061063,
+      "n_in": 34,
+      "n_ok": 36,
+      "frac_in": 0.9444444444444444,
+      "rmse": 0.4013295054587475,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "bw0910_05": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.298,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level area rejected: frame would be 384 cols"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.337,
+    "lo": 425.931,
+    "hi": 426.742,
+    "conf": 0.497,
+    "outer": null,
+    "x_top": 426.086,
+    "x_bottom": 426.587,
+    "note": "run [0,2) rows 38/38 rmse 0.33"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     19.0,
+     18.0,
+     21.0
+    ],
+    "ref_cols": [
+     0,
+     46
+    ],
+    "sig": [
+     0.137,
+     0.1583,
+     0.1756
+    ],
+    "source": "roll 3/5",
+    "trust": 0.7,
+    "fb": 0.7786956521739131,
+    "gb": 0.85,
+    "narrow": "left",
+    "left": {
+     "f_head": [
+      0.82,
+      0.83,
+      0.83,
+      0.86,
+      0.86,
+      0.89,
+      0.84,
+      0.86,
+      0.86,
+      0.86,
+      0.86,
+      0.84
+     ],
+     "run": [
+      0,
+      43
+     ],
+     "at_level": true,
+     "cont_in": 0.754,
+     "fit": {
+      "x": 42.07875950162346,
+      "slope": -0.01750515951223167,
+      "n_in": 20,
+      "n_ok": 20,
+      "frac_in": 1.0,
+      "rmse": 0.39565618953228693,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.88,
+      0.83,
+      0.72,
+      0.72,
+      0.72,
+      0.72,
+      0.72,
+      0.7,
+      0.72,
+      0.7,
+      0.7,
+      0.71
+     ],
+     "run": [
+      0,
+      2
+     ],
+     "at_level": true,
+     "cont_in": 0.721,
+     "fit": {
+      "x": 1.6633704667459004,
+      "slope": -0.0018235357516970092,
+      "n_in": 38,
+      "n_ok": 38,
+      "frac_in": 1.0,
+      "rmse": 0.32603731583857826,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "bw0910_06": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.83"
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.348,
+    "lo": 424.007,
+    "hi": 424.689,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": 423.234,
+    "x_bottom": 425.462,
+    "note": "run [0,3) rows 240/240 rmse 0.31"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     19.0,
+     18.0,
+     21.0
+    ],
+    "ref_cols": [
+     425,
+     428
+    ],
+    "sig": [
+     0.114,
+     0.1533,
+     0.1432
+    ],
+    "source": "roll 3/5",
+    "trust": 0.7,
+    "fb": 0.7823188405797102,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.16,
+      0.17,
+      0.2,
+      0.22,
+      0.25,
+      0.24,
+      0.23,
+      0.22,
+      0.26,
+      0.27,
+      0.25,
+      0.24
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.84,
+      0.86,
+      0.87,
+      0.27,
+      0.08,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      3
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 3.6519370367227015,
+      "slope": -0.008101022295974578,
+      "n_in": 240,
+      "n_ok": 240,
+      "frac_in": 1.0,
+      "rmse": 0.3148657228930501,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "bw0910_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.42,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.85"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.42,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.82"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     19.0,
+     18.0,
+     21.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.1815,
+     0.2027,
+     0.215
+    ],
+    "source": "roll level; the frame's brightest area is scene under it",
+    "trust": 0.42,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.11,
+      0.19,
+      0.19,
+      0.25,
+      0.2,
+      0.24,
+      0.27,
+      0.29,
+      0.29,
+      0.28,
+      0.29,
+      0.3
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.28,
+      0.07,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "bw0910_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.42,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.42,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     19.0,
+     18.0,
+     21.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.1534,
+     0.1775,
+     0.1708
+    ],
+    "source": "roll level; the frame's brightest area is scene under it",
+    "trust": 0.42,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.01,
+      0.01,
+      0.02,
+      0.01,
+      0.02,
+      0.02,
+      0.01,
+      0.02,
+      0.02,
+      0.03,
+      0.03,
+      0.03
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "bw0910_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.088,
+    "lo": 425.751,
+    "hi": 426.425,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": 425.283,
+    "x_bottom": 426.893,
+    "note": "run [0,1) rows 241/241 rmse 0.29"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     4933.5,
+     4699.5,
+     5499.0
+    ],
+    "ref_cols": [
+     427,
+     428
+    ],
+    "sig": [
+     0.1221,
+     0.1316,
+     0.1482
+    ],
+    "source": "roll 1/1",
+    "trust": 0.7,
+    "fb": 0.7931884057971015,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.02,
+      0.04,
+      0.01,
+      0.04,
+      0.02,
+      0.03,
+      0.02,
+      0.01
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.87,
+      0.72,
+      0.12,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 1.9118519269815895,
+      "slope": -0.005854767951439539,
+      "n_in": 241,
+      "n_ok": 241,
+      "frac_in": 1.0,
+      "rmse": 0.28881759594148715,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "bw0910_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.638,
+    "lo": 422.298,
+    "hi": 422.978,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": 421.848,
+    "x_bottom": 423.428,
+    "note": "run [0,5) rows 232/234 rmse 0.27"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     4966.0,
+     4764.0,
+     5419.0
+    ],
+    "ref_cols": [
+     423,
+     428
+    ],
+    "sig": [
+     0.1111,
+     0.1192,
+     0.1403
+    ],
+    "source": "roll 1/1",
+    "trust": 0.7,
+    "fb": 0.7786956521739131,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.01,
+      0.01,
+      0.01,
+      0.02,
+      0.02,
+      0.0,
+      0.03,
+      0.0,
+      0.0,
+      0.01,
+      0.01,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.85,
+      0.85,
+      0.87,
+      0.86,
+      0.87,
+      0.19,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      5
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 5.362003092766302,
+      "slope": -0.005742432760340151,
+      "n_in": 232,
+      "n_ok": 234,
+      "frac_in": 0.9914529914529915,
+      "rmse": 0.2742772807354307,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "r0911_01": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     73.0,
+     34.0,
+     18.0
+    ],
+    "ref_cols": [
+     201,
+     214
+    ],
+    "sig": [
+     0.0253,
+     0.0336,
+     0.0584
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.8261371841155235,
+    "gb": 0.8333574007220217,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_02": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     32.0,
+     17.0
+    ],
+    "ref_cols": [
+     226,
+     230
+    ],
+    "sig": [
+     0.0491,
+     0.061,
+     0.0991
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.7900361010830326,
+    "gb": 0.788231046931408,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_03": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     32.0,
+     18.0
+    ],
+    "ref_cols": [
+     278,
+     282
+    ],
+    "sig": [
+     0.0326,
+     0.036,
+     0.0594
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_04": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,29) but no straight edge"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 74 cols wide from the border"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     205,
+     217
+    ],
+    "sig": [
+     0.0264,
+     0.0358,
+     0.0676
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.8279422382671481,
+    "gb": 0.8333574007220217,
+    "left": {
+     "f_head": [
+      0.64,
+      0.69,
+      0.77,
+      0.69,
+      0.74,
+      0.73,
+      0.8,
+      0.78,
+      0.55,
+      0.75,
+      0.77,
+      0.7
+     ],
+     "run": [
+      0,
+      29
+     ],
+     "at_level": false,
+     "cont_in": 0.747,
+     "fit": null
+    },
+    "right": {
+     "f_head": [
+      0.78,
+      0.59,
+      0.68,
+      0.78,
+      0.69,
+      0.66,
+      0.75,
+      0.65,
+      0.64,
+      0.66,
+      0.79,
+      0.76
+     ],
+     "run": [
+      0,
+      74
+     ],
+     "at_level": true
+    }
+   }
+  },
+  "r0911_05": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,45) but no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.35,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "near-base area 79 cols wide, never at base level"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     29.0,
+     16.0
+    ],
+    "ref_cols": [
+     25,
+     33
+    ],
+    "sig": [
+     0.0259,
+     0.0376,
+     0.0688
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.84,
+      0.88,
+      0.91,
+      0.91,
+      0.92,
+      0.96,
+      0.96,
+      0.94,
+      0.94,
+      0.97,
+      0.96,
+      0.96
+     ],
+     "run": [
+      0,
+      45
+     ],
+     "at_level": true,
+     "cont_in": 0.765,
+     "fit": null
+    },
+    "right": {
+     "f_head": [
+      0.71,
+      0.74,
+      0.66,
+      0.77,
+      0.63,
+      0.56,
+      0.61,
+      0.7,
+      0.62,
+      0.63,
+      0.71,
+      0.65
+     ],
+     "run": [
+      0,
+      79
+     ],
+     "at_level": false
+    }
+   }
+  },
+  "r0911_06": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 135 cols wide from the border"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,19) but no straight edge"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     84,
+     96
+    ],
+    "sig": [
+     0.0268,
+     0.0372,
+     0.0638
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.7,
+      0.79,
+      0.87,
+      0.81,
+      0.84,
+      0.88,
+      0.89,
+      0.9,
+      0.77,
+      0.91,
+      0.9,
+      0.91
+     ],
+     "run": [
+      0,
+      135
+     ],
+     "at_level": true
+    },
+    "right": {
+     "f_head": [
+      0.92,
+      0.92,
+      0.88,
+      0.95,
+      0.91,
+      0.87,
+      0.92,
+      0.91,
+      0.91,
+      0.62,
+      0.57,
+      0.52
+     ],
+     "run": [
+      0,
+      19
+     ],
+     "at_level": true,
+     "cont_in": 0.697,
+     "fit": {
+      "x": 22.492188974330674,
+      "slope": 0.006245025604439797,
+      "n_in": 11,
+      "n_ok": 15,
+      "frac_in": 0.7333333333333333,
+      "rmse": 0.5697225656052888,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "r0911_07": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.79"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 114 cols wide from the border"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     66.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     116,
+     120
+    ],
+    "sig": [
+     0.0315,
+     0.0407,
+     0.0647
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.7810108303249098,
+    "gb": 0.788231046931408,
+    "left": {
+     "f_head": [
+      0.21,
+      0.22,
+      0.23,
+      0.21,
+      0.21,
+      0.23,
+      0.22,
+      0.22,
+      0.22,
+      0.24,
+      0.24,
+      0.25
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.93,
+      0.88,
+      0.78,
+      0.63,
+      0.54,
+      0.53,
+      0.62,
+      0.56,
+      0.48,
+      0.51,
+      0.61,
+      0.56
+     ],
+     "run": [
+      0,
+      114
+     ],
+     "at_level": true
+    }
+   }
+  },
+  "r0911_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.92"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.572,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.32"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0591,
+     0.072,
+     0.1041
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.06,
+      0.09,
+      0.1,
+      0.11,
+      0.21,
+      0.34,
+      0.28,
+      0.17,
+      0.12,
+      0.17,
+      0.14,
+      0.12
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.72,
+      0.65,
+      0.69,
+      0.68,
+      0.66,
+      0.61,
+      0.64,
+      0.64,
+      0.6,
+      0.54,
+      0.64,
+      0.57
+     ]
+    }
+   }
+  },
+  "r0911_09": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.754,
+    "lo": 425.374,
+    "hi": 426.135,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 425.341,
+    "x_bottom": 426.168,
+    "note": "run [0,1) rows 258/264 rmse 0.56"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "ref_cols": [
+     427,
+     428
+    ],
+    "sig": [
+     0.0219,
+     0.0362,
+     0.0632
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.01,
+      0.01,
+      0.01,
+      0.0,
+      0.0,
+      0.01,
+      0.01,
+      0.0,
+      0.01,
+      0.0,
+      0.01
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.97,
+      0.55,
+      0.16,
+      0.03,
+      0.01,
+      0.02,
+      0.02,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.02
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.018,
+     "fit": {
+      "x": 2.2456667224396667,
+      "slope": -0.0029975669273628516,
+      "n_in": 258,
+      "n_ok": 264,
+      "frac_in": 0.9772727272727273,
+      "rmse": 0.5556341179648541,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "r0911_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.229,
+    "lo": 421.883,
+    "hi": 422.574,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 421.852,
+    "x_bottom": 422.605,
+    "note": "run [0,5) rows 270/270 rmse 0.37"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     66.0,
+     29.0,
+     16.0
+    ],
+    "ref_cols": [
+     423,
+     428
+    ],
+    "sig": [
+     0.0226,
+     0.0374,
+     0.0978
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.99,
+      0.97,
+      0.98,
+      0.99,
+      0.98,
+      0.22,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      5
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 5.771411161071512,
+      "slope": -0.0027304958398865846,
+      "n_in": 270,
+      "n_ok": 270,
+      "frac_in": 1.0,
+      "rmse": 0.3723040677069231,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "r0911_11": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.90"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.81"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0652,
+     0.0927,
+     0.104
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.09,
+      0.12,
+      0.12,
+      0.15,
+      0.14,
+      0.12,
+      0.15,
+      0.12,
+      0.13,
+      0.13,
+      0.15,
+      0.11
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.21,
+      0.18,
+      0.12,
+      0.16,
+      0.17,
+      0.13,
+      0.16,
+      0.1,
+      0.13,
+      0.09,
+      0.11,
+      0.07
+     ]
+    }
+   }
+  },
+  "r0911_12": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,33) but no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.98"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     63.0,
+     28.0,
+     15.0
+    ],
+    "ref_cols": [
+     8,
+     11
+    ],
+    "sig": [
+     0.0337,
+     0.0396,
+     0.0616
+    ],
+    "source": "roll 2/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.9,
+      0.89,
+      0.93,
+      0.95,
+      0.96,
+      0.96,
+      0.96,
+      0.97,
+      0.95,
+      0.96,
+      0.98,
+      0.94
+     ],
+     "run": [
+      0,
+      33
+     ],
+     "at_level": true,
+     "cont_in": 0.704,
+     "fit": null
+    },
+    "right": {
+     "f_head": [
+      0.03,
+      0.01,
+      0.0,
+      0.0,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.02,
+      0.01,
+      0.03
+     ]
+    }
+   }
+  },
+  "r0911_13": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 56 cols wide from the border"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.94"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     62.0,
+     29.0,
+     15.0
+    ],
+    "ref_cols": [
+     0,
+     25
+    ],
+    "sig": [
+     0.0375,
+     0.039,
+     0.0667
+    ],
+    "source": "roll 2/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.87,
+      0.89,
+      0.94,
+      0.97,
+      0.96,
+      0.96,
+      0.97,
+      0.97,
+      0.96,
+      0.97,
+      0.98,
+      0.98
+     ],
+     "run": [
+      0,
+      56
+     ],
+     "at_level": true
+    },
+    "right": {
+     "f_head": [
+      0.06,
+      0.05,
+      0.04,
+      0.04,
+      0.04,
+      0.06,
+      0.08,
+      0.07,
+      0.03,
+      0.05,
+      0.1,
+      0.07
+     ]
+    }
+   }
+  },
+  "r0911_14": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.92"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0722,
+     0.0915,
+     0.0818
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.15,
+      0.02,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0697,
+     0.091,
+     0.0857
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_16": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.94"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0796,
+     0.1139,
+     0.1256
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.12,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_17": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 413.234,
+    "lo": 412.875,
+    "hi": 413.594,
+    "conf": 0.56,
+    "outer": 418.918,
+    "x_top": 411.798,
+    "x_bottom": 414.671,
+    "note": "run [11,14) rows 262/265 rmse 0.44"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0461,
+     0.0588,
+     0.064
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.07,
+      0.04,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.07,
+      0.74,
+      0.88
+     ],
+     "run": [
+      11,
+      14
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 14.765515215277528,
+      "slope": -0.010406548858124092,
+      "n_in": 262,
+      "n_ok": 265,
+      "frac_in": 0.9886792452830189,
+      "rmse": 0.43524091770739864,
+      "yc": 138.0
+     },
+     "cont_out": 0.0,
+     "outer_fit": {
+      "x": 418.91820712274523,
+      "slope": 0.007271565713084011,
+      "n_in": 265,
+      "n_ok": 266,
+      "frac_in": 0.9962406015037594,
+      "rmse": 0.4980297769985892,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "r0911_18": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.063,
+     0.1154,
+     0.2205
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.02,
+      0.0,
+      0.0,
+      0.03,
+      0.04,
+      0.06,
+      0.04,
+      0.05,
+      0.05,
+      0.04,
+      0.05,
+      0.07
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.016,
+    "lo": 422.649,
+    "hi": 423.383,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 422.7,
+    "x_bottom": 423.332,
+    "note": "run [0,3) rows 259/269 rmse 0.39"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     425,
+     428
+    ],
+    "sig": [
+     0.0293,
+     0.0369,
+     0.0629
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.95,
+      0.97,
+      0.95,
+      0.42,
+      0.02,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      3
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 4.983965874057662,
+      "slope": -0.0022884007422673157,
+      "n_in": 259,
+      "n_ok": 269,
+      "frac_in": 0.9628252788104089,
+      "rmse": 0.39026386724145246,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "r0911_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.83"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0798,
+     0.1243,
+     0.1904
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.03,
+      0.0,
+      0.01,
+      0.01,
+      0.0,
+      0.01,
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.0,
+      0.01
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.34,
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.0,
+      0.0,
+      0.01,
+      0.01,
+      0.01,
+      0.01,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_21": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [35,70) but no straight edge"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,5) but no straight edge"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     65.0,
+     29.0,
+     16.0
+    ],
+    "ref_cols": [
+     51,
+     54
+    ],
+    "sig": [
+     0.032,
+     0.0556,
+     0.0681
+    ],
+    "source": "roll 7/17",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.71,
+      0.75,
+      0.75,
+      0.75,
+      0.74,
+      0.73,
+      0.75,
+      0.72,
+      0.73,
+      0.74,
+      0.76,
+      0.71
+     ],
+     "run": [
+      35,
+      70
+     ],
+     "at_level": true,
+     "cont_in": 0.744,
+     "fit": {
+      "x": 70.48883301287185,
+      "slope": -0.014389310066965576,
+      "n_in": 17,
+      "n_ok": 24,
+      "frac_in": 0.7083333333333334,
+      "rmse": 0.795335985125492,
+      "yc": 138.0
+     }
+    },
+    "right": {
+     "f_head": [
+      0.74,
+      0.71,
+      0.72,
+      0.69,
+      0.65,
+      0.69,
+      0.66,
+      0.66,
+      0.65,
+      0.64,
+      0.65,
+      0.66
+     ],
+     "run": [
+      0,
+      5
+     ],
+     "at_level": false,
+     "cont_in": 0.646,
+     "fit": {
+      "x": 3.6305091807343204,
+      "slope": 0.001518661001127918,
+      "n_in": 16,
+      "n_ok": 26,
+      "frac_in": 0.6153846153846154,
+      "rmse": 0.6399786574541069,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "r0911_22": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 167 cols wide from the border"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 232 cols wide from the border"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": [
+     209,
+     212
+    ],
+    "sig": [
+     0.0294,
+     0.045,
+     0.0705
+    ],
+    "source": "second plateau in frame",
+    "trust": 0.9,
+    "fb": 0.7683754512635379,
+    "gb": 0.7828158844765344,
+    "left": {
+     "f_head": [
+      0.83,
+      0.85,
+      0.85,
+      0.83,
+      0.92,
+      0.9,
+      0.89,
+      0.9,
+      0.83,
+      0.91,
+      0.94,
+      0.92
+     ],
+     "run": [
+      0,
+      167
+     ],
+     "at_level": true
+    },
+    "right": {
+     "f_head": [
+      0.85,
+      0.8,
+      0.82,
+      0.86,
+      0.83,
+      0.86,
+      0.87,
+      0.78,
+      0.91,
+      0.89,
+      0.88,
+      0.89
+     ],
+     "run": [
+      0,
+      232
+     ],
+     "at_level": true
+    }
+   }
+  },
+  "r0911_23": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,4) but no straight edge"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 103 cols wide from the border"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": [
+     269,
+     276
+    ],
+    "sig": [
+     0.0326,
+     0.0386,
+     0.065
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.8333574007220217,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.6,
+      0.64,
+      0.67,
+      0.67,
+      0.65,
+      0.68,
+      0.65,
+      0.68,
+      0.64,
+      0.73,
+      0.72,
+      0.72
+     ],
+     "run": [
+      0,
+      4
+     ],
+     "at_level": false,
+     "cont_in": 0.603,
+     "fit": {
+      "x": 4.258864186006489,
+      "slope": 0.003693977106192783,
+      "n_in": 7,
+      "n_ok": 17,
+      "frac_in": 0.4117647058823529,
+      "rmse": 0.5318837516467758,
+      "yc": 138.0
+     }
+    },
+    "right": {
+     "f_head": [
+      0.92,
+      0.87,
+      0.88,
+      0.94,
+      0.88,
+      0.86,
+      0.92,
+      0.86,
+      0.91,
+      0.93,
+      0.95,
+      0.95
+     ],
+     "run": [
+      0,
+      103
+     ],
+     "at_level": true
+    }
+   }
+  },
+  "r0911_24": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,22) but no straight edge"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     65.0,
+     28.0,
+     15.0
+    ],
+    "ref_cols": [
+     3,
+     6
+    ],
+    "sig": [
+     0.0535,
+     0.0792,
+     0.0725
+    ],
+    "source": "roll 2/17",
+    "trust": 1.0,
+    "fb": 0.7467148014440433,
+    "gb": 0.7900361010830326,
+    "left": {
+     "f_head": [
+      0.77,
+      0.79,
+      0.79,
+      0.83,
+      0.84,
+      0.8,
+      0.76,
+      0.75,
+      0.78,
+      0.77,
+      0.78,
+      0.78
+     ],
+     "run": [
+      0,
+      22
+     ],
+     "at_level": true,
+     "cont_in": 0.693,
+     "fit": {
+      "x": 23.621707622246472,
+      "slope": 0.004279030420513066,
+      "n_in": 7,
+      "n_ok": 24,
+      "frac_in": 0.2916666666666667,
+      "rmse": 0.6242564832415157,
+      "yc": 138.0
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     75.0,
+     34.0,
+     19.0
+    ],
+    "ref_cols": [
+     205,
+     208
+    ],
+    "sig": [
+     0.0257,
+     0.0433,
+     0.0581
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.8297472924187727,
+    "gb": 0.8333574007220217,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_26": {
+   "left": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 156 cols wide from the border"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level run 67 cols wide from the border"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     47.0,
+     21.0,
+     13.0
+    ],
+    "ref_cols": [
+     41,
+     47
+    ],
+    "sig": [
+     0.1313,
+     0.1517,
+     0.1174
+    ],
+    "source": "second plateau in frame",
+    "trust": 0.9,
+    "fb": 0.85,
+    "gb": 0.7954512635379062,
+    "left": {
+     "f_head": [
+      0.88,
+      0.95,
+      0.95,
+      0.96,
+      0.97,
+      0.97,
+      0.96,
+      0.97,
+      0.97,
+      0.98,
+      0.98,
+      0.98
+     ],
+     "run": [
+      0,
+      156
+     ],
+     "at_level": true
+    },
+    "right": {
+     "f_head": [
+      0.99,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.99,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ],
+     "run": [
+      0,
+      67
+     ],
+     "at_level": true
+    }
+   }
+  },
+  "r0911_27": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0778,
+     0.1101,
+     0.1242
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.061,
+     0.105,
+     0.1927
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0911_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.73"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     17.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0721,
+     0.1189,
+     0.2265
+    ],
+    "source": "roll level only (2 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.53,
+      0.01,
+      0.54,
+      0.53,
+      0.53,
+      0.54,
+      0.54,
+      0.54,
+      0.54,
+      0.54,
+      0.54,
+      0.54
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.01,
+      0.02,
+      0.01,
+      0.16,
+      0.5,
+      0.66,
+      0.73,
+      0.76,
+      0.64,
+      0.52,
+      0.51
+     ]
+    }
+   }
+  },
+  "r0914_01": {
+   "left": {
+    "state": "edge",
+    "x": 15.357,
+    "lo": 15.04,
+    "hi": 15.674,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": 14.922,
+    "x_bottom": 15.791,
+    "note": "run [0,15) rows 267/267 rmse 0.14"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     66.0,
+     30.0,
+     15.0
+    ],
+    "ref_cols": [
+     0,
+     15
+    ],
+    "sig": [
+     0.0265,
+     0.0401,
+     0.0672
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.87,
+      0.92,
+      0.89,
+      0.93,
+      0.96,
+      0.95,
+      0.91,
+      0.95,
+      0.95,
+      0.97,
+      0.98,
+      0.97
+     ],
+     "run": [
+      0,
+      15
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 15.35679170956706,
+      "slope": 0.003158900210077411,
+      "n_in": 267,
+      "n_ok": 267,
+      "frac_in": 1.0,
+      "rmse": 0.13967752905195535,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_05": {
+   "left": {
+    "state": "edge",
+    "x": 9.217,
+    "lo": 8.894,
+    "hi": 9.539,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.762,
+    "x_bottom": 9.671,
+    "note": "run [0,8) rows 261/263 rmse 0.15"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     8
+    ],
+    "sig": [
+     0.0237,
+     0.0457,
+     0.103
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.9,
+      0.93,
+      0.95,
+      0.95,
+      0.95,
+      0.97,
+      0.96,
+      0.95,
+      0.71,
+      0.02,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      8
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 9.216627000112918,
+      "slope": 0.0033050518292525046,
+      "n_in": 261,
+      "n_ok": 263,
+      "frac_in": 0.9923954372623575,
+      "rmse": 0.15267047282902596,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_06": {
+   "left": {
+    "state": "edge",
+    "x": 8.29,
+    "lo": 7.969,
+    "hi": 8.611,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.098,
+    "x_bottom": 8.482,
+    "note": "run [0,8) rows 250/251 rmse 0.15"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     8
+    ],
+    "sig": [
+     0.0272,
+     0.0433,
+     0.0824
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.8402898550724639,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.86,
+      0.88,
+      0.9,
+      0.94,
+      0.91,
+      0.93,
+      0.94,
+      0.94,
+      0.01,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      8
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 8.289939757057867,
+      "slope": 0.0013945940805099053,
+      "n_in": 250,
+      "n_ok": 251,
+      "frac_in": 0.9960159362549801,
+      "rmse": 0.14680435426459015,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_07": {
+   "left": {
+    "state": "edge",
+    "x": 4.34,
+    "lo": 4.007,
+    "hi": 4.674,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.942,
+    "x_bottom": 4.739,
+    "note": "run [0,4) rows 242/249 rmse 0.15"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     4
+    ],
+    "sig": [
+     0.0268,
+     0.0526,
+     0.1013
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.8402898550724639,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.91,
+      0.89,
+      0.93,
+      0.96,
+      0.04,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      4
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 4.340461858283761,
+      "slope": 0.002895980022581814,
+      "n_in": 242,
+      "n_ok": 249,
+      "frac_in": 0.9718875502008032,
+      "rmse": 0.15347138530811963,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_08": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.90"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.93"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0486,
+     0.0772,
+     0.0655
+    ],
+    "source": "roll level only (19 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.2,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.08,
+      0.07,
+      0.01,
+      0.01,
+      0.03,
+      0.03,
+      0.01,
+      0.02,
+      0.02,
+      0.04,
+      0.01,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_09": {
+   "left": {
+    "state": "edge",
+    "x": 8.331,
+    "lo": 8.007,
+    "hi": 8.654,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 7.856,
+    "x_bottom": 8.806,
+    "note": "run [0,8) rows 265/266 rmse 0.18"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     3
+    ],
+    "sig": [
+     0.0254,
+     0.0548,
+     0.1021
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.8257971014492754,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.91,
+      0.89,
+      0.93,
+      0.95,
+      0.96,
+      0.96,
+      0.97,
+      0.83,
+      0.06,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      8
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 8.33078734964922,
+      "slope": 0.003454310035549768,
+      "n_in": 265,
+      "n_ok": 266,
+      "frac_in": 0.9962406015037594,
+      "rmse": 0.17515120206404958,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_10": {
+   "left": {
+    "state": "edge",
+    "x": 6.039,
+    "lo": 5.699,
+    "hi": 6.378,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 5.535,
+    "x_bottom": 6.543,
+    "note": "run [0,6) rows 249/253 rmse 0.25"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.66"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     6
+    ],
+    "sig": [
+     0.0255,
+     0.049,
+     0.108
+    ],
+    "source": "roll 17/22",
+    "trust": 1.0,
+    "fb": 0.831231884057971,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.9,
+      0.91,
+      0.92,
+      0.95,
+      0.96,
+      0.75,
+      0.04,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      6
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 6.038759578422155,
+      "slope": 0.003665865740984957,
+      "n_in": 249,
+      "n_ok": 253,
+      "frac_in": 0.9841897233201581,
+      "rmse": 0.24967367018577374,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.35,
+      0.34,
+      0.34,
+      0.34,
+      0.34,
+      0.36,
+      0.34,
+      0.35,
+      0.31,
+      0.34,
+      0.34,
+      0.33
+     ]
+    }
+   }
+  },
+  "r0914_11": {
+   "left": {
+    "state": "edge",
+    "x": 7.522,
+    "lo": 7.189,
+    "hi": 7.855,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 7.22,
+    "x_bottom": 7.824,
+    "note": "run [0,7) rows 258/261 rmse 0.22"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.72"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     29.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     7
+    ],
+    "sig": [
+     0.0256,
+     0.0458,
+     0.0978
+    ],
+    "source": "roll 17/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.89,
+      0.91,
+      0.91,
+      0.95,
+      0.95,
+      0.95,
+      0.96,
+      0.08,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      7
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 7.521907735844229,
+      "slope": 0.002198814165012624,
+      "n_in": 258,
+      "n_ok": 261,
+      "frac_in": 0.9885057471264368,
+      "rmse": 0.221426126149426,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.29,
+      0.28,
+      0.29,
+      0.29,
+      0.29,
+      0.3,
+      0.29,
+      0.24,
+      0.22,
+      0.24,
+      0.23,
+      0.22
+     ]
+    }
+   }
+  },
+  "r0914_12": {
+   "left": {
+    "state": "edge",
+    "x": 12.55,
+    "lo": 12.232,
+    "hi": 12.868,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 12.139,
+    "x_bottom": 12.96,
+    "note": "run [0,12) rows 268/268 rmse 0.15"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     12
+    ],
+    "sig": [
+     0.0262,
+     0.0384,
+     0.0832
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.89,
+      0.91,
+      0.92,
+      0.95,
+      0.95,
+      0.96,
+      0.97,
+      0.95,
+      0.97,
+      0.97,
+      0.97,
+      0.98
+     ],
+     "run": [
+      0,
+      12
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 12.549910983344619,
+      "slope": 0.002985204441134827,
+      "n_in": 268,
+      "n_ok": 268,
+      "frac_in": 1.0,
+      "rmse": 0.14662408821459635,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_13": {
+   "left": {
+    "state": "edge",
+    "x": 9.383,
+    "lo": 9.058,
+    "hi": 9.708,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 8.816,
+    "x_bottom": 9.95,
+    "note": "run [0,8) rows 261/264 rmse 0.15"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     8
+    ],
+    "sig": [
+     0.0244,
+     0.0469,
+     0.0599
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.91,
+      0.91,
+      0.95,
+      0.95,
+      0.96,
+      0.97,
+      0.95,
+      0.95,
+      0.7,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      8
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 9.382961276528698,
+      "slope": 0.004123288667368141,
+      "n_in": 261,
+      "n_ok": 264,
+      "frac_in": 0.9886363636363636,
+      "rmse": 0.1528211081644579,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_14": {
+   "left": {
+    "state": "edge",
+    "x": 7.123,
+    "lo": 6.774,
+    "hi": 7.472,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 6.475,
+    "x_bottom": 7.771,
+    "note": "run [0,7) rows 186/189 rmse 0.28"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.81"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     7
+    ],
+    "sig": [
+     0.0267,
+     0.0507,
+     0.1063
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.91,
+      0.91,
+      0.95,
+      0.95,
+      0.97,
+      0.96,
+      0.97,
+      0.11,
+      0.11,
+      0.09,
+      0.23,
+      0.42
+     ],
+     "run": [
+      0,
+      7
+     ],
+     "at_level": true,
+     "cont_in": 0.101,
+     "fit": {
+      "x": 7.123268569611832,
+      "slope": 0.004711435341398671,
+      "n_in": 186,
+      "n_ok": 189,
+      "frac_in": 0.9841269841269841,
+      "rmse": 0.2794894534953981,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.23,
+      0.11,
+      0.14,
+      0.17,
+      0.12,
+      0.09,
+      0.12,
+      0.09,
+      0.08,
+      0.08,
+      0.09,
+      0.09
+     ]
+    }
+   }
+  },
+  "r0914_15": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.67"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.94"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0677,
+     0.1016,
+     0.2117
+    ],
+    "source": "roll level only (19 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.17,
+      0.49,
+      0.54,
+      0.53,
+      0.54,
+      0.54,
+      0.53,
+      0.52,
+      0.54,
+      0.54,
+      0.54,
+      0.54
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.06,
+      0.06,
+      0.17,
+      0.47,
+      0.75,
+      0.78,
+      0.79,
+      0.75,
+      0.63,
+      0.63,
+      0.6,
+      0.58
+     ]
+    }
+   }
+  },
+  "r0914_16": {
+   "left": {
+    "state": "edge",
+    "x": 10.507,
+    "lo": 10.174,
+    "hi": 10.84,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 9.806,
+    "x_bottom": 11.209,
+    "note": "run [0,9) rows 259/261 rmse 0.23"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     3,
+     7
+    ],
+    "sig": [
+     0.0245,
+     0.0509,
+     0.0768
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.87,
+      0.9,
+      0.94,
+      0.95,
+      0.96,
+      0.96,
+      0.96,
+      0.95,
+      0.95,
+      0.72,
+      0.08,
+      0.0
+     ],
+     "run": [
+      0,
+      9
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 10.507271943806314,
+      "slope": 0.005102862688813856,
+      "n_in": 259,
+      "n_ok": 261,
+      "frac_in": 0.9923371647509579,
+      "rmse": 0.23462108975613832,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_17": {
+   "left": {
+    "state": "edge",
+    "x": 9.58,
+    "lo": 9.242,
+    "hi": 9.918,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 9.0,
+    "x_bottom": 10.159,
+    "note": "run [0,9) rows 193/196 rmse 0.21"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level line [49,60) is scene: rows run on 0.13/0.10"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     9
+    ],
+    "sig": [
+     0.0259,
+     0.0466,
+     0.0696
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.87,
+      0.91,
+      0.92,
+      0.97,
+      0.94,
+      0.96,
+      0.94,
+      0.96,
+      0.95,
+      0.5,
+      0.18,
+      0.18
+     ],
+     "run": [
+      0,
+      9
+     ],
+     "at_level": true,
+     "cont_in": 0.145,
+     "fit": {
+      "x": 9.579703592836367,
+      "slope": 0.004215790894924854,
+      "n_in": 193,
+      "n_ok": 196,
+      "frac_in": 0.9846938775510204,
+      "rmse": 0.21131166074432725,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.13,
+      0.14,
+      0.13,
+      0.15,
+      0.14,
+      0.15,
+      0.13,
+      0.13,
+      0.13,
+      0.14,
+      0.14,
+      0.14
+     ],
+     "run": [
+      49,
+      60
+     ],
+     "at_level": true,
+     "cont_in": 0.13,
+     "fit": {
+      "x": 62.00362677651758,
+      "slope": -0.01467008278596961,
+      "n_in": 189,
+      "n_ok": 221,
+      "frac_in": 0.8552036199095022,
+      "rmse": 0.5386268925952876,
+      "yc": 137.5
+     },
+     "cont_out": 0.098,
+     "outer_fit": {
+      "x": 381.08197803072125,
+      "slope": 0.001433892477916787,
+      "n_in": 191,
+      "n_ok": 223,
+      "frac_in": 0.8565022421524664,
+      "rmse": 0.6546817879365735,
+      "yc": 137.5
+     }
+    }
+   }
+  },
+  "r0914_18": {
+   "left": {
+    "state": "edge",
+    "x": 5.413,
+    "lo": 5.001,
+    "hi": 5.824,
+    "conf": 0.678,
+    "outer": null,
+    "x_top": 4.47,
+    "x_bottom": 6.355,
+    "note": "run [0,5) rows 127/133 rmse 0.50"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.95"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "ref_cols": [
+     190,
+     199
+    ],
+    "sig": [
+     0.0277,
+     0.0359,
+     0.0591
+    ],
+    "source": "roll 18/22",
+    "trust": 1.0,
+    "fb": 0.8439130434782609,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.74,
+      0.78,
+      0.83,
+      0.83,
+      0.71,
+      0.46,
+      0.35,
+      0.27,
+      0.39,
+      0.34,
+      0.38,
+      0.4
+     ],
+     "run": [
+      0,
+      5
+     ],
+     "at_level": false,
+     "cont_in": 0.341,
+     "fit": {
+      "x": 5.412722745593792,
+      "slope": 0.006854610292265937,
+      "n_in": 127,
+      "n_ok": 133,
+      "frac_in": 0.9548872180451128,
+      "rmse": 0.5024489530209194,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.06,
+      0.05,
+      0.02,
+      0.04,
+      0.06,
+      0.05,
+      0.03,
+      0.05,
+      0.04,
+      0.05,
+      0.04,
+      0.05
+     ]
+    }
+   }
+  },
+  "r0914_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.976,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.48"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,1) but no straight edge"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     248,
+     260
+    ],
+    "sig": [
+     0.0277,
+     0.0362,
+     0.0624
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.8493478260869566,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.5,
+      0.54,
+      0.55,
+      0.58,
+      0.55,
+      0.53,
+      0.53,
+      0.49,
+      0.48,
+      0.41,
+      0.39,
+      0.42
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.11,
+      0.15,
+      0.11,
+      0.12,
+      0.12,
+      0.2,
+      0.13,
+      0.14,
+      0.13,
+      0.12,
+      0.2,
+      0.15
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": false,
+     "cont_in": 0.797,
+     "fit": null
+    }
+   }
+  },
+  "r0914_20": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.95"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     31.0,
+     16.0
+    ],
+    "ref_cols": [
+     328,
+     342
+    ],
+    "sig": [
+     0.0258,
+     0.0362,
+     0.0613
+    ],
+    "source": "roll 18/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.07,
+      0.04,
+      0.08,
+      0.06,
+      0.07,
+      0.13,
+      0.12,
+      0.06,
+      0.11,
+      0.07,
+      0.07,
+      0.1
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_21": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate at the border"
+   },
+   "debug": {
+    "gate_cols": 97,
+    "ref": [
+     69.0,
+     31.0,
+     17.0
+    ],
+    "ref_cols": [
+     326,
+     329
+    ],
+    "sig": [
+     0.0267,
+     0.0354,
+     0.0653
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.7968115942028986,
+    "gb": 0.847536231884058,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_23": {
+   "left": {
+    "state": "edge",
+    "x": 18.265,
+    "lo": 17.941,
+    "hi": 18.588,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 17.948,
+    "x_bottom": 18.581,
+    "note": "run [0,18) rows 268/268 rmse 0.19"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     7,
+     18
+    ],
+    "sig": [
+     0.0265,
+     0.0376,
+     0.0622
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.82,
+      0.88,
+      0.87,
+      0.93,
+      0.93,
+      0.93,
+      0.91,
+      0.92,
+      0.92,
+      0.95,
+      0.95,
+      0.96
+     ],
+     "run": [
+      0,
+      18
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 18.2646941072435,
+      "slope": 0.002301904053405244,
+      "n_in": 268,
+      "n_ok": 268,
+      "frac_in": 1.0,
+      "rmse": 0.1912182491553854,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_24": {
+   "left": {
+    "state": "edge",
+    "x": 15.737,
+    "lo": 15.418,
+    "hi": 16.056,
+    "conf": 0.8,
+    "outer": 2.0,
+    "x_top": 15.155,
+    "x_bottom": 16.319,
+    "note": "run [2,15) rows 265/267 rmse 0.12"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     69.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     2,
+     7
+    ],
+    "sig": [
+     0.028,
+     0.0486,
+     0.0557
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.01,
+      0.53,
+      0.96,
+      0.97,
+      0.97,
+      0.97,
+      0.97,
+      0.96,
+      0.96,
+      0.96,
+      0.98,
+      0.97
+     ],
+     "run": [
+      2,
+      15
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 15.73707205586058,
+      "slope": 0.004231880677352914,
+      "n_in": 265,
+      "n_ok": 267,
+      "frac_in": 0.9925093632958801,
+      "rmse": 0.1217710332965124,
+      "yc": 137.5
+     },
+     "cont_out": 0.0,
+     "outer_fit": null
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_25": {
+   "left": {
+    "state": "edge",
+    "x": 13.076,
+    "lo": 12.736,
+    "hi": 13.416,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 12.502,
+    "x_bottom": 13.65,
+    "note": "run [0,13) rows 209/211 rmse 0.26"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.93"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     13
+    ],
+    "sig": [
+     0.0265,
+     0.0376,
+     0.0638
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.87,
+      0.91,
+      0.9,
+      0.94,
+      0.94,
+      0.97,
+      0.96,
+      0.96,
+      0.97,
+      0.97,
+      0.97,
+      0.96
+     ],
+     "run": [
+      0,
+      13
+     ],
+     "at_level": true,
+     "cont_in": 0.058,
+     "fit": {
+      "x": 13.07603152585919,
+      "slope": 0.004175361510319722,
+      "n_in": 209,
+      "n_ok": 211,
+      "frac_in": 0.990521327014218,
+      "rmse": 0.2562020756202231,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.05,
+      0.07,
+      0.03,
+      0.03,
+      0.04,
+      0.06,
+      0.04,
+      0.05,
+      0.04,
+      0.14,
+      0.15,
+      0.15
+     ]
+    }
+   }
+  },
+  "r0914_27": {
+   "left": {
+    "state": "edge",
+    "x": 4.023,
+    "lo": 3.662,
+    "hi": 4.383,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.363,
+    "x_bottom": 4.682,
+    "note": "run [0,4) rows 155/156 rmse 0.36"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.55"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     4
+    ],
+    "sig": [
+     0.0293,
+     0.0556,
+     0.063
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.9,
+      0.93,
+      0.96,
+      0.96,
+      0.18,
+      0.11,
+      0.08,
+      0.34,
+      0.47,
+      0.47,
+      0.51,
+      0.27
+     ],
+     "run": [
+      0,
+      4
+     ],
+     "at_level": true,
+     "cont_in": 0.091,
+     "fit": {
+      "x": 4.022728622229273,
+      "slope": 0.004794504808579379,
+      "n_in": 155,
+      "n_ok": 156,
+      "frac_in": 0.9935897435897436,
+      "rmse": 0.3573363205741625,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.46,
+      0.36,
+      0.19,
+      0.22,
+      0.25,
+      0.25,
+      0.21,
+      0.18,
+      0.17,
+      0.18,
+      0.14,
+      0.15
+     ]
+    }
+   }
+  },
+  "r0914_28": {
+   "left": {
+    "state": "edge",
+    "x": 16.249,
+    "lo": 15.919,
+    "hi": 16.579,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 15.53,
+    "x_bottom": 16.967,
+    "note": "run [0,15) rows 269/269 rmse 0.25"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     68.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     15
+    ],
+    "sig": [
+     0.0273,
+     0.0372,
+     0.0626
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.84,
+      0.86,
+      0.92,
+      0.92,
+      0.93,
+      0.94,
+      0.95,
+      0.93,
+      0.96,
+      0.96,
+      0.95,
+      0.97
+     ],
+     "run": [
+      0,
+      15
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 16.248868872852537,
+      "slope": 0.00522483568557554,
+      "n_in": 269,
+      "n_ok": 269,
+      "frac_in": 1.0,
+      "rmse": 0.24682220466575377,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_29": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": "none"
+   }
+  },
+  "r0914_31": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.55,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no flat full-height area"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": "none"
+   }
+  },
+  "r0914_33": {
+   "left": {
+    "state": "edge",
+    "x": 4.281,
+    "lo": 3.952,
+    "hi": 4.61,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 3.982,
+    "x_bottom": 4.58,
+    "note": "run [0,4) rows 248/251 rmse 0.18"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     67.0,
+     30.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     4
+    ],
+    "sig": [
+     0.0292,
+     0.04,
+     0.0609
+    ],
+    "source": "roll 20/22",
+    "trust": 1.0,
+    "fb": 0.827608695652174,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.91,
+      0.91,
+      0.95,
+      0.89,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      4
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 4.281122501366945,
+      "slope": 0.002173003253583296,
+      "n_in": 248,
+      "n_ok": 251,
+      "frac_in": 0.9880478087649402,
+      "rmse": 0.18010514507041078,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "r0914_34": {
+   "left": {
+    "state": "edge",
+    "x": 1.603,
+    "lo": 1.282,
+    "hi": 1.924,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 1.088,
+    "x_bottom": 2.118,
+    "note": "run [0,1) rows 256/256 rmse 0.17"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     70.0,
+     31.0,
+     16.0
+    ],
+    "ref_cols": [
+     0,
+     1
+    ],
+    "sig": [
+     0.0321,
+     0.0364,
+     0.0627
+    ],
+    "source": "roll 18/22",
+    "trust": 1.0,
+    "fb": 0.847536231884058,
+    "gb": 0.8402898550724638,
+    "left": {
+     "f_head": [
+      0.93,
+      0.11,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 1.6027817460984726,
+      "slope": 0.0037458080116948823,
+      "n_in": 256,
+      "n_ok": 256,
+      "frac_in": 1.0,
+      "rmse": 0.17006073151877027,
+      "yc": 137.5
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_10": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.70"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.79"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0503,
+     0.0722,
+     0.1006
+    ],
+    "source": "roll level only (4 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.59,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.2,
+      0.21,
+      0.22,
+      0.19,
+      0.21,
+      0.21,
+      0.2,
+      0.2,
+      0.21,
+      0.22,
+      0.22,
+      0.22
+     ]
+    }
+   }
+  },
+  "x0920_19": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0472,
+     0.069,
+     0.1061
+    ],
+    "source": "roll level only (4 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_22": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0724,
+     0.1095,
+     0.1764
+    ],
+    "source": "roll level only (4 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_25": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0598,
+     0.0999,
+     0.1781
+    ],
+    "source": "roll level only (4 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.01,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_28": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.125,
+    "lo": 424.764,
+    "hi": 425.486,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 424.594,
+    "x_bottom": 425.657,
+    "note": "run [0,2) rows 241/245 rmse 0.41"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16483.0,
+     7645.0,
+     4127.5
+    ],
+    "ref_cols": [
+     426,
+     428
+    ],
+    "sig": [
+     0.0237,
+     0.0321,
+     0.0489
+    ],
+    "source": "roll 4/7",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.96,
+      0.96,
+      0.69,
+      0.03,
+      0.03,
+      0.01,
+      0.01,
+      0.01,
+      0.0,
+      0.01,
+      0.01,
+      0.01
+     ],
+     "run": [
+      0,
+      2
+     ],
+     "at_level": true,
+     "cont_in": 0.004,
+     "fit": {
+      "x": 2.8746056496445127,
+      "slope": -0.003850375473136521,
+      "n_in": 241,
+      "n_ok": 245,
+      "frac_in": 0.9836734693877551,
+      "rmse": 0.40978568898785894,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "x0920_37": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0525,
+     0.0744,
+     0.1064
+    ],
+    "source": "roll level only (4 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_40": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.75,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.82"
+   },
+   "right": {
+    "state": "refuse",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base run [0,31) but no straight edge"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     13793.0,
+     6423.0,
+     3660.0
+    ],
+    "ref_cols": [
+     409,
+     428
+    ],
+    "sig": [
+     0.1235,
+     0.1329,
+     0.1098
+    ],
+    "source": "brightest plateau only",
+    "trust": 0.75,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.16,
+      0.19,
+      0.22,
+      0.26,
+      0.23,
+      0.22,
+      0.23,
+      0.23,
+      0.2,
+      0.2,
+      0.21,
+      0.2
+     ]
+    },
+    "right": {
+     "f_head": [
+      1.0,
+      1.0,
+      0.99,
+      1.0,
+      0.99,
+      0.99,
+      0.99,
+      1.0,
+      0.99,
+      1.0,
+      0.99,
+      0.99
+     ],
+     "run": [
+      0,
+      31
+     ],
+     "at_level": true,
+     "cont_in": 0.982,
+     "fit": null
+    }
+   }
+  },
+  "x0920_43": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.71"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0675,
+     0.0969,
+     0.1527
+    ],
+    "source": "roll level only (4 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.29,
+      0.3,
+      0.3,
+      0.3,
+      0.3,
+      0.3,
+      0.3,
+      0.3,
+      0.29,
+      0.3,
+      0.3,
+      0.3
+     ]
+    }
+   }
+  },
+  "x0920_46": {
+   "left": {
+    "state": "edge",
+    "x": 1.823,
+    "lo": 1.483,
+    "hi": 2.164,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 1.418,
+    "x_bottom": 2.228,
+    "note": "run [0,1) rows 250/250 rmse 0.32"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16558.0,
+     7788.0,
+     4128.0
+    ],
+    "ref_cols": [
+     0,
+     1
+    ],
+    "sig": [
+     0.0248,
+     0.034,
+     0.0515
+    ],
+    "source": "roll 4/7",
+    "trust": 1.0,
+    "fb": 0.8225270758122744,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.9,
+      0.2,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "run": [
+      0,
+      1
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 1.823146663109137,
+      "slope": 0.002934622182989819,
+      "n_in": 250,
+      "n_ok": 250,
+      "frac_in": 1.0,
+      "rmse": 0.3199456704824113,
+      "yc": 138.0
+     }
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_55": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.98"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.037,
+     0.0583,
+     0.116
+    ],
+    "source": "roll level; the frame's brightest area is scene under it",
+    "trust": 0.6,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_58": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.689,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.48"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.99"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0744,
+     0.1075,
+     0.2146
+    ],
+    "source": "roll level only (4 frames)",
+    "trust": 0.7,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.51,
+      0.53,
+      0.53,
+      0.53,
+      0.09,
+      0.53,
+      0.53,
+      0.52,
+      0.53,
+      0.54,
+      0.54,
+      0.53
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.01,
+      0.01,
+      0.25,
+      0.47,
+      0.64,
+      0.67,
+      0.75,
+      0.62,
+      0.5,
+      0.48,
+      0.36,
+      0.38
+     ]
+    }
+   }
+  },
+  "x0920_61": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.58"
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.0,
+    "lo": 422.654,
+    "hi": 423.347,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": 422.603,
+    "x_bottom": 423.398,
+    "note": "run [0,4) rows 265/267 rmse 0.35"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16336.0,
+     7609.0,
+     4131.0
+    ],
+    "ref_cols": [
+     424,
+     428
+    ],
+    "sig": [
+     0.0227,
+     0.0333,
+     0.0441
+    ],
+    "source": "roll 4/7",
+    "trust": 1.0,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.31,
+      0.34,
+      0.32,
+      0.33,
+      0.34,
+      0.32,
+      0.33,
+      0.32,
+      0.31,
+      0.14,
+      0.01,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.96,
+      0.96,
+      0.95,
+      0.95,
+      0.71,
+      0.08,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.17
+     ],
+     "run": [
+      0,
+      4
+     ],
+     "at_level": true,
+     "cont_in": 0.0,
+     "fit": {
+      "x": 4.999750630271396,
+      "slope": -0.002879470171394404,
+      "n_in": 265,
+      "n_ok": 267,
+      "frac_in": 0.9925093632958801,
+      "rmse": 0.34935774619290777,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "x0920_64": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 1.00"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": null,
+    "sig": [
+     0.0733,
+     0.1104,
+     0.1614
+    ],
+    "source": "roll level; the frame's brightest area is scene under it",
+    "trust": 0.6,
+    "fb": 0.85,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.01,
+      0.03,
+      0.0
+     ]
+    }
+   }
+  },
+  "x0920_73": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.85"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 0.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base-level line [58,69) is scene: rows run on 0.11/0.09"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16444.5,
+     7748.0,
+     3995.0
+    ],
+    "ref_cols": [
+     358,
+     370
+    ],
+    "sig": [
+     0.0266,
+     0.0357,
+     0.0559
+    ],
+    "source": "roll 3/7",
+    "trust": 1.0,
+    "fb": 0.8387725631768953,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.14,
+      0.16,
+      0.17,
+      0.16,
+      0.18,
+      0.19,
+      0.21,
+      0.25,
+      0.29,
+      0.32,
+      0.33,
+      0.35
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.11,
+      0.12,
+      0.12,
+      0.15,
+      0.14,
+      0.13,
+      0.14,
+      0.13,
+      0.14,
+      0.15,
+      0.15,
+      0.14
+     ],
+     "run": [
+      58,
+      69
+     ],
+     "at_level": true,
+     "cont_in": 0.112,
+     "fit": {
+      "x": 70.7050996228944,
+      "slope": -0.008564859287472946,
+      "n_in": 157,
+      "n_ok": 217,
+      "frac_in": 0.7235023041474654,
+      "rmse": 0.5654722392487096,
+      "yc": 138.0
+     },
+     "cont_out": 0.094,
+     "outer_fit": {
+      "x": 371.6578042640721,
+      "slope": -0.001564606272164019,
+      "n_in": 165,
+      "n_ok": 221,
+      "frac_in": 0.746606334841629,
+      "rmse": 0.5202983713471863,
+      "yc": 138.0
+     }
+    }
+   }
+  },
+  "x0920_76": {
+   "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.66"
+   },
+   "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "conf": 1.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no base within 64 cols; border rows denser 0.92"
+   },
+   "debug": {
+    "gate_cols": 0,
+    "ref": [
+     16702.0,
+     7889.0,
+     4232.5
+    ],
+    "ref_cols": [
+     180,
+     190
+    ],
+    "sig": [
+     0.0273,
+     0.0336,
+     0.0514
+    ],
+    "source": "roll 3/7",
+    "trust": 1.0,
+    "fb": 0.8098916967509026,
+    "gb": 0.85,
+    "left": {
+     "f_head": [
+      0.3,
+      0.38,
+      0.45,
+      0.5,
+      0.54,
+      0.6,
+      0.59,
+      0.61,
+      0.62,
+      0.71,
+      0.67,
+      0.75
+     ]
+    },
+    "right": {
+     "f_head": [
+      0.05,
+      0.12,
+      0.19,
+      0.14,
+      0.14,
+      0.08,
+      0.08,
+      0.06,
+      0.06,
+      0.06,
+      0.04,
+      0.05
+     ]
+    }
+   }
+  }
+ }
+}

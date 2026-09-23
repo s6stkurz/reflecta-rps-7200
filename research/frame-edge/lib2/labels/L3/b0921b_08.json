@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_08", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 23.2, "lo": 23.0, "hi": 23.8,
+            "outer": 9.5, "x_top": 23.3, "x_bottom": 24.0,
+            "note": "base cols 10-22 (R/G 2.30 B/G 0.53) against this frame's dark wall at ~13 -- sharp; edge 23.1-23.3 over most of the height, bottom tenth at ~24.0. Neighbour picture cols 0-8 is bright (~80) so outer is soft: ~9.0 mid-height, ~10.3 in the top tenth, ~9.8 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hedge texture runs to col 427, likeness 60-70, no plateau"},
+  "frame_note": "left gap cols ~9.5-23.2, neighbour sliver beyond it"
+}

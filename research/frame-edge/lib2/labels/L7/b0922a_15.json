@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_15", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 5.1, "lo": 4.6, "hi": 5.7,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "narrow base sliver cols 0-4 (counts 56/25/14, R/G 2.24, B/G 0.56, uniform in all bands at likeness ~71; not the top of the table because the lit foliage reads ~80). The dark foliage beside it has the same median counts, so only the top band steps (col 5 = 57 vs 71). A locally stretched positive shows a straight full-height line at ~5.0 with featureless noise to the left and foliage texture to the right."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/figure run to col 427; bands differ (59/41/70/73), R/G 2.4"},
+  "frame_note": "hard: left sliver is at base density but so is the dark foliage next to it; the edge rests on the top band and texture in a local stretch"
+}

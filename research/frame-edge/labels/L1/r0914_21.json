@@ -1,0 +1,26 @@
+{
+  "id": "r0914_21",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate: cols 0-63 a flat 98 in all bands, featureless, black in B / white-neutral in A; the film (and picture) starts beyond the panel at roughly col 95 per the thumbnail, not measurable from the table"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "gallery wall/pictures to col 427, all bands 3-5, no base"
+  },
+  "frame_note": "strip end: gate on the left"
+}

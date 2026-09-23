@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_18",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 84.9,
+    "lo": 84.5,
+    "hi": 85.4,
+    "outer": 69.4,
+    "x_top": 84.75,
+    "x_bottom": 85.5,
+    "note": "gap deeper than the crop: base cols ~70-84 (raw 67/30/16, R/G 2.23, B/G 0.53), sharp. Frame edge ~84.75 through the top half, ~85.0-85.2 lower, bottom rows low contrast (pale wall ~91 vs base 96), ~85.5. Neighbour edge ~70.35 top, ~69.1-69.3 lower, ~69.9 bottom rows."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "window wall/table run to column 427"
+  },
+  "frame_note": "Interior gap at 70-84: neighbour 70 cols on the left, this frame ~343 cols on the right."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "b0921c_56", "labeller": "L2", "view": "A",
+  "left":  {"state": "edge", "x": 207.2, "lo": 206.6, "hi": 207.8,
+            "outer": 187.8, "x_top": 206.2, "x_bottom": 207.6,
+            "note": "interior gap deeper than the crop: base cols 188-205 (R/G 2.2, B/G 0.55). This frame (palace/lawn, right part) starts ~206.2 in the sky rows at the top, ~207.2-207.6 lower down, where the lawn is pale (~82-90 vs base 96) so the step is low-contrast. Outer: neighbour street picture ends ~187.5-187.9 in the top 3/8; below that it is nearly as bright as base but the pale texture still stops at ~188"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "sky/lawn/object run to 427"},
+  "frame_note": "gap at ~188-206; frame = right part (~221 cols) vs neighbour left part (~188 cols). Hairline sensor line at col 214-215 is not base"
+}

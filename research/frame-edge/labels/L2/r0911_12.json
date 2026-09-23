@@ -1,0 +1,26 @@
+{
+  "id": "r0911_12",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark gallery wall runs to col 0; smooth values 71-76, no sharp line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall darkens smoothly toward 428 (74->90 ramp, no step); faint scene line at bottom right crosses 412-428, so it is picture not base"
+  },
+  "frame_note": "dark walls nearly base-level; no sharp full-height line on either side"
+}

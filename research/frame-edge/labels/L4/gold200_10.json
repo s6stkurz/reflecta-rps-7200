@@ -1,0 +1,26 @@
+{
+  "id": "gold200_10",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building/street picture reaches column 0 (dark band at bottom cols 0-5); no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building picture to 428; no plateau"
+  },
+  "frame_note": ""
+}

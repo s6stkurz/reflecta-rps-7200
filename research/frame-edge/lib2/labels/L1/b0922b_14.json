@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_14", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 60.1, "lo": 59.7, "hi": 60.9,
+            "outer": 39.4, "x_top": 59.8, "x_bottom": 60.8,
+            "note": "gap at ~39-59 (95-99, base). Frame edge sharp, slight lean: col 59 ~80% base in the top two bands, col 60 ~75% base in the bottom band. Neighbour sliver (0-38) is very thin (77-91) so the outer boundary is soft, ~39.0-39.7"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky and garden to col 427; the bright block at 406-418 is a cypress (bottom half only), not base"},
+  "frame_note": ""
+}

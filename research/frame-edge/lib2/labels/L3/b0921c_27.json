@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_27", "labeller": "L3", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "wall/hat scene runs to col 0, no plateau"},
+  "right": {"state": "edge", "x": 350.0, "lo": 349.5, "hi": 350.6,
+            "outer": 367.3, "x_top": 350.3, "x_bottom": 349.0,
+            "note": "black base cols 351-365 (R/G 2.23-2.27, B/G 0.53). Picture edge ~350.5 at 10-40% height, ~350.0 at mid-height, 349.0 in the bottom fifth (tilted, bottom to the left); top tenth ~349.85. Neighbour picture from ~366.0 in the top tenth, 366.4 next, then 367.0-367.6 below"},
+  "frame_note": "gap at cols ~350-367 (right crop starts at 364, so this frame's edge is outside it); frame is the left part (0-350, ~350 cols) vs neighbour 367-427"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "x0920_58",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "shelf post (cols 0-2, ~53) and floor reach column 0; no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "shelf/step/floor reach 428 (b3 ~19 to the border); col 423 a darker line in the picture, not base"
+  },
+  "frame_note": ""
+}

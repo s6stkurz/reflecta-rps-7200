@@ -1,0 +1,26 @@
+{
+  "id": "r0914_33",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor to col 0; dark object in the top-left corner (b1 ~60-67 at cols 0-6) is scene, not full height"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.8,
+    "lo": 423.4,
+    "hi": 424.1,
+    "outer": null,
+    "x_top": 423.8,
+    "x_bottom": 423.6,
+    "note": "base 424-427 ~100 all bands vs picture ~21-27. col 423: b1 23%, b2 18%, b3 22%, b4 44% base. Clean"
+  },
+  "frame_note": "frame upside down"
+}

@@ -1,0 +1,31 @@
+b0920_05: L picture_to_border vs edge; move off +12.1 u
+b0921a_07: L picture_to_border vs edge; move off +24.7 u
+b0921a_15: L off +1.1 cols
+b0921a_17: L picture_to_border vs edge; move off +19.7 u
+b0921a_29: L refuse vs edge; move refused
+b0921b_40: L picture_to_border vs no_film
+b0921c_37: L picture_to_border vs edge; move off +72.9 u
+b0921c_38: L picture_to_border vs edge; move off +86.1 u
+b0921c_49: L picture_to_border vs edge; move off +72.5 u
+b0921c_51: R picture_to_border vs edge; move off -63.4 u
+b0921c_54: L picture_to_border vs edge; move off +88.6 u
+b0921c_57: L picture_to_border vs edge; move off +57.3 u
+b0921c_60: R picture_to_border vs edge; move off -70.1 u
+b0921c_64: R picture_to_border vs edge; move off -88.6 u
+b0922a_01: L picture_to_border vs edge; move off +7.6 u
+b0922a_02: L picture_to_border vs edge; move off +20.5 u
+b0922a_03: L picture_to_border vs edge; move off +34.3 u
+b0922a_04: L picture_to_border vs edge; move off +48.6 u
+b0922a_10: L picture_to_border vs edge; move off +52.8 u
+b0922a_12: L picture_to_border vs edge; move off +40.1 u
+b0922a_14: L picture_to_border vs edge; move off +12.6 u
+b0922a_15: L picture_to_border vs edge; move off +9.0 u
+b0922b_05: L picture_to_border vs edge; move off +60.2 u
+b0922b_06: L picture_to_border vs edge; move off +56.2 u
+b0922b_07: L picture_to_border vs edge; move off +54.8 u
+b0922b_09: L picture_to_border vs edge; move off +55.0 u
+b0922b_10: L picture_to_border vs edge; move off +54.6 u
+b0922b_13: L picture_to_border vs edge; move off +54.2 u
+b0922s_04: L picture_to_border vs edge; move off +15.9 u
+b0922s_08: L picture_to_border vs edge; R edge vs picture_to_border; move off +18.0 u
+b0922s_09: L picture_to_border vs edge; move off +10.4 u

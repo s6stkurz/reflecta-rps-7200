@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_10",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 86.9,
+    "lo": 86.5,
+    "hi": 87.3,
+    "outer": 69.9,
+    "x_top": 86.35,
+    "x_bottom": 87.8,
+    "note": "gap deeper than the crop: base cols ~70-86 (raw 66-67/30-31/16-17, R/G 2.2, B/G 0.53), sharp both sides. Frame edge tilted: ~86.35 top, ~86.7 upper-mid, ~87.1 lower-mid, ~87.8 bottom rows. Neighbour edge ~70.4 top, ~69.3-69.9 lower."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dress/table run to column 427"
+  },
+  "frame_note": "Interior gap at 70-86: neighbour part 70 cols on the left, this frame ~341 cols on the right."
+}

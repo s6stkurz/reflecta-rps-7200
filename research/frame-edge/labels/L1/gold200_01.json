@@ -1,0 +1,26 @@
+{
+  "id": "gold200_01",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "scene to col 0, max ~65, no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 426.1,
+    "lo": 425.7,
+    "hi": 426.8,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "2-col sliver 426-427 reads 76-77 in all bands (b4 col426 = 47), dark full-height line in B; plateau lower than base on this roll (~97 in gold200_16) so may be partial base at the scan end; edge placed at start of sliver"
+  },
+  "frame_note": ""
+}

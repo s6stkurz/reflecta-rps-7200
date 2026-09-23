@@ -1,0 +1,26 @@
+{
+  "id": "stage3_01",
+  "labeller": "L1",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark board to col 0; col 0 raised only in bottom band (77), not full height"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "pavement/railing to col 427, ~60 flat"
+  },
+  "frame_note": ""
+}

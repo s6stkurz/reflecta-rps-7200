@@ -1,0 +1,26 @@
+{
+  "id": "r0914_29",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark shelf/TVs/floor to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "floor (b3/b4 ~25-46) to col 427; col 427 dark only in the lowest rows (b4 69), not full height"
+  },
+  "frame_note": ""
+}

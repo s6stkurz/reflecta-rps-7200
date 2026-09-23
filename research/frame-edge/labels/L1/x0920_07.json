@@ -1,0 +1,26 @@
+{
+  "id": "x0920_07",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 23.0,
+    "lo": 22.6,
+    "hi": 23.5,
+    "outer": 3.6,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "POLARITY REVERSED on this roll: the inter-frame gap is a uniform, featureless, full-height strip at cols ~4-22 that is OPAQUE (black in A, white in B, base-likeness ~1), with neighbour picture at cols 0-3 beyond it. View A looks like a positive (dark figure on snow), so this looks like reversal/slide film despite film=c41. Edges: inner crossing ~22.9 (b2-b4), ~23.4 (b1); outer ~3.5-4.1"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "snow/buildings to col 427"
+  },
+  "frame_note": "x0920 roll appears to be reversal film: gap is dense (black in A), not clear; labelled the gap as base by structure"
+}

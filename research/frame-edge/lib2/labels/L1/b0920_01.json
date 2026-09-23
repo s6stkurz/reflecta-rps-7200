@@ -1,0 +1,10 @@
+{
+  "id": "b0920_01", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 2.8, "lo": 2.4, "hi": 3.1,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "cols 0-1 base (102-103, R/G 2.3-2.4, B/G 0.50-0.53), col 2 mostly base (96 of 103 vs picture ~45); sharp"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bright low-density wall reaches border but top band ramps 64-82, never the base plateau; no uniform strip"},
+  "frame_note": "thin scratch line near col 218-219, not base (top band 25)"
+}

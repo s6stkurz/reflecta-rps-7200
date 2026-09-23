@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_70",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 83.5,
+    "lo": 83.0,
+    "hi": 84.2,
+    "outer": 63.2,
+    "x_top": 83.1,
+    "x_bottom": 84.2,
+    "note": "gap deeper than the crop: base cols ~63-83 (R/G 2.2, B/G 0.55, flat ~86). The frame (hydrangeas) beside it is dark foliage reading ~75 with R/G 2.48, so contrast is modest; edge ~83.1 at top to ~84.2 at the bottom. Neighbour (park, sky at top) ends ~64 at top, ~63 lower; its lower half is near base value"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "house front and flowers run to column 428"
+  },
+  "frame_note": "interior gap at cols ~63-83; the frame is the right part (344 picture columns vs 63)"
+}

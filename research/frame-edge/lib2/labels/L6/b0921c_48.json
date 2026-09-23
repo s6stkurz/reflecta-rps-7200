@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_48", "labeller": "L6", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bright scene (likeness ~72, R/G 2.1-2.2 but B/G 0.57, varies by band) to col 0; no uniform plateau at base level (~92)"},
+  "right": {"state": "edge", "x": 410.4, "lo": 410.0, "hi": 410.8,
+            "outer": null, "x_top": 410.8, "x_bottom": 408.9,
+            "note": "base cols 411-427 (~90, R/G 2.2, B/G 0.52). Picture beside it is the dense white wall (likeness ~7). Edge is not straight: ~410.75 over rows 48-128, 410.0 by row 176, ~409.3 at row 232, ~409.0 at the bottom; the top ~20 rows bend left to ~409.4 (corner). x_top given from the straight part below the corner"},
+  "frame_note": "no internal gap in the thumbnail"
+}

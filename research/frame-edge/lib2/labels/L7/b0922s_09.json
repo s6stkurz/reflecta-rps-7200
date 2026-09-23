@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_09", "labeller": "L7", "view": "B",
+  "left":  {"state": "unreadable", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "the whole frame is a dark canopy at base density: median counts 66/28/16 (R/G 2.3, B/G 0.55, likeness ~90) in nearly every column, so density and ratio cannot separate base from shadow. Cols 0-6 are featureless (green sd 1.0-1.5, the same as real base on b0922s_03) and the first highlights start at col 7. But the two leaves reaching that far (rows ~93 and ~156) taper to 1-2 px tips at cols 7-8 rather than being cut, and a locally stretched positive shows no straight vertical line. So this is either picture_to_border (unexposed shadow) or a ~7-col base sliver with x ~ 7.0; I cannot tell which."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "leaf highlights run to col 427 in many rows (25-35 dark-green pixels per column across 412-427); the picture reaches the border even though the median is at base density"},
+  "frame_note": "hard: dark forest canopy, base-dense almost everywhere; the left side is left unreadable rather than guessed"
+}

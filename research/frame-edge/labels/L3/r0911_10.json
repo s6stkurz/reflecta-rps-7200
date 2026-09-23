@@ -1,0 +1,26 @@
+{
+  "id": "r0911_10",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 5.5,
+    "lo": 5.2,
+    "hi": 6.4,
+    "outer": null,
+    "x_top": 6.2,
+    "x_bottom": 5.6,
+    "note": "base 0-4 ~98 all bands. col 5: b2 55%, b3 43%, b4 48% base -> ~5.5; top band col 5 is base and col 6 34% -> ~6.3, so edge bows right at top"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall brightens gradually toward the border (to ~73/86) but no plateau or line"
+  },
+  "frame_note": ""
+}

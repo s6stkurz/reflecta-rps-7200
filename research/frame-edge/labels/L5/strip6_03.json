@@ -1,0 +1,26 @@
+{
+  "id": "strip6_03",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 10.0,
+    "lo": 9.8,
+    "hi": 10.4,
+    "outer": null,
+    "x_top": 10.4,
+    "x_bottom": 9.9,
+    "note": "clean sharp base 0-9 (~77), picture ~19 from col 10. col 10 partly base in top rows (b1=35), col 9 slightly dim at very bottom: slight tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark (white curtain) picture runs to 428, flat ~20, no plateau"
+  },
+  "frame_note": ""
+}

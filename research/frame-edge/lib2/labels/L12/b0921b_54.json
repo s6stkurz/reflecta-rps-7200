@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_54",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate cols 0-~7 (~177 neutral), film end slanted (~8.0 at top, ~5.5 at the bottom rows). Base lies BETWEEN gate and picture: cols ~8-28 (G 29, R/G 2.25, B/G 0.53). Base-to-picture boundary 29.0 in rows 0-100 and 30.0 in rows 100-286 (mid-height ~30.0)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees/path run to 428"
+  },
+  "frame_note": "end-of-strip frame; gate washes view B pale. Same picture as b0921b_44 shifted ~7 cols"
+}

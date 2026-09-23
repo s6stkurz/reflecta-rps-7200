@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_16",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 115.3,
+    "lo": 114.9,
+    "hi": 116.0,
+    "outer": 98.4,
+    "x_top": 115.0,
+    "x_bottom": 116.1,
+    "note": "gap deeper than the crop: base cols ~98-114 (R/G 2.2, B/G 0.54). Edge sharp: ~115.0-115.1 over the upper half, bending to ~115.5-115.8 lower and ~116.1 in the bottom band. Outer ~99.0 at top to ~98.0 lower"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "purple cloth / scene runs to column 428"
+  },
+  "frame_note": "interior gap at cols ~98-114; the frame is the right part (313 picture columns vs 98)"
+}

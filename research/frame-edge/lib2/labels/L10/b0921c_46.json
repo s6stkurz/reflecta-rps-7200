@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_46",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "party scene runs to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 217.0,
+    "lo": 216.7,
+    "hi": 217.5,
+    "outer": 238.4,
+    "x_top": 217.5,
+    "x_bottom": 216.85,
+    "note": "gap mid-frame at cols ~217-237 (raw 77-79/34-35/19, R/G 2.23, B/G 0.55), sharp both sides. This frame's picture (dense white wall) ends ~217.4-217.7 in the top rows, ~217.0 mid, ~216.85 bottom. Neighbour (grey backdrop, lower contrast) starts ~237.5 at top, ~238.4 mid, ~238.7 bottom."
+  },
+  "frame_note": "Gap near the middle: left part 0-217 = 217 cols, right part 238-427 = 190 cols; the left part is the frame (more picture columns, difference 27 > 10, so no tie)."
+}

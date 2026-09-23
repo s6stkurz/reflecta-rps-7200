@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_17", "labeller": "L9", "view": "B",
+  "left":  {"state": "edge", "x": 62.2, "lo": 62.0, "hi": 62.8,
+            "outer": 47.1, "x_top": null, "x_bottom": null,
+            "note": "gap 47/48-61 (base 94-97, R/G 2.2, B/G 0.53). Frame is the right part (62-427) vs neighbour 0-46. Edge 62.1-62.3 over the upper half (col 62 10-25% base), 62.5-62.7 around rows 160-185, ~63.5 at row 197; below row ~205 the frame's picture (dark floor) is within a few percent of base and the edge cannot be read, so no x_bottom given. Outer 48.0 in the top quarter, 47.0-47.2 through the middle, ~47.6 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "wall and desk run to 428; the bright bottom-band readings there are the dark desk, not full height"},
+  "frame_note": ""
+}

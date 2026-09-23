@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_13",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 26.5,
+    "lo": 26.1,
+    "hi": 27.2,
+    "outer": 5.2,
+    "x_top": 26.2,
+    "x_bottom": 27.1,
+    "note": "base cols ~6-25: featureless (sdG 1.0-1.5 against 4-6 in the picture), R/G 2.21, B/G 0.55, though it brightens slightly toward the frame (R 58 -> 62). Thin forest negative beside it is nearly base-bright, so contrast is good only in the top band (foliage) and the bottom quarter; top ~26.2, bottom ~27.1, and the texture onset is at col 26. Neighbour sliver at 0-4 (R/G 2.5, textured): its boundary is ~5.0-5.2 over mid-height, curving out to ~6.3-6.7 at the top and ~5.7 at the bottom (rounded corner)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building/girls run to 427"
+  },
+  "frame_note": "same forest scene as b0922a_01/_19"
+}

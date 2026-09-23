@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_42",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 168.5,
+    "lo": 168.0,
+    "hi": 169.0,
+    "outer": 147.0,
+    "x_top": 168.0,
+    "x_bottom": 169.0,
+    "note": "interior gap: base cols 148-167 (R/G 2.2, B/G 0.55, G 32), neighbour picture (dense sky) 0-146. Inner edge tilted: col 168 picture in rows 0-140, partial 140-200, base below. Backdrop next to the gap is only ~20% darker than base (G 25-27 vs 32) so contrast is modest but the line is straight. Outer edge ~147.8 at top, 147.0 mid, ~146.9 at the bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop and figure run to 428"
+  },
+  "frame_note": "two parts: left ~147 cols, right ~259; right is the frame"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_29",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey backdrop runs to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 385.0,
+    "lo": 384.0,
+    "hi": 385.2,
+    "outer": 402.0,
+    "x_top": 384.8,
+    "x_bottom": 384.0,
+    "note": "base 385-400 (R/G 2.26, B/G 0.53). Edge sharp: 385.0 across the upper and middle bands, moving in to ~384.5 at row ~190 and 384.0 in the bottom quarter (the table shows the same: band 4 col 384 is base). Neighbour on the far right starts at ~402.0 over mid-height, curving in to ~400.5 at the top and ~401.5 at the bottom (rounded corners)."
+  },
+  "frame_note": ""
+}

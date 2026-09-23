@@ -1,0 +1,26 @@
+{
+  "id": "r0911_18",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall runs to col 0; table ~5-10"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall runs to 428; dark diagonal line 410->427 is a wall corner (slanted, not base), grey wall beyond it"
+  },
+  "frame_note": ""
+}

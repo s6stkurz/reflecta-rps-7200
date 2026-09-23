@@ -1,0 +1,26 @@
+{
+  "id": "strip6_02",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 11.2,
+    "lo": 10.9,
+    "hi": 11.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sharp vertical edge; pale picture beside base makes table contrast low (81 vs 78); top rows put it at 11.0, b3 partial col 11 suggests up to 11.6 (dark hair adjacent)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "face/wall picture reaches 428; no plateau"
+  },
+  "frame_note": ""
+}

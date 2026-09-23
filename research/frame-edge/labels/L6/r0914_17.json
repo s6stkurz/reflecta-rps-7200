@@ -1,0 +1,26 @@
+{
+  "id": "r0914_17",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tiles and grout run to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.5,
+    "lo": 418.0,
+    "hi": 419.0,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.0,
+    "note": "base 419-427 at 92-94 all bands; four tiles/patches all cut off on one straight line: top tile at 419.0 (b1 col418=23), middle 418.5 (b2 col418=51 -> 46%), blue patch and bottom tile at 418.0; clear grout (84-91) sits next to base in places"
+  },
+  "frame_note": "tile grid: clear grout is nearly as bright as base"
+}

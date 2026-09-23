@@ -1,0 +1,26 @@
+{
+  "id": "r0911_15",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "brown wall runs to column 0 (72-83), no black band"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall runs to 428. The black shape at 364-369 (reads ~100) is the picture frame shadow, only rows ~45-230 and tapered, not base"
+  },
+  "frame_note": ""
+}

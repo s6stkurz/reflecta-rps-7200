@@ -1,0 +1,26 @@
+{
+  "id": "r0911_07",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 2.7,
+    "lo": 2.0,
+    "hi": 3.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|dark gallery wall is as clear as base, so edge only visible where the floor (bottom ~30 rows) is cut off: floor starts at col 2-3 with a base sliver at cols 0-1 (91/90 vs wall 86-88); upper rows unverifiable"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "painting and floor run to col 427; slanted painting frame at 373-378 is scene"
+  },
+  "frame_note": "left sliver only visible in the floor at the bottom"
+}

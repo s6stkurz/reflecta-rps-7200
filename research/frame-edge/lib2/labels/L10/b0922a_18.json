@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_18",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage runs to column 0 (raw 53-55/24/13, denser than base; leaf highlights at cols 0-5 in the top rows)"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.8,
+    "lo": 418.3,
+    "hi": 419.2,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols ~419-427 (raw 61-63/27/14, R/G 2.3, B/G 0.52), uniform in all bands, only ~76 on the table. Boundary sharp and vertical in the top half (418.4-419.0); in the lower half the dark forest floor is at or above base on the table and the edge cannot be seen. No neighbour visible beyond it."
+  },
+  "frame_note": "Base on the right is dark slate in view B, not black: picture highlights set the stretch."
+}

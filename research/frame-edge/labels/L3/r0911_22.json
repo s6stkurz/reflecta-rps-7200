@@ -1,0 +1,26 @@
+{
+  "id": "r0911_22",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "night scene: the dark surround is as clear as base (flat 89-92 all bands, all 64 cols); no line or step anywhere, so base vs dark scene cannot be told apart"
+  },
+  "right": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "same: flat 89-93 all bands to col 427, no line; a faint diagonal scratch at bottom right only"
+  },
+  "frame_note": "near-blank night frame, only a lit window in the middle"
+}

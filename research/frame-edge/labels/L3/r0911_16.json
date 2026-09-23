@@ -1,0 +1,26 @@
+{
+  "id": "r0911_16",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "no plateau. col 0 is only ~15% base mid-height (44 vs wall 34) and turns base only in the top/bottom corners (b1 col0=86, cols 0-1 black at top in B). Borderline: if counted as a sliver the edge is ~0.15 mid, ~1.0 at the top corner"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall to col 427, smooth 38->46, no step"
+  },
+  "frame_note": ""
+}

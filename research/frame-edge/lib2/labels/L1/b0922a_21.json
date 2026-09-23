@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_21", "labeller": "L1", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage and a figure to col 0"},
+  "right": {"state": "edge", "x": 367.2, "lo": 366.8, "hi": 367.7,
+            "outer": 387.5, "x_top": null, "x_bottom": null,
+            "note": "gap at 367-386 (~86, raw 70/30/16, R/G 2.3 B/G 0.53). Frame edge clear in the upper half (col 367 ~80-90% base, col 366 picture with B/G 0.64-0.67); lower half is dark foliage at base density, line assumed straight. Neighbour edge leans strongly: ~386.0 at top, ~387.3-388.0 below"},
+  "frame_note": "gap at 367-387 inside the right crop; frame is the left part (367 cols vs 41)"
+}

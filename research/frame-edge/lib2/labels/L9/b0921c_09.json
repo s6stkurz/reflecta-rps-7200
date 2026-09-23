@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_09", "labeller": "L9", "view": "B",
+  "left":  {"state": "edge", "x": 83.2, "lo": 82.9, "hi": 84.0,
+            "outer": 66.1, "x_top": 83.05, "x_bottom": 84.6,
+            "note": "interior gap (deeper than the crop): base 66/67-82 (95-99, R/G 2.2, B/G 0.53). Frame is the right part (83-427) vs neighbour 0-65. Edge 83.0-83.1 over the top half, 83.4-83.9 in rows 160-245, 84.0-84.8 in the last rows (corner). Outer 67.0 in the top rows, 66.0 through the middle, ~66.4 at the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dress/table run to 428"},
+  "frame_note": "gap at 66-83, found in the 1:1 thumbnail"
+}

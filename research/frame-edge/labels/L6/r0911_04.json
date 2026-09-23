@@ -1,0 +1,26 @@
+{
+  "id": "r0911_04",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark navy gallery wall (flat ~89) runs to col 0 and continues past col 64 to the painting; no vertical line anywhere near the border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "slanted doorway edge 381-389 is scene; beyond it the same dark navy wall as above the door, no vertical line"
+  },
+  "frame_note": "dark wall is nearly as clear as base and very flat; not base (dark blue, no boundary)"
+}

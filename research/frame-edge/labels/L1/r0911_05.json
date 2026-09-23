@@ -1,0 +1,26 @@
+{
+  "id": "r0911_05",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark blue wall, near-base (86-90) but flat with no step to col 0; blue tint in B, not black"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "same dark wall right of doorway to col 427 (flare from doorway top reaches ~390); no step"
+  },
+  "frame_note": ""
+}

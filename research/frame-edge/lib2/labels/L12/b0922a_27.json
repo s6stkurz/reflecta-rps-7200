@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_27",
+  "labeller": "L12",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage texture runs to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 337.0,
+    "lo": 336.5,
+    "hi": 337.8,
+    "outer": 357.2,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "interior gap deeper than the crop: base cols 338-355 (G 31, R/G 2.23, B/G 0.55), neighbour picture from ~357. Inner edge 337.0 in rows 60-135, 338.0 in rows 25-40 (a dark feature fills col 337 there); below row ~150 the picture beside the gap reads exactly base in all channels, so the edge is invisible in the bottom half. Outer: ~356.0 at top, 357.0 at rows 60-100, ~357.3 lower"
+  },
+  "frame_note": "frame = left part (~337 cols) vs neighbour ~71 cols. Same walk as b0922a_02 (shifted ~118 cols)"
+}

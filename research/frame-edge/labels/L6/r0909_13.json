@@ -1,0 +1,26 @@
+{
+  "id": "r0909_13",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "film picture (railing, dark orange negative) runs to col 0; table ~2 everywhere because the empty gate is the brightest thing"
+  },
+  "right": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate from ~col 148 to 427: neutral white, 98 in all bands, brighter than any base"
+  },
+  "frame_note": "strip ends mid-frame at ~col 148; rest is empty gate"
+}

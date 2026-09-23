@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_19",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 8.5,
+    "lo": 8.1,
+    "hi": 9.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "clean base 0-7 (R/G 2.25, B/G 0.55). Col 8 is 23-87% base depending on band (upper/mid bands give 8.2-8.9); the lowest quarter has picture almost as bright as base, so low contrast there."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall/table run to 427; bright but textured, not base"
+  },
+  "frame_note": ""
+}

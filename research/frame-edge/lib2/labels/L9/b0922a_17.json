@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_17", "labeller": "L9", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark foliage runs to column 0 with texture in every column (full-height sd 12-18 against base's 1-2)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/path run to 428 (sd 15-17), no plateau"},
+  "frame_note": "dark forest scene, near base in level almost everywhere; scanned every 3rd column across the whole width and found no featureless full-height strip (minimum sd 8.8), so no gap anywhere"
+}

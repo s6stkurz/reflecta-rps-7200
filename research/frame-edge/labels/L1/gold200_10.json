@@ -1,0 +1,26 @@
+{
+  "id": "gold200_10",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "street scene to col 0, no black full-height strip"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building/foliage to col 427, no black full-height strip"
+  },
+  "frame_note": ""
+}

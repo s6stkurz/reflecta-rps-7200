@@ -1,0 +1,26 @@
+{
+  "id": "r0911_01",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark gallery wall (clear on negative) runs to col 0 with a smooth gradient 68->77, no sharp vertical line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "slanted doorway edge at 388-395 is scene (tilts 7 cols, blurred shadow); beyond it the same wall as above the door, gradient 78->69, faint horizontal line near bottom"
+  },
+  "frame_note": "dark wall nearly as clear as base on both sides - not base"
+}

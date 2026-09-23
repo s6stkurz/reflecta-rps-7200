@@ -1,0 +1,26 @@
+{
+  "id": "hwcheck_03",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "pavement and legs run to column 0, no black band"
+  },
+  "right": {
+    "state": "edge",
+    "x": 424.6,
+    "lo": 424.1,
+    "hi": 425.1,
+    "outer": null,
+    "x_top": 424.2,
+    "x_bottom": 425.0,
+    "note": "uniform black strip cols 425-427 (~86 all bands), sharp full-height line. Col 424 partial: 90% base at top, 0% at bottom, so tilted. Foliage beside it is fairly bright (70-85), so contrast is low in the top band"
+  },
+  "frame_note": ""
+}

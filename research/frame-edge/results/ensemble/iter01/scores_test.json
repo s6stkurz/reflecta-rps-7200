@@ -1,0 +1,135 @@
+{
+ "split": "test",
+ "side": {
+  "n": 40,
+  "correct": 39,
+  "accuracy": 0.975,
+  "false_base": 0,
+  "missed": 0,
+  "refused": 1,
+  "edge_n": 6,
+  "edge_mae_cols": 0.147,
+  "edge_p90_cols": 0.283,
+  "edge_max_cols": 0.301,
+  "edge_bias_cols": -0.093,
+  "edge_mae_units": 0.118,
+  "confusion": {
+   "edge": {
+    "edge": 6,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 1,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 0,
+    "picture_to_border": 33,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 20,
+  "ok": 19,
+  "bad": 0,
+  "refused": 1,
+  "sign_errors": 0,
+  "accuracy": 0.95,
+  "du_mae_units": 0.037,
+  "du_p90_units": 0.143
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.975,
+   "edge_mae_cols": 0.147,
+   "n": 40
+  }
+ },
+ "per_roll": {
+  "gold200": {
+   "accuracy": 0.971,
+   "edge_mae_cols": 0.061,
+   "n": 34
+  },
+  "hwcheck": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.234,
+   "n": 6
+  }
+ },
+ "worst": [],
+ "label_free": {
+  "pairs": {
+   "n": 0,
+   "both_edge": 0,
+   "state_changes": 0,
+   "mae_cols": NaN,
+   "p90_cols": NaN,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 0,
+   "state_changes": 0,
+   "mae_cols": NaN,
+   "over_1": 0
+  },
+  "ladder": {
+   "left": {
+    "found": 12,
+    "of": 21,
+    "slope_cols": 7.246,
+    "resid_mad": 0.314,
+    "resid_max": 0.792
+   },
+   "right": {
+    "found": 8,
+    "of": 21,
+    "slope_cols": -0.821,
+    "resid_mad": 13.779,
+    "resid_max": 25.713
+   }
+  },
+  "mirror": {
+   "state_changes": 0,
+   "mae_cols": 0.0,
+   "over_0_5": 0
+  }
+ },
+ "seconds_per_frame": 0.2697
+}

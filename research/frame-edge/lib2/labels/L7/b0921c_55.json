@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_55", "labeller": "L7", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky/building/grass run to col 0; no plateau"},
+  "right": {"state": "edge", "x": 331.2, "lo": 330.8, "hi": 331.7,
+            "outer": 350.2, "x_top": 331.5, "x_bottom": 331.0,
+            "note": "interior gap cols 331-349, deeper than the crop: full-height black bar, uniform across bands (~92, R/G 2.26, B/G 0.54), straight on both sides where it crosses the sky. Neighbour 350-427 (78 cols) is a different scene with a straight horizon. The frame's dark hedge (bands 2-4 ~81-90) is close to base below the sky, so the step is sharpest in band 1 (col 331 = 55 -> ~331.5) and band 3 (clean at 331.0). Outer placed from the top band (col 350 = 57 -> ~350.2); below the horizon the neighbour's dark ground is within a few points of base."},
+  "frame_note": "black bar at 331-350 read as the inter-frame gap, not a post: full height, straight, base ratio, and the scene does not continue across it. Frame is the left part (331 cols)."
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_11", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 6.1, "lo": 5.9, "hi": 6.5,
+            "outer": null, "x_top": 6.0, "x_bottom": 6.9,
+            "note": "base cols 0-5 (~98, R/G 2.28, B/G 0.55), sharp; edge 6.0 over the top half, drifting to ~6.4 lower and ~7.0 in the bottom tenth"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "tree foliage (bright in A, 75-87) and road run to col 427; bottom band ~43, not a plateau"},
+  "frame_note": ""
+}

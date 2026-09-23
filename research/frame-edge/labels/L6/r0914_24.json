@@ -1,0 +1,26 @@
+{
+  "id": "r0914_24",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "lighter orange strip at cols 0-5 (top to ~9) reads only ~63 vs base 93 on the right and is orange, not base colour; picture (background) with a soft step, not base"
+  },
+  "right": {
+    "state": "edge",
+    "x": 412.3,
+    "lo": 411.8,
+    "hi": 412.7,
+    "outer": 427.1,
+    "x_top": 412.65,
+    "x_bottom": 411.7,
+    "note": "clean sharp edge, base 413-425 at ~93; col 412 b1 38%, b2 54%, b3 75%, b4 100% (col 411 b4 27%) -> tilt ~1 col, bottom further left; neighbour picture sliver at 426-427 (dark olive), outer ~427.7 top to ~426.5 bottom"
+  },
+  "frame_note": ""
+}

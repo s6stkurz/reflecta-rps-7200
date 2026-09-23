@@ -1,0 +1,26 @@
+{
+  "id": "b0921a_23",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 18.6,
+    "lo": 18.2,
+    "hi": 19.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "clean full-height base 0-17 (R/G 2.30, B/G 0.54); col 18 about half base; bottom band keeps col 18 as base, so the bottom may sit ~0.5 further right"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building/fence to 427; bright patch at 423-427 is in band 3 only (scene)"
+  },
+  "frame_note": ""
+}

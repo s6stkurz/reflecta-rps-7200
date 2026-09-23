@@ -1,0 +1,26 @@
+{
+  "id": "gold200_14",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dense (white-in-positive) wall runs to col 0; table ~4, not base"
+  },
+  "right": {
+    "state": "edge",
+    "x": 423.1,
+    "lo": 422.6,
+    "hi": 423.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "uniform strip 423-427 same in all 4 bands (~79, matches base level ~80 in neighbour gold200_15 at same x); dark top bar (neg) ends sharply at ~423. Low level contrast vs flash-shadow picture, placed mainly from b1 and geometry"
+  },
+  "frame_note": "right: base barely distinguishable in level from picture shadows"
+}

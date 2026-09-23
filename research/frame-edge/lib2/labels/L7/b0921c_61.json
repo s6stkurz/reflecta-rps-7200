@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_61", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 20.8, "lo": 20.4, "hi": 21.3,
+            "outer": null, "x_top": 20.6, "x_bottom": 21.5,
+            "note": "base cols 0-19 to the aperture (likeness 82-89 with a gentle ramp, R/G 2.2, B/G 0.56), no neighbour. Picture next to it is bright foliage (~70-80), so contrast is modest. Col 20 reads 80/80/86/88, col 21 84 in the bottom band: bottom sits ~0.9 col further right."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427, likeness ~32"},
+  "frame_note": "whole thumbnail checked: no interior gap"
+}

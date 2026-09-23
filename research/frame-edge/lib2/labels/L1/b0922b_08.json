@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_08", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 62.7, "lo": 62.3, "hi": 63.1,
+            "outer": 43.2, "x_top": 62.0, "x_bottom": 63.2,
+            "note": "gap at 44-61 (95-99, raw 67-70/30/16, R/G 2.25 B/G 0.53). Frame edge sharp at 62.0 against the sky in the upper third; below it the frame's picture is a dark building/grass (77-87) and col 62 is base there, edge ~62.6-63.3. Neighbour (dusk scene, near-base in its lower half) edge readable in the top two eighths only, ~43.0-43.4"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "face/hair to col 427"},
+  "frame_note": "gap at 43-62 lies within the left crop; frame is the right part"
+}

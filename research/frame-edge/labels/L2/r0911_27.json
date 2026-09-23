@@ -1,0 +1,26 @@
+{
+  "id": "r0911_27",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 0.2,
+    "lo": 0.0,
+    "hi": 0.6,
+    "outer": null,
+    "x_top": 0.6,
+    "x_bottom": 0.1,
+    "note": "sub-column sliver: col 0 darker than wall full height in B, ~47% base in b1 (63 vs pic 35, base ~95 on roll), only ~6-10% in b2-b4; col 1 picture. Borderline vs picture_to_border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "beige wall runs to 428; table flat ~33"
+  },
+  "frame_note": "left is a <1 col sliver, wider at top"
+}

@@ -1,0 +1,2 @@
+r0911_06: L picture_to_border vs edge; move off +12.9 u
+r0911_07: L refuse vs edge; move refused

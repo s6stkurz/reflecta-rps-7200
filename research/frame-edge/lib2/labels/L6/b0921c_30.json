@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_30", "labeller": "L6", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop cloth (with a diagonal fold) to col 0: likeness ~47, R/G 2.1, well below base (~87); no plateau"},
+  "right": {"state": "edge", "x": 402.6, "lo": 402.0, "hi": 403.0,
+            "outer": 420.8, "x_top": 403.0, "x_bottom": 401.2,
+            "note": "base cols 403-417 (~86, R/G 2.2-2.3, B/G 0.52-0.55; dark slate in B), full height. Edge not straight: ~403.0 over rows 50-140, ~402.0 over rows 180-230, ~401.2-401.7 at rows 240-287; top ~30 rows ~401.9-402.5 (corner). x_top from the straight part below the corner. Neighbour (dense, likeness ~5): its boundary ~419.1 at the top rows, ~420.9 over rows 110-210, ~420.2 near the bottom"},
+  "frame_note": "left part 0-402 is the frame, right sliver 420-427 the neighbour"
+}

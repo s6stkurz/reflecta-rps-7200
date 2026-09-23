@@ -1,0 +1,26 @@
+{
+  "id": "r0914_19",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark textured wall (~84-88) runs to column 0 with no line; it is 75+ columns wide with specks, scene not base"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark grid between tiles reaches ~89 in b1/b3 but a tile runs to 428 in b2 (29) and the bottom band has tile content: not full height, not base"
+  },
+  "frame_note": ""
+}

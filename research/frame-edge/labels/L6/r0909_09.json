@@ -1,0 +1,26 @@
+{
+  "id": "r0909_09",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 1.75,
+    "lo": 1.3,
+    "hi": 2.2,
+    "outer": null,
+    "x_top": 1.4,
+    "x_bottom": 2.1,
+    "note": "2-col dark sliver, straight full-height line; col 0 = 86 all bands (taken as base level), col 1: b1 45%, b2 53%, b3/b4 100% (col 2 b4 ~11%) -> slight tilt, bottom further right; base plateau too narrow to be sure of its true level"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees, crowd and pavement run to col 427"
+  },
+  "frame_note": ""
+}

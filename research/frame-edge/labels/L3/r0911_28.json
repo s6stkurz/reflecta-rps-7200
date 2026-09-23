@@ -1,0 +1,26 @@
+{
+  "id": "r0911_28",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall (dark on negative, ~5) to col 0, no step"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "strongly slanted bright line 410->426 top to bottom (~60) and grey region beyond (~25) are a room corner in the scene, not base (not near-white, not vertical)"
+  },
+  "frame_note": ""
+}

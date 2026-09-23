@@ -1,0 +1,26 @@
+{
+  "id": "hwcheck_01",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "roof/white door to col 0; col 0 marginally odd in the all-rows figure but no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 424.1,
+    "lo": 423.7,
+    "hi": 424.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 424-427 uniform ~76 in all four bands, dark strip full height in B with a sharp vertical line; base only a little brighter than the dark foliage (~65-75) so the 50% crossing is soft in b3/b4 (col 424 ~60%) and ~423.8-424.0 in b1/b2. Same scene as gold200_06 shifted, the strip lies beyond the picture there"
+  },
+  "frame_note": ""
+}

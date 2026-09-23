@@ -1,0 +1,26 @@
+{
+  "id": "r0909_10",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 1.0,
+    "lo": 0.5,
+    "hi": 1.3,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "one-column sliver: col 0 uniform full height (74 in all bands, bluish in A, dark brown in B) with sharp line; col 1 slightly elevated (53 vs 44). No full plateau so the true base level is unknown -> wide interval"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "trees/people picture reaches 428; no plateau"
+  },
+  "frame_note": ""
+}

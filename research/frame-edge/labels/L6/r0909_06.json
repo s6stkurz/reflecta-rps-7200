@@ -1,0 +1,26 @@
+{
+  "id": "r0909_06",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 6.0,
+    "lo": 5.6,
+    "hi": 6.4,
+    "outer": null,
+    "x_top": 5.5,
+    "x_bottom": 6.6,
+    "note": "clean base cols 0-4 (98); slight tilt: b1 crosses ~5.5, b4 ~6.6"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark door/wall (white in positive) and stones run to col 427; bright diagonal at bottom right is picture"
+  },
+  "frame_note": ""
+}

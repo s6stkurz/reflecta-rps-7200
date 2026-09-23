@@ -1,0 +1,26 @@
+{
+  "id": "gold200_09",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark foliage with sky highlights reaching col 0 (several rows); dark but not base: highlights cross to the border, no line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark foliage with highlights reaching col 427; gradient 82->73, no sharp line"
+  },
+  "frame_note": "dark foliage nearly as clear as base both sides"
+}

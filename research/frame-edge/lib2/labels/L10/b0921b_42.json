@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_42",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "no_film",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "empty gate at cols 0-~8 (raw ~178/177/176, neutral); its boundary with the film end is ragged, ~9 at top to ~6 at the bottom. BASE between gate and picture: cols ~9-29 (raw 66/29/15, R/G 2.28, B/G 0.53). Base->picture boundary tilted: ~29.1 top, ~30.6 bottom, ~30.0 mid (+-0.5)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "path and trees run to column 427 (raw 59/24/12, R/G 2.5 - picture, not base)"
+  },
+  "frame_note": "Strip end: gate, then ~21 columns of base, then picture."
+}

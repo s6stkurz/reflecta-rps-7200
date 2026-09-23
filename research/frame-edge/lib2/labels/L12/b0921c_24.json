@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_24",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop/figure run to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 298.5,
+    "lo": 298.0,
+    "hi": 299.0,
+    "outer": 315.8,
+    "x_top": 299.0,
+    "x_bottom": 298.0,
+    "note": "interior gap deeper than the crop: base cols 299-314 (G 33, R/G 2.23, B/G 0.53), neighbour picture from ~315.5. Inner edge 299.0 in rows 40-120, 298.0 in rows 180-280; rows 140-180 picture is base-level (hidden); top rows 0-20 already at 298.0 (corner). Outer edge irregular: ~314.3 at top, 315.1 rows 40-80, ~315.8-316.0 mid, ~315.3 lower"
+  },
+  "frame_note": "frame = left part (~298 cols) vs neighbour ~112"
+}

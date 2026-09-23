@@ -1,0 +1,26 @@
+{
+  "id": "r0914_25",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "TV shelves/floor reach column 0; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 415.0,
+    "lo": 414.7,
+    "hi": 415.3,
+    "outer": null,
+    "x_top": 415.1,
+    "x_bottom": 414.7,
+    "note": "sharp edge, base plateau 415-427 (~93 all bands); b3 against the pale step gives 415.0, b4 col 414 ~34% base -> 414.7 at bottom; upper bands lower contrast (dark shelf in positive)"
+  },
+  "frame_note": ""
+}

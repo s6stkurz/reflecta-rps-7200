@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_19", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 19.1, "lo": 18.8, "hi": 19.6,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "base cols 0-18 (~95, R/G 2.31 B/G 0.55); col 19 already at picture level in most bands; bright foliage beside the edge softens it slightly, bottom tenth leans to ~19.6"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dark scene (people, bag) to col 427, likeness ~35; the vertical step near col 369 is scene, partial height"},
+  "frame_note": "no gap inside the frame"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_07", "labeller": "L11", "view": "A",
+  "left":  {"state": "edge", "x": 8.0, "lo": 7.4, "hi": 8.7,
+            "outer": null, "x_top": 7.4, "x_bottom": 8.6,
+            "note": "base columns 0-6 (R/G 2.25, B/G 0.53). Sharp against the dark sky at the top (column 7 ~35-55% base, x ~7.4); lower down the pale lawn is close to base (~80 vs 95) so the edge is softer: column 7 fully base mid-height, column 8 partly base at the bottom. Slight tilt"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky, building and lawn run to column 427"},
+  "frame_note": ""
+}

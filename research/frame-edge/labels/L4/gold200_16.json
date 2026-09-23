@@ -1,0 +1,26 @@
+{
+  "id": "gold200_16",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "chair/picture reaches column 0; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 425.2,
+    "lo": 424.7,
+    "hi": 425.7,
+    "outer": null,
+    "x_top": 424.8,
+    "x_bottom": 425.5,
+    "note": "clean sharp edge, slight tilt (bands 424.9/425.1/425.75/425.4); 3 cols of base"
+  },
+  "frame_note": ""
+}

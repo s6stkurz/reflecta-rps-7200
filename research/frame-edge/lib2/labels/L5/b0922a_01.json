@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_01",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 3.2,
+    "lo": 2.8,
+    "hi": 3.8,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "3-column base sliver: cols 0-2 featureless (sdG 1.2 vs 4-6 in picture), R/G 2.23, B/G 0.55. Picture is a thin forest negative that reads almost as bright as base (table 70 vs 71), so the edge is placed from where foliage features are cut off in a straight line at ~3 (clearest in the top band, col 3 ~27% base)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "scene runs to 427"
+  },
+  "frame_note": "low-contrast: picture close to base level"
+}

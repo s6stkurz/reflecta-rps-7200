@@ -1,0 +1,26 @@
+{
+  "id": "r0909_11",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 5.1,
+    "lo": 4.8,
+    "hi": 5.4,
+    "outer": null,
+    "x_top": 5.0,
+    "x_bottom": 5.3,
+    "note": "clean: base 0-4 ~96, col 5 picture in b1-b3, ~24% base in b4 -> very slight tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "flat wall runs to 428; table flat ~20"
+  },
+  "frame_note": ""
+}

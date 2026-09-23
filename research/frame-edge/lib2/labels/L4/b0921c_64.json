@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_64",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair and street scene run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 324.4,
+    "lo": 323.9,
+    "hi": 325.0,
+    "outer": 346.3,
+    "x_top": 324.7,
+    "x_bottom": 324.0,
+    "note": "gap deeper than the crop: base cols ~324-345 (R/G 2.2-2.3, B/G 0.53-0.55). Edge sharp: ~324.4-324.9 in the upper bands, 324.0-324.2 in the lower ones; low contrast at mid-height where the street is near base value. The gap has two flat levels, ~94 at cols 325-337 and ~89 at 338-344, both base ratio and full height, so both counted as gap. Outer is soft (neighbour tree near base value): ~345.3 top, ~346.3-347 mid, ~346 bottom"
+  },
+  "frame_note": "interior gap at cols ~324-345; the frame is the left part (324 picture columns vs ~82)"
+}

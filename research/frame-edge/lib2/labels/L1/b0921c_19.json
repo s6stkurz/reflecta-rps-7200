@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_19", "labeller": "L1", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bed/figure scene to col 0, ~20"},
+  "right": {"state": "edge", "x": 215.4, "lo": 215.0, "hi": 215.9,
+            "outer": 232.3, "x_top": 215.8, "x_bottom": 215.2,
+            "note": "internal gap: base cols 216-231 (~96, R/G 2.2-2.3 B/G 0.54). Col 215 is mixed (bluish fringe, B/G 0.63): mostly picture in the upper third (edge ~215.7-215.9), ~85% base in the lower third (edge ~215.15). Col 214 picture. Neighbour picture from ~232 (231.9 top to ~232.6 bottom)"},
+  "frame_note": "gap inside the frame at 215-232; left part 215 picture cols vs right part 196, difference 19 so frame = left part, gap on the right side"
+}

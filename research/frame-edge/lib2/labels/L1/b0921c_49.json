@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_49", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 84.1, "lo": 83.5, "hi": 84.8,
+            "outer": 58.2, "x_top": null, "x_bottom": null,
+            "note": "gap from ~58 (base ~87, R/G 2.2 B/G 0.55). The frame's first picture is a dark wooden post at base density (84-89 in bands 1-5), so the boundary shows only in the bottom third (col 84 drops to 78-84) and where two highlights in view B both start at col 84. Gap is wide (~26 cols) because of that; a narrower gap cannot be excluded above the bottom third. Neighbour edge sharp, ~59.5 top, ~58.0 over most of the height"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "dense bright wall (white in B, 1-3 in the table) to col 427"},
+  "frame_note": "gap at 58-84 crosses the crop boundary; frame is the right part (344 cols vs 58)"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_08",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall (~90) and the floor wedge at the bottom (b4 ~60) both reach column 0; no line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and picture-frame shadows reach 428; no plateau"
+  },
+  "frame_note": ""
+}

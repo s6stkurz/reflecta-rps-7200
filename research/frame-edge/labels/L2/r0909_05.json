@@ -1,0 +1,26 @@
+{
+  "id": "r0909_05",
+  "labeller": "L2",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 0.5,
+    "lo": 0.0,
+    "hi": 1.1,
+    "outer": null,
+    "x_top": 0.1,
+    "x_bottom": 1.0,
+    "note": "sub-column sliver: col 0 is base (98/100) in b3/b4, black in B from ~55% height down; above that col 0 is sky (31/42 vs picture 28/34). Looks like a ~1-col step mid-scan rather than a straight tilt; col 1 pure picture"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "pier/grass run to 428; no plateau, no vertical boundary"
+  },
+  "frame_note": "left edge is a 0-1 col sliver with a step at ~55% height"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_11",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 5.1,
+    "lo": 4.9,
+    "hi": 5.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols 0-4 (~91), wall ~39 from col 6. Col 5 mostly picture (b2/b3 ~5%) but ~85% base in top band and ~30% in bottom band: top ~40 rows base reaches ~6 (rounded gate corner), not a straight tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "window frame and wall run to 428; cols 422-427 are the window frame, no base plateau"
+  },
+  "frame_note": ""
+}

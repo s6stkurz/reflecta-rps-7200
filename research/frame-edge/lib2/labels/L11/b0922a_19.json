@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_19", "labeller": "L11", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage runs to column 0"},
+  "right": {"state": "edge", "x": 406.7, "lo": 406.2, "hi": 407.1,
+            "outer": 425.5, "x_top": null, "x_bottom": null,
+            "note": "base columns 407-424 (R/G 2.3, B/G 0.53, ~80 on the table). This frame's picture ends on a straight vertical, read row by row where bright leaves meet it (406.2-407.0 in the upper half); lower down the dark foliage has base's value and no boundary shows. Neighbour sliver at 425-427: its bright top rows start at ~425.0-425.3; lower down its content is dark and the visible boundary drifts to 426-427, so outer is uncertain"},
+  "frame_note": "this frame 0-406, base gap ~18 columns, neighbour sliver at the right border"
+}

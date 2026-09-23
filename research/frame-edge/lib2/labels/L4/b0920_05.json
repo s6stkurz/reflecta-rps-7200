@@ -1,0 +1,26 @@
+{
+  "id": "b0920_05",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 9.1,
+    "lo": 8.6,
+    "hi": 9.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "9 columns of base; dark night scene beside it matches base value and ratio at the top, but the bench and the figures start on a straight vertical line at col 9"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright wall (dense negative) runs to column 428"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "x0920_64",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 0-7 are bright cream in B (DENSE in A, 4-16), i.e. the lit wall outside the round mirror, not base (base would be black in B); its boundary follows the mirror rim. Picture runs to col 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "mirror reflection to col 427; bottom band rises (to 55) where the dark mirror rim curves in, no vertical line"
+  },
+  "frame_note": "selfie in a round mirror; corners outside the mirror are scene"
+}

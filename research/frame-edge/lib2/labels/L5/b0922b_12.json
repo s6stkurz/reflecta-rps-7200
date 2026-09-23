@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_12",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 60.7,
+    "lo": 60.2,
+    "hi": 61.2,
+    "outer": 42.1,
+    "x_top": 60.2,
+    "x_bottom": 61.1,
+    "note": "base cols 43-59 (R/G 2.27, B/G 0.55). Frame = right part (street scene, 60-428) vs neighbour 0-42. Edge sharp, tilted: ~60.2 in the top quarter, ~60.7 at mid-height, ~61.0-61.2 at the bottom. Neighbour/base boundary ~42.9 at the top, 42.0 from mid-height down."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tree/car/road run to 427"
+  },
+  "frame_note": "same scene as b0921c_65; gap at 42-60 lies inside the crop"
+}

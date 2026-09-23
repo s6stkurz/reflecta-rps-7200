@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_13", "labeller": "L11", "view": "B",
+  "left":  {"state": "edge", "x": 5.6, "lo": 5.4, "hi": 7.1,
+            "outer": null, "x_top": 5.9, "x_bottom": 7.0,
+            "note": "base columns 0-4 (R/G 2.23, B/G 0.53, raw ~[67,30,16], not gate). Sharp edge, bowed: ~5.9 in the first rows, ~5.5-5.6 over most of the upper and middle height, ~6.0 around rows 160-245, then out to ~6.8-7.1 in the last ~25 rows (column 6 mostly base there). Rows 197-221 are unreadable because the pale wall there is near base"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky, trees and path run to column 427"},
+  "frame_note": ""
+}

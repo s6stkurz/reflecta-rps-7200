@@ -1,0 +1,26 @@
+{
+  "id": "gold200_08",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "pavement and legs run to column 0, no black band"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark foliage runs to 428: textured, bright twigs, not uniform black; values 60-89 vary by band"
+  },
+  "frame_note": ""
+}

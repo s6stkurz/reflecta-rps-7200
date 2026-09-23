@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_09",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 26.9,
+    "lo": 26.5,
+    "hi": 27.3,
+    "outer": 13.1,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "clean: base gap ~13-26 (raw 69-71/29-31/15-16, R/G 2.3, B/G 0.52), bright sky starts at 26.9 in almost every band (26.7 at mid-height); only the bottom ~30 rows reach ~27.7 (rounded corner). Neighbour edge ~14.0 in the top rows, ~12.6-13.0 lower down, low contrast (neighbour pale)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hedge leaves run to column 427"
+  },
+  "frame_note": "Left gap at 13-26; neighbour 13 cols, this frame ~401 cols."
+}

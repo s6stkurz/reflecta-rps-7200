@@ -1,0 +1,26 @@
+{
+  "id": "r0914_13",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "light strip 0-12 (~62) is a scene wall section, far below base (~94), boundary slanted 17->11; picture runs to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.6,
+    "lo": 418.2,
+    "hi": 419.0,
+    "outer": null,
+    "x_top": 419.1,
+    "x_bottom": 418.1,
+    "note": "base 419-427 ~94 all bands; col 418 = 42/48/57/71 (slightly soft, 1-col transition) -> crossing ~419.0/418.66/418.51/418.25 top to bottom: tilt, base starts further left at the bottom"
+  },
+  "frame_note": ""
+}

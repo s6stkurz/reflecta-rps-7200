@@ -1,0 +1,26 @@
+{
+  "id": "x0920_40",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall (b1/b4 gradient 80->65) and dark trousers (b2/b3 ~95, clear on negative) run to col 0; trousers not full height"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "uniform grey wall ~60 runs to col 427, no vertical line"
+  },
+  "frame_note": ""
+}

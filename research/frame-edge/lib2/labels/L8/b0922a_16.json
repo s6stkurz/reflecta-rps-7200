@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_16", "labeller": "L8", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage and a person run to column 0; col 0 reads like col 1 in every band, so no sub-column sliver"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage and the third person run off col 427; no plateau"},
+  "frame_note": "thin forest negative; no full-height uniform strip anywhere in the 428 columns (every column has a band well below base). Faint vertical lines near cols ~225 and ~280 in view B are scan artefacts, not gaps."
+}

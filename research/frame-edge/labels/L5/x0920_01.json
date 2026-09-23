@@ -1,0 +1,26 @@
+{
+  "id": "x0920_01",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 16.1,
+    "lo": 15.9,
+    "hi": 16.4,
+    "outer": null,
+    "x_top": 16.4,
+    "x_bottom": 15.95,
+    "note": "REVERSED POLARITY: cols 0-14 are an opaque, uniform, full-height band (reads 1, WHITE in B, black in A) with a straight sharp edge; no neighbour picture beyond it. The scene reads as a natural positive in A (dark figure on snow, dark trees on white sky), so this strip looks like reversal film, where unexposed film is opaque (probably the leader before frame 1). Labelled that band as base. Slight tilt ~16.4 top to ~16.0 bottom"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky, trees and buildings run to 428; bottom/top bands vary, no uniform band"
+  },
+  "frame_note": "polarity opposite to the instructions (same strip as x0920_08): gap/leader is black in A, white in B. Labelled the opaque band as base; confirm how x0920 reversal frames should be treated"
+}

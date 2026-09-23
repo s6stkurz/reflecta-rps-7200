@@ -1,0 +1,26 @@
+{
+  "id": "gold200_16",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "chair/table to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 425.2,
+    "lo": 424.8,
+    "hi": 425.8,
+    "outer": null,
+    "x_top": 424.9,
+    "x_bottom": 425.5,
+    "note": "clean black strip 425/426-427 (base 96-98); slight tilt: b1 crosses ~424.9, b3/b4 ~425.4-425.7"
+  },
+  "frame_note": ""
+}

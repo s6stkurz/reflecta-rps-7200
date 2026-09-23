@@ -1,0 +1,1617 @@
+{
+ "about": "test split truth -- final scoring only",
+ "frames": {
+  "gold200_01": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "scene to col 0, max ~65, no plateau",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture (trees/bench) reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 426.0,
+    "lo": 425.7,
+    "hi": 426.8,
+    "outer": null,
+    "x_top": 426.0,
+    "x_bottom": 426.5,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 426.0,
+      "lo": 425.7,
+      "hi": 426.8,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "2-col sliver 426-427 reads 76-77 in all bands (b4 col426 = 47), dark full-height line in B; plateau lower than base on this roll (~97 in gold200_16) so may be partial base at the scan end; edge placed at start of sliver",
+      "labeller": "L1",
+      "x_eye": 426.1,
+      "x_snap": 426.0
+     },
+     {
+      "state": "edge",
+      "x": 426.0,
+      "lo": 425.8,
+      "hi": 426.6,
+      "outer": null,
+      "x_top": 426.0,
+      "x_bottom": 426.5,
+      "note": "2-column full-height strip (cols 426-427 ~76-78 in every band, dark in B, grey in A), sharp; col 426 is full base in b1-b3 and ~47% in b4 -> bottom leans right. Plateau reads only ~77, not ~97, so possibly the base's own level in this frame",
+      "labeller": "L4",
+      "x_eye": 426.05,
+      "x_snap": 426.0
+     }
+    ]
+   }
+  },
+  "gold200_02": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "leaves texture to col 0; no plateau (table ~60)",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "leafy foreground (textured, not black in B) runs to column 0; values 47-75, no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense sky runs to 428; table ~11, no base plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "bright sky runs to 428 (~11), no black band in B",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_03": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage runs to col 0, no plateau (max ~72)",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage, sky and building run to col 0; no black plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage to col 427, table tops ~81 with no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark foliage runs to col 427, textured, no sharp vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_04": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark foliage to col 0, no plateau",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture (pale leaves) runs to column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "bright sky/water to col 427, no base plateau",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture incl. dark lower half runs to 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_05": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/trees run to col 0; no black plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/trees run to column 0; no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building/sky run to 428; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building runs to 428; no plateau in any band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_06": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "roof, window and white door run to col 0; no black strip in B, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "no base plateau; cols 0-3 slightly lighter in bottom band only (b4 ~25), picture",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage to col 427, no black strip, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture (flowers) to border",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_07": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tree/road to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "trees/road picture reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "car wheel/foliage to col 427; b4 rise at 425-427 is picture, not full height",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "house/hedge/car picture reaches 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_08": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "legs/pavement bands run to col 0; table ~30, no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "pavement and legs run to column 0, no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "tree branches to 428; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark foliage runs to 428: textured, bright twigs, not uniform black; values 60-89 vary by band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_09": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark foliage (near-white on negative) with leaf detail reaching col 0; no flat plateau, table ~65-75",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark foliage with sky highlights reaching col 0 (several rows); dark but not base: highlights cross to the border, no line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "leaf features at cols 420-427; table smoothly declining 80->73, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark foliage with highlights reaching col 427; gradient 82->73, no sharp line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_10": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "street scene to col 0, no black full-height strip",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building/street picture reaches column 0 (dark band at bottom cols 0-5); no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building/foliage to col 427, no black full-height strip",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "building picture to 428; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_11": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/grass run to col 0; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky and grass run to column 0; band1 stays at 12",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/grass run to 428; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky and grass run to 428; no plateau",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_12": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark background (grey in B, not black) and bright bottom region both reach col 0; no line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "bright wall background reaches border but bottom band (foreground) is picture to col 0; no full-height plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dark background and bright bottom region reach col 427; horizontal boundary crosses to the border, no vertical line",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "bright wall top, dark foreground bottom, both to col 427; no vertical line",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_13": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grass/figure to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "grass/bag picture reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "right ~60 cols are pale and featureless in A (dark grey in B) but it is a gradual falloff (81 at ~380 sliding to 72 at 427), with faint texture and no sharp straight boundary: underexposed scene, not base. Low confidence",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "NOT base: grass fades gradually (flash falloff) into a featureless dark region from ~col 360 on, ~80 in all bands, no sharp line anywhere; a base strip would put the frame under 370 cols wide while the left has picture at col 0",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "gold200_14": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "dense (white-in-positive) wall runs to col 0; table ~4, not base",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "blown-out white (flash-lit wall, 2-7) runs to column 0",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 423.1,
+    "lo": 422.6,
+    "hi": 423.6,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "resolved_by": "R1",
+    "labels": [
+     {
+      "state": "edge",
+      "x": 423.1,
+      "lo": 422.6,
+      "hi": 423.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "uniform strip 423-427 same in all 4 bands (~79, matches base level ~80 in neighbour gold200_15 at same x); dark top bar (neg) ends sharply at ~423. Low level contrast vs flash-shadow picture, placed mainly from b1 and geometry",
+      "labeller": "L2",
+      "x_eye": 423.1,
+      "x_snap": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 423-427 form a uniform full-height strip with a sharp line at ~422.7 (the top bar ends there), but it reads only ~79, darker in A than scene areas at 85-87, so it cannot be base; a thin line near the bottom crosses into it. Read as a post/door frame in the scene",
+      "labeller": "L5",
+      "x_eye": null
+     },
+     {
+      "state": "edge",
+      "x": 423.1,
+      "lo": 422.6,
+      "hi": 423.6,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "third look: the ceiling band and highlights all stop on one vertical line at 423; 423-427 featureless at base colour (59,27,14, R/G 2.19); gold200_15 sits at 423.0",
+      "labeller": "R1",
+      "x_eye": 423.1,
+      "x_snap": null
+     }
+    ]
+   }
+  },
+  "gold200_15": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop and legs run to col 0, no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "backdrop and trousers run to col 0",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 422.97222222222223,
+    "lo": 422.4,
+    "hi": 423.3,
+    "outer": null,
+    "x_top": 423.0,
+    "x_bottom": 422.2,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 422.97222222222223,
+      "lo": 422.4,
+      "hi": 423.3,
+      "outer": null,
+      "x_top": 423.0,
+      "x_bottom": 422.2,
+      "note": "5-col base plateau ~80 in all bands vs backdrop ~61; col 422 base only in bottom band (b4=75) so edge leans left at the bottom",
+      "labeller": "L3",
+      "x_eye": 423.0,
+      "x_snap": 422.97222222222223
+     },
+     {
+      "state": "edge",
+      "x": 422.97222222222223,
+      "lo": 422.7,
+      "hi": 423.3,
+      "outer": null,
+      "x_top": 423.0,
+      "x_bottom": 422.2,
+      "note": "5-col strip 423-427 uniform 79-81 in all bands, sharp straight full-height line; col 422 is 0% in b1-b3 but ~72% in b4 -> bottom rows start ~422.2; strip is dark slate in B rather than pure black (base only ~80 on this frame, as on hwcheck_01)",
+      "labeller": "L6",
+      "x_eye": 423.0,
+      "x_snap": 422.97222222222223
+     }
+    ]
+   }
+  },
+  "gold200_16": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "chair/table to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "chair/picture reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.2282407407407,
+    "lo": 424.7,
+    "hi": 425.8,
+    "outer": null,
+    "x_top": 424.85,
+    "x_bottom": 425.5,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 425.2282407407407,
+      "lo": 424.8,
+      "hi": 425.8,
+      "outer": null,
+      "x_top": 424.9,
+      "x_bottom": 425.5,
+      "note": "clean black strip 425/426-427 (base 96-98); slight tilt: b1 crosses ~424.9, b3/b4 ~425.4-425.7",
+      "labeller": "L1",
+      "x_eye": 425.2,
+      "x_snap": 425.2282407407407
+     },
+     {
+      "state": "edge",
+      "x": 425.2282407407407,
+      "lo": 424.7,
+      "hi": 425.7,
+      "outer": null,
+      "x_top": 424.8,
+      "x_bottom": 425.5,
+      "note": "clean sharp edge, slight tilt (bands 424.9/425.1/425.75/425.4); 3 cols of base",
+      "labeller": "L4",
+      "x_eye": 425.2,
+      "x_snap": 425.2282407407407
+     }
+    ]
+   }
+  },
+  "gold200_17": {
+   "split": "test",
+   "roll": "gold200",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "room wall/desk run to col 0; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "wall/ceiling slope runs to column 0",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "window/wall/desk run to 428; no plateau",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "window wall runs to 428",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   }
+  },
+  "hwcheck_01": {
+   "split": "test",
+   "roll": "hwcheck",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "roof/white door to col 0; col 0 marginally odd in the all-rows figure but no plateau",
+      "labeller": "L3",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "picture (window/wall) to col 0; bands differ strongly, no plateau",
+      "labeller": "L6",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.02272727272725,
+    "lo": 423.6,
+    "hi": 424.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 424.02272727272725,
+      "lo": 423.7,
+      "hi": 424.5,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "cols 424-427 uniform ~76 in all four bands, dark strip full height in B with a sharp vertical line; base only a little brighter than the dark foliage (~65-75) so the 50% crossing is soft in b3/b4 (col 424 ~60%) and ~423.8-424.0 in b1/b2. Same scene as gold200_06 shifted, the strip lies beyond the picture there",
+      "labeller": "L3",
+      "x_eye": 424.1,
+      "x_snap": 424.02272727272725
+     },
+     {
+      "state": "edge",
+      "x": 424.02272727272725,
+      "lo": 423.6,
+      "hi": 424.4,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "|4-col base sliver 424-427, uniform 75-77 in all bands, sharp vertical line; base only ~76 because deep shadows in the flowers are nearly as clear",
+      "labeller": "L6",
+      "x_eye": 424.0,
+      "x_snap": 424.02272727272725
+     }
+    ]
+   }
+  },
+  "hwcheck_02": {
+   "split": "test",
+   "roll": "hwcheck",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "foliage/road to col 0",
+      "labeller": "L1",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "sky/trees picture reaches column 0; no plateau",
+      "labeller": "L4",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 425.8478260869565,
+    "lo": 425.1,
+    "hi": 426.0,
+    "outer": null,
+    "x_top": 425.125,
+    "x_bottom": 425.975,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 425.8478260869565,
+      "lo": 425.1,
+      "hi": 426.0,
+      "outer": null,
+      "x_top": 425.1,
+      "x_bottom": 426.0,
+      "note": "base plateau 81-82 at 426-427, all bands equal; col 425 partial, more base at top (78) than bottom (27) -> slight tilt",
+      "labeller": "L1",
+      "x_eye": 425.6,
+      "x_snap": 425.8478260869565
+     },
+     {
+      "state": "edge",
+      "x": 425.8478260869565,
+      "lo": 425.1,
+      "hi": 426.0,
+      "outer": null,
+      "x_top": 425.15,
+      "x_bottom": 425.95,
+      "note": "2-col base plateau 426-427 (~82 all bands), sharp; col 425 base fraction b1 84%, b2 46%, b3 33%, b4 5% -> visible lean, bottom further right",
+      "labeller": "L4",
+      "x_eye": 425.6,
+      "x_snap": 425.8478260869565
+     }
+    ]
+   }
+  },
+  "hwcheck_03": {
+   "split": "test",
+   "roll": "hwcheck",
+   "flags": [],
+   "left": {
+    "state": "picture_to_border",
+    "labels": [
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "legs/pavement run to col 0; table ~30 flat",
+      "labeller": "L2",
+      "x_eye": null
+     },
+     {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": "pavement and legs run to column 0, no black band",
+      "labeller": "L5",
+      "x_eye": null
+     }
+    ]
+   },
+   "right": {
+    "state": "edge",
+    "x": 424.6583333333333,
+    "lo": 424.0,
+    "hi": 425.1,
+    "outer": null,
+    "x_top": 424.1,
+    "x_bottom": 425.05,
+    "labels": [
+     {
+      "state": "edge",
+      "x": 424.6666666666667,
+      "lo": 424.0,
+      "hi": 425.0,
+      "outer": null,
+      "x_top": 424.0,
+      "x_bottom": 425.1,
+      "note": "narrow base sliver ~3 cols, uniform ~86 all bands from 425; col 424 is base in b1 (84) and picture in b4 (63): slight tilt, edge moves right going down",
+      "labeller": "L2",
+      "x_eye": 424.5,
+      "x_snap": 424.6666666666667
+     },
+     {
+      "state": "edge",
+      "x": 424.65,
+      "lo": 424.1,
+      "hi": 425.1,
+      "outer": null,
+      "x_top": 424.2,
+      "x_bottom": 425.0,
+      "note": "uniform black strip cols 425-427 (~86 all bands), sharp full-height line. Col 424 partial: 90% base at top, 0% at bottom, so tilted. Foliage beside it is fairly bright (70-85), so contrast is low in the top band",
+      "labeller": "L5",
+      "x_eye": 424.6,
+      "x_snap": 424.65
+     }
+    ]
+   }
+  }
+ },
+ "frame_width": {
+  "_all": 440.15,
+  "_measured": {
+   "r0911": [
+    449.9
+   ],
+   "r0914": [
+    437.5,
+    440.1
+   ]
+  },
+  "_evidence": {
+   "r0911": [
+    "r0911_17 left gap 5.4 -> 449.9"
+   ],
+   "r0914": [
+    "r0914_20 left gap 17.8 -> 437.5",
+    "r0914_24 right gap 15.2 -> 440.1"
+   ]
+  }
+ },
+ "pair_check": {
+  "n": 0,
+  "mae": null,
+  "max": null,
+  "bad": []
+ },
+ "anchors_check": {
+  "summary": {
+   "n": 40,
+   "state_match": 34,
+   "edge_mae": 0.137,
+   "edge_max": 0.33
+  },
+  "rows": [
+   {
+    "id": "gold200_01",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_01",
+    "side": "right",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.01
+   },
+   {
+    "id": "gold200_02",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_02",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_03",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_03",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_04",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_04",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_05",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_05",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_06",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_06",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_07",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_07",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_08",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_08",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_09",
+    "side": "left",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_09",
+    "side": "right",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_10",
+    "side": "left",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_10",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_11",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_11",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_12",
+    "side": "left",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_12",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_13",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_13",
+    "side": "right",
+    "anchor": "unreadable",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_14",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_14",
+    "side": "right",
+    "anchor": "unreadable",
+    "gt": "edge"
+   },
+   {
+    "id": "gold200_15",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_15",
+    "side": "right",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": -0.12
+   },
+   {
+    "id": "gold200_16",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_16",
+    "side": "right",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": -0.21
+   },
+   {
+    "id": "gold200_17",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "gold200_17",
+    "side": "right",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "hwcheck_01",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "hwcheck_01",
+    "side": "right",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": -0.33
+   },
+   {
+    "id": "hwcheck_02",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "hwcheck_02",
+    "side": "right",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.08
+   },
+   {
+    "id": "hwcheck_03",
+    "side": "left",
+    "anchor": "picture_to_border",
+    "gt": "picture_to_border"
+   },
+   {
+    "id": "hwcheck_03",
+    "side": "right",
+    "anchor": "edge",
+    "gt": "edge",
+    "diff": 0.07
+   }
+  ]
+ }
+}

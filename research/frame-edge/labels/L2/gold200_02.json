@@ -1,0 +1,26 @@
+{
+  "id": "gold200_02",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "leaves texture to col 0; no plateau (table ~60)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dense sky runs to 428; table ~11, no base plateau"
+  },
+  "frame_note": ""
+}

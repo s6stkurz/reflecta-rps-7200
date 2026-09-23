@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_58",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "Gap starts at the neighbour edge ~131.5 (outer boundary: ~132.6 in the top rows, ~131.3 lower), but its far side cannot be seen: this frame's dark foliage is at base density and base ratio (raw 66-72/29-32/16-18, R/G 2.2, B/G 0.56) all the way from 133 to past 200, no step anywhere. The first picture features (sky specks through leaves) appear at cols 151-153 (rows ~97-99 and ~160-167), so the edge is at or before ~151; with this roll's usual 17-21 col gap it would sit ~148-152, but nothing visible marks it."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "foliage and sky run to column 427"
+  },
+  "frame_note": "Neighbour (jeans/person) 0-131 on the left, this frame on the right; gap-to-picture boundary invisible because the scene is at base density. outer (neighbour edge) ~131.5."
+}

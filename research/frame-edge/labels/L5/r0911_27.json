@@ -1,0 +1,26 @@
+{
+  "id": "r0911_27",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 0.1,
+    "lo": 0.0,
+    "hi": 0.6,
+    "outer": null,
+    "x_top": 0.55,
+    "x_bottom": 0.1,
+    "note": "barely-there sliver: col 0 black in B only in the top ~quarter (b1 63 vs wall 35, ~47%, col 1 ~7%); below that col 0 is only ~6-10% base (dark grey). Tilted edge grazing the frame; could equally be called picture_to_border"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "beige wall runs to 428, flat 30-40, no black band"
+  },
+  "frame_note": "left: fractional sliver"
+}

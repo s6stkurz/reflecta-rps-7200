@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_05",
+  "labeller": "L10",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 68.6,
+    "lo": 67.9,
+    "hi": 69.1,
+    "outer": 42.8,
+    "x_top": 68.2,
+    "x_bottom": 68.8,
+    "note": "base gap cols ~43-67 (raw 66-67/29-30/16-17, R/G 2.25, B/G 0.55), uniform. This frame's dark bar interior is barely denser than base (~92 vs 96 on the table), so the edge is low-contrast: col 68 reads slightly darker full height and every picture feature (bench at the bottom, streak near row 210) starts at ~68.8-69.0. Neighbour edge ~43.6 top rows, ~42.6-42.9 lower."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols ~388-427 are an extremely dense flash-burned region (white in view B, table 3-6), picture not base or gate, runs to column 427"
+  },
+  "frame_note": "Left gap at 43-67; neighbour 43 cols, this frame ~359 cols. Same scene as b0920_05."
+}

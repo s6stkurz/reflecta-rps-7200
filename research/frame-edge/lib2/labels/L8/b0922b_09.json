@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_09", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 62.0, "lo": 61.6, "hi": 62.8,
+            "outer": 41.5, "x_top": null, "x_bottom": null,
+            "note": "base cols 42-61 (G~30, R/G 2.23-2.27, B/G 0.53-0.57, uniform, full height, ~93). This frame's picture starts at 62.0: sharp in the top band (facade) and along a horizontal line at mid-height that starts at exactly col 62; the lower half is a dark tree trunk near base value, so there only inferred. Neighbour picture cols 0-41: dark scene (G~28, R/G 2.33) with bright leaf specks that all stop on a straight line at ~41.5 -> outer."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "street facades run off the right border"},
+  "frame_note": "thin negative; the neighbour on the left is dark and only its specks mark its edge"
+}

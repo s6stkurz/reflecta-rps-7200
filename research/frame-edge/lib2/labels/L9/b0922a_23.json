@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_23", "labeller": "L9", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage and faces run to column 0"},
+  "right": {"state": "edge", "x": 229.8, "lo": 229.2, "hi": 230.5,
+            "outer": 250.0, "x_top": null, "x_bottom": null,
+            "note": "mid-frame gap: base 230/231-248 (95-97, R/G 2.25, B/G 0.54). Left part 0-229 (230 cols) is the frame, right part 250-427 (178 cols) the neighbour. Edge ~230.0 in the upper third (a dark branch reaches to 231.0 around row 29), 229.2-229.6 around mid-height; in the lower half the frame's picture (pale jacket) is within a few percent of base, so the bottom is barely readable. Outer tilts ~249.1 at the top to ~250.0-250.3 in the lower half"},
+  "frame_note": "gap in the middle of the scan, found in the 1:1 thumbnail; tie rule not needed (230 vs 178 columns)"
+}

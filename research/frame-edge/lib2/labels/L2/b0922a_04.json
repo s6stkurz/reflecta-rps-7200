@@ -1,0 +1,9 @@
+{
+  "id": "b0922a_04", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 54.0, "lo": 53.6, "hi": 54.5,
+            "outer": 33.0, "x_top": 53.7, "x_bottom": 54.3,
+            "note": "base cols 34-53 reads only ~82 on the table (dark slate in B) but is base by ratio (R/G 2.24, B/G 0.55) and is featureless (row std ~1.3). The forest beside it is at base density in most rows, so the edge is placed where texture starts: row std jumps at col 54, and in the top band col 53 is ~75% base (53.7). Straight line on the zoomed view. Neighbour's patterned surface ends ~33.8 at the top, ~33.0 below, ~32.4 near 5/8 height"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "house/figure/foliage run to 427"},
+  "frame_note": "underexposed forest frame; base is not the brightest thing on the table here"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_19", "labeller": "L7", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grey backdrop runs to col 0, likeness ~20; no plateau"},
+  "right": {"state": "edge", "x": 215.4, "lo": 215.0, "hi": 215.9,
+            "outer": 232.4, "x_top": 216.0, "x_bottom": 215.2,
+            "note": "gap in the middle, cols 215-231 (R/G 2.2, B/G 0.54). Col 215 reads 64/58/88/88 by band: the top band is still picture there, so the top meets base at ~216.0 and the lower half at ~215.2. Col 214 is a thin lighter line in the positive (likeness 43 vs ~48). Outer ~231.9 at top, ~232.2-232.7 below."},
+  "frame_note": "gap at 215-232 in the middle of the frame, found on the 1:1 thumbnail. Left part 0-214 (215 cols) vs right part 232-427 (196 cols): 19 cols apart, so not a tie; the left part is the frame."
+}

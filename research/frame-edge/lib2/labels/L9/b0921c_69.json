@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_69", "labeller": "L9", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "hydrangeas and fence run to column 0"},
+  "right": {"state": "edge", "x": 410.7, "lo": 409.2, "hi": 410.9,
+            "outer": null, "x_top": 410.5, "x_bottom": 409.2,
+            "note": "base 411-427 (82-90, R/G 2.2, B/G 0.53, shading slightly towards 427). Edge 410.5-410.9 over the upper half (col 410 15-40% base); in rows ~160-245 the picture (white wall) equals base in value and the edge cannot be read; bottom rows 409.0-409.2 (corner). A few-row neighbour sliver shows at col 427 only in rows 3-24 (G 11-17 vs base 26) - the next frame's corner, not a straight edge, so outer left null"},
+  "frame_note": ""
+}

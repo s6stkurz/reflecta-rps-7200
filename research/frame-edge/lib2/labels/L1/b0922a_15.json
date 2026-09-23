@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_15", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 5.0, "lo": 4.7, "hi": 5.5,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "cols 0-4 featureless and uniform 69-72 in all 8 bands, R/G 2.24 B/G 0.56 = base; not the brightest (thin dark scene reads the same ~70), identified by uniformity and by every highlight stopping at col 5 in view B. Clear only in the top band (col 5 drops to 42)"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/figure to col 427"},
+  "frame_note": "underexposed forest scene, much of it near base density; faint 1-col scratch lines near cols 215 and 262 are not base"
+}

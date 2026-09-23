@@ -1,0 +1,26 @@
+{
+  "id": "r0914_09",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall (dense, ~7) to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 419.75,
+    "lo": 419.2,
+    "hi": 420.0,
+    "outer": null,
+    "x_top": 419.9,
+    "x_bottom": 419.25,
+    "note": "sharp black strip from 420 (base 96-100); col 419 ~13-27% base in b1-b3 but ~73% in b4 -> bottom of the edge sits ~0.6 col further left"
+  },
+  "frame_note": ""
+}

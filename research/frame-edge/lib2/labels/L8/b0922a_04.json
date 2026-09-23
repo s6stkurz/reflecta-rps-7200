@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_04", "labeller": "L8", "view": "A",
+  "left":  {"state": "edge", "x": 54.1, "lo": 53.7, "hi": 54.8,
+            "outer": 33.2, "x_top": null, "x_bottom": null,
+            "note": "base cols 34-53 (G~29, R/G 2.22, B/G 0.55, full height) reads only ~81 on the table because the thin forest scene has brighter pixels. This frame's picture starts at ~54.0: sharp in the top and bottom bands (foliage); the middle bands are dark scene within 1-3 points of base, boundary there taken from the straight line visible in view B. Neighbour picture (bark texture) cols 0-32, outer ~33.2 (34.0 in the top band)."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "girl and foliage run off the right border"},
+  "frame_note": "thin (underexposed) negative, same scene as b0921a_29"
+}

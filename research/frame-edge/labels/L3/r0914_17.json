@@ -1,0 +1,26 @@
+{
+  "id": "r0914_17",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tiles run to col 0; vertical black band at ~47-60 is grout between tiles (tiles resume at ~61), not base"
+  },
+  "right": {
+    "state": "edge",
+    "x": 418.5,
+    "lo": 418.0,
+    "hi": 419.1,
+    "outer": null,
+    "x_top": 419.0,
+    "x_bottom": 418.0,
+    "note": "cols 419-427 ~93 all bands, black full height with a straight line. Grout is nearly as dark (~84-90) and runs into it in b3, so boundary only readable against tiles: b1 419.0 (col 418 = picture), b2 418.5 (col 418 46%), b4 418.0 (col 418 fully base). Tilted ~1 col"
+  },
+  "frame_note": "tile/grout pattern: grout nearly base-dark"
+}

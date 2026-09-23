@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_65",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "building/hedge/car run to column 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark tree reads 70-80 in bands 1-3 but is textured, and the road (band 4, ~36) runs to 427; no base anywhere"
+  },
+  "frame_note": "no gap in the frame; thin vertical lines at cols ~214 and ~260 are sensor columns"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_09", "labeller": "L1", "view": "A",
+  "left":  {"state": "edge", "x": 7.2, "lo": 6.5, "hi": 8.0,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "LOW CONFIDENCE. Underexposed foliage reads exactly base level (sum ~110, R/G 2.3, same as base on b0922s_03), so no level step exists. Evidence is geometric only: cols 0-6 hold no sky patch in any row (<=2 dense px per col vs 7-18 from col 7 on) and three separate sky features all begin at col 7 on one vertical line"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky patches through the foliage reach col 427"},
+  "frame_note": "whole frame is near-base density (tree canopy against sky); table reads ~90 everywhere"
+}

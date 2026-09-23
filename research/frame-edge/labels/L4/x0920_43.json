@@ -1,0 +1,26 @@
+{
+  "id": "x0920_43",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey wall and black skirt (b2/b3 ~92, a scene object, not full height) reach column 0; no plateau"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grey wall reaches 428 (~28), no line or plateau"
+  },
+  "frame_note": ""
+}

@@ -1,0 +1,26 @@
+{
+  "id": "strip6_01",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 11.0,
+    "lo": 10.8,
+    "hi": 11.2,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|base cols 0-10 (~80-86, pinkish-white in A, dark slate in B), sharp straight full-height line at col 11 cutting both the hair (top) and the white wall; col 10 b2 86% base, col 11 b3 3%, b4 8% (bottom few rows ~11.5)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hair runs to col 427, textured, no line"
+  },
+  "frame_note": "base reads only ~80-86 on this frame; a clear part of the hair (b1 ~79) touches the edge at the top"
+}

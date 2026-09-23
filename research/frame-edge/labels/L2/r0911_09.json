@@ -1,0 +1,26 @@
+{
+  "id": "r0911_09",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 1.8,
+    "lo": 1.4,
+    "hi": 3.2,
+    "outer": null,
+    "x_top": 3.2,
+    "x_bottom": 2.4,
+    "note": "narrow base: col 0 = 95 all bands; 50% crossing per band ~3.1 (b1), 2.0 (b2), 1.6 (b3), 2.4 (b4). Edge bows: widest at top quarter, narrowest ~60% height; painting (dark) abuts base in b2/b3"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall and second painting run to 428; no plateau (b1 ~80 vs base 95)"
+  },
+  "frame_note": ""
+}

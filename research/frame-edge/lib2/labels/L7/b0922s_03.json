@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_03", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 15.0, "lo": 14.7, "hi": 15.5,
+            "outer": null, "x_top": 14.9, "x_bottom": 15.6,
+            "note": "base cols 0-14 to the aperture (likeness ~96, R/G 2.25, B/G 0.54), no neighbour. Picture is a pale grey backdrop at ~72, straight clean step. Col 15 reads 77/71/71/88: only the bottom band carries extra base, ~0.6 col."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop/trousers run to col 427, likeness ~43"},
+  "frame_note": "whole thumbnail checked: no interior gap"
+}

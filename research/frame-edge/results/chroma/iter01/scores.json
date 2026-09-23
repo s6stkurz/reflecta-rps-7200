@@ -1,0 +1,118 @@
+{
+ "split": "dev",
+ "side": {
+  "n": 0,
+  "correct": 0,
+  "accuracy": 0.0,
+  "false_base": 0,
+  "missed": 0,
+  "refused": 0,
+  "edge_n": 0,
+  "edge_mae_cols": NaN,
+  "edge_p90_cols": NaN,
+  "edge_max_cols": NaN,
+  "edge_bias_cols": null,
+  "edge_mae_units": NaN,
+  "confusion": {
+   "edge": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 0,
+  "ok": 0,
+  "bad": 0,
+  "refused": 0,
+  "sign_errors": 0,
+  "accuracy": 0.0,
+  "du_mae_units": NaN,
+  "du_p90_units": NaN
+ },
+ "per_film": {},
+ "per_roll": {},
+ "worst": [],
+ "label_free": {
+  "pairs": {
+   "n": 78,
+   "both_edge": 15,
+   "state_changes": 26,
+   "mae_cols": 0.435,
+   "p90_cols": 0.972,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 152,
+   "state_changes": 7,
+   "mae_cols": 0.277,
+   "over_1": 0
+  },
+  "ladder": {
+   "left": {
+    "found": 12,
+    "of": 21,
+    "slope_cols": 7.248,
+    "resid_mad": 0.32,
+    "resid_max": 0.72
+   },
+   "right": {
+    "found": 8,
+    "of": 21,
+    "slope_cols": -0.822,
+    "resid_mad": 13.762,
+    "resid_max": 25.732
+   }
+  },
+  "mirror": {
+   "state_changes": 10,
+   "mae_cols": 0.002,
+   "over_0_5": 0
+  }
+ },
+ "seconds_per_frame": 0.1049
+}

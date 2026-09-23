@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_15", "labeller": "L9", "view": "A",
+  "left":  {"state": "edge", "x": 110.2, "lo": 109.9, "hi": 111.0,
+            "outer": 93.2, "x_top": 110.1, "x_bottom": 111.6,
+            "note": "interior gap (deeper than the crop): base 93/94-109 at 94-98, R/G 2.2, B/G 0.54. Frame is the right part (110-427, 318 cols) vs neighbour 0-93. Edge 110.0-110.1 in the upper half, drifting to ~111.7 in the bottom rows (corner rounding). Outer 93.0-93.3 mid-height, ~94.0 in the top rows"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "scene runs to 428"},
+  "frame_note": "gap at columns 93-110, inside the frame; found in the 1:1 thumbnail"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_07",
+  "labeller": "L3",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 2.0,
+    "lo": 1.0,
+    "hi": 2.9,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall is nearly base-clear, so weak: the lit floor at the bottom stops at col ~2.5 with cols 0-1 dark in B, and cols 0-1 read ~90 vs wall ~86 in b2-b4 (~half base). Sliver, soft, ambiguous"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "framed picture and floor run to col 427, no black strip"
+  },
+  "frame_note": ""
+}

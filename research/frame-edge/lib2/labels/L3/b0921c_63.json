@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_63", "labeller": "L3", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "street/figure scene runs to col 0, no plateau"},
+  "right": {"state": "edge", "x": 216.2, "lo": 215.7, "hi": 216.5,
+            "outer": 238.0, "x_top": 216.3, "x_bottom": 215.8,
+            "note": "gap deeper than the crop: black base cols 217-236 (R/G 2.21-2.24, B/G 0.56; faint line at 230). A fixed brownish scan line at cols 213-215 sits right against the edge; col 215 still reads as picture in the upper 70%. Edge ~216.1-216.4 in the upper 70%, ~215.75 in the bottom 30%. Neighbour (foliage) starts ~237.0 in the top fifth, 238.0-238.2 through mid and lower rows"},
+  "frame_note": "internal gap at cols ~216-238; frame is the left part (0-216, ~216 cols) vs neighbour 238-427 (~190 cols), not a tie"
+}

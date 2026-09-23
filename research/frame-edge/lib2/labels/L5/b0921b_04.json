@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_04",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 10.2,
+    "lo": 10.0,
+    "hi": 10.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "clean base 0-9 (R/G 2.29, B/G 0.52; not the empty gate, col 0 reads 68/30/15). Sharp edge, col 10 ~5-40% base over most of the height (x 10.0-10.4); the bottom ~15 rows curve out to ~11 (rounded frame corner)."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hedge leaves run to 427"
+  },
+  "frame_note": ""
+}

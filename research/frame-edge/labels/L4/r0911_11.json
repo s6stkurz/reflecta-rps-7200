@@ -1,0 +1,26 @@
+{
+  "id": "r0911_11",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark green wall (pale in the negative) reaches column 0 with smooth vignetting-like gradient, no line; col 0 only 2-3 above its neighbours"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wall reaches 428; no line or plateau"
+  },
+  "frame_note": ""
+}

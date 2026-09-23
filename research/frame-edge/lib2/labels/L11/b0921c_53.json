@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_53", "labeller": "L11", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky, steeple and face run to column 0"},
+  "right": {"state": "edge", "x": 292.7, "lo": 292.0, "hi": 293.4,
+            "outer": 307.0, "x_top": null, "x_bottom": null,
+            "note": "night scene: below the sky the dark scene has base's value and ratio, so the edge is seen directly only in the top ~28 rows, where a sliver of sky (B/G 0.41) above the trees is cut by a sharp vertical at ~292.4-293.0. Lower down only a faint full-height step (2-3 units) near 290-292 is visible. Columns 293-306 are flat base (R/G 2.25, B/G 0.53); a faint but straight full-height step at 306/307 is taken as the neighbour's picture start (outer), which then darkens gradually to a blob at 395-427"},
+  "frame_note": "hard: dark night frame where scene black equals base; the same scene as b0921a_11 shifted by ~160 columns, whose trees reach the top where this frame's do (~267 here), consistent with the frame ending just past them. This frame 0-292 (~292 cols), neighbour ~307-427"
+}

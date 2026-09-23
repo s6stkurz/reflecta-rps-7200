@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_59",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "people/bookcase run to column 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 238.8,
+    "lo": 238.3,
+    "hi": 239.4,
+    "outer": 259.0,
+    "x_top": 239.3,
+    "x_bottom": 238.4,
+    "note": "interior gap: frame = left part (0-239) vs neighbour. Base starts sharply at ~238.8 (R/G 2.25, B/G 0.56), slightly tilted (~239.3 top, ~238.4 bottom). The neighbour is dark tree canopy, which on the negative reads as base with sparse dense specks, so its edge is placed only from where the branches are cut off, ~259 (soft, +-2). Cols 260-261 carry a fixed sensor-column stripe (also at 214-215 on every b0921c frame), not a film feature."
+  },
+  "frame_note": "gap inside the frame at 239-~259; frame = left part; neighbour boundary soft"
+}

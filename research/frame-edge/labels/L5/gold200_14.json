@@ -1,0 +1,26 @@
+{
+  "id": "gold200_14",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "blown-out white (flash-lit wall, 2-7) runs to column 0"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "cols 423-427 form a uniform full-height strip with a sharp line at ~422.7 (the top bar ends there), but it reads only ~79, darker in A than scene areas at 85-87, so it cannot be base; a thin line near the bottom crosses into it. Read as a post/door frame in the scene"
+  },
+  "frame_note": "right strip 423-427 is a base look-alike"
+}

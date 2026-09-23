@@ -1,0 +1,10 @@
+{
+  "id": "b0921a_11", "labeller": "L11", "view": "A",
+  "left":  {"state": "edge", "x": 18.3, "lo": 17.9, "hi": 18.7,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "night scene: the boundary is only visible in the top band, where the sky ends on a sharp straight vertical at 18; below it the dark scene has base's value and ratio (R/G 2.3, B/G 0.53), so the gap cannot be seen there"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "sky and tree silhouette run to column 427 in the top band; no plateau"},
+  "frame_note": "dark night frame; left edge placed from the sky's vertical boundary alone"
+}

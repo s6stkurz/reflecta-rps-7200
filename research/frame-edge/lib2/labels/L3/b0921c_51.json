@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_51", "labeller": "L3", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grass and figure run to col 0, no plateau"},
+  "right": {"state": "edge", "x": 355.5, "lo": 355.0, "hi": 356.1,
+            "outer": 380.3, "x_top": 356.0, "x_bottom": 355.0,
+            "note": "base cols 356-379 reads only 84-87 (grass highlights elsewhere are brighter) but is uniform, full height, R/G 2.2-2.3, B/G 0.53. Picture edge 356.0 in the upper 40%, moving to 355.0 in the lower 30% (tilted, bottom to the left). Neighbour picture (dark room) starts at ~380.25-380.5: it reads 77-82, only slightly below base, but its bright objects in the lower rows start sharply at 380"},
+  "frame_note": "gap at cols ~355-380, deeper than the right crop; frame is the left part (0-355) vs neighbour 380-427"
+}

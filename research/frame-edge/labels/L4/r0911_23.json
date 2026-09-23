@@ -1,0 +1,26 @@
+{
+  "id": "r0911_23",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "unreadable",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "underexposed night scene reads ~90-92 in every band from col 0 to ~47, same as base would; no line or step anywhere; faint picture smear reaches ~col 31 at mid-height; cannot tell whether a sliver of base is hidden"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "church facade picture (b2 dips to 71-85) reaches 428; no plateau"
+  },
+  "frame_note": "hard: nearly the whole negative is base-bright"
+}

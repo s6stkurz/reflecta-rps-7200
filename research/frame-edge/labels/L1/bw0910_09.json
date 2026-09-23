@@ -1,0 +1,26 @@
+{
+  "id": "bw0910_09",
+  "labeller": "L1",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 1.9,
+    "lo": 1.5,
+    "hi": 2.7,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "black strip 0-1/2, full height; per-band crossings b1 ~2.6, b2 ~1.8, b3 ~1.6, b4 ~2.0 (all ~1.75); slightly ragged, wider at very top"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "window frame/wall to col 427"
+  },
+  "frame_note": ""
+}

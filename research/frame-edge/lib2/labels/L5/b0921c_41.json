@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_41",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 151.4,
+    "lo": 151.0,
+    "hi": 152.0,
+    "outer": 130.0,
+    "x_top": 151.0,
+    "x_bottom": 152.0,
+    "note": "interior gap, base cols 131-150 (R/G 2.21, B/G 0.56), far deeper than the crop (the crop 0-64 is all neighbour picture). Frame = right part (151-428, ~277 cols) vs neighbour 0-130 (~130 cols). Edge sharp, tilted: 151.0 at the top, ~151.5 at mid-height, ~152.0 at the bottom (the grey backdrop beside it reads ~69, R/G 2.1). Neighbour/base boundary ~130.9 at the top, ~130.0 from mid-height down."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop/figure run to 427"
+  },
+  "frame_note": "gap inside the frame at 130-151; frame = right part"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_17",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 130.6,
+    "lo": 130.0,
+    "hi": 131.4,
+    "outer": 113.3,
+    "x_top": 130.1,
+    "x_bottom": 131.3,
+    "note": "interior gap, base cols 114-129 (R/G 2.19, B/G 0.53), far deeper than the crop. Frame = right part (130-428, ~298 cols) vs neighbour 0-113. Edge sharp but tilted: ~130.1 at the top, ~130.8 at mid-height, ~131.0-131.3 at the bottom. Neighbour/base boundary ~114.0 at the top, ~113.0-113.6 lower down."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "scene runs to 427"
+  },
+  "frame_note": "gap inside the frame at 113-130; frame = right part"
+}

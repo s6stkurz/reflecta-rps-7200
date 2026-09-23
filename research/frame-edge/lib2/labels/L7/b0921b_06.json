@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_06", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 17.0, "lo": 16.7, "hi": 17.4,
+            "outer": 3.3, "x_top": null, "x_bottom": null,
+            "note": "black gap cols 3/4-16 (likeness 95-98, R/G 2.3, B/G 0.53), sharp against bright sky at 17 (col 17 reads 14/12/13/22). Neighbour picture sliver at cols 0-2 (R/G 2.5, textured). Outer ~3.1 in the lower bands, ~4.0 in the top band where the neighbour is pale."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage runs to col 427, likeness ~70, textured"},
+  "frame_note": "whole thumbnail checked: no interior gap"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_14", "labeller": "L6", "view": "A",
+  "left":  {"state": "edge", "x": 5.4, "lo": 5.0, "hi": 5.9,
+            "outer": null, "x_top": 5.0, "x_bottom": 5.95,
+            "note": "base cols 0-4 (~97, R/G 2.23-2.31, B/G 0.53-0.55). Col 5 is picture in rows 10-80 (x=5.0), ~20-55% base in rows 90-150, ~80-95% base in rows 160-280. Tilted, moving right toward the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "bright foliage to col 427 (likeness 81-86 but R/G 2.4-2.5, B/G ~0.48 -- not base; textured)"},
+  "frame_note": "no internal gap in the thumbnail"
+}

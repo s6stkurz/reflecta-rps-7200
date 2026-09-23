@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_02", "labeller": "L6", "view": "A",
+  "left":  {"state": "edge", "x": 10.8, "lo": 10.4, "hi": 11.2,
+            "outer": null, "x_top": 10.8, "x_bottom": 11.3,
+            "note": "base cols 0-9 (~97-100, R/G 2.2-2.3, B/G 0.52). Col 10 ~70-95% base in rows 0-80 and 150-180, ~45% in rows 90-140; col 11 ~10-35% base in rows 190-250; bottom ~25 rows base through col 11 (x~12.3, corner). Slight tilt, edge moves right toward the bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "chair/table picture to col 427, likeness ~37"},
+  "frame_note": "no internal gap in the thumbnail"
+}

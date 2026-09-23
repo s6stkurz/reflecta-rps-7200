@@ -1,0 +1,10 @@
+{
+  "id": "b0921b_45", "labeller": "L1", "view": "A",
+  "left":  {"state": "no_film", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "empty gate cols 0-5, neutral ~177/176/174; gate/film boundary tilted, ~6.0 at top to ~3.8 at bottom (cut strip end). BASE lies between gate and picture: cols 6-27 uniform 19-20, R/G 2.3 B/G 0.54. Picture starts x~27.0 at top, ~28.0 in lower half (mid ~27.7), sharp"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "scene (path, grass) to col 427; reads 14-18 against base 19-20 but R/G 2.5 and textured in view B"},
+  "frame_note": "strip end: gate sliver dominates the stretch, view A brown, view B pale"
+}

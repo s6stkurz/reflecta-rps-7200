@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_09", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 83.2, "lo": 82.9, "hi": 83.8,
+            "outer": 66.3, "x_top": 83.0, "x_bottom": 84.2,
+            "note": "gap deeper than the crop: base cols 67-82 (R/G 2.20, B/G 0.53); this frame's dark picture starts at 83.0 in the top half, drifting to ~84.2 in the bottom eighth. Neighbour picture cols 0-65; outer ~67.0 at top, ~66.0-66.3 lower down"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "plants/table scene to col 427, likeness 30-45, no plateau"},
+  "frame_note": "internal gap at cols ~66-83; frame is the right part (83-427, ~345 cols) vs neighbour 0-66"
+}

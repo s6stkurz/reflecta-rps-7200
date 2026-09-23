@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_41", "labeller": "L11", "view": "A",
+  "left":  {"state": "edge", "x": 151.5, "lo": 151.0, "hi": 152.0,
+            "outer": 130.4, "x_top": 151.0, "x_bottom": 151.9,
+            "note": "gap inside the frame: base columns 131-150 (R/G 2.2, B/G 0.56). This frame's picture is a flat grey backdrop (~69 on the table vs base ~95), so the edge has low contrast but is straight; slightly tilted, ~151.0 at top to ~151.9 at bottom. Neighbour's dark picture ends ~130.9 at top, ~130.0 at bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figure and backdrop run to column 427"},
+  "frame_note": "two partial pictures: neighbour 0-130 (~130 cols), this frame 151-427 (~277 cols)"
+}

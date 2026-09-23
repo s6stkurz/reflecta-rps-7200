@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_48",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "crowd/bench run to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 410.5,
+    "lo": 410.0,
+    "hi": 410.8,
+    "outer": null,
+    "x_top": 409.5,
+    "x_bottom": 409.0,
+    "note": "base cols 411-427 (G 26-29, R/G 2.23, B/G 0.53), no neighbour picture. Edge is bowed, not straight: ~409.5 at rows 0-20, 410.6-410.8 through rows 40-140, 410.0 at rows 180-220, 409.0 at rows 240-280, 408.3 in the bottom corner. x given at mid-height"
+  },
+  "frame_note": ""
+}

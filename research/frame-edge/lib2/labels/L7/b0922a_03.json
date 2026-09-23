@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_03", "labeller": "L7", "view": "A",
+  "left":  {"state": "edge", "x": 36.8, "lo": 36.3, "hi": 37.4,
+            "outer": 15.4, "x_top": 36.5, "x_bottom": 37.1,
+            "note": "base cols 16-35 (likeness 76-80, R/G 2.2, B/G 0.55); neighbour picture 0-14. The frame opens on dark foliage almost at base density: bands 2-3 show no step at all (78-81 flat), band 1 steps at col 36 (70) and band 4 at ~37. A locally stretched positive shows a straight line at ~36.3-37 with foliage detail to the right only. Outer ~15.0-15.4 in bands 2-4, ~16.6 in the top band."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "picture to col 427, likeness ~66, textured"},
+  "frame_note": "hard-ish: whole frame is bright on the negative (likeness ~80 almost everywhere), so base is not the top of the table; identified by ratio and the local-stretch line"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "r0911_19",
+  "labeller": "L6",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 5.4,
+    "lo": 4.6,
+    "hi": 6.0,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "|base cols 0-2 at 100, soft 3-col ramp (col3 ~90, col4 ~81, col5 ~65, col6 ~15 vs picture 14); 50% area ~5.3, midpoint crossing ~5.7; top ~quarter bulges to col 7-8 (curved light, b1 col6=70) - not treated as tilt"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "white wall (dense) runs to col 427, values 7-10, no plateau"
+  },
+  "frame_note": ""
+}

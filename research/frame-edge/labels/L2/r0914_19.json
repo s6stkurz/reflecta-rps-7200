@@ -1,0 +1,26 @@
+{
+  "id": "r0914_19",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "flat wall (dark in positive) runs to col 0; uniform ~84-89 but below grout/base level and no sharp line anywhere in 0-64"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "tiles and grout run to 428 (tile in b2 reaches the border, another tile at 425-427 mid-height)"
+  },
+  "frame_note": ""
+}

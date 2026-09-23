@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_07",
+  "labeller": "L12",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 62.0,
+    "lo": 61.8,
+    "hi": 62.7,
+    "outer": 42.3,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols 43-61 (G 30, R/G 2.25, B/G 0.53), neighbour picture 0-42. Inner edge sharp at 62.0 in the sky rows 0-100 (col 62 is picture there); below row 100 the frame (lawn) reads exactly base, so the edge is measured only in the top third. Outer edge 43.0-43.4 in the sky rows, 42.0 in rows 160-260 where the neighbour lawn is darker"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/buildings/shoulder run to 428"
+  },
+  "frame_note": "same picture as b0921c_54 at a different position; frame = right part (~366 cols)"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_05", "labeller": "L3", "view": "B",
+  "left":  {"state": "unreadable", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "Flash shot at night: the grass fades smoothly into black toward the left and reaches base density and base ratio (R/G 2.25-2.29, B/G 0.54) well before col 0. Cols 0-43 are uniform (likeness 89-93, raw G 28.1-28.7, texture sd ~3) and grass texture only builds up gradually past ~44. In view B and in the table there is no straight, sharp, full-height line anywhere in 0-90, so I cannot tell whether cols ~0-20 are base or unexposed grass. Context only, not observation: the same frame in b0921c_51 sits ~87 columns further left with its right edge at 355.5, which would put this frame's left edge near col ~15-20 if the frame is ~425 columns wide"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "grass, bag and figure run to col 427, textured, no plateau"},
+  "frame_note": "same frame as b0921c_51 (girl on grass), shifted right; left side has no visible boundary"
+}

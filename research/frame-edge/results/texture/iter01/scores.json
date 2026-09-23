@@ -1,0 +1,192 @@
+{
+ "split": "dev",
+ "side": {
+  "n": 193,
+  "correct": 168,
+  "accuracy": 0.87,
+  "false_base": 2,
+  "missed": 12,
+  "refused": 11,
+  "edge_n": 33,
+  "edge_mae_cols": 0.148,
+  "edge_p90_cols": 0.291,
+  "edge_max_cols": 0.617,
+  "edge_bias_cols": -0.061,
+  "edge_mae_units": 0.119,
+  "confusion": {
+   "edge": {
+    "edge": 33,
+    "picture_to_border": 19,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 6,
+    "unreadable": 0
+   },
+   "picture_to_border": {
+    "edge": 2,
+    "picture_to_border": 126,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 5,
+    "unreadable": 0
+   },
+   "all_base": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "no_film": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 2,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "refuse": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   },
+   "unreadable": {
+    "edge": 0,
+    "picture_to_border": 0,
+    "all_base": 0,
+    "no_film": 0,
+    "refuse": 0,
+    "unreadable": 0
+   }
+  }
+ },
+ "decision": {
+  "n": 94,
+  "ok": 64,
+  "bad": 21,
+  "refused": 9,
+  "sign_errors": 0,
+  "accuracy": 0.681,
+  "du_mae_units": 2.816,
+  "du_p90_units": 6.368
+ },
+ "per_film": {
+  "c41": {
+   "accuracy": 0.893,
+   "edge_mae_cols": 0.148,
+   "n": 177
+  },
+  "bw": {
+   "accuracy": 0.625,
+   "edge_mae_cols": null,
+   "n": 16
+  }
+ },
+ "per_roll": {
+  "strip6": {
+   "accuracy": 1.0,
+   "edge_mae_cols": 0.122,
+   "n": 6
+  },
+  "strip3": {
+   "accuracy": 0.833,
+   "edge_mae_cols": 0.179,
+   "n": 6
+  },
+  "r0909": {
+   "accuracy": 0.85,
+   "edge_mae_cols": 0.218,
+   "n": 20
+  },
+  "stage3": {
+   "accuracy": 0.833,
+   "edge_mae_cols": null,
+   "n": 6
+  },
+  "bw0910": {
+   "accuracy": 0.625,
+   "edge_mae_cols": null,
+   "n": 16
+  },
+  "r0911": {
+   "accuracy": 0.873,
+   "edge_mae_cols": 0.064,
+   "n": 55
+  },
+  "r0914": {
+   "accuracy": 0.926,
+   "edge_mae_cols": 0.152,
+   "n": 54
+  },
+  "x0920": {
+   "accuracy": 0.9,
+   "edge_mae_cols": 0.085,
+   "n": 30
+  }
+ },
+ "worst": [
+  "r0914_19 move -90.6 u <- vs truth none (+0.0 u)",
+  "r0914_19 left false base 106.5 cols",
+  "r0911_17 move none (+0.0 u) vs truth -16.3 u <-",
+  "r0911_06 move -12.5 u <- vs truth none (+0.0 u)",
+  "r0911_17 left missed 14.1 cols of base",
+  "bw0910_04 move none (+0.0 u) vs truth -10.5 u <-",
+  "bw0910_11 move none (+0.0 u) vs truth -9.0 u <-",
+  "r0914_18 move none (+0.0 u) vs truth +8.9 u ->",
+  "bw0910_01 move none (+0.0 u) vs truth -7.7 u <-",
+  "bw0910_06 move none (+0.0 u) vs truth -7.7 u <-",
+  "r0911_06 left false base 9.4 cols",
+  "bw0910_09 move none (+0.0 u) vs truth -6.4 u <-",
+  "bw0910_05 move none (+0.0 u) vs truth -6.3 u <-",
+  "r0909_10 move none (+0.0 u) vs truth -5.8 u <-",
+  "x0920_10 move none (+0.0 u) vs truth +5.8 u ->",
+  "r0914_31 move none (+0.0 u) vs truth +5.8 u ->",
+  "r0909_08 move none (+0.0 u) vs truth -5.7 u <-",
+  "bw0910_04 left missed 7.0 cols of base",
+  "r0909_05 move none (+0.0 u) vs truth -5.5 u <-",
+  "r0914_08 move none (+0.0 u) vs truth +5.3 u ->",
+  "r0911_20 move none (+0.0 u) vs truth -5.3 u <-",
+  "bw0910_07 move none (+0.0 u) vs truth -5.1 u <-",
+  "r0911_16 move none (+0.0 u) vs truth -5.1 u <-",
+  "r0911_14 move none (+0.0 u) vs truth -5.1 u <-",
+  "r0911_27 move none (+0.0 u) vs truth -5.0 u <-"
+ ],
+ "label_free": {
+  "pairs": {
+   "n": 78,
+   "both_edge": 10,
+   "state_changes": 19,
+   "mae_cols": 0.359,
+   "p90_cols": 0.792,
+   "over_1_5": 0
+  },
+  "dups": {
+   "n": 152,
+   "state_changes": 15,
+   "mae_cols": 0.406,
+   "over_1": 1
+  },
+  "ladder": {
+   "left": {
+    "found": 9,
+    "of": 21,
+    "slope_cols": 7.253,
+    "resid_mad": 0.113,
+    "resid_max": 0.45
+   },
+   "right": {
+    "found": 1,
+    "of": 21
+   }
+  },
+  "mirror": {
+   "state_changes": 1,
+   "mae_cols": 0.0,
+   "over_0_5": 0
+  }
+ }
+}

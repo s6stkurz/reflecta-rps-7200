@@ -1,0 +1,26 @@
+{
+  "id": "r0914_14",
+  "labeller": "L3",
+  "view": "A",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "TV wall and floor run to col 0; b4 col 0 = 50 same as floor, no base"
+  },
+  "right": {
+    "state": "edge",
+    "x": 420.9,
+    "lo": 420.4,
+    "hi": 421.2,
+    "outer": null,
+    "x_top": 421.0,
+    "x_bottom": 420.5,
+    "note": "base 421-427 ~95 all bands. b3 (dark bench, ~18) clean step at 421.0; b4 col 420 = 60 vs 34/95 -> ~43% base -> 420.6; top half the scene is bright wall so less certain"
+  },
+  "frame_note": ""
+}

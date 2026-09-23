@@ -1,0 +1,10 @@
+{
+  "id": "b0922s_03", "labeller": "L1", "view": "B",
+  "left":  {"state": "edge", "x": 15.0, "lo": 14.7, "hi": 15.4,
+            "outer": null, "x_top": 14.8, "x_bottom": 15.8,
+            "note": "base cols 0-14 black in B (~95, raw 66/29/15, R/G 2.28 B/G 0.52-0.55); sharp line at 15.0 over most of the height, stepping out to ~15.9 in the bottom eighth"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop and trousers to col 427; B/G 0.40, not base"},
+  "frame_note": ""
+}

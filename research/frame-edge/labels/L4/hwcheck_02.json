@@ -1,0 +1,26 @@
+{
+  "id": "hwcheck_02",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky/trees picture reaches column 0; no plateau"
+  },
+  "right": {
+    "state": "edge",
+    "x": 425.6,
+    "lo": 425.1,
+    "hi": 426.0,
+    "outer": null,
+    "x_top": 425.15,
+    "x_bottom": 425.95,
+    "note": "2-col base plateau 426-427 (~82 all bands), sharp; col 425 base fraction b1 84%, b2 46%, b3 33%, b4 5% -> visible lean, bottom further right"
+  },
+  "frame_note": ""
+}

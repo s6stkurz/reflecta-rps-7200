@@ -1,0 +1,26 @@
+{
+  "id": "x0920_01",
+  "labeller": "L2",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 16.1,
+    "lo": 15.7,
+    "hi": 16.5,
+    "outer": null,
+    "x_top": 16.3,
+    "x_bottom": 16.0,
+    "note": "DENSE GAP, not bright base: cols 0-14 uniform ~1 all bands (black in A, white in B), straight sharp full-height boundary; picture ~70. Crossing per band 16.3 (b1) .. 16.0 (b4). This roll looks reversal-processed (A view reads as a natural positive), so the unexposed gap is dense. Labelled edge because it is plainly the inter-frame gap; reject if only bright base counts"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "bright snowy sky/houses run to 428; no gap (dense or bright) on this side"
+  },
+  "frame_note": "REVERSAL-LIKE FILM: inter-frame gap is dense (min), the opposite of the bright-base rule"
+}

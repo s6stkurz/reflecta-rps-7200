@@ -1,0 +1,26 @@
+{
+  "id": "b0922b_06",
+  "labeller": "L5",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 63.8,
+    "lo": 62.5,
+    "hi": 65.5,
+    "outer": 42.0,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark night scene sits right next to the gap, so the edge is low-contrast. Neighbour picture ends on a straight vertical line at 42.0 (clear in rows 0-30 where the neighbour is dense: 25-26 vs 29.5 in G; ~1 count in R full height). Cols 42-63 are the flattest, brightest strip (R 66.4, R/G 2.26, B/G 0.54). A weak, straight, full-height step of ~1 count in R at ~64 (bands 1-3; band 4 weaker) is where this frame starts; right of it the scene darkens gradually. Placed from vertically smoothed, stretched R; gap ~22 cols, like the other gaps on this strip."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "grass runs to 427"
+  },
+  "frame_note": "same scene as b0920_06, shifted ~58 cols right; left edge is soft/low-confidence"
+}

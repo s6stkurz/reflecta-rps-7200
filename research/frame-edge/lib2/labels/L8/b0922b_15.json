@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_15", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 59.9, "lo": 59.2, "hi": 60.5,
+            "outer": 39.8, "x_top": 59.2, "x_bottom": 60.3,
+            "note": "black base cols 40-58 (G~30, R/G 2.25, B/G 0.53, full height). This frame (garden with lotus leaves, cols 60-427) starts sharply against the sky in the top band (59.2) and leans right toward the bottom (~60.3). Neighbour picture (trees) cols 0-39: its edge is clear only in the upper half (40.0 top, 39.0 second band); lower down its dark foliage reads at base level, so outer ~39.8 is from the upper half."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "leaves and trees run off the right border"},
+  "frame_note": ""
+}

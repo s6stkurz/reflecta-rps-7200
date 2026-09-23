@@ -1,0 +1,26 @@
+{
+  "id": "r0911_02",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark blue wall (bluish in B, not black) reaches column 0, uniform ~68, no line"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "dark wall right of the doorway reaches 428, ~71, no line; faint diagonal scratch lower right"
+  },
+  "frame_note": ""
+}

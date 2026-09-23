@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_12", "labeller": "L11", "view": "A",
+  "left":  {"state": "edge", "x": 60.7, "lo": 60.2, "hi": 61.1,
+            "outer": 42.2, "x_top": 60.2, "x_bottom": 61.0,
+            "note": "clean gap: base columns 43-59 (R/G 2.27, B/G 0.55). This frame's picture starts ~60.2 at the top, ~61.0 in the lower half (column 60 is ~20% base at top, ~90-100% lower down). Neighbour's picture ends ~42.8 in the top 60 rows and ~42.0 below"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "tree, car and road run to column 427"},
+  "frame_note": "neighbour 0-42 (~43 cols), this frame 61-427 (~367 cols)"
+}

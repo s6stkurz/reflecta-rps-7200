@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_34",
+  "labeller": "L4",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 34.3,
+    "lo": 34.0,
+    "hi": 35.0,
+    "outer": 13.3,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "base cols ~14-33 reads only ~80 (brighter picture elsewhere) but R/G 2.2, B/G 0.56, flat full height; neighbour sliver cols 0-12 is dense picture. Frame edge sharp, ~34.1-34.2 over the upper half, drifting to ~34.8-35.0 lower and ~35.7 in the bottom band (step near the bottom). Grey backdrop beside it (~60) has a ratio close to base but is clearly darker and is picture. Outer ~14.1 at top, ~13.0 lower"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "backdrop and legs run to column 428"
+  },
+  "frame_note": ""
+}

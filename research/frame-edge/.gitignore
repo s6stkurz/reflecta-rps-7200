@@ -1,0 +1,4 @@
+data/
+crops/
+labels/*/renders/
+*.npy

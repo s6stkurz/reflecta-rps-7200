@@ -1,0 +1,26 @@
+{
+  "id": "b0921c_05",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 70.1,
+    "lo": 69.9,
+    "hi": 71.2,
+    "outer": 53.2,
+    "x_top": 70.0,
+    "x_bottom": 71.1,
+    "note": "interior gap, base cols 54-69 (R/G 2.20, B/G 0.53), deeper than the crop. Frame = right part (70-428) vs neighbour 0-53. Edge sharp: 70.0 over the upper half, bending out to ~70.5-70.7 lower down and ~71.2 in the bottom eighth. Neighbour/base boundary ~53.9 in the top quarter, 53.0 below."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "scene runs to 427"
+  },
+  "frame_note": "gap inside the frame at 53-70; frame = right part (same scene as b0921c_11)"
+}

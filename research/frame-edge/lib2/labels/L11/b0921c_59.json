@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_59", "labeller": "L11", "view": "B",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "figures and bookshelf run to column 0"},
+  "right": {"state": "edge", "x": 238.9, "lo": 238.5, "hi": 239.4,
+            "outer": 259.5, "x_top": 239.4, "x_bottom": 238.5,
+            "note": "gap inside the frame: this frame's picture ends at a sharp straight edge, ~239.4 at the top to ~238.5 at the bottom; clean base from 239 (R/G 2.24, B/G 0.56). The neighbour is a dark foliage scene whose thin areas read like base, so its start is placed where a faint full-height density line (259-261, slightly bluer) sits and the first leaf specks begin (~260); outer is less certain than x"},
+  "frame_note": "two partial pictures: this frame 0-238 (~239 cols), neighbour ~260-427 (~168 cols); frame is the left one"
+}

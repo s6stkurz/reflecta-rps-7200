@@ -1,0 +1,26 @@
+{
+  "id": "r0909_01",
+  "labeller": "L6",
+  "view": "B",
+  "left": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "sky, shoreline and river run to col 0"
+  },
+  "right": {
+    "state": "edge",
+    "x": 415.7,
+    "lo": 415.2,
+    "hi": 416.2,
+    "outer": null,
+    "x_top": 416.8,
+    "x_bottom": 414.9,
+    "note": "base 417-427 ~95, black in B; tilted: b1 col416 24% -> 416.8, b2 416.0, b3 col415 85% -> 415.15, b4 ~415.0; lower half has dark pier/vegetation (b3/b4 80-90) beside base, low contrast there"
+  },
+  "frame_note": ""
+}

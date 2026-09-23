@@ -1,0 +1,26 @@
+{
+  "id": "stage3_02",
+  "labeller": "L5",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 1.4,
+    "lo": 1.1,
+    "hi": 2.5,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "thin black sliver, base ~96. Not straight: ~2.4 in top band (col 1 full, col 2 36%), ~1.2-1.6 in the middle bands (col 1 23-57%), ~2.5 in bottom band (col 2 51%). Wider at both ends, like rounded gate corners or a curled strip; x is the mid-height value"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "wooden shelf (brown in B, 46-70) runs to 428, well below base (~96); the sharp step at 373-376 is the magazine edge, not base"
+  },
+  "frame_note": "left sliver bowed rather than straight"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "b0922a_21", "labeller": "L7", "view": "A",
+  "left":  {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "foliage/figure detail runs to col 0 (likeness ~65, textured); no plateau"},
+  "right": {"state": "edge", "x": 366.9, "lo": 366.4, "hi": 367.5,
+            "outer": 387.5, "x_top": null, "x_bottom": null,
+            "note": "gap cols 367-386 (likeness 85-87, R/G 2.3, B/G 0.53); neighbour 387-427 (41 cols) vs this frame 0-366. The step is clear in bands 1-2 (col 366 ~66, col 367 82-85); in bands 3-4 the frame's dark foliage is within a few points of base, so the line there is from the positive view only. Outer tilted: ~386.3 in the top band, ~387.4-388.0 below."},
+  "frame_note": "frame is the left part; gap is inside the right crop"
+}

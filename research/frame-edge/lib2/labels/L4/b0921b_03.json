@@ -1,0 +1,26 @@
+{
+  "id": "b0921b_03",
+  "labeller": "L4",
+  "view": "B",
+  "left": {
+    "state": "edge",
+    "x": 7.0,
+    "lo": 6.7,
+    "hi": 7.4,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "clean: base cols 0-6 (R/G 2.3, B/G 0.53) against bright sky. Vertical at 7.0-7.1 over most of the height; bends to ~7.9 in the bottom band only (corner)"
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "hedge runs to column 428"
+  },
+  "frame_note": ""
+}

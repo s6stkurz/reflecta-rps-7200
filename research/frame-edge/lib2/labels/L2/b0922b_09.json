@@ -1,0 +1,9 @@
+{
+  "id": "b0922b_09", "labeller": "L2", "view": "B",
+  "left":  {"state": "edge", "x": 62.4, "lo": 61.9, "hi": 63.1,
+            "outer": 41.8, "x_top": null, "x_bottom": null,
+            "note": "featureless black base cols 42-61 (R/G 2.23, B/G 0.53, row std ~2). This frame's street picture starts at 62.0 in the top band (col 62 textured and darker than base), ~62.3-62.5 through mid-height; in the lower half the street is dark, at base density with little texture, so the edge there is soft (~62.5-63.0). Neighbour's dark foliage has leaf texture up to col 41 (bands 2-3) and none in col 42 anywhere; outer ~41.8"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null, "note": "house facade/railings run to 427"},
+  "frame_note": "both sides of the gap are dark scene near base density; boundaries placed by texture onset"
+}

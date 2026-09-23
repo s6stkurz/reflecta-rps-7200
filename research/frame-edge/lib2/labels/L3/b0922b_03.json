@@ -1,0 +1,10 @@
+{
+  "id": "b0922b_03", "labeller": "L3", "view": "A",
+  "left":  {"state": "edge", "x": 67.0, "lo": 66.7, "hi": 67.6,
+            "outer": 50.1, "x_top": 66.7, "x_bottom": 67.9,
+            "note": "base cols 51-65 (R/G 2.23-2.27, B/G 0.53) against this frame's dark room at ~11-18; clean. Edge ~66.7 at top, ~67.0-67.2 through the middle, ~67.9 in the bottom eighth. Neighbour picture cols 0-49; outer ~50.7 at top, ~49.8 at bottom"},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "plants/dress scene to col 427, no plateau"},
+  "frame_note": "gap at cols ~50-67 (just beyond the 64-col crop on the right side of the gap); frame is the right part (67-427) vs neighbour 0-50"
+}

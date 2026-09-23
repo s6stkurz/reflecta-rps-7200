@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_32", "labeller": "L8", "view": "B",
+  "left":  {"state": "edge", "x": 0.3, "lo": 0.1, "hi": 0.7,
+            "outer": null, "x_top": 0.1, "x_bottom": 0.9,
+            "note": "sub-column sliver of base, tilted: col 0 is lighter than the backdrop on the negative (R 55 vs 41 at the bottom, base ~67), i.e. about half base in the lower bands, near nil at the top; at the very bottom col 1 is also partly base. Mixed fraction per band: ~0.1 top, ~0.2 mid, ~0.9 bottom. Visible in view B as a thin dark-green line along col 0-1 at the bottom."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "trousers and backdrop run off the right border"},
+  "frame_note": "diagonal line at cols 42-64 in the lower half is a fold in the backdrop cloth, not an edge"
+}

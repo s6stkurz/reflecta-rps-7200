@@ -1,0 +1,10 @@
+{
+  "id": "b0921c_43", "labeller": "L7", "view": "B",
+  "left":  {"state": "edge", "x": 187.2, "lo": 186.8, "hi": 187.6,
+            "outer": 165.9, "x_top": 186.7, "x_bottom": 187.6,
+            "note": "gap in the middle, cols 166-186 (likeness 94-98, R/G 2.2-2.3, B/G 0.55); a slightly different dark column at 183-184 is still base. This frame opens on a grey backdrop at ~72; col 187 reads 79/72/79/87, col 186 91 in the top band: top ~186.7, bottom ~187.6. Outer (white neighbour to base) ~166.5 at top, ~165.7 at bottom."},
+  "right": {"state": "picture_to_border", "x": null, "lo": null, "hi": null,
+            "outer": null, "x_top": null, "x_bottom": null,
+            "note": "backdrop/figure runs to col 427, likeness ~20"},
+  "frame_note": "gap at 166-187 found on the 1:1 thumbnail. Left part 0-165 (166 cols) vs right part 187-427 (241 cols): the right part is the frame."
+}

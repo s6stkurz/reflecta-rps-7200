@@ -1,0 +1,26 @@
+{
+  "id": "b0922a_24",
+  "labeller": "L10",
+  "view": "A",
+  "left": {
+    "state": "edge",
+    "x": 54.0,
+    "lo": 53.6,
+    "hi": 54.5,
+    "outer": 33.3,
+    "x_top": 53.65,
+    "x_bottom": 54.9,
+    "note": "base gap ~33-53 (raw 62-65/28-30/15-16, R/G 2.2, B/G 0.55). Frame edge sharp, tilted: ~53.65 top, 54.0 mid, ~54.4-55.0 in the bottom rows. Neighbour edge ~34.5 in the top rows (soft), ~33.0 lower down where the neighbour is pale and contrast is low."
+  },
+  "right": {
+    "state": "picture_to_border",
+    "x": null,
+    "lo": null,
+    "hi": null,
+    "outer": null,
+    "x_top": null,
+    "x_bottom": null,
+    "note": "lotus leaves / dark trees run to column 427"
+  },
+  "frame_note": "Left gap at 33-53; neighbour 33 cols on the left, this frame ~374 cols."
+}
