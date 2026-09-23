@@ -773,6 +773,21 @@ def test_the_roll_dialog_says_what_happens_to_the_film_first():
     assert "asks the transport first" in unknown and cost == 0.0
 
 
+def test_a_frame_no_strip_has_is_forecast_as_the_refusal_it_gets():
+    """The seek refuses frame 45 before it reads or moves anything. The
+    dialog said the film would advance 44 frames first, in about 202 s, and
+    the operator confirmed a wind that never happened."""
+    note, cost = gui.seek_note(0, 45)
+    assert "refuse" in note and "costs nothing" in note, note
+    assert "advances" not in note
+    assert cost == 0.0
+    assert "refuse" in gui.seek_note(None, 45)[0]
+    # The last frame a strip is taken to have is still a wind, the next not.
+    last = gui.LAST_PLAUSIBLE_POSITION + 1
+    assert f"advances {last - 1} frames" in gui.seek_note(0, last)[0]
+    assert "refuse" in gui.seek_note(0, last + 1)[0]
+
+
 def test_a_wind_back_is_not_given_a_time_nobody_measured():
     """A forward frame is measured; a backward one never has been. An
     estimate that invents one reads exactly like one that measured it."""
@@ -1178,6 +1193,22 @@ def test_an_unknown_position_replaces_the_one_before_it(window):
     assert "has not heard" in gui.seek_note(app._transport, 1)[0]
 
 
+def test_a_results_counter_no_strip_has_is_not_a_forecast(window):
+    """A pass carries the counter it was taken at, and the window keeps it for
+    the Roll dialog. One that read 72 would have the dialog forecast a
+    72-frame wind back -- the filter `_report_position` and `_move` apply
+    holds here as well, and the frame heard before stands."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    app._handle(Event(kind="transport", done=10))
+    app._handle(Event(kind="result", result=Result(
+        seq=1, kind="prescan", label="frame 3 prescan",
+        image=np.zeros((8, 8, 3), np.uint8),
+        meta={"resolution_dpi": 300}, position=72, number=3)))
+    assert app._transport == 10
+
+
 def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
                                                             monkeypatch):
     """`start at` 45 was refused by the window, on the premise that the film
@@ -1187,11 +1218,18 @@ def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
     from conftest import StripScanner
 
     from rps7200 import session
+    from rps7200.session import Event
 
     app, root = window
-    _said, jobs, errors = _press_roll(app, monkeypatch, start_at="45")
+    app._handle(Event(kind="transport", done=0))
+    said, jobs, errors = _press_roll(app, monkeypatch, start_at="45")
     assert errors == []
     assert [job.start_at for job in jobs] == [45]
+    # And the dialog forecasts the refusal it will get, not "advances 44
+    # frames -- about 202 s" and "Roughly 4m 31s" for a wind and frames
+    # that never happen.
+    assert "refuse" in said[0] and "costs nothing" in said[0], said[0]
+    assert "advances" not in said[0] and "Roughly" not in said[0], said[0]
     film = StripScanner(at=0)
     with pytest.raises(session.FilmNotPlaced, match="frame 45 is past"):
         session.seek(film, 44)

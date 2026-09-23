@@ -74,6 +74,7 @@ from rps7200.session import (                              # noqa: E402
     FINE_MIN_MM,
     FORWARD_FRAME_S,
     INFRARED_TIE_CROSSOVER_DPI,
+    LAST_PLAUSIBLE_POSITION,
     NUMBERING,
     Approved,
     Calibrate,
@@ -2003,6 +2004,11 @@ class ScannerGui:
                estimate_seconds(dpi, self.v_ir.get(),
                                 self.v_fast_ir.get()) + 70)
         move, move_s = seek_note(self._transport, start_at)
+        # No figure for the frames when the seek will refuse the first: the
+        # line above says it costs nothing, and "Roughly 4m 31s" under it
+        # was the time of frames nobody would scan.
+        cost = (f"{roll_estimate(per, frames, move_s)}\n\n"
+                if plausible(start_at - 1) else "")
         what = (f"{frames} frame{'s' if frames != 1 else ''}" if frames
                 else "every frame to the end of the strip")
         if not messagebox.askokcancel(
@@ -2011,7 +2017,7 @@ class ScannerGui:
             f"at {dpi} dpi"
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
             f"{move}\n\n"
-            f"{roll_estimate(per, frames, move_s)}\n\n"
+            f"{cost}"
             "Start?",
         ):
             return
@@ -5549,7 +5555,17 @@ def seek_note(here: int | None, start_at: int) -> tuple[str, float]:
     Only the forward moves are costed, at the measured `FORWARD_FRAME_S`. A
     move backwards has never been timed, and saying so is better than an
     estimate that looks measured and is not.
+
+    A frame no strip has is refused by the seek before it reads or moves
+    anything, so it is forecast as that -- nothing moves and it costs nothing
+    -- rather than as a wind that never happens. The refusal itself stays the
+    seek's; this only stops the forecast contradicting it.
     """
+    if not plausible(start_at - 1):
+        return (f"Frame {start_at} is past the {LAST_PLAUSIBLE_POSITION + 1} "
+                "frames a strip is taken to have, so the roll will refuse it "
+                "before it moves the film: nothing moves, nothing is scanned, "
+                "and it costs nothing.", 0.0)
     if here is None:
         return ("The window has not heard where the film is, so the roll "
                 f"asks the transport first and goes to frame {start_at} from "

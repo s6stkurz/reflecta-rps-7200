@@ -237,7 +237,8 @@ nothing moves until a button is pressed.
 **The contact sheet.** A dry run walks the strip prescanning and advancing only — about 20
 seconds a frame — and opens every picture it found in a grid with its frame number and its
 measured contrast. (A position you set by hand replaces the contrast with the offset in
-millimetres; a frame already scanned reads *scanned*.) Tick what is worth having and only
+units of the transport's own adjustment parameter; a frame already scanned reads
+*scanned*.) Tick what is worth having and only
 those frames are scanned: the roll goes to the first ticked frame by the transport's
 counter, winding back or advancing from wherever the film is, and an unticked frame costs
 its ~7 s advance instead of the minutes a scan would. Seventeen frames at 3600 dpi RGBI
