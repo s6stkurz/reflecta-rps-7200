@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from conftest import load_tool
+from conftest import FilmOnFrame, load_tool
 from rps7200.direct import DirectScanner, RollFrame
 
 scan_roll = load_tool("scan_roll")
@@ -26,13 +26,18 @@ scan_roll = load_tool("scan_roll")
 RAW_LEVEL, CORRECTED_LEVEL = 111, 222
 
 
-class FakeRollScanner(DirectScanner):
+class FakeRollScanner(FilmOnFrame, DirectScanner):
     """Yields frames the way the driver does, including the raw pixels.
 
     `RollFrame` carries `raw_image` beside `image` precisely because the
     library stores what the scanner sent and recomputes the correction on the
     way out. The two levels here are distinct so a test can say which was
     filed.
+
+    On a transport now, because the tool asks where the film is before it
+    moves anything; a double that cannot say is a scanner every roll refuses.
+    Its frames count from ``first_index`` and sit where the film is, as the
+    driver's do.
     """
 
     def __init__(self, frames: int = 3, **kw):
@@ -65,11 +70,14 @@ class FakeRollScanner(DirectScanner):
         # argument that stops being passed, which is this tool's known
         # failure mode: --no-fast-ir was parsed, stored and dropped.
         count = kw.get("frames") or self._frames
-        for index in range(count):
+        first = kw.get("first_index", 0)
+        for i in range(count):
+            if i:
+                self.at += 1                  # the advance between frames
             shape = (6, 6, 3)
             yield RollFrame(
-                index=index,
-                position=index,
+                index=first + i,
+                position=self.at,
                 image=np.full(shape, CORRECTED_LEVEL, np.uint16),
                 meta={"resolution_dpi": kw.get("resolution", 1800),
                       "channel_order": list("RGB"), "duration_s": 1.0},
@@ -265,6 +273,97 @@ def test_a_frame_that_failed_makes_the_run_fail(tmp_path, monkeypatch):
     code = scan_roll.main()
     assert len(list((tmp_path / "roll").glob("frame*.tif"))) == 2
     assert code != 0, "two scanned and one lost is not a clean run"
+
+
+# --- --start-at is a place on the strip --------------------------------------
+
+
+def _run_on(tmp_path, monkeypatch, at, *argv):
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            self.at = at
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--no-shading", "--roll", "placed", *argv])
+    code = scan_roll.main()
+    return created[0], code
+
+
+def test_start_at_is_a_place_on_the_strip(tmp_path, monkeypatch):
+    """`--start-at 3` used to mean "advance twice from wherever the film is",
+    so with the film on frame 8 it scanned 10 and 11 and called them 3 and 4.
+    It goes to frame 3 now, by the transport's counter, and numbers from it."""
+    import json
+
+    scanner, code = _run_on(tmp_path, monkeypatch, 7,
+                            "--start-at", "3", "--frames", "2")
+    assert code == 0
+    assert scanner.moves == [("retreat", 1)] * 5
+    assert scanner.asked["first_index"] == 2
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert [(f["number"], f["transport_position"])
+            for f in manifest["frames"]] == [(3, 2), (4, 3)]
+    assert manifest["numbering"] == "strip"
+
+
+def test_a_roll_the_tool_cannot_place_scans_nothing(tmp_path, monkeypatch):
+    from rps7200 import session
+
+    class Silent(FakeRollScanner):
+        def position(self):
+            return None
+
+    created = []
+
+    class Patched(Silent):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0, raising=False)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--no-shading", "--roll", "lost", "--frames", "2"])
+    assert scan_roll.main() == 1
+    assert created[0].asked == {}, "the roll was never started"
+    assert not list((tmp_path / "roll").glob("frame*.tif"))
+
+
+def test_an_old_walks_prescans_are_held_under_the_strips_numbers(
+        tmp_path, monkeypatch):
+    """`registration-F` named its prescans 01 to 03 from a walk begun on the
+    counter's 14. Held under those numbers, a roll that now numbers frames by
+    their place on the strip would hold frame 1 of the strip to frame 15's
+    reference."""
+    import json
+
+    from rps7200 import tiff
+
+    folder = tmp_path / "registration-F"
+    folder.mkdir()
+    for n in (1, 2, 3):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n + 13} for n in (1, 2, 3)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, _note = scan_roll.hold_from_walk(folder)
+    assert sorted(held) == [15, 16, 17]
+    assert all(a.number == n for n, a in held.items())
 
 
 # --- winding the film back, and refusing to go on if it did not -------------

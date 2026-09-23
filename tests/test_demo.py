@@ -403,6 +403,110 @@ def test_a_library_with_no_prescans_still_walks_a_strip(tmp_path):
     assert len({f.prescan.tobytes() for f in frames}) == 3
 
 
+# --- a roll starts where the film is, in the demo as on the hardware --------
+#
+# The demo's roll used to put the film straight on frame `skip + i` whatever
+# it was on. The real one starts where the film is -- which is how a roll from
+# frame 10 was numbered 1 on the scanner while the demo, asked the same thing,
+# got it right and hid it. The stand-in now moves its film with its own
+# `advance`, so `session.seek` above the seam has something true to work on.
+
+
+class _Counting(DemoScanner):
+    """The demo, counting its own whole-frame moves."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.advances = self.retreats = 0
+
+    def advance(self, *a, **kw):
+        self.advances += 1
+        return super().advance(*a, **kw)
+
+    def retreat(self, *a, **kw):
+        self.retreats += 1
+        return super().retreat(*a, **kw)
+
+
+def _on_frame(s, position):
+    for _ in range(position):
+        s.advance()
+    assert s.position() == position
+
+
+def test_a_demo_roll_starts_where_its_film_is(tmp_path):
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        _on_frame(s, 5)
+        frames = list(s.scan_roll(frames=2, dry_run=True, first_index=5))
+    assert [f.position for f in frames] == [5, 6]
+    assert [f.index for f in frames] == [5, 6]
+
+
+def _end_of_strip(tmp_path):
+    """Where the demo's own `advance` stops, found by asking it."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        while s.advance() is not None:
+            pass
+        return s.position()
+
+
+def test_a_demo_roll_with_no_count_runs_to_the_end_of_its_strip(tmp_path):
+    """As the real one does, which has no count to stop at either. The demo's
+    used to stop after six whatever the strip held."""
+    end = _end_of_strip(tmp_path)
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        _on_frame(s, end - 2)
+        frames = list(s.scan_roll(dry_run=True, first_index=end - 2))
+    assert [f.position for f in frames] == [end - 2, end - 1, end]
+
+
+def test_a_demo_roll_never_walks_past_the_end_of_its_strip(tmp_path):
+    """It used to hand back frames at positions its own `advance` would have
+    refused to reach."""
+    end = _end_of_strip(tmp_path)
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        frames = list(s.scan_roll(frames=end + 5, dry_run=True))
+    assert len(frames) == end + 1
+    assert frames[-1].position == end
+
+
+def test_a_demo_roll_ends_after_its_last_chosen_frame(tmp_path):
+    """Not walked on to the end of the strip past frames nobody chose."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        frames = list(s.scan_roll(only=(1, 3), dry_run=True))
+        assert s.position() == 3
+    assert [f.index for f in frames] == [1, 3]
+
+
+def test_the_demo_is_wound_back_by_the_sessions_own_seek(tmp_path):
+    """The reported case, run through the whole of the real software with the
+    demo standing where the scanner stands: nine frames on, a roll from frame
+    1 winds back with the demo's own `retreat` and walks 1, 2, 3."""
+    import time
+
+    from rps7200.session import Roll, ScanSession
+
+    demo = _Counting(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    _on_frame(demo, 9)
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    s.submit(Roll(frames=3, start_at=1, dry_run=True, name="walk"))
+    s.shutdown()
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if any(e.kind == "closed" for e in s.poll()):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    survey = json.loads((tmp_path / "rolls" / "walk" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    assert [(f["number"], f["transport_position"])
+            for f in survey["frames"]] == [(1, 0), (2, 1), (3, 2)]
+    assert demo.retreats == 9
+
+
 # --- the stand-in has to behave like the thing it stands in for -------------
 #
 # Two real bugs reached the scanner because the demo diverged from it: the

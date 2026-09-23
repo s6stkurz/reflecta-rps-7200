@@ -491,6 +491,14 @@ deflate-compressed TIFFs:
 a 36-frame roll at 1800 dpi RGBI is a couple of hours and one calibration (3–4 min) covers
 all of it.
 
+Frame numbers are places on the strip: frame N is where the transport's own counter
+(`READ_STATE` byte 2) reads N-1, and it reads 0 once a strip goes in. A roll — from the
+window or from `--start-at N` here — reads that counter first and winds or advances the
+film to its first frame, and refuses with nothing scanned if the counter will not answer or
+the film does not arrive. It used to start wherever the film happened to be and call that
+frame 1. Manifests written before this say so by lacking `"numbering": "strip"`, and are
+read back by each frame's recorded transport position rather than by its number.
+
 `--start-at` resumes a roll that stopped, `--max-failures 3` gives up after three bad
 frames rather than grinding through a whole strip, and a resumed roll carries forward what
 the earlier session already did instead of overwriting its manifest.

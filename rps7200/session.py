@@ -100,6 +100,16 @@ FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
 BACKLASH_COMMANDS = 3
 
 
+def _frame(position: int | None) -> str:
+    """A transport position as the frame number a person reads, or "?".
+
+    The counter is 0-based and every number this driver shows is not: frame N
+    of a strip is where the counter reads N-1. Converted in one place so a log
+    line and the window cannot count the same film two ways.
+    """
+    return "?" if position is None else str(position + 1)
+
+
 def rewind(scanner, frames: int, say=None) -> int | None:
     """Wind the film back, one frame at a time, checking each one landed.
 
@@ -128,8 +138,8 @@ def rewind(scanner, frames: int, say=None) -> int | None:
         if say is not None:
             say(message)
 
-    start = scanner.position()
-    tell(f"rewinding {frames} frame(s) from position {start}")
+    start = now = scanner.position()
+    tell(f"rewinding {frames} frame(s) from frame {_frame(start)}")
     done, swallowed = 0, 0
     while done < frames:
         before = scanner.position()
@@ -141,11 +151,248 @@ def rewind(scanner, frames: int, say=None) -> int | None:
                 tell(f"  (no movement yet -- backlash, command "
                      f"{swallowed}/{BACKLASH_COMMANDS})")
                 continue
-            tell(f"  stopped after {done} of {frames}: position still {before}")
+            tell(f"  stopped after {done} of {frames}: still on frame "
+                 f"{_frame(before)}")
             return None
         done += 1
-        tell(f"  {done}/{frames}: {before} -> {now}")
-    return scanner.position()
+        tell(f"  {done}/{frames}: frame {_frame(before)} -> {_frame(now)}")
+    # The last position it confirmed, when the closing read comes back empty:
+    # a READ_STATE straight after a transport command often does, and None
+    # here means "stopped short" to every caller -- which it did not.
+    end = scanner.position()
+    return now if end is None else end
+
+
+#: The highest transport position taken at its word. READ_STATE byte 2 counts
+#: whole frames from where the strip went in, and a 36-exposure roll is about
+#: 38 of them -- the longest this driver is written for. The one reading ever
+#: seen past that was a stale 72, left over with no strip in and reset to 0
+#: when one went in (`docs/protocol.md` section 9). A number no strip can have
+#: is not a place to count frames from, so above this the position is unknown.
+LAST_PLAUSIBLE_POSITION = 39
+
+#: How often, and how far apart, the transport is asked where the film is
+#: before a roll gives up on knowing. A READ_STATE sent right after a
+#: transport command comes back empty every time, and a new position has taken
+#: up to 6.2 s to appear (`DirectScanner._whole_frames`); eight asks a second
+#: apart outlast that. Module-level so a test can take the waiting out.
+POSITION_READS = 8
+POSITION_POLL_S = 1.0
+
+#: What one whole frame forward costs, for the estimates a person reads before
+#: a roll moves the film. Measured from the stored walks: the gap between
+#: consecutive frames' filed prescans less the later pass's own duration, 38
+#: pairs across four walks (2026-09-21 to -23 and aligned-strip), median 4.6 s,
+#: 3.6 to 4.8 s between the 10th and 90th percentiles, on timestamps with one
+#: second's resolution. It includes the host's work around the move.
+#:
+#: **A move backwards has never been timed.** There is no figure for it here
+#: on purpose: an estimate that invents one reads exactly like one that
+#: measured it.
+FORWARD_FRAME_S = 4.6
+
+
+class FilmNotPlaced(RuntimeError):
+    """The film could not be put where a roll starts, so nothing was scanned.
+
+    Raised rather than returned so it takes the failed-job path: the window
+    shows it where it shows a transport fault, and the job behind it is not
+    mistaken for one that finished. Its text is the sentence the operator
+    reads, so it says what to do.
+    """
+
+
+def _ask_position(scanner) -> int | None:
+    """What the transport's counter reads, asking again while it says nothing.
+
+    None only once every ask has come back empty. A stand-in that cannot say at
+    all -- or says it by raising -- is the same answer: not known.
+    """
+    for attempt in range(POSITION_READS):
+        if attempt:
+            time.sleep(POSITION_POLL_S)
+        try:
+            here = scanner.position()
+        except Exception:                                # noqa: BLE001
+            here = None
+        if here is not None:
+            return int(here)
+    return None
+
+
+def plausible(position: int | None) -> bool:
+    """Whether a counter reading is a place on a strip at all."""
+    return position is not None and 0 <= position <= LAST_PLAUSIBLE_POSITION
+
+
+def seek(scanner, target: int, say=None) -> int:
+    """Put frame ``target + 1`` of the strip in the gate, or refuse.
+
+    Frame numbers are places on the strip: frame N is where the transport's
+    own counter -- READ_STATE byte 2, which resets when a strip goes in and
+    follows the scanner's keys as well as this driver's moves -- reads N-1.
+    A roll used to count from wherever the film happened to be, so a roll of
+    frames 1 to 15 started with the film on frame 11 scanned 11 and called it
+    1, and nothing anywhere said so.
+
+    Reads where the film is, then winds back with the checked :func:`rewind`
+    or steps forward one frame at a time, each checked, and reads again at the
+    end. Nothing moves when the film is already there.
+
+    Refuses, by raising :class:`FilmNotPlaced`, whenever it cannot be sure: the
+    counter will not answer, answers with a number no strip has, the strip ends
+    first, a rewind stops short, or the film is not on the frame afterwards.
+    Every one of those would otherwise be a roll numbering frames it is not
+    on. Returns the position it arrived at, which is ``target``.
+
+    Above the seam on purpose. It speaks only through `position`, `advance`
+    and `retreat`, so the demo's stand-in runs it unchanged -- the arrangement
+    CLAUDE.md asks for, and the reason it is not inside `scan_roll`, which
+    each backend has its own copy of.
+    """
+    def tell(message):
+        if say is not None:
+            say(message)
+
+    frame = target + 1
+    if not plausible(target):
+        raise FilmNotPlaced(
+            f"frame {frame} is past the {LAST_PLAUSIBLE_POSITION + 1} frames "
+            "a strip is taken to have, so nothing was scanned")
+    here = _ask_position(scanner)
+    if here is None:
+        raise FilmNotPlaced(
+            "the transport would not say which frame the film is on, so "
+            "nothing was scanned: a roll numbers its frames by where they are "
+            "on the strip, and without that every number would be a guess. "
+            "Check the strip is in, then start the roll again.")
+    if not plausible(here):
+        raise FilmNotPlaced(
+            f"the transport says the film is on frame {here + 1}, which no "
+            "strip has -- a counter left over from before the strip went in "
+            "reads like that. Nothing was scanned. Take the strip out and put "
+            "it back, which reset the counter to frame 1 the one time this "
+            "was seen, then start the roll again.")
+
+    if here > target:
+        tell(f"the film is on frame {here + 1}; winding back "
+             f"{here - target} to frame {frame}")
+        if rewind(scanner, here - target, say=say) is None:
+            raise FilmNotPlaced(
+                f"the film stopped short of frame {frame} while winding back, "
+                "so nothing was scanned -- the roll would have numbered "
+                "frames it was not on")
+    elif here < target:
+        tell(f"the film is on frame {here + 1}; advancing "
+             f"{target - here} to frame {frame}")
+        at = here
+        while at < target:
+            landed = scanner.advance()
+            if landed is None or landed <= at:
+                raise FilmNotPlaced(
+                    f"the strip ended on frame {at + 1}, before frame "
+                    f"{frame}, so nothing was scanned")
+            tell(f"  frame {at + 1} -> {landed + 1}")
+            at = landed
+
+    arrived = _ask_position(scanner)
+    if arrived != target:
+        raise FilmNotPlaced(
+            f"the film should be on frame {frame} and the transport says "
+            f"frame {_frame(arrived)}, so nothing was scanned")
+    return arrived
+
+
+#: Written into every manifest since frame numbers became places on the strip
+#: (see :func:`seek`), under the key ``numbering``. A manifest without it
+#: numbered its frames from wherever that walk or roll started, which is only
+#: the same thing when it started on frame 1.
+NUMBERING = "strip"
+
+
+def legacy_shift(manifest: dict) -> int | None:
+    """How far a manifest's frame numbers sit behind the strip's own.
+
+    0 for a manifest that says it numbers by the strip. For an older one, what
+    its frames' recorded transport positions say: frame ``n`` of a walk that
+    started on the counter's 5 was on 5 + (n - 1), a shift of 5. Numbering
+    then was an index counted up once per advance, so one manifest has one
+    shift; the commonest is taken in case a position read wrongly. None when
+    no frame recorded a position, which says nothing either way.
+    """
+    if manifest.get("numbering") == NUMBERING:
+        return 0
+    seen: dict[int, int] = {}
+    for record in manifest.get("frames") or ():
+        try:
+            number = int(record["number"])
+            position = record.get("transport_position")
+        except (KeyError, TypeError, ValueError):
+            continue
+        if position is None:
+            continue
+        shift = int(position) - (number - 1)
+        seen[shift] = seen.get(shift, 0) + 1
+    if not seen:
+        return None
+    return max(seen, key=lambda k: seen[k])
+
+
+def renumbered(manifest: dict, fallback: int = 0) -> dict:
+    """A manifest with its frame numbers moved onto the strip's.
+
+    Mapped by each frame's recorded transport position where it has one, and
+    by the manifest's own shift otherwise -- never by the number alone, which
+    is what was relative. ``fallback`` is the shift to use when the manifest
+    cannot say: a roll that died before its first frame is numbered the way the
+    walk beside it was, because that is where its frame numbers came from.
+
+    Returns the manifest unchanged when it already numbers by the strip, and a
+    copy otherwise; nothing on disk is rewritten.
+    """
+    if not manifest or manifest.get("numbering") == NUMBERING:
+        return manifest
+    shift = legacy_shift(manifest)
+    if shift is None:
+        shift = fallback
+
+    def moved(value):
+        try:
+            return int(value) + shift
+        except (TypeError, ValueError):
+            return value
+
+    def moved_all(values):
+        return None if values is None else [moved(v) for v in values]
+
+    out = dict(manifest)
+    frames = []
+    for record in manifest.get("frames") or ():
+        record = dict(record)
+        position = record.get("transport_position")
+        if position is not None:
+            record["number"] = int(position) + 1
+        elif "number" in record:
+            record["number"] = moved(record["number"])
+        if isinstance(record.get("number"), int):
+            record["index"] = record["number"] - 1
+        frames.append(record)
+    if "frames" in manifest:
+        out["frames"] = frames
+    for key in ("only", "wanted"):
+        if key in out:
+            out[key] = moved_all(out[key])
+    if out.get("start_at") is not None:
+        out["start_at"] = moved(out["start_at"])
+    if isinstance(out.get("settings"), dict):
+        settings = dict(out["settings"])
+        if "only" in settings:
+            settings["only"] = moved_all(settings["only"])
+        if settings.get("start_at") is not None:
+            settings["start_at"] = moved(settings["start_at"])
+        out["settings"] = settings
+    out["numbering"] = NUMBERING
+    return out
 
 
 #: How many sub-frame commands one move may use. The law itself holds over
@@ -296,7 +543,7 @@ class Approved:
     orientation, for the reason :class:`FrameWriter` gives.
     """
 
-    number: int                              # 1-based, as the contact sheet counts
+    number: int                              # its frame on the strip, from 1
     offset_mm: float = 0.0
     reference: Any = field(default=None, compare=False, repr=False)
     reference_entry: str = ""
@@ -365,6 +612,10 @@ class Roll:
     """Walk a strip or roll, one picture at a time."""
 
     frames: int | None = None
+    #: The frame of the strip to start at: frame N is where the transport's
+    #: counter reads N-1, and it reads 0 when a strip goes in. The roll winds
+    #: or advances the film there before anything else -- see :func:`seek` --
+    #: and numbers every frame by its place on the strip from then on.
     start_at: int = 1
     resolution: int = 1800
     infrared: bool = True
@@ -377,22 +628,21 @@ class Roll:
     mono: bool | None = None
     mono_channel: str = MONO_CHANNEL
     prescan_resolution: int = 300
-    #: Frames to wind back before anything else, checked one at a time.
-    #:
-    #: Part of the roll rather than a `Move` queued in front of it, because the
-    #: failure is *across* jobs: `_move` reports a short rewind by returning a
-    #: string, the worker logs it and takes the next job, and the roll then
-    #: scans frames it has mis-numbered. A job cannot cancel the one behind it
-    #: however it reports, and inventing a queue-abort would be new semantics
-    #: for every job type to fix one sequence. One job owning both halves is
-    #: smaller, and it is already how the window describes it to the operator.
-    rewind: int = 0
+    # There was a `rewind` here: frames to wind back first, which the sheet
+    # computed from how far its walk had gone. It is gone because `start_at`
+    # now names a place on the strip and the roll goes there itself, from
+    # wherever the transport says the film is. Counting back from where the
+    # walk *ended* scanned the wrong frames without a word whenever the film
+    # had moved since, by the window's buttons or by the scanner's own keys.
+    # The reason it was part of the roll rather than a `Move` still holds for
+    # the seek: a refusal has to stop the roll, and one job cannot cancel the
+    # job behind it.
     dry_run: bool = False
-    #: The frame numbers worth scanning, as the window numbers them -- 1 for the
-    #: first picture. Anything else is advanced past unprescanned and unscanned,
-    #: and the roll ends after the last one. This is what a survey is for: walk
-    #: the strip in four minutes, look at it, then spend the hours on the frames
-    #: that earn them. None scans every frame.
+    #: The frames worth scanning, numbered the same way as `start_at` -- by
+    #: their place on the strip. Anything else is advanced past unprescanned
+    #: and unscanned, and the roll ends after the last one. This is what a
+    #: survey is for: walk the strip in four minutes, look at it, then spend
+    #: the hours on the frames that earn them. None scans every frame.
     only: tuple[int, ...] | None = None
     correct: bool = False
     #: Judge every frame and log what would be commanded, without sending it.
@@ -457,9 +707,10 @@ class Result:
     #: Where the transport was when this pass was taken. A scan can only stand
     #: in for a prescan of the same picture, and this is how that is known.
     position: int | None = None
-    #: Which picture of the roll this is, counting from 1, or 0 for a pass that
-    #: belongs to no roll. It is what a contact sheet ticks and what `Roll.only`
-    #: is then given, so it must not be recovered by parsing `label`.
+    #: Which frame of the strip this is, counting from 1 -- its place on the
+    #: strip, the same number whichever roll or walk took it -- or 0 for a pass
+    #: that belongs to no roll. It is what a contact sheet ticks and what
+    #: `Roll.only` is then given, so it must not be recovered from `label`.
     number: int = 0
 
 
@@ -474,7 +725,11 @@ class Event:
 
 #: "filed" carries the sequence number in `done` and the entry path in `text`,
 #: which is how a result learns where its full-resolution pixels ended up.
-#: "transport" carries the frame position in `done`, or -1 when it is unknown.
+#: "transport" carries the transport's own counter in `done` -- 0-based, so
+#: frame N of the strip is N-1 -- or -1 when it is unknown or not plausible.
+#: It is sent when the session opens, after every job that finished, and as a
+#: roll moves, so the window's readout follows the film rather than only the
+#: moves its own buttons made.
 KINDS = ("state", "log", "progress", "result", "filed", "transport",
          "finished", "failed", "closed")
 
@@ -766,6 +1021,11 @@ class ScanSession:
             self._emit("failed", text=f"could not open the scanner: {exc}")
             self._emit("closed")
             return
+        # Where the film is before anything has moved it. The window used to
+        # learn the position only from its own frame buttons, so at launch --
+        # and after anyone used the scanner's keys -- it had nothing to say
+        # about where a roll would start from.
+        self._report_position()
 
         self._writer = FrameWriter(on_done=self._filed)
         try:
@@ -777,6 +1037,11 @@ class ScanSession:
                 self._emit("state", text=_describe(job), busy=True)
                 try:
                     note = self._dispatch(job)
+                    # A move reports every frame it makes; anything else says
+                    # once where it left the film. Only after a job that ended
+                    # normally: after a failure the device is left alone.
+                    if not isinstance(job, Move):
+                        self._report_position()
                     self._emit("finished", text=note or _describe(job))
                 except _Stopped:
                     self._emit("finished", text="stopped")
@@ -969,7 +1234,7 @@ class ScanSession:
                 self._emit("transport", done=landed)
             if landed is None:
                 return "the film did not move -- it may be at the end of the strip"
-            return f"at frame position {landed}"
+            return f"on frame {_frame(landed)} of the strip"
 
         if job.millimetres:
             # One SLIDE command tops out at ~1.01 mm, so anything further is
@@ -1008,19 +1273,31 @@ class ScanSession:
         return "nothing to move"
 
     def _roll(self, job: Roll) -> str | None:
-        # Before the directory, before the manifest: a rewind that stops short
-        # must leave nothing behind and scan nothing. The window used to queue
-        # this as a separate `Move`, which reports a short rewind by returning
-        # a string -- logged, and then the roll ran anyway over frames it had
-        # mis-numbered.
-        if job.rewind:
-            landed = rewind(self._scanner, job.rewind,
-                            say=lambda m: self._emit("log", text=m))
-            if landed is None:
-                return ("the rewind stopped short, so nothing was scanned -- "
-                        "the film is not where the roll would have assumed")
-            if self._stop.is_set():
-                return "stopped during the rewind"
+        # Before the directory, before the manifest: a roll that cannot put the
+        # film on its first frame must leave nothing behind and scan nothing.
+        # Refusing raises, so the window reports it as the failure it is rather
+        # than as a job that finished.
+        #
+        # This is where a roll used to begin wherever the film happened to be,
+        # and call that frame 1: with the film on frame 11, a roll of frames 1
+        # to 15 scanned frame 11 first and filed it as frame 1. The numbers are
+        # places on the strip now, and the film goes to the first one before
+        # anything else happens.
+        first = max(0, job.start_at - 1)
+        try:
+            seek(self._scanner, first, say=lambda m: self._emit("log", text=m))
+        except FilmNotPlaced:
+            # Where it stopped, so the readout does not go on showing where it
+            # started. Only for a refusal: after a transport fault the device
+            # is left alone, as it is after every other failed job.
+            self._report_position()
+            raise
+        # Read and checked by the seek, so the readout has it without another
+        # question to the device.
+        self._emit("transport", done=first)
+        if self._stop.is_set():
+            return (f"stopped with the film on frame {first + 1}, before "
+                    "anything was scanned")
         name = job.name or time.strftime("%Y-%m-%d")
         out = Path(job.out) if job.out else self.rolls / name
         out.mkdir(parents=True, exist_ok=True)
@@ -1042,8 +1319,18 @@ class ScanSession:
                 earlier = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 earlier = {}
+            # Written before frame numbers were places on the strip, its
+            # numbers are counted from wherever that roll started, and this
+            # run's are not -- merged as they stand, frame 1 of the old record
+            # and frame 6 of this one could be the same picture. Moved onto the
+            # strip's numbering by their recorded positions first; a roll that
+            # recorded none is numbered as the walk beside it was.
+            earlier = renumbered(earlier, fallback=self._walk_shift(out))
         manifest: dict[str, Any] = {
             "roll": name,
+            # Says the numbers below are places on the strip, so a reader can
+            # tell this file from one written before they were.
+            "numbering": NUMBERING,
             "dpi": job.resolution,
             "infrared": job.infrared,
             "meter": job.meter,
@@ -1140,8 +1427,11 @@ class ScanSession:
             fast_infrared=job.fast_infrared,
             film=job.film,
             meter=job.meter,
-            skip=max(0, job.start_at - 1),
-            # The window counts pictures from 1 and the driver from 0.
+            # The film is on this frame now, so the roll counts from it: a
+            # frame's index is its transport position, and the number every
+            # file and record carries is that plus one.
+            first_index=first,
+            # The window counts frames from 1 and the transport from 0.
             only=(None if job.only is None
                   else tuple(n - 1 for n in job.only)),
             max_failures=job.max_failures,
@@ -1157,6 +1447,10 @@ class ScanSession:
         try:
             for rf in frames:
                 number = rf.index + 1
+                if rf.position is not None and plausible(rf.position):
+                    # Already read for this frame, so the readout follows the
+                    # roll without asking the device anything more.
+                    self._emit("transport", done=rf.position)
                 if rf.prescan is not None:
                     seq = self._deliver(
                         "prescan", f"frame {number} prescan", rf.prescan,
@@ -1332,12 +1626,43 @@ class ScanSession:
         ))
         return self._seq
 
+    @staticmethod
+    def _walk_shift(folder: Path) -> int:
+        """How the walk beside a roll numbered its frames, for a legacy roll.
+
+        See :func:`legacy_shift`. 0 when there is no walk or it cannot say,
+        which leaves the numbers exactly as they were.
+        """
+        walked = folder / "survey.json"
+        if not walked.exists():
+            return 0
+        try:
+            survey = json.loads(walked.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        return legacy_shift(survey) or 0
+
     def _position(self) -> int | None:
         """Where the transport is, or None if it will not say."""
         try:
             return self._scanner.position()
         except Exception:                                # noqa: BLE001
             return None
+
+    def _report_position(self) -> None:
+        """Tell the window where the film is, as the counter says it.
+
+        One READ_STATE, not the patient read a roll makes before it moves: a
+        readout that says "?" for a moment costs nothing, and this runs after
+        every job. A counter no strip can have is reported as unknown rather
+        than as a frame number nobody could find.
+        """
+        if self.dead:
+            return
+        here = self._position()
+        if here is None or not plausible(here):
+            here = -1
+        self._emit("transport", done=here)
 
     def _orientation_for(self, number: int, kind: str) -> tuple[int, bool]:
         """How this picture's delivered file should be arranged.

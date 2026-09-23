@@ -5,8 +5,11 @@
     uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
         --roll 2026-08-28-gold200 --stock "Kodak Gold 200"
 
-The film is already at the first picture when this starts, so the first frame is
-scanned before anything moves; the transport advances between frames. Shading is
+Frame numbers are places on the strip: frame N is where the transport's own
+counter reads N-1, and it reads 0 once a strip goes in. The roll starts at
+`--start-at` (frame 1 unless told otherwise) and winds or advances the film
+there first, from wherever the transport says it is -- refusing, with nothing
+scanned, if it cannot tell -- then advances between frames. Shading is
 calibrated once and reused for the whole roll -- which is what the vendor does,
 and the reason a 17-pass session in the captures contains no calibration at all.
 
@@ -44,7 +47,15 @@ from rps7200.direct import (
 from rps7200.library import FilmNotes
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
-from rps7200.session import Approved, FrameWriter, plan_nudges
+from rps7200.session import (
+    NUMBERING,
+    Approved,
+    FilmNotPlaced,
+    FrameWriter,
+    legacy_shift,
+    plan_nudges,
+    seek,
+)
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
 from rps7200.session import rewind as _rewind
 
@@ -67,12 +78,18 @@ def build_parser() -> argparse.ArgumentParser:
                          "until the window holds no picture or the transport "
                          "stops moving")
     ap.add_argument("--start-at", type=int, default=1, metavar="N",
-                    help="resume at picture N, advancing to it without scanning "
-                         "(1 = the picture the film is on now)")
+                    help="start at frame N of the strip, winding the film "
+                         "there first from wherever it is. Frame 1 is where "
+                         "the transport's counter reads 0, which it does once "
+                         "a strip goes in; the frames are numbered by their "
+                         "place on the strip, so a roll resumed with N files "
+                         "its frames under the same numbers as before")
     ap.add_argument("--rewind", type=int, default=0,
                     help="wind the film back this many frames before doing "
                          "anything else, one frame at a time, checking each "
-                         "one landed. With --frames 0 it rewinds and stops.")
+                         "one landed. With --frames 0 it rewinds and stops. "
+                         "A roll no longer needs it: --start-at goes to its "
+                         "frame from wherever the film is.")
     ap.add_argument("--nudge", type=float, default=0.0,
                     help="move the film this many mm before starting, after "
                          "any --rewind. The window's fine-adjust buttons do "
@@ -190,14 +207,27 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     what makes this survive an imprecise rewind -- the reference anchors it, so
     the film is driven to "where the walk saw this frame, plus the correction"
     however exactly the transport came back.
+
+    The frames are keyed by their place on the strip, as the roll numbers
+    them. A walk made before frame numbers meant that named its prescans from
+    wherever it started -- `registration-F` calls the counter's 14 its frame 1
+    -- so those names are moved by the shift its `survey.json` records.
     """
+    shift = 0
+    walked = folder / "survey.json"
+    if walked.exists():
+        try:
+            shift = legacy_shift(
+                json.loads(walked.read_text(encoding="utf-8"))) or 0
+        except (OSError, ValueError):
+            shift = 0
     frames = []
     for path in sorted(folder.glob("prescan*.tif")):
         if path.stem.endswith("-before"):
             continue                      # the picture a correction replaced
         number = int("".join(c for c in path.stem if c.isdigit()) or 0)
         if number:
-            frames.append((number, tiff.read(str(path))))
+            frames.append((number + shift, tiff.read(str(path))))
     if len(frames) < 2:
         raise SystemExit(f"{folder} holds {len(frames)} prescan(s); a strip is "
                          "needed to propose positions from")
@@ -252,6 +282,10 @@ def main() -> int:
 
     manifest = {
         "roll": roll_name,
+        # The frame numbers below are places on the strip, as the window's
+        # manifests say too; a file without this counted from wherever its
+        # roll happened to start.
+        "numbering": NUMBERING,
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "settings": {
             "dpi": args.dpi, "infrared": args.ir, "meter": args.meter,
@@ -318,8 +352,20 @@ def main() -> int:
                           "asked to be, so every frame after this would be "
                           "mis-numbered", file=sys.stderr)
                     return 1
-                print(f"rewound to position {landed}")
+                print(f"rewound to frame {landed + 1}")
                 print()
+            if args.frames != 0:
+                # To the first frame, by the transport's own counter, before
+                # the nudge -- so an offset set on purpose is the last thing
+                # the film does before the roll, and the whole-frame moves do
+                # not happen on top of it. The same helper the window's roll
+                # uses, so the two cannot disagree about where frame N is.
+                try:
+                    seek(s, max(0, args.start_at - 1),
+                         say=lambda m: print(m, flush=True))
+                except FilmNotPlaced as exc:
+                    print(f"refusing to go on: {exc}", file=sys.stderr)
+                    return 1
             if args.nudge:
                 # Deliberately, and said out loud: everything downstream
                 # measures against where the film is now, so a displacement
@@ -362,13 +408,15 @@ def main() -> int:
                 film=args.film,
                 meter=args.meter,
                 prescan_resolution=args.prescan_dpi,
-                skip=max(0, args.start_at - 1),
+                # The film is on this frame now; the roll counts from it, so
+                # an index is a transport position and a number is that + 1.
+                first_index=max(0, args.start_at - 1),
                 keep_raw=bool(args.library),
                 max_failures=args.max_failures,
                 dry_run=args.dry_run,
-                # Keyed by the roll's own index, as `session.py` keys it: the
-                # offsets are relative to the survey's start, not to a
-                # transport coordinate.
+                # Keyed by the roll's own index, as `session.py` keys it -- a
+                # place on the strip. The offsets themselves stay relative to
+                # where the walk saw each frame; only the key is absolute.
                 approved={n - 1: a for n, a in held.items()},
                 correct=args.correct,
                 correct_dry_run=args.correct_dry_run,

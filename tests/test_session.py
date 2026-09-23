@@ -67,6 +67,29 @@ class FakeScanner:
         self._on_yield = on_yield
         self._fail_scan = fail_scan
         self.only = None
+        #: Where the film is, as the transport's counter says it. A roll now
+        #: asks before it moves anything, so a stand-in with no transport at
+        #: all refuses every roll -- which is right for a stand-in that cannot
+        #: say, and wrong for one meant to be a strip on frame 1.
+        self.pos = 0
+        #: Every whole-frame move, in order, so a test can say which way the
+        #: film went and whether it went before the roll started.
+        self.moves = []
+
+    def position(self):
+        return self.pos
+
+    def advance(self, steps=1, **kw):
+        self.moves.append(("advance", steps))
+        self.pos += 1
+        return self.pos
+
+    def retreat(self, steps=1, **kw):
+        self.moves.append(("retreat", steps))
+        if self.pos <= 0:
+            return None
+        self.pos -= 1
+        return self.pos
 
     def open(self):
         self.opened = True
@@ -122,13 +145,27 @@ class FakeScanner:
         }
 
     def scan_roll(self, frames=None, resolution=1800, infrared=True,
-                  dry_run=False, skip=0, only=None, **kw):
+                  dry_run=False, skip=0, only=None, first_index=0, **kw):
+        """Frames from wherever the film is, as the driver's loop gives them.
+
+        It used to hand back frame ``skip + i`` at position ``skip + i``
+        whatever the transport said, which is the demo's old teleport in
+        miniature: a session that never put the film anywhere passed every
+        test, because the film was always where the numbers said. Now the
+        first frame is where `pos` is, the film advances between frames, and
+        the index counts from ``first_index`` -- so a roll numbers the frame it
+        is on only if the session put the film there first.
+        """
         self.calls.append(("roll", frames, resolution, dry_run, skip))
         self.only = only
+        self.pos += skip
         for i in range(frames or self._frames):
+            if i:
+                self.pos += 1             # the advance between frames
+            index = first_index + skip + i
             # The real one advances past an unchosen frame without prescanning
             # it, which from here looks like a frame that never arrives.
-            if only is not None and skip + i not in only:
+            if only is not None and index not in only:
                 continue
             if self._on_yield:
                 # Stands in for the operator pressing stop while this frame is
@@ -139,7 +176,7 @@ class FakeScanner:
                 resolution=resolution, infrared=infrared
             )
             yield RollFrame(
-                index=skip + i, position=skip + i, image=image, meta=meta,
+                index=index, position=self.pos, image=image, meta=meta,
                 prescan=picture(channels=3, seed=i),
                 registration={"offset_mm": 0.04, "shortfall_mm": 0.02},
             )
@@ -765,14 +802,16 @@ def test_moving_forward_a_frame_reports_the_new_position(tmp_path):
     scanner = FakeTransportScanner(position=3)
     _, scanner, events = run(Move(frames=1), tmp_path, scanner=scanner)
     assert scanner.moves == [("advance", 1)]
-    assert [e.done for e in kinds(events, "transport")] == [4]
+    # The first is the session saying where the film was when it opened, so
+    # the window's readout is right before anything has moved.
+    assert [e.done for e in kinds(events, "transport")] == [3, 4]
 
 
 def test_moving_back_a_frame_uses_the_reverse(tmp_path):
     scanner = FakeTransportScanner(position=3)
     _, scanner, events = run(Move(frames=-1), tmp_path, scanner=scanner)
     assert scanner.moves == [("retreat", 1)]
-    assert [e.done for e in kinds(events, "transport")] == [2]
+    assert [e.done for e in kinds(events, "transport")] == [3, 2]
 
 
 def test_a_transport_that_will_not_move_is_reported_not_raised(tmp_path):
@@ -794,8 +833,9 @@ def test_a_nudge_says_the_frame_counter_cannot_confirm_it(tmp_path):
     assert scanner.moves == [("nudge", pytest.approx(0.3002, abs=1e-4))]
     assert any("prescan to check it landed" in e.text
                for e in kinds(events, "finished"))
-    # Position is still whatever it was; nothing pretends otherwise.
-    assert [e.done for e in kinds(events, "transport")] == [3]
+    # Position is still whatever it was; nothing pretends otherwise. (The
+    # first report is the one the session makes when it opens.)
+    assert [e.done for e in kinds(events, "transport")] == [3, 3]
 
 
 def test_a_move_never_files_anything(tmp_path):
@@ -809,7 +849,7 @@ def test_moving_several_frames_steps_one_at_a_time(tmp_path):
     scanner = FakeTransportScanner(position=0)
     _, scanner, events = run(Move(frames=3), tmp_path, scanner=scanner)
     assert scanner.moves == [("advance", 1)] * 3
-    assert [e.done for e in kinds(events, "transport")] == [1, 2, 3]
+    assert [e.done for e in kinds(events, "transport")] == [0, 1, 2, 3]
 
 
 # -- rotation ---------------------------------------------------------------
@@ -1097,6 +1137,248 @@ def test_the_rewind_can_say_what_it_is_doing():
     rewind(_Winding(3), 3, say=said.append)
     assert any("rewinding 3" in line for line in said)
     assert any("1/3" in line for line in said)
+
+
+# --- a roll starts on its first frame, wherever the film is -----------------
+#
+# Reported 2026-09-23: with the transport on frame 10, a roll commissioned
+# from 1 to 15 started where the film was and numbered it 1. `start_at` was a
+# count of advances from wherever the film happened to be; the transport's
+# own counter, which knew, was never asked. These drive the session with
+# `StripScanner`, whose roll starts where the film is exactly as the driver's
+# does -- the doubles that put frame i at position i whatever the transport
+# said are how this passed every test before.
+
+
+def walk(job, tmp_path, scanner, monkeypatch=None):
+    """Run `job` against `scanner`; return its events and its manifest's
+    (number, transport_position) pairs."""
+    if monkeypatch is not None:
+        monkeypatch.setattr(session, "POSITION_POLL_S", 0.0, raising=False)
+    _, _, events = run(job, tmp_path, scanner=scanner)
+    folder = tmp_path / "rolls" / (job.name or "strip")
+    manifest = folder / ("survey.json" if job.dry_run else "roll.json")
+    frames = []
+    if manifest.exists():
+        frames = [(f["number"], f["transport_position"]) for f in json.loads(
+            manifest.read_text(encoding="utf-8"))["frames"]]
+    return events, frames
+
+
+def test_a_roll_from_frame_one_winds_back_to_it_first(tmp_path):
+    """The reported case, at the session: the film on frame 10, a walk of 1
+    to 3. It used to record frames 1, 2, 3 at transport positions 9, 10, 11."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=9)
+    _, frames = walk(Roll(frames=3, start_at=1, dry_run=True, name="strip"),
+                     tmp_path, scanner)
+    assert frames == [(1, 0), (2, 1), (3, 2)]
+    assert scanner.moves[:9] == [("retreat", 1)] * 9
+    assert scanner.rolls[0]["moves_before"] == 9, "wound back first"
+    assert scanner.rolls[0]["first_index"] == 0
+
+
+@pytest.mark.parametrize("at", [0, 2])
+def test_a_roll_behind_its_first_frame_only_advances(tmp_path, at):
+    """Frame 4 is three frames on from frame 1 whichever frame the film is on,
+    and the film gets there before the roll begins -- so a refusal would come
+    before anything was created, not part-way into a roll."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=at)
+    _, frames = walk(Roll(frames=3, start_at=4, dry_run=True, name="strip"),
+                     tmp_path, scanner)
+    assert frames == [(4, 3), (5, 4), (6, 5)]
+    assert ("retreat", 1) not in scanner.moves
+    assert scanner.rolls[0]["moves_before"] == 3 - at
+    assert scanner.rolls[0]["skip"] == 0
+
+
+def test_a_rewind_that_stops_short_files_nothing(tmp_path):
+    """Nothing scanned, nothing filed, no folder: every frame after a short
+    rewind would be numbered as a frame it is not."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=9, sticks_at=5)
+    events, frames = walk(Roll(frames=3, start_at=1, dry_run=True,
+                               name="strip"), tmp_path, scanner)
+    assert frames == []
+    assert scanner.rolls == [], "the roll never started"
+    assert library.entries(tmp_path) == []
+    assert not (tmp_path / "rolls" / "strip").exists()
+    failed = kinds(events, "failed")
+    assert failed and "nothing was scanned" in failed[0].text
+
+
+def test_a_roll_refuses_when_the_transport_will_not_say(tmp_path, monkeypatch):
+    """Where the film is unknown, frame 1 is a guess -- which is today's bug
+    with a different number. Refused, through the failed-job path."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=4, silent=True)
+    events, frames = walk(Roll(frames=3, start_at=1, dry_run=True,
+                               name="strip"), tmp_path, scanner, monkeypatch)
+    assert frames == [] and scanner.rolls == [] and scanner.moves == []
+    assert library.entries(tmp_path) == []
+    assert not (tmp_path / "rolls" / "strip").exists()
+    failed = kinds(events, "failed")
+    assert failed and "would not say" in failed[0].text
+
+
+def test_a_counter_no_strip_has_is_not_a_place_to_start(tmp_path):
+    """A stale 72 was once read with no strip in. Winding back 72 frames from
+    it would spend four minutes of commands against the end of a strip."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=72, last=80)
+    events, frames = walk(Roll(frames=3, start_at=1, dry_run=True,
+                               name="strip"), tmp_path, scanner)
+    assert frames == [] and scanner.moves == []
+    failed = kinds(events, "failed")
+    assert failed and "frame 73" in failed[0].text
+
+
+def test_a_strip_that_ends_before_the_first_frame_refuses(tmp_path):
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=2, last=4)
+    events, frames = walk(Roll(frames=3, start_at=9, dry_run=True,
+                               name="strip"), tmp_path, scanner)
+    assert frames == [] and scanner.rolls == []
+    failed = kinds(events, "failed")
+    assert failed and "strip ended on frame 5" in failed[0].text
+
+
+def test_a_film_already_there_is_not_moved(tmp_path):
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=4)
+    _, frames = walk(Roll(frames=2, start_at=5, dry_run=True, name="strip"),
+                     tmp_path, scanner)
+    assert frames == [(5, 4), (6, 5)]
+    assert scanner.rolls[0]["moves_before"] == 0
+
+
+def test_the_chosen_frames_are_places_on_the_strip(tmp_path):
+    """`only` names frames the same way `start_at` does, so a sheet's ticks
+    reach the pictures it showed whichever frame the film was left on."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=12)
+    _, frames = walk(Roll(start_at=2, only=(2, 4), infrared=False,
+                          resolution=300, name="strip"), tmp_path, scanner)
+    assert frames == [(2, 1), (4, 3)]
+
+
+def test_the_window_hears_where_the_film_is_when_the_session_opens(tmp_path):
+    """So the Roll dialog can say what the roll will do to the film. The
+    readout used to hear only about the moves its own buttons made, and read
+    '?' from launch until one was pressed."""
+    from conftest import StripScanner
+
+    _, _, events = run(Prescan(), tmp_path, scanner=StripScanner(at=4))
+    reported = [e.done for e in kinds(events, "transport")]
+    assert reported[0] == 4, "at open, before any job"
+    assert reported[-1] == 4, "and again once the job has finished"
+
+
+def test_a_roll_tells_the_window_where_the_film_went(tmp_path):
+    from conftest import StripScanner
+
+    _, _, events = run(Roll(frames=2, start_at=1, dry_run=True, name="strip"),
+                       tmp_path, scanner=StripScanner(at=3))
+    reported = [e.done for e in kinds(events, "transport")]
+    assert reported[0] == 3
+    assert reported[-1] == 1, "the last frame walked"
+    assert 0 in reported, "and where the seek put it"
+
+
+def test_resuming_a_roll_numbered_the_old_way_renumbers_it_by_position(
+        tmp_path):
+    """A roll.json written before frame numbers were places on the strip is
+    counted from wherever that roll started. Merged as it stands, its frame 1
+    and this run's frame 6 could be the same picture in one file."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "strip", "wanted": [1, 2, 3],
+        "frames": [{"number": 1, "transport_position": 5, "done": True},
+                   {"number": 2, "transport_position": 6, "done": True}],
+    }), encoding="utf-8")
+    _, frames = walk(Roll(frames=1, start_at=8, infrared=False,
+                          resolution=300, name="strip"), tmp_path,
+                     StripScanner(at=0))
+    assert frames == [(6, 5), (7, 6), (8, 7)]
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["wanted"] == [6, 7, 8]
+    assert manifest["numbering"] == session.NUMBERING
+
+
+# --- the seek itself, and the numbering it gives manifests -------------------
+
+
+def test_seek_goes_nowhere_when_the_film_is_there():
+    from conftest import StripScanner
+
+    film = StripScanner(at=6)
+    assert session.seek(film, 6) == 6
+    assert film.moves == []
+
+
+def test_seek_refuses_when_the_film_is_not_where_it_ended_up(monkeypatch):
+    """The last word is the counter's. An advance that reports a frame the
+    counter then disagrees with is a roll about to mis-number itself."""
+    from conftest import StripScanner
+
+    class Slips(StripScanner):
+        def advance(self, steps=1, **kw):
+            landed = super().advance(steps, **kw)
+            if landed == 3:
+                self.at = 4                   # the counter says one further
+            return landed
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    with pytest.raises(session.FilmNotPlaced, match="frame 4 .* frame 5"):
+        session.seek(Slips(at=0), 3)
+
+
+def test_seek_asks_again_while_the_transport_says_nothing(monkeypatch):
+    """READ_STATE right after a transport command comes back empty every
+    time; one empty answer is not the film being lost."""
+    from conftest import StripScanner
+
+    class Slow(StripScanner):
+        asked = 0
+
+        def position(self):
+            self.asked += 1
+            return None if self.asked < 3 else self.at
+
+    monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
+    assert session.seek(Slow(at=2), 2) == 2
+
+
+def test_the_old_numbering_is_mapped_by_position_not_by_number():
+    """rolls/2026-09-23 as it is on disk: a walk begun on the counter's 5 that
+    called that frame 1."""
+    old = {"frames": [{"number": 1, "transport_position": 5},
+                      {"number": 2, "transport_position": 6}],
+           "settings": {"start_at": 1, "only": None}}
+    assert session.legacy_shift(old) == 5
+    new = session.renumbered(old)
+    assert [f["number"] for f in new["frames"]] == [6, 7]
+    assert new["settings"]["start_at"] == 6
+    assert new["numbering"] == session.NUMBERING
+    assert session.renumbered(new) is new, "already on the strip's numbers"
+
+
+def test_a_manifest_that_recorded_no_positions_borrows_its_walks_shift():
+    died = {"wanted": [1, 2], "frames": [{"number": 1, "done": False}]}
+    assert session.legacy_shift(died) is None
+    assert session.renumbered(died, fallback=5)["wanted"] == [6, 7]
 
 
 def test_a_plan_says_what_the_hardware_will_actually_travel():

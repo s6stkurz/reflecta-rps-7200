@@ -18,14 +18,18 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from conftest import load_tool
+from conftest import FilmOnFrame, load_tool
 from rps7200.direct import DirectScanner, RollFrame
 
 scan_roll = load_tool("scan_roll")
 
 
-class RecordingScanner(DirectScanner):
-    """Notes whether it was asked to calibrate, and with what."""
+class RecordingScanner(FilmOnFrame, DirectScanner):
+    """Notes whether it was asked to calibrate, and with what.
+
+    On frame 1 of a strip, because the tool asks where the film is before a
+    roll, and a double that cannot say is one every roll refuses.
+    """
 
     def __init__(self, **kw):
         self.verbose = False

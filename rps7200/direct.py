@@ -381,7 +381,7 @@ class RollFrame:
     the rest.
     """
 
-    index: int                          # 0-based, from the start of the roll
+    index: int                          # 0-based, its place on the strip
     position: int | None                # what READ_STATE said the transport held
     image: np.ndarray | None
     meta: dict[str, Any]
@@ -3102,6 +3102,7 @@ class DirectScanner:
         approved: dict[int, Any] | None = None,
         reverse_hold: bool = False,
         fast_infrared: bool = True,
+        first_index: int = 0,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -3113,7 +3114,15 @@ class DirectScanner:
 
         The first picture is scanned **before** any advance -- the film is
         already positioned at it when the roll starts. ``skip`` advances that
-        many times first, which is how a part-scanned roll is resumed.
+        many times first.
+
+        ``first_index`` is where the film is when the roll starts, as the
+        transport counts it, and so the index the first frame is given. The
+        caller puts the film there first -- `session.seek` does, from wherever
+        it was -- so that a frame's index is its place on the strip and the
+        same picture has the same number in every roll and walk. Counting from
+        0 wherever the film happened to be is what numbered frame 11 as 1.
+        ``only``, ``approved`` and ``frames`` all count from it.
 
         Every frame is scanned at the full transport window. Cropping is a
         host-side decision that can be revisited; a window detected wrongly
@@ -3142,7 +3151,7 @@ class DirectScanner:
         ``"none"``
             scan at whatever the device holds.
 
-        ``only`` is the frame numbers worth scanning, in the same numbering the
+        ``only`` is the frame indexes worth scanning, in the same numbering the
         yielded :class:`RollFrame` carries. Everything else is advanced past
         without being prescanned or scanned, so a frame nobody chose costs its
         ~7 s advance rather than 13 s surveyed or six minutes scanned, and the
@@ -3194,7 +3203,8 @@ class DirectScanner:
         # when nothing asked for aiming, so an ordinary roll is untouched.
         walk = StripWalk() if (correct or correct_dry_run) else None
         misses = 0
-        index = 0
+        index = first_index
+        end = None if frames is None else first_index + skip + frames
 
         # Past the last chosen frame there is nothing left to do, so the roll
         # ends there rather than advancing through the rest of the strip
@@ -3206,7 +3216,7 @@ class DirectScanner:
         last_wanted = max(wanted) if wanted else None
 
         def finished(index: int) -> bool:
-            if frames is not None and index >= skip + frames:
+            if end is not None and index >= end:
                 return True
             return last_wanted is not None and index > last_wanted
 
@@ -3228,7 +3238,7 @@ class DirectScanner:
                 return
             index += 1
 
-        while frames is None or index < skip + frames:
+        while end is None or index < end:
             # The frame has not begun here, so this is where stopping is
             # cheapest -- and it covers the advance, which takes 2-7 seconds
             # during which a stop would otherwise not be looked at again until
@@ -3255,6 +3265,12 @@ class DirectScanner:
             prescan_meta: dict[str, Any] = {}
             marks: dict[str, Any] = {}
             position = self.position()
+            if position is not None and position != index:
+                # Said, not corrected: the index is what every file is named
+                # by, and an advance that moved two frames or a key pressed
+                # mid-roll would otherwise number a picture it is not.
+                self._log(f"frame {index}: the transport says position "
+                          f"{position}, not {index}")
 
             try:
                 prescan_image, _ = self.prescan(

@@ -180,13 +180,18 @@ class DemoScanner:
     def inquiry(self, refresh: bool = False) -> _Inquiry:
         return self._inquiry
 
+    #: Where this pretend strip ends: seventeen frames, 0 to 16 on the counter,
+    #: as long as the strip in `full_17_strip`. A fact about the film being
+    #: pretended, not about the driver, so it is the demo's own number.
+    LAST_POSITION = 16
+
     def position(self) -> int | None:
         return self._position
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("advance")
         self._work(7.0)
-        if self._position >= 16:                         # a strip runs out
+        if self._position >= self.LAST_POSITION:         # a strip runs out
             self._log("no advance: treating that as the end of the film")
             return None
         self._position += steps
@@ -389,8 +394,20 @@ class DemoScanner:
         reverse_hold: bool = False,
         correct: bool = False,
         correct_dry_run: bool = False,
+        first_index: int = 0,
+        should_stop: Any = None,
         **kw: Any,
     ):
+        """The roll, walked the way `DirectScanner.scan_roll` walks it.
+
+        From wherever this pretend film is, moved by its own :meth:`advance`,
+        counted from ``first_index`` and ended by the same four things: the
+        frame count, the last chosen frame, a stop, or the strip running out.
+        It used to put the film straight on frame ``skip + i`` whatever it was
+        on, which is how the demo hid a roll that started on frame 11 and
+        called it 1: the real one starts where the film is, and so does this,
+        so `session.seek` above the seam has something true to work against.
+        """
         self._need_film("roll")
         # Up front, as the real one does: a roll spends minutes calibrating
         # before the first frame, so this cannot wait until one is taken.
@@ -402,95 +419,134 @@ class DemoScanner:
                 "its ~212 s floor and hand back the picture rather than the "
                 "dust. Scan it RGB."
             )
-        limit = frames if frames is not None else 6
+        wanted = frozenset(only) if only is not None else None
+        if wanted is not None and not wanted:
+            self._log("no frames were chosen, so there is nothing to scan")
+            return
+        last_wanted = max(wanted) if wanted else None
+        end = None if frames is None else first_index + skip + frames
+
+        def finished(index: int) -> bool:
+            if end is not None and index >= end:
+                return True
+            return last_wanted is not None and index > last_wanted
+
+        def stopping() -> bool:
+            return should_stop is not None and should_stop()
+
+        index = first_index
+        for _ in range(skip):
+            if self.advance() is None:
+                self._log("nothing to skip to: the transport did not move")
+                return
+            index += 1
+
         holding = True
         walk = StripWalk() if (correct or correct_dry_run) else None
         misses = 0
-        for i in range(limit):
-            self._position = skip + i
-            self._index = skip + i
-            # Each frame starts where the advance left it, as the real one
-            # does; the offset an operator asked for is what the loop below
-            # then puts in.
-            self._film_mm = 0.0
-            self._owed_mm = 0.0
-            self._last_way = 0
-            if only is not None and skip + i not in only:
-                # Advanced past, not looked at -- the whole point of picking
-                # frames off a contact sheet.
-                self._log(f"frame {i}: not chosen, advancing past it")
-                self._work(7.0)
-                continue
-            strip = self._strip_for(film)
-            # Held across both passes of this frame, and dropped at the end, so
-            # the frame's prescan and its scan are one picture and the next
-            # frame is a different one.
-            self._frame_source = strip[(skip + i) % len(strip)] if strip else None
-            try:
-                prescan, _ = self.prescan(film=film)
-                marks = self._marks(prescan)
-                self._log(
-                    f"frame {i}: contrast {marks['contrast']:.3f}, "
-                    f"offset {marks['offset_mm']:+.2f} mm, "
-                    f"short by {marks['shortfall_mm']:.2f} mm"
-                )
-                held = (approved or {}).get(skip + i)
-                if held is not None and holding:
-                    fix = self._hold_to_approved(
-                        i, prescan, 300, held, keep_raw=False,
-                        reverse=reverse_hold,
+        try:
+            while not finished(index):
+                if stopping():
+                    self._log("stopping before the next frame, as asked")
+                    return
+                self._index = index
+                # Each frame starts where the advance left it, as the real one
+                # does; the offset an operator asked for is what the loop below
+                # then puts in.
+                self._film_mm = 0.0
+                self._owed_mm = 0.0
+                self._last_way = 0
+                if wanted is not None and index not in wanted:
+                    # Advanced past, not looked at -- the whole point of
+                    # picking frames off a contact sheet.
+                    self._log(f"frame {index}: not chosen, advancing past it")
+                    index += 1
+                    if finished(index) or stopping() or self.advance() is None:
+                        return
+                    continue
+                strip = self._strip_for(film)
+                # Held across both passes of this frame, and dropped at the
+                # end, so the frame's prescan and its scan are one picture and
+                # the next frame is a different one. Chosen by where the film
+                # is, so a frame walked twice is the same picture both times.
+                self._frame_source = (strip[self._position % len(strip)]
+                                      if strip else None)
+                try:
+                    prescan, _ = self.prescan(film=film)
+                    marks = self._marks(prescan)
+                    self._log(
+                        f"frame {index}: contrast {marks['contrast']:.3f}, "
+                        f"offset {marks['offset_mm']:+.2f} mm, "
+                        f"short by {marks['shortfall_mm']:.2f} mm"
                     )
-                    if fix.get("roll_abort"):
-                        holding = False
-                    if fix.get("outcome") != "held":
-                        misses += 1
-                        if misses >= self.HOLD_GIVE_UP_FRAMES:
+                    held = (approved or {}).get(index)
+                    if held is not None and holding:
+                        fix = self._hold_to_approved(
+                            index, prescan, 300, held, keep_raw=False,
+                            reverse=reverse_hold,
+                        )
+                        if fix.get("roll_abort"):
                             holding = False
-                            self._log("three frames in a row missed their "
-                                      "position; holding off for this roll")
-                    else:
-                        misses = 0
-                    if fix.get("prescan") is not None:
-                        prescan = fix["prescan"]
-                        marks = self._marks(prescan)
-                    marks["approved"] = {k: v for k, v in fix.items()
-                                         if k != "prescan"}
-                elif held is not None:
-                    marks["approved"] = {
-                        "target_mm": round(held.offset_mm, 4), "outcome": "off",
-                        "reason": "holding was switched off earlier in this roll",
-                    }
-                elif walk is not None:
-                    marks["base"] = walk.observe(skip + i, prescan)
-                    fix = self._aim_frame(
-                        skip + i, prescan, 300, walk,
-                        dry_run=correct_dry_run, keep_raw=False,
-                    )
-                    if fix.get("prescan") is not None:
-                        prescan = fix["prescan"]
-                        marks = self._marks(prescan)
-                    marks["correction"] = {k: v for k, v in fix.items()
-                                           if k != "prescan"}
-                image = meta = None
-                if not dry_run:
-                    image, meta = self.scan(
-                        resolution=resolution, infrared=infrared, film=film,
-                        keep_raw=True,
-                    )
-            finally:
-                self._frame_source = None
-            yield RollFrame(
-                index=skip + i,
-                position=skip + i,
-                image=image,
-                meta=meta or {},
-                prescan=prescan,
-                registration=marks,
-            )
-            self._work(7.0)                              # the advance
-        # Outside a roll again, so a manual nudge from the window is not
-        # mistaken for the slipping frame.
-        self._index = -1
+                        if fix.get("outcome") != "held":
+                            misses += 1
+                            if misses >= self.HOLD_GIVE_UP_FRAMES:
+                                holding = False
+                                self._log("three frames in a row missed their "
+                                          "position; holding off for this "
+                                          "roll")
+                        else:
+                            misses = 0
+                        if fix.get("prescan") is not None:
+                            prescan = fix["prescan"]
+                            marks = self._marks(prescan)
+                        marks["approved"] = {k: v for k, v in fix.items()
+                                             if k != "prescan"}
+                    elif held is not None:
+                        marks["approved"] = {
+                            "target_mm": round(held.offset_mm, 4),
+                            "outcome": "off",
+                            "reason": "holding was switched off earlier in "
+                                      "this roll",
+                        }
+                    elif walk is not None:
+                        marks["base"] = walk.observe(index, prescan)
+                        fix = self._aim_frame(
+                            index, prescan, 300, walk,
+                            dry_run=correct_dry_run, keep_raw=False,
+                        )
+                        if fix.get("prescan") is not None:
+                            prescan = fix["prescan"]
+                            marks = self._marks(prescan)
+                        marks["correction"] = {k: v for k, v in fix.items()
+                                               if k != "prescan"}
+                    image = meta = None
+                    if not dry_run:
+                        image, meta = self.scan(
+                            resolution=resolution, infrared=infrared,
+                            film=film, keep_raw=True,
+                        )
+                finally:
+                    self._frame_source = None
+                yield RollFrame(
+                    index=index,
+                    position=self._position,
+                    image=image,
+                    meta=meta or {},
+                    prescan=prescan,
+                    registration=marks,
+                )
+                index += 1
+                if finished(index):
+                    break
+                if stopping():
+                    self._log("stopping before the next advance, as asked")
+                    return
+                if self.advance() is None:
+                    return
+        finally:
+            # Outside a roll again, so a manual nudge from the window is not
+            # mistaken for the slipping frame.
+            self._index = -1
 
     #: The real loop, run against the simulated film above rather than
     #: reimplemented. It only needs `nudge`, `prescan` and `_log`, all of

@@ -72,7 +72,10 @@ from rps7200.protocol import (                             # noqa: E402
 from rps7200.session import (                              # noqa: E402
     FINE_MAX_MM,
     FINE_MIN_MM,
+    FORWARD_FRAME_S,
     INFRARED_TIE_CROSSOVER_DPI,
+    LAST_PLAUSIBLE_POSITION,
+    NUMBERING,
     Approved,
     Calibrate,
     Move,
@@ -85,7 +88,9 @@ from rps7200.session import (                              # noqa: E402
     _unclaimed,
     deliverable_mm,
     estimate_seconds,
+    legacy_shift,
     plan_nudges,
+    renumbered,
 )
 
 #: Resolutions this scanner has actually been driven at, plus the optical
@@ -421,7 +426,6 @@ class ScannerGui:
         self.orientations: dict[tuple, tuple[int, bool]] = {}
         self.survey: list = []               # the prescans a dry run walked
         self._surveying = False              # a dry run is running right now
-        self._survey_start = 1               # the `start at` it was walked with
         #: The prescan resolution the survey walked at. A commissioned scan is
         #: held to it when approved positions are in play: checking a frame
         #: against a reference from another resolution works geometrically but
@@ -429,7 +433,13 @@ class ScannerGui:
         #: real passes -- enough to drop a good match below the floor and
         #: report a frame as unverified for no reason.
         self._survey_predpi = None
-        self._transport = None               # last frame position the device gave
+        #: The transport's own counter as it last reported it -- 0-based, so
+        #: frame N of the strip is N-1 -- or None before it has said anything.
+        #: Only ever what it last *said*: the scanner's keys move the film
+        #: without a word over USB, which is why a roll asks again itself
+        #: before it moves anything, and this only feeds the sentence the
+        #: confirm dialog shows.
+        self._transport = None
         self.sheet = None                    # the contact sheet, while it is open
         #: What the contact sheet was last left holding -- ticks, offsets,
         #: rotations, flips. The sheet is a Toplevel that is destroyed when it
@@ -1369,7 +1379,7 @@ class ScannerGui:
 
         row = ttk.Frame(box)
         row.pack(fill="x")
-        self.v_position = tk.StringVar(value="frame position: ?")
+        self.v_position = tk.StringVar(value=position_label(None))
         ttk.Label(row, textvariable=self.v_position).pack(side="left")
         ttk.Button(row, text="ⓘ", width=3,
                    command=self.on_transport_help).pack(side="right")
@@ -1847,7 +1857,10 @@ class ScannerGui:
         messagebox.showinfo(
             "Moving the film",
             "Prev / next slide step whole pictures. The transport counts them "
-            "and READ_STATE confirms the move, so these are the reliable ones.\n\n"
+            "and READ_STATE confirms the move, so these are the reliable "
+            "ones. The readout above is that count as a frame number, the "
+            "same one a roll files each frame under: frame 1 is where the "
+            "counter reads 0, which is where the strip went in.\n\n"
             "Back / forward move a fraction of a frame. The frame counter does "
             "not see these at all, so only a prescan shows whether one landed. "
             f"The smallest step the hardware can make is "
@@ -1973,20 +1986,26 @@ class ScannerGui:
         if dpi is None or predpi is None:
             return
         frames = self._int(self.v_frames, "Frames", 0, 100)
-        start_at = self._int(self.v_startat, "Start at", 1, 100)
+        # Bounded by the counter a roll will believe, so a frame no strip has
+        # is refused here rather than after the film has been wound for it.
+        start_at = self._int(self.v_startat, "Start at", 1,
+                             LAST_PLAUSIBLE_POSITION + 1)
         if frames is None or start_at is None:
             return
         dry = self.v_dryrun.get()
         per = (23.0 if dry else
                estimate_seconds(dpi, self.v_ir.get(),
                                 self.v_fast_ir.get()) + 70)
+        move, move_s = seek_note(self._transport, start_at)
+        what = (f"{frames} frame{'s' if frames != 1 else ''}" if frames
+                else "every frame to the end of the strip")
         if not messagebox.askokcancel(
             "Scan roll",
-            f"{'Walk' if dry else 'Scan'} {frames or 'as many frames as there are'} "
-            f"frames at {dpi} dpi"
+            f"{'Walk' if dry else 'Scan'} {what}, from frame {start_at}, "
+            f"at {dpi} dpi"
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
-            f"Roughly {_duration(per * (frames or 6))}. The film should already "
-            "be at the first picture -- it is scanned before anything moves.\n\n"
+            f"{move}\n\n"
+            f"Roughly {_duration(per * (frames or 6) + move_s)}.\n\n"
             "Start?",
         ):
             return
@@ -2009,12 +2028,11 @@ class ScannerGui:
             # decisions filed against the roll before it.
             self._sheet_roll = None
             self._surveying = True
-            self._survey_start = start_at
             self._survey_predpi = predpi
         # Starts the whole-roll estimate at the same rough figure the dialog
         # above just showed, so the number on screen does not jump the moment
-        # scanning begins. `frames` is already "how many this run will do" --
-        # scan_roll takes `start_at` as where to resume, not added on top.
+        # scanning begins. `frames` is already "how many this run will do",
+        # counted from `start_at` rather than added on top of it.
         # The button this handler is behind is disabled while busy, so this
         # cannot race a job that is still running.
         self._roll_wall_start = time.monotonic()
@@ -2474,13 +2492,14 @@ class ScannerGui:
                 f"so there is no contact sheet to show.\n\n"
                 f"{len(done)} frames are done and {len(remaining)} are left. "
                 f"Its settings are back and \"start at\" is set to frame "
-                f"{remaining[0]} -- put the strip in and press Roll.")
+                f"{remaining[0]} -- put the strip in the way it went in "
+                "before and press Roll, and the film is wound there first.\n\n"
+                + STRIP_NUMBERS)
             self._say(f"reopened {out['roll']}: {len(done)} scanned, "
                       f"{len(remaining)} left, no sheet")
             return
 
         self.survey = out["results"]
-        self._survey_start = out["start_at"]
         self._survey_predpi = out["prescan_resolution"]
         for result in out["results"]:
             self.results.append(result)
@@ -2536,8 +2555,11 @@ class ScannerGui:
                                    proposals=notes,
                                    rotations=out["rotations"],
                                    flips=out["flips"], done=done)
-        # The film is almost certainly not where the walk left it, and only
-        # Stefan can see that. Said rather than guessed at, and the sentence
+        # The film is almost certainly not where the walk left it, and that no
+        # longer matters: the roll goes to each frame by the transport's own
+        # counter. What does matter, and only Stefan can see it, is that the
+        # strip is back in the way it went in, because that is where the
+        # counter starts from. Said rather than guessed at, and the sentence
         # differs by what he is about to do.
         if done and remaining:
             messagebox.showinfo(
@@ -2546,9 +2568,10 @@ class ScannerGui:
                 f"scanned, {len(remaining)} left "
                 f"({', '.join(str(n) for n in remaining)}).\n\n"
                 "Those are ticked in the sheet and the ones already done are "
-                "not. Its settings are back. Put the strip back at its start "
-                "and press \"Scan chosen frames\" -- the transport rewinds to "
-                "the beginning and advances to each frame itself.\n\n"
+                "not. Its settings are back. Put the strip in the way it went "
+                "in before and press \"Scan chosen frames\" -- the transport "
+                "goes to each frame itself, from wherever the film is.\n\n"
+                + STRIP_NUMBERS + "\n\n"
                 "It will calibrate again first, which is the right default "
                 "rather than a limitation: a reference describes the sensor at "
                 "the exposure and gain of the pass that measured it, and "
@@ -2566,11 +2589,7 @@ class ScannerGui:
                 + ("The positions are measured from these prescans every time "
                    "this opens, so the sheet shows what the frames say today "
                    "rather than what was recorded about them."
-                   if self.look_only else
-                   "The frame numbers are counted from where that walk "
-                   "started, so put the film back to the start of the strip "
-                   "before scanning anything -- nothing here can see where it "
-                   "is now."))
+                   if self.look_only else STRIP_NUMBERS))
 
     def _restore_roll_settings(self, settings: dict) -> list[str]:
         """Put a roll's stored settings back into the controls.
@@ -2600,7 +2619,14 @@ class ScannerGui:
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=(),
                        options=None) -> None:
-        """Rewind to where the survey began, then scan only what was ticked.
+        """Go to the first frame ticked, then scan only what was ticked.
+
+        The frame numbers are places on the strip, so the roll goes to the
+        first one from wherever the transport says the film is. It used to
+        count back from where the walk had ended, which scanned the wrong
+        frames without a word whenever the film had moved since -- by the
+        window's buttons, by the scanner's own keys, or by a strip put back
+        in to finish a roll another day.
 
         Runs even where there is no film. This is the sole writer of
         `approved.json` and the sole submitter of a `Roll` from the sheet, so
@@ -2676,32 +2702,20 @@ class ScannerGui:
                       f"survey your positions were set on (you asked for "
                       f"{predpi})")
             predpi = self._survey_predpi
-        back = rewind_frames([r.position for r in self.survey],
-                             self._survey_start)
+        start_at, span = chosen_span(numbers)
         walked = len(self.survey)
         per = self._per_frame_seconds(dpi=dpi, ir=infrared, fast_ir=fast_ir)
-        moved = ""
-        expected = max((r.position for r in self.survey
-                        if r.position is not None), default=None)
-        if (expected is not None and self._transport is not None
-                and self._transport != expected):
-            # The film has been moved since the walk, so counting frames back
-            # from here lands somewhere else. Said rather than corrected: only
-            # the operator can see the transport.
-            moved = ("\n\nThe film has moved since the strip was walked (it "
-                     f"was at {expected}, it is at {self._transport}). Put it "
-                     "back, or walk the strip again -- the frame numbers below "
-                     "are counted from where the walk started.")
+        move, move_s = seek_note(self._transport, start_at)
         if not messagebox.askokcancel(
             "Scan chosen frames",
             f"Scan {len(numbers)} of the {walked} frames walked: "
             f"{', '.join(str(n) for n in numbers)}.\n\n"
+            f"{move}\n\n"
             f"At {dpi} dpi{' with infrared' if infrared else ''}, {film}, "
-            f"roughly {_duration(per * len(numbers) + back * 7)} including "
-            f"rewinding {back} frame{'s' if back != 1 else ''} to the start of "
-            "the strip first. The frames nobody ticked cost their advance only."
+            f"roughly {_duration(per * len(numbers) + move_s)}. The frames "
+            "nobody ticked cost their advance only."
             + self._approved_note(approved, correct)
-            + self._options_note(options) + moved + "\n\nStart?",
+            + self._options_note(options) + "\n\nStart?",
         ):
             return
         self._write_approved(approved)
@@ -2711,16 +2725,13 @@ class ScannerGui:
         for record in approved:
             self.orientations[("frame", record.number)] = (
                 record.rotation, bool(record.flipped))
-        # Carried on the roll rather than queued in front of it. A separate
+        # The move is the roll's own, not a `Move` queued in front of it: a
         # `Move` reports a short rewind by returning a string, which the worker
         # logs before taking the next job -- so a rewind that got three of
         # fourteen was followed straight away by a roll scanning frames it had
-        # mis-numbered, and a break after three successes read exactly like a
-        # break after none. One job owns both halves now, and the checked
-        # rewind tolerates the two or three commands backlash swallows.
+        # mis-numbered. The roll refuses instead, and scans nothing.
         self.session.submit(Roll(
-            rewind=back,
-            frames=walked, start_at=self._survey_start, resolution=dpi,
+            frames=span, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=infrared,
             fast_infrared=fast_ir,
             film=film, meter=meter, dry_run=False,
@@ -2811,6 +2822,9 @@ class ScannerGui:
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "approved.json").write_text(json.dumps({
                 "roll": name,
+                # The numbers below are places on the strip; a file without
+                # this was numbered the way its walk was. See `read_approved`.
+                "numbering": NUMBERING,
                 "frames": [{"number": a.number,
                             "offset_mm": round(a.offset_mm, 4),
                             "rotation": int(a.rotation),
@@ -3046,15 +3060,18 @@ class ScannerGui:
             done_kind = "prescan" if self._roll_dry else "frame"
             if (self._roll_wall_start is not None
                     and event.result.number and event.result.kind == done_kind):
-                self._roll_frames_done = event.result.number
+                # Counted, not read off the number: a frame's number is its
+                # place on the strip, so a roll started on frame 11 would
+                # otherwise have "done" eleven frames after its first.
+                self._roll_frames_done += 1
                 elapsed = time.monotonic() - self._roll_wall_start
                 self._roll_seconds_per_frame = elapsed / self._roll_frames_done
                 self._update_roll_eta()
         elif event.kind == "transport":
-            self.v_position.set("frame position: ?" if event.done < 0
-                                else f"frame position: {event.done}")
-            if event.done >= 0:
-                self._transport = event.done
+            known = event.done if event.done >= 0 else None
+            self.v_position.set(position_label(known))
+            if known is not None:
+                self._transport = known
         elif event.kind == "filed":
             for r in self.results:
                 if r.seq == event.done:
@@ -4497,6 +4514,20 @@ def read_survey(folder) -> dict:
          else roll_path).read_text(encoding="utf-8"))
     progress = (json.loads(roll_path.read_text(encoding="utf-8"))
                 if roll_path.exists() else {})
+    # Onto the strip's numbering, whatever each file was written with. A walk
+    # made before frame numbers were places on the strip counted from wherever
+    # it started -- rolls/2026-09-23 calls the frame on the counter's 5 its
+    # frame 1 -- and a roll commissioned from it now goes to frames by the
+    # counter. Mapped by each frame's recorded transport position, never by
+    # its number, and the decisions filed against those numbers with them.
+    shift = legacy_shift(manifest) or 0
+    # `approved.json` was written when a roll was commissioned, and that roll
+    # numbered its frames the way the file did -- so where the roll recorded
+    # positions, its shift is the file's, even when a later walk into the
+    # same folder has replaced the survey it was decided on.
+    decided = legacy_shift(progress) if progress else None
+    manifest = renumbered(manifest)
+    progress = renumbered(progress, fallback=shift)
     # Merged, because `tools/scan_roll.py` writes these only inside `settings`
     # and this reader wanted them at the top level. See `manifest_settings`:
     # the one that matters is `prescan_resolution`, and reading it as None
@@ -4505,7 +4536,8 @@ def read_survey(folder) -> dict:
     turn = int(manifest.get("rotation") or 0)
     mirrored = bool(manifest.get("flipped"))
 
-    offsets, rotations, flips, entries, sources = read_approved(folder)
+    offsets, rotations, flips, entries, sources = read_approved(
+        folder, legacy=shift if decided is None else decided)
 
     results = []
     for record in manifest.get("frames", []):
@@ -4701,13 +4733,21 @@ def duplicate_name(folder) -> Path:
     raise ValueError(f"no free name beside {folder.name}")
 
 
-def read_approved(folder):
+def read_approved(folder, legacy: int = 0):
     """A roll's stored decisions: `(offsets, rotations, flips, entries, sources)`.
 
     `approved.json` is the one thing in a roll folder that is **not** derivable
     from the library -- the frames and the prescans can be rebuilt, these
     positions and turns cannot -- which is why Delete names it and why this is
     read on its own rather than only as part of loading a whole survey.
+
+    ``legacy`` is how far the walk this file was written against numbered its
+    frames from the strip's own, for a file from before frame numbers were
+    places on the strip; see `session.legacy_shift`. It keeps no positions of
+    its own, so its numbers can only move with the walk's. A file that says it
+    numbers by the strip is read as it stands, and so is every file when the
+    caller leaves ``legacy`` at 0 -- the export path, whose library entries
+    carry the same numbers the file does.
     """
     folder = Path(folder)
     offsets: dict[int, float] = {}
@@ -4722,12 +4762,14 @@ def read_approved(folder):
     if not approved_path.exists():
         return offsets, rotations, flips, entries, sources
     try:
-        records = json.loads(approved_path.read_text(encoding="utf-8")).get("frames", [])
-    except (OSError, ValueError):
+        stored = json.loads(approved_path.read_text(encoding="utf-8"))
+        records = stored.get("frames", [])
+    except (OSError, ValueError, AttributeError):
         return offsets, rotations, flips, entries, sources
+    shift = 0 if stored.get("numbering") == NUMBERING else legacy
     for record in records:
         try:
-            number = int(record["number"])
+            number = int(record["number"]) + shift
         except (KeyError, TypeError, ValueError):
             continue
         if record.get("offset_mm"):
@@ -4823,6 +4865,10 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
                     if roll_path.exists() else {})
     except (OSError, ValueError):
         return None
+    # The same numbering `read_survey` puts on them, so the list and the sheet
+    # it opens cannot disagree about which frames are left.
+    progress = renumbered(progress, fallback=legacy_shift(manifest) or 0)
+    manifest = renumbered(manifest)
 
     settings = progress.get("settings") or manifest.get("settings") or {}
     wanted = wanted_frames(manifest, progress)
@@ -5414,27 +5460,77 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
     return tuple(out)
 
 
-def rewind_frames(positions, start_at: int = 1) -> int:
-    """How far back the film has to go before the chosen frames are scanned.
+#: What a frame number means, for the dialogs that send a reopened roll back
+#: to the scanner. The one thing the transport cannot check for itself is how
+#: the strip was put in, and only the operator can see that.
+STRIP_NUMBERS = (
+    "Frame numbers are places on the strip, counted by the transport from "
+    "where the strip went in: frame 1 is where its counter reads 0, and it "
+    "has been seen resetting to 0 as a strip goes in. The roll finds each "
+    "frame by that counter, so it is right as long as the strip is in the "
+    "way it was when it was walked.")
 
-    A survey leaves the transport at the last picture it walked, and a roll
-    always begins where the film already is -- so it has to be put back at the
-    picture the walk started from. `start_at` advances from there, so the film
-    goes back that much further again for the advance to land in the same place.
 
-    Counted from the transport's own positions rather than from how many frames
-    came back: a frame that failed still moved the film, and counting results
-    would leave it short by one for every failure.
+def position_label(position: int | None) -> str:
+    """The transport readout: which frame of the strip the film is on.
+
+    One-based, like every other frame number the window shows. It showed the
+    counter itself until 2026-09-23, so "frame position: 10" sat beside a roll
+    that called the same picture frame 11 -- two numbering schemes on one
+    screen for one piece of film.
     """
-    seen = list(positions)
-    known = [p for p in seen if p is not None]
-    if len(known) >= 2:
-        walked = max(known) - min(known)
-    else:
-        # No positions to count, so fall back to one frame per result. It is
-        # what the transport did if nothing failed, which is the usual case.
-        walked = max(0, len(seen) - 1)
-    return max(0, walked + max(0, start_at - 1))
+    if position is None:
+        return "film on frame ?"
+    return f"film on frame {position + 1}"
+
+
+def chosen_span(numbers) -> tuple[int, int]:
+    """Where a roll of the ticked frames starts, and how many frames it covers.
+
+    The numbers are places on the strip -- the survey's recorded transport
+    positions plus one, for a walk made now and, through `read_survey`, for
+    one made before numbers meant that -- so the first of them is the frame
+    the film has to go to, and the roll ends with the last.
+    """
+    chosen = sorted(int(n) for n in numbers)
+    return chosen[0], chosen[-1] - chosen[0] + 1
+
+
+def seek_note(here: int | None, start_at: int) -> tuple[str, float]:
+    """What a roll will do to the film before its first frame, and its cost.
+
+    ``here`` is the transport's counter as the window last heard it, 0-based;
+    ``start_at`` the frame the roll starts on, 1-based. The roll asks the
+    transport again itself before moving, so this is a forecast, and it says
+    so when it cannot know.
+
+    Only the forward moves are costed, at the measured `FORWARD_FRAME_S`. A
+    move backwards has never been timed, and saying so is better than an
+    estimate that looks measured and is not.
+    """
+    if here is None:
+        return ("The window has not heard where the film is, so the roll "
+                f"asks the transport first and goes to frame {start_at} from "
+                "there -- or refuses, and scans nothing, if it cannot tell.",
+                0.0)
+    target = start_at - 1
+    # "Last said", because the scanner's own keys move the film without a word
+    # over USB; the roll reads the counter again before it moves anything.
+    if here == target:
+        return (f"The transport last said the film is on frame {start_at}, so "
+                "nothing moves before the first frame.", 0.0)
+    if here > target:
+        back = here - target
+        return (f"The transport last said the film is on frame {here + 1}, so "
+                f"it winds back {back} frame{'s' if back != 1 else ''} to "
+                f"frame {start_at} first. A move backwards has never been "
+                "timed, so that is not in the figure below.", 0.0)
+    ahead = target - here
+    cost = ahead * FORWARD_FRAME_S
+    return (f"The transport last said the film is on frame {here + 1}, so it "
+            f"advances {ahead} frame{'s' if ahead != 1 else ''} to frame "
+            f"{start_at} first -- about {cost:.0f} s, at the "
+            f"{FORWARD_FRAME_S:.1f} s a frame measured forward.", cost)
 
 
 def _age(hours: float) -> str:

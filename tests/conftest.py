@@ -50,7 +50,7 @@ if os.environ.get("RPS7200_NO_TIFFFILE"):
 
 import numpy as np  # noqa: E402
 
-from rps7200.direct import Settings  # noqa: E402
+from rps7200.direct import RollFrame, Settings  # noqa: E402
 from rps7200.usb_transport import CheckCondition  # noqa: E402
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
@@ -105,6 +105,137 @@ class FakeTransport:
     def payloads(self, opcode: int) -> list[bytes]:
         """Every data payload sent with ``opcode``, in order."""
         return [data for sent, data in self.sent if sent == opcode]
+
+
+class FilmOnFrame:
+    """A film transport for a scanner double: the counter, and whole frames.
+
+    Mixed in ahead of `DirectScanner` (``class X(FilmOnFrame, DirectScanner)``)
+    so these win over the real methods, which would reach for a USB transport
+    the double does not have. A roll now asks where the film is before it
+    moves anything, the window and the roll tool alike, so a double with no
+    transport at all is a scanner that will not say -- and every roll refuses.
+
+    ``at`` is the counter, 0-based: frame 1 of the strip by default.
+    ``last`` is where the strip ends. ``moves`` is every whole-frame command,
+    in order, so a test can say which way the film went.
+    """
+
+    at = 0
+    last = 16
+    moves: list | None = None
+
+    def position(self):
+        return self.at
+
+    def advance(self, steps=1, **kw):
+        self._moved("advance", steps)
+        if self.at >= self.last:
+            return None
+        self.at += 1
+        return self.at
+
+    def retreat(self, steps=1, **kw):
+        self._moved("retreat", steps)
+        if self.at <= 0:
+            return None
+        self.at -= 1
+        return self.at
+
+    def _moved(self, way, steps):
+        # Made on first use: the doubles this mixes into skip
+        # `DirectScanner.__init__`, which would open a transport.
+        if self.moves is None:
+            self.moves = []
+        self.moves.append((way, steps))
+
+
+class StripScanner(FilmOnFrame):
+    """A scanner on a strip, for driving `ScanSession` end to end.
+
+    Its roll is `DirectScanner.scan_roll`'s loop in miniature and nothing
+    kinder: the first frame is **wherever the film is**, the film advances
+    between frames and past the ones not chosen, and the roll ends at its
+    count, after its last chosen frame, or where the strip runs out. The index
+    counts from ``first_index`` and ``skip`` advances first, as the driver's
+    does. The doubles that put frame ``i`` at position ``i`` whatever the
+    transport said are how a roll that started on frame 11 and called it 1
+    passed every test, so this one does not.
+
+    ``sticks_at`` stops a rewind there. ``silent`` is a transport that never
+    says where the film is. ``rolls`` records what each roll was asked, and how
+    many whole-frame moves had happened before it began.
+    """
+
+    def __init__(self, at=0, last=16, sticks_at=None, silent=False):
+        self.at, self.last = at, last
+        self.sticks_at, self.silent = sticks_at, silent
+        self.moves = []
+        self.rolls = []
+        self.log_hook = None
+        self.progress_hook = None
+
+    def open(self):
+        return self
+
+    def close(self):
+        pass
+
+    def inquiry(self, refresh=False):
+        return "STRIP  test double"
+
+    def capture_record(self):
+        return {"reference": None, "ccd_mask": None, "raw": None,
+                "raw_layout": None}
+
+    def position(self):
+        return None if self.silent else self.at
+
+    def retreat(self, steps=1, **kw):
+        if self.sticks_at is not None and self.at <= self.sticks_at:
+            self._moved("retreat", steps)
+            return None
+        return super().retreat(steps, **kw)
+
+    def prescan(self, resolution=300, keep_raw=False, film="negative", **kw):
+        return self._picture(self.at, np.uint8), None
+
+    def scan(self, resolution=1800, infrared=True, **kw):
+        return self._picture(self.at, np.uint16), {
+            "resolution_dpi": resolution, "channel_order": list("RGB")}
+
+    @staticmethod
+    def _picture(at, dtype):
+        # Different at every position, so a test can tell frames apart.
+        return np.full((6, 8, 3), 10 + at, dtype=dtype)
+
+    def scan_roll(self, frames=None, resolution=1800, infrared=True,
+                  dry_run=False, skip=0, only=None, first_index=0,
+                  should_stop=None, **kw):
+        self.rolls.append({"first_index": first_index, "skip": skip,
+                           "only": only, "frames": frames,
+                           "moves_before": len(self.moves), "at": self.at})
+        index = first_index
+        for _ in range(skip):
+            if self.advance() is None:
+                return
+            index += 1
+        end = None if frames is None else first_index + skip + frames
+        last_wanted = max(only) if only else None
+        while end is None or index < end:
+            if only is None or index in only:
+                prescan, _ = self.prescan()
+                image, meta = ((None, {}) if dry_run
+                               else self.scan(resolution, infrared))
+                yield RollFrame(index=index, position=self.at, image=image,
+                                meta=meta, prescan=prescan, registration={})
+            index += 1
+            if end is not None and index >= end:
+                return
+            if last_wanted is not None and index > last_wanted:
+                return
+            if self.advance() is None:
+                return
 
 
 def frame_of(value=0, shape=(4, 4, 3), dtype=np.uint16) -> np.ndarray:

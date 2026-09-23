@@ -267,6 +267,24 @@ def test_skip_resumes_a_part_scanned_roll():
     assert [f.index for f in out] == [3, 4]
 
 
+def test_a_roll_counts_from_where_the_film_was_put():
+    """`first_index` is the transport position the caller put the film on, so
+    a frame's index is its place on the strip -- and `only` and `frames` count
+    the same way. Counting from 0 wherever the film was is what numbered the
+    frame on the counter's 10 as frame 1."""
+    s = FakeRoll([picture(seed=i) for i in range(9)])
+    s.at = 3
+    out = list(s.scan_roll(frames=2, first_index=3, meter=METER_NONE))
+    assert [f.index for f in out] == [3, 4]
+    assert [f.position for f in out] == [3, 4]
+
+    s = FakeRoll([picture(seed=i) for i in range(9)])
+    s.at = 3
+    out = list(s.scan_roll(only=(5,), first_index=3, meter=METER_NONE))
+    assert [(f.index, f.position) for f in out] == [(5, 5)]
+    assert s.at == 5, "and the roll ends at its last chosen frame"
+
+
 def test_only_scans_the_frames_that_were_chosen():
     """The point of a survey: pay for the four good frames, not the seventeen."""
     s = FakeRoll([picture(seed=i) for i in range(6)])
