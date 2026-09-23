@@ -33,6 +33,7 @@ that does not exist.
 from __future__ import annotations
 
 import json
+import random
 import time
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,8 @@ class DemoScanner:
     """Serves stored library entries as though they had just been scanned."""
 
     def __init__(self, root: str | Path = "library", speed: float = SPEED,
-                 entry: str | Path | None = None, no_film: bool = False):
+                 entry: str | Path | None = None, no_film: bool = False,
+                 seed: int | None = None):
         self.root = Path(root)
         #: The entry chosen for each film, so a prescan and the scan after it
         #: show one picture rather than two.
@@ -98,8 +100,18 @@ class DemoScanner:
         #: It is held across the frame's prescan *and* its scan, so the two are
         #: still the same photograph, which is what the fixed pair is for.
         self._frame_source: Path | None = None
-        #: Entries that kept a prescan, per film. What a roll walks.
+        #: The strip in the transport, per film: one entry per frame, frame N
+        #: showing entry N. What a roll walks. See `_next_strip`.
         self._strips: dict[str, list[Path]] = {}
+        #: Every entry that kept a prescan, per film -- what a strip is laid
+        #: from -- and those a strip has already shown this session.
+        self._pools: dict[str, list[Path]] = {}
+        self._shown: dict[str, set[Path]] = {}
+        #: Rolls run this session. The first walks the strip as it always has;
+        #: each one after it started from the Roll button gets a new strip.
+        self._rolls = 0
+        #: Lays each new strip. Seeded only where a test wants it repeatable.
+        self._rng = random.Random(seed)
         #: The bytes and calibration behind the last pass. Filled in by
         #: :meth:`_decode`, handed to the session by :meth:`capture_record`.
         self._capture: dict[str, Any] = {
@@ -194,7 +206,7 @@ class DemoScanner:
     #: Where this pretend strip ends: thirty-eight frames, 0 to 37 on the
     #: counter -- a whole 35 mm roll, as Stefan asked, where it used to be the
     #: seventeen of `full_17_strip`. Each frame is a library prescan
-    #: (`_strip_for`: 41 on this machine, so a roll repeats none of them), and
+    #: (`_pool_for`: 41 on this machine, so a roll repeats none of them), and
     #: 37 stays inside what the driver believes a strip can reach
     #: (`DirectScanner.LAST_PLAUSIBLE_POSITION`, 39). A fact about the film
     #: being pretended, not about the driver, so it is the demo's own number.
@@ -514,6 +526,12 @@ class DemoScanner:
         if wanted is not None and not wanted:
             self._log("no frames were chosen, so there is nothing to scan")
             return
+        # A roll from the Roll button reads a strip of its own; a roll scanning
+        # frames chosen on the contact sheet scans the strip that was walked,
+        # or the positions set there would be for other pictures.
+        if only is None and self._rolls:
+            self._next_strip(film)
+        self._rolls += 1
         # The driver's own decision, not a copy of it: this line was a retyped
         # `finished` that had drifted three ways before it was retyped again.
         finished = self.roll_ends(first_index, skip, frames, wanted)
@@ -880,15 +898,51 @@ class DemoScanner:
         }
 
     def _strip_for(self, film: str) -> list[Path]:
-        """The entries a roll of this film walks, one per frame.
+        """The entries the strip in the transport shows, one per frame.
+
+        The first strip of a session is the library's own order, so the demo
+        opens on the roll it always has. `_next_strip` lays the ones after it.
+        """
+        if film not in self._strips:
+            self._strips[film] = self._pool_for(film)
+            self._shown.setdefault(film, set()).update(
+                self._strips[film][: self.LAST_POSITION + 1])
+        return self._strips[film]
+
+    def _next_strip(self, film: str) -> list[Path]:
+        """Put another strip in the transport: other pictures, in another order.
+
+        Stefan: the first roll is the one it always was, and a second roll in
+        the same session reads other pictures. So a new strip takes pictures
+        no strip has shown yet first, then fills up from the ones already
+        seen, and shuffles the lot -- a library with fewer pictures than a
+        strip has frames repeats some, but never in the same places.
+        """
+        self._strip_for(film)                   # the first strip, if not yet laid
+        pool = self._pool_for(film)
+        shown = self._shown.setdefault(film, set())
+        fresh = [e for e in pool if e not in shown]
+        seen = [e for e in pool if e in shown]
+        self._rng.shuffle(fresh)
+        self._rng.shuffle(seen)
+        strip = (fresh + seen)[: self.LAST_POSITION + 1]
+        self._rng.shuffle(strip)
+        self._strips[film] = strip
+        shown.update(strip)
+        self._log(f"a new strip in the transport: {len(strip)} pictures, "
+                  f"{min(len(fresh), len(strip))} not shown before")
+        return strip
+
+    def _pool_for(self, film: str) -> list[Path]:
+        """Every entry a strip of this film can be laid from, in library order.
 
         Entries of the right film first -- being shown a colour negative for a
         black and white roll is no more a demonstration here than it is for a
         single pass. Two is the point at which a strip is worth calling one; a
         library with fewer of that film walks whatever kept a prescan instead.
         """
-        if film in self._strips:
-            return self._strips[film]
+        if film in self._pools:
+            return self._pools[film]
         matching, any_prescan = [], []
         for path in sorted(self.root.glob("*/prescan.tif")):
             entry = path.parent
@@ -899,8 +953,8 @@ class DemoScanner:
                 continue
             if (record.get("scan") or {}).get("film") == film:
                 matching.append(entry)
-        self._strips[film] = matching if len(matching) >= 2 else any_prescan
-        return self._strips[film]
+        self._pools[film] = matching if len(matching) >= 2 else any_prescan
+        return self._pools[film]
 
     def _marks(self, prescan: np.ndarray) -> dict[str, Any]:
         """Measure the frame the way the driver does, not with made-up numbers.

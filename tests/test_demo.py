@@ -754,3 +754,65 @@ def test_a_pass_read_bottom_up_files_bytes_that_agree_with_its_record(tmp_path):
                        **capture)
     _, verdict = library.reconstruct(out)
     assert verdict.startswith("identical"), verdict
+
+
+# -- a second roll in one session reads other pictures ------------------------
+
+
+def _shown(frames):
+    """Which picture each frame showed, by its prescan's bytes."""
+    return [f.prescan.tobytes() for f in frames]
+
+
+def test_the_first_roll_is_the_one_it_always_was(tmp_path):
+    for n in range(5):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=1) as a:
+        first = _shown(a.scan_roll(frames=5, dry_run=True))
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=2) as b:
+        again = _shown(b.scan_roll(frames=5, dry_run=True))
+    assert first == again, "a fresh session opens on the library's own strip"
+
+
+def test_a_second_roll_reads_a_new_strip_and_fresh_pictures_first(tmp_path):
+    """Stefan: another roll in the same session reads other pictures. With
+    more pictures than one strip holds, the second strip starts from the ones
+    not shown yet."""
+    for n in range(8):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=3) as s:
+        s.LAST_POSITION = 3                    # a four-frame strip of eight
+        first = _shown(s.scan_roll(frames=4, dry_run=True))
+        for _ in range(4):
+            s.retreat()
+        second = _shown(s.scan_roll(frames=4, dry_run=True))
+    assert len(set(first)) == len(set(second)) == 4
+    assert not set(first) & set(second), "the unseen four come first"
+
+
+def test_a_new_strip_repeats_pictures_only_in_other_places(tmp_path):
+    for n in range(5):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=4) as s:
+        first = _shown(s.scan_roll(frames=5, dry_run=True))
+        for _ in range(5):
+            s.retreat()
+        second = _shown(s.scan_roll(frames=5, dry_run=True))
+    assert sorted(first) == sorted(second), "the same five pictures"
+    assert first != second, "laid out differently"
+
+
+def test_scanning_chosen_frames_scans_the_strip_that_was_walked(tmp_path):
+    """The contact sheet's positions belong to the pictures it showed. A roll
+    commissioned from it must not find other ones in the transport."""
+    for n in range(5):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=5) as s:
+        s.scan_roll(frames=1, dry_run=True).__next__()     # an earlier roll
+        for _ in range(1):
+            s.retreat()
+        walked = _shown(s.scan_roll(frames=5, dry_run=True))
+        for _ in range(5):
+            s.retreat()
+        chosen = list(s.scan_roll(frames=5, only=(1, 3), dry_run=True))
+    assert [f.prescan.tobytes() for f in chosen] == [walked[1], walked[3]]
