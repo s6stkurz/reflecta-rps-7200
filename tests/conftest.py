@@ -393,6 +393,37 @@ class NoWaiting:
         return getattr(self._real, name)
 
 
+#: `roll.json` as 8a9ba17 -- what `main` ran until the roll learned where the
+#: film is -- wrote it across a "Start at N, same roll name" resume: its own
+#: `ScanSession`, run twice into roll "r" with the film left where the first
+#: run stopped, each run counting `skip` from there and merging its frames
+#: into the file the other left. Produced by running 8a9ba17's package, not
+#: typed from its code; only the keys a reader looks at are kept.
+#: ``(frames, start_at)`` of each run -> ``(number, transport_position)``:
+#:
+#:     (3, 1) then (3, 4)   (1,0) (2,1) (3,2) (4,5) (5,6) (6,7)
+#:     (2, 1) then (3, 3)   (1,0) (2,1) (3,3) (4,4) (5,5)
+#:
+#: Two shifts in one file, legitimately: tied in the first, the second run's
+#: the commoner in the other.
+RESUMED_BY_8A9BA17 = {
+    "tied": (4, [(1, 0), (2, 1), (3, 2), (4, 5), (5, 6), (6, 7)]),
+    "second-longer": (3, [(1, 0), (2, 1), (3, 3), (4, 4), (5, 5)]),
+}
+
+
+def resumed_by_8a9ba17(which: str = "tied") -> dict:
+    """A fresh copy of one of `RESUMED_BY_8A9BA17`, as the file held it."""
+    start_at, frames = RESUMED_BY_8A9BA17[which]
+    return {
+        "roll": "r", "start_at": start_at, "only": None, "wanted": None,
+        "settings": {"frames": 3, "start_at": start_at, "only": None},
+        "frames": [{"number": n, "index": n - 1, "transport_position": p,
+                    "registration": {}, "error": None, "done": True}
+                   for n, p in frames],
+    }
+
+
 def frame_of(value=0, shape=(4, 4, 3), dtype=np.uint16) -> np.ndarray:
     """A constant frame, for tests that only care about shape and dtype."""
     return np.full(shape, value, dtype=dtype)

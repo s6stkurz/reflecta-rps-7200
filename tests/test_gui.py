@@ -849,8 +849,8 @@ def test_the_sheet_scans_the_frames_it_showed_wherever_the_film_is(
 def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
     """rolls/2026-09-23, as it is on disk: a second walk, begun on the
     counter's 5, called that frame 1 -- and the roll beside it, begun on 0,
-    scanned the same picture as its frame 6. Mapped by recorded position, the
-    two agree about which frame that is and that it is done."""
+    scanned the same picture as its frame 6. Each mapped by its own recorded
+    position, the two agree about which frame that is and that it is done."""
     folder = tmp_path / "2026-09-23"
     _write_survey(folder, frames=2)
     survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
@@ -873,6 +873,26 @@ def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
     # Decided against the roll's numbering, which began on 0: its frame 2 is
     # the strip's frame 2, whatever the later walk called its own frames.
     assert out["offsets"] == {2: pytest.approx(0.25)}
+
+
+def test_a_roll_resumed_under_8a9ba17_reopens_with_the_frames_it_scanned(
+        tmp_path):
+    """8a9ba17 resumed a roll into the file its first run left, each run
+    counting from wherever the film then was: frames 1-3 at positions 0-2,
+    4-6 at 5-7. Read with one shift for the file, the window called frames 4
+    and 5 of the strip done -- never scanned -- and 6 to 8 not, and offered
+    to scan the wrong ones. The browser's list reads it the same way."""
+    from conftest import resumed_by_8a9ba17
+
+    folder = tmp_path / "r"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17("tied")),
+                                      encoding="utf-8")
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == [1, 2, 3, 6, 7, 8]
+    assert said == []
+    assert sorted(gui.roll_summary(folder)["done"]) == [1, 2, 3, 6, 7, 8]
 
 
 def test_a_reopened_old_walk_sends_the_film_to_the_frame_it_showed(

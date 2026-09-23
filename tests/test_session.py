@@ -1439,8 +1439,8 @@ def test_one_misread_position_does_not_give_two_frames_one_number():
     """Numbers in an old manifest were counted once per advance, so they sit
     one apart. Following a lone disagreeing position gave its frame the
     number its neighbour already had -- 5, 5, 7 came back as 6, 6, 8 -- and
-    two pictures under one number. The walk's own shift is taken for every
-    frame, and the disagreement is said rather than hidden."""
+    two pictures under one number. The frames whose positions collide take
+    the walk's own shift, and the disagreement is said rather than hidden."""
     old = {"roll": "misread",
            "frames": [{"number": 1, "transport_position": 5},
                       {"number": 2, "transport_position": 5},
@@ -1451,6 +1451,49 @@ def test_one_misread_position_does_not_give_two_frames_one_number():
     said = []
     session.renumbered(old, say=said.append)
     assert len(said) == 1 and "frame 2 of misread" in said[0], said
+
+
+@pytest.mark.parametrize("which, strip", [
+    ("tied", [1, 2, 3, 6, 7, 8]),
+    ("second-longer", [1, 2, 4, 5, 6]),
+])
+def test_a_roll_resumed_under_8a9ba17_is_read_frame_by_frame(which, strip):
+    """Each run of a resumed 8a9ba17 roll counted from wherever the film then
+    was, so its file holds two shifts honestly. The commonest applied to all
+    of it read the tied file as 1 to 6 -- strip frames 6 to 8 as 4 to 6 --
+    and the other as 2 to 6, the first run's frames one place on; a resume
+    then wrote that down. Every frame's own position says where it was, and
+    nothing in either file collides, so there is nothing to report."""
+    from conftest import resumed_by_8a9ba17
+
+    old = resumed_by_8a9ba17(which)
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == strip
+    assert [f["index"] for f in new["frames"]] == [n - 1 for n in strip]
+    assert said == []
+
+
+def test_a_resume_writes_back_the_frames_an_8a9ba17_roll_really_scanned(
+        tmp_path):
+    """The write-back half, through the real session: frames 4 and 5 of the
+    strip, never scanned, resumed into the tied file with the film on frame
+    8. The file then said 'strip' over frames 1 to 6 read with one shift, so
+    the new frames 4 and 5 replaced the records of strip frames 6 and 7, and
+    the scan of frame 8 stayed filed as frame 6 for good."""
+    from conftest import StripScanner, resumed_by_8a9ba17
+
+    folder = tmp_path / "rolls" / "r"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17("tied")),
+                                      encoding="utf-8")
+    _, frames = walk(Roll(frames=2, start_at=4, infrared=False,
+                          resolution=300, name="r"), tmp_path,
+                     StripScanner(at=7))
+    assert frames == [(1, 0), (2, 1), (3, 2), (6, 5), (7, 6), (8, 7),
+                      (4, 3), (5, 4)]
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["numbering"] == session.NUMBERING
 
 
 def test_a_manifest_that_recorded_no_positions_borrows_its_walks_shift():

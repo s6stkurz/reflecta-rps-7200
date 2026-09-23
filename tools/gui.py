@@ -4544,7 +4544,9 @@ def read_survey(folder, say=None) -> dict:
     # it started -- rolls/2026-09-23 calls the frame on the counter's 5 its
     # frame 1 -- and a roll commissioned from it now goes to frames by the
     # counter. Mapped by each frame's recorded transport position, never by
-    # its number, and the decisions filed against those numbers with them.
+    # its number -- by the file's commonest shift only where two positions
+    # give one number (`session.renumbered`) -- and the decisions filed
+    # against those numbers with the walk's shift, having none of their own.
     shift = legacy_shift(manifest) or 0
     # `approved.json` was written when a roll was commissioned, and that roll
     # numbered its frames the way the file did -- so where the roll recorded
