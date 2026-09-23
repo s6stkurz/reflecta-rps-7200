@@ -1,0 +1,463 @@
+{
+ "type": "result",
+ "key": "v2:5f7af652fbb57ca8a2c45006c1b26ee52ed67fe73562167a7c7ebff10c870cb9",
+ "agentId": "aa4bce03cd6587549",
+ "result": {
+  "area_summary": "Framing/units area: rps7200/framing.py (legacy strip detectors, hold loop maths, measure_shift_mm, unit constants, unused command law), tools/frame_edges/* (the study detector: detect/vote/centring/decide, WalkReader, EdgeWatch background reader), rps7200/shortcuts.py, and how direct.scan_roll, demo.scan_roll, session._roll and the GUI sheet/adjuster use them.\n\nWhat works: EdgeWatch is thread-safe as written. It uses one worker, a Condition wrapping an RLock, generation and version checks that discard superseded work, and per-frame error capture. StripWalk keys everything by frame number. The sign conventions agree between decide, centring, measure_shift_mm and hold_plan. The hold loop and the detector share one scale (APERTURE_MM/width).\n\nThe main problems:\n1. Framing decisions cannot be recomputed from the library. Prescans in a real roll are kept only as corrected 8-bit TIFFs with no raw bytes. The prescan the frame arrived with, and the hold loop's intermediate prescans, are not kept at all unless RPS7200_DEBUG is on.\n2. Orientation of the stored prescanNN.tif is not recorded per file. `tools/scan_roll.py --approved` does not un-orient it at all, and rotating during a walk makes the survey and the manifest disagree.\n3. An operator's explicit zero (\"as surveyed\") position is dropped on reopen and replaced by the detector's proposal.\n4. 600/900 dpi prescans, both offered in the GUI, are silently refused by the edge detector, although its docstring says they are handled. The code path meant for them computes wrong, sign-inverted moves if it is ever reached.\n5. Two contradictory frame-geometry models live side by side: a 36 mm frame narrower than the aperture (legacy path), and 350.6 units, about 37.1 mm, wider than the aperture (frame_edges).\n6. SEARCH_MM (9.0 mm) is below the largest single command (9.39 mm) that the sheet can ask for, so the largest moves cannot be verified.\n7. The demo roll pins prescans to 300 dpi and skips several of the driver's framing steps.\n8. Millimetres are still the internal and persisted unit everywhere, and the CLI prints and accepts mm.\n9. Several constants have two homes, three unit scales coexist, and a lot of framing code is dead, including a second 'command law' whose cap contradicts the driver's.",
+  "findings": [
+   {
+    "id": "FU-01",
+    "title": "Framing inputs are not stored exactly: roll prescans have no raw bytes; arrival and intermediate hold prescans are discarded",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1804",
+     "rps7200/session.py:1830",
+     "rps7200/session.py:1834-1853",
+     "rps7200/session.py:1880-1893",
+     "rps7200/library.py:161-162",
+     "rps7200/direct.py:2903-2908",
+     "rps7200/direct.py:3548-3558",
+     "rps7200/direct.py:3578-3590"
+    ],
+    "evidence": "session.py:1804 `if job.dry_run:` is the only branch that passes `raw_image=rf.raw_prescan,` (1830). For a real roll the frame is filed with `raw_image=rf.raw_image, prescan=rf.prescan,` (1886-1887) and the prescan's raw is dropped. library.py:161-162: \"`prescan.tif` has no raw bytes of its own\". direct.py:2908 `out[\"prescan\"] = image` overwrites each hold pass, so only the last survives. direct.py:3553 `prescan_image = fix[\"prescan\"]` in the approved branch keeps no copy of the arrival prescan. Only the correction branch sets `prescan_before = prescan_image` (3583), and session files it only inside the dry-run block, with `dict(rf.prescan_meta ...)` (the replacement pass's meta) and `file_entry=False` (1834-1853).",
+    "description": "Every framing decision starts from a prescan: centring from the frame-edge detector, `measure_shift_mm` in the hold loop, `_aim_frame`. A real (non-dry-run) roll stores only the last prescan of each frame, as the shading-corrected 8-bit decode, in the frame entry's prescan.tif. It has no raw bytes, no shading reference and no mask of its own. The prescan the frame arrived with, and up to two intermediate verification prescans, are not written anywhere unless DirectScanner debug filing is on, and it is off by default in the GUI. So `approved.history` in roll.json (confidence, dx, dy, row_reversed per pass) cannot be recomputed. A newer detector or correlation cannot be re-run on what the operator's frame looked like on arrival. The prescan cannot be re-decoded with today's shading code, against CLAUDE.md's 'file every scan with its raw bytes'. The dry-run prescanNN-before.tif also carries the wrong pass's read_direction/carriage_state, and has neither raw bytes nor a library entry.",
+    "failure_scenario": "A 38-frame commissioned roll holds each frame to its sheet position, and two moves each. Months later the frame-edge detector or `register` is improved and the owner wants to re-evaluate whether each hold landed. The library has one corrected 8-bit prescan per frame, the last one. The arrival pass and the second pass are gone, and the kept prescan's raw bytes were never stored. The hold records cannot be re-derived, and the question cannot be answered.",
+    "recommendation": "Pass `raw_image=rf.raw_prescan` (and the capture record) for the frame's prescan in real rolls too, and store it as its own library entry or as prescan raw beside the frame. In `_hold_to_approved` and `_aim_frame`, keep every pass: the arrival prescan and each verification prescan, with raw bytes and meta, as a list on RollFrame, and file them all. File prescan_before in real rolls as well, with its own meta and not the replacement's."
+   },
+   {
+    "id": "FU-02",
+    "title": "prescanNN.tif orientation is not recorded per file; rotating or flipping during a walk corrupts the stored walk and duplicates survey entries",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "tools/gui.py:3498-3505",
+     "tools/gui.py:3911-3923",
+     "tools/gui.py:719-723",
+     "tools/gui.py:744",
+     "rps7200/session.py:1687",
+     "rps7200/session.py:2010-2029",
+     "tools/gui.py:4712-4740"
+    ],
+    "evidence": "gui.py:3503-3505 `if self._surveying and result.kind == \"prescan\" and result.number: self.survey.append(result); self.edge_watch.add(result.number, result.image)` runs on every `remember_arrangement`, which `_carry` (rotate/flip, 3922-3923: `self.session.rotation = result.rotation ... self.remember_arrangement(result)`) and the sheet's turns call. session.py:1687 records `\"rotation\": self.rotation` once, at roll start. `_orientation_for` (2029) writes each prescanNN.tif with the session's *current* `self.rotation, self.flip`. `read_survey` un-orients every file with the manifest's single pair: `image=preview.unorient(image, turn, mirrored)` (4740).",
+    "description": "The rotate, flip and contact-sheet keys all work while a dry-run walk is running. The docstrings encourage it: 'rotating a prescan is how you say which way up the film is'. Each rotate or flip of a walked prescan during the walk does three things. (1) It appends the same Result to `self.survey` again, so the sheet gets duplicate cells. (2) It bumps the frame's version in EdgeWatch, so the frame is re-read for nothing. (3) It changes session.rotation mid-roll: prescanNN.tif files written afterwards carry the new orientation, while survey.json keeps the old one. On reopen, those later references are un-oriented wrongly. At 90/270 degrees the detector refuses them (287 columns is not a multiple of 428). At 180 degrees or flipped, the left and right edges swap, so the proposed offset's sign is inverted. `measure_shift_mm` against a mirrored reference falls below the floor, so every such frame reads 'unverified' and is not corrected.",
+    "failure_scenario": "The operator starts a 36-frame walk. At frame 3 he sees the film is mirrored and presses Cmd-M. Frames 4-36 are written flipped, and the manifest says flipped=false. Survey entry 3 appears twice. Next day he reopens the roll: frames 4-36 come back mirrored. The sheet proposes positions with inverted sign and draws edges on the wrong side. The commissioned roll reports 'unverified' for them and scans them uncorrected.",
+    "recommendation": "Record rotation and flip per prescanNN.tif in each frame record of survey.json, or write prescanNN.tif un-oriented as the scanner's own orientation, since it is a reference and not a deliverable. In `remember_arrangement`, append to the survey and call `edge_watch.add` only when the result is new (for example, key by seq), not on every re-arrangement."
+   },
+   {
+    "id": "FU-03",
+    "title": "tools/scan_roll.py --approved uses prescanNN.tif without un-orienting it",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/scan_roll.py:243-258",
+     "tools/gui.py:4740",
+     "rps7200/session.py:2026-2029"
+    ],
+    "evidence": "scan_roll.py:243 `frames = [(number, tiff.read(str(path))) for number, path, _ in walked_prescans(folder, manifest, say=print)]` then 252 `offsets, notes = frame_edges.propose_centred(frames, film=film)` and `Approved(number=n, offset_mm=float(offsets[n]), reference=im, ...)`. The window's reader does `image=preview.unorient(image, turn, mirrored)` (gui.py:4740) because 'prescanNN.tif is written turned the way the screen had it'.",
+    "description": "`hold_from_walk` claims to be 'the window's contact-sheet path with the window taken off', but it skips the un-orient step. A walk made in the window with any session rotation or flip therefore feeds rotated or mirrored prescans to the frame-edge detector, and hands them to the hold loop as references. With 90/270 degrees, every frame is refused (the width is not a multiple of 428). With a flip or 180 degrees, the offsets have inverted sign and the reference cannot correlate. It also does not snap offsets, and reads the prescan resolution from `--prescan-dpi` rather than from the manifest.",
+    "failure_scenario": "A walk is made in the GUI with the strip loaded mirrored and 'flip' set. `uv run python tools/scan_roll.py --approved rolls/X` prints 'holding 30 frame(s)'. Every hold then reads 'unverified' and nothing is corrected. The manifest's `held.offsets` records sign-inverted proposals as if they were measured.",
+    "recommendation": "Share one reader: have `hold_from_walk` go through the same un-orient (`manifest rotation/flipped`) as `read_survey`, and take `prescan_resolution` from the manifest, refusing a conflicting --prescan-dpi."
+   },
+   {
+    "id": "FU-04",
+    "title": "An operator's explicit 'as surveyed' (zero) position is lost on sheet or roll reopen and replaced by the detector's proposal",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/gui.py:4963-4964",
+     "tools/gui.py:5510-5534",
+     "tools/gui.py:6716-6721",
+     "tools/gui.py:7203-7205",
+     "tools/gui.py:5835",
+     "rps7200/session.py:790-795"
+    ],
+    "evidence": "Adjuster `_set`: `if value: self.sheet.offsets[self.number] = value else: self.sheet.offsets.pop(self.number, None)` then `proposals[...] = {\"source\": \"operator\"}` (6716-6721). `read_approved`: `if record.get(\"offset_mm\"): offsets[number] = ...` (4963), a truthiness test, although the same function uses `is not None` for rotation 'because an explicit zero is a decision'. `_merge_kept` loops only `for number, value in kept.items():` (5520), so a `sources` entry without an offset is ignored. gui.py:7203-7205: 'unlike `offsets`, where an explicit zero and an absent entry mean the same thing'. session.py:794: zero '... is not the same as having no approval at all'.",
+    "description": "Since the sheet pre-fills every frame with the detector's reading, 'absent' now means 'use the detector'. Zero offsets are dropped in three places: sheet.offsets, sheet_state/gui-settings, and read_approved. The 'operator' protection lives only in `proposals`, which is rebuilt from offsets on reopen. So when the operator rejects a machine proposal by pressing 'Put it back where it was surveyed' (Cmd-C), his decision survives only while that sheet window lives. Closing and reopening the sheet, or reopening the roll, applies the EdgeWatch reading again. Relatedly, `approved_from_sheet` defaults `source` to 'operator' for frames the reader has not placed yet (5835). A roll commissioned while the edge light is still blue therefore logs 'operator +0.0 units' for frames he never touched.",
+    "failure_scenario": "The detector proposes -14 units for frame 5, which the operator can see is a silhouette and not base. He presses Cmd-C (0, 'you set this one') and closes the sheet to check something. He reopens it, or reopens the roll the next day to 'continue this roll'. Frame 5 shows -14 units again, labelled 'measured'. He commissions, and the film is moved 14 units the wrong way.",
+    "recommendation": "Store explicit zeros: keep offsets with source 'operator' even at 0.0, and use `is not None` in read_approved. Have `_merge_kept` treat any number whose recorded source is 'operator' as kept, with its offset defaulting to 0.0. Leave `source` None rather than 'operator' for frames with no note."
+   },
+   {
+    "id": "FU-05",
+    "title": "600/900 dpi prescans (offered in the GUI) are silently never read by the frame-edge detector; docstring says they are",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "tools/frame_edges/propose.py:14-17",
+     "tools/frame_edges/propose.py:51-65",
+     "tools/frame_edges/propose.py:95-98",
+     "tools/gui.py:124",
+     "rps7200/demo.py:905-909",
+     "README.md:447-448"
+    ],
+    "evidence": "propose.py:15-16: 'a pass whose width is a whole multiple of it (600, 900 dpi) is averaged down first and its positions scaled back'. `_downscaled`: `if w % SCALE: return None` (60). demo.py:907-908: 'the widths the scanner reports are 428, 860, 1292, 2584, 5172 for 300 to 3600 dpi'. README.md:448 says 600 dpi is 862 wide. gui.py:124 `PRESCAN_LADDER = (300, 600, 900)`.",
+    "description": "Real 600 and 900 dpi prescans are 860 (or 862) and 1292 columns wide. Neither is a multiple of 428, so `detect` returns REFUSE on both sides for every frame, and `summary` returns None. The whole walk ends with no proposals: fill_from_neighbours needs 3 placed frames. With `correct` on, `_aim_frame` abstains on every frame. The GUI offers exactly these resolutions and the docstring promises they work. The only signal is a 'not a multiple' note per frame. README.md:447 also says a 300 dpi prescan is 431 wide, while the detector requires exactly 428 (PRESCAN_COLUMNS). If that doc were right, nothing would be read at all.",
+    "failure_scenario": "The operator walks at 600 dpi for a sharper sheet. EdgeWatch finishes green and 'not placed' for all frames. The sheet shows no positions, the commissioned roll holds every frame to 'as surveyed', and no centring happens. He has no reason to connect this to the prescan dpi.",
+    "recommendation": "Either resample non-multiple widths to 428 (area-average with a fractional factor) and map positions back by width/428, or remove 600/900 from PRESCAN_LADDER and warn when a walk is started at them with correction or proposals expected. Fix the docstring and the README width table."
+   },
+   {
+    "id": "FU-06",
+    "title": "centring() applies decide() at 428-column width to edges already scaled to the full width: wrong, sign-inverted moves for any exact-multiple width",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/frame_edges/propose.py:68-78",
+     "tools/frame_edges/propose.py:102",
+     "tools/frame_edges/propose.py:129-143",
+     "tools/frame_edges/centre.py:103-112",
+     "tests/test_frame_edges.py:190-196"
+    ],
+    "evidence": "`detect` returns `_scaled(vote.detect(small, ctx), k)` (102), so x is in full-width columns. `centring` then does `dec = decide(result, SCALE, frame_columns(SCALE, frame_units))` (130). In decide, `b = s.base_width(name, width)` is `self.x if side == \"left\" else width - self.x`, with width=428.",
+    "description": "When k>1 (for example an 856-column pass), the left base width is k times too large, which gives about a 1.76x overshoot for a 12-column gap. The right base width becomes 428 - (856 - 2b), which is about -420 columns, so a frame needing a small move right is told to move about -325 units, i.e. left. The one test for the scaled path checks only `detect`'s x and never the resulting offset. Today this path is unreachable because real widths are 860/1292 (FU-05). Making prescans exact multiples, the obvious fix for FU-05, would activate it.",
+    "failure_scenario": "Someone crops 600 dpi prescans to 856 columns so they 'are multiples'. A frame with 10 columns of base on the right is proposed at -34 mm. snap_offset clamps that to -88.8 units, the sheet shows a full backward command, and the hold loop drives the film the wrong way by a quarter of the aperture.",
+    "recommendation": "Run decide on the unscaled 428-column result (scale x back by k, or call vote.detect before _scaled and scale only the notes), then convert units to columns at the real width. Add a test that the offset from `read_frame` on an np.kron-upscaled prescan equals the offset from the 428 original."
+   },
+   {
+    "id": "FU-07",
+    "title": "Two contradictory frame-geometry models coexist; the legacy path aims to a 36 mm frame that the current measurement says is wrong",
+    "severity": "medium",
+    "category": "design",
+    "locations": [
+     "rps7200/framing.py:3-7",
+     "rps7200/framing.py:42",
+     "rps7200/framing.py:285-290",
+     "rps7200/framing.py:586",
+     "rps7200/framing.py:740",
+     "rps7200/framing.py:1281",
+     "rps7200/framing.py:1368",
+     "rps7200/framing.py:1957",
+     "rps7200/direct.py:3419-3423",
+     "tools/frame_edges/propose.py:39"
+    ],
+    "evidence": "framing.py:3-4 'The aperture is 36.5 mm and a 35 mm frame is 36 mm, so there is half a millimetre of slack'. `NOMINAL_FRAME_WIDTH = 10080` (42, 35.56 mm). `MAX_REGISTRATION_MM = 0.49` (290). `FRAME_WIDTH_MM = 36.0` (586). `TARGET_GAP_MM = (APERTURE_MM - FRAME_WIDTH_MM) / 2.0` (740). `right_gap_closure(..., frame_mm: float = 36.0)` (1368). The same file has `FRAME_WIDTH_UNITS = 350.6` (1957), 435.6 prescan columns, about 37.1 mm, 'Wider than the aperture ... so a centred frame shows no base at all'.",
+    "description": "The legacy StripWalk detector aims each frame to leave TARGET_GAP_MM (about 0.25 mm, about 2.9 columns) of base at the left. That is about 6.7 columns, about 5.4 units, away from the centre the frame_edges model defines, and it loses picture at the right. The legacy path runs whenever `correct` is on and `edge_reader(film)` returns None: on positive or Kodachrome film, where frame_edges deliberately refuses because the gap is opaque, and in any script that does not pass edge_reader. `registration()`'s shortfall compares against a 10080-unit frame that can never be seen whole in a 10344-unit aperture under the newer model. Three frame widths (35.56, 36.0 and about 37.1 mm) live in one module, and MAX_CORRECTION_MM (the reject bound also used by `_rejudge_for` on the new path) is derived from the old one.",
+    "failure_scenario": "A slide roll is scanned with 'correct' ticked. walk_reader('positive') returns None, so StripWalk falls back to film_base/picture_start, built for bright C-41 base, and aims frames to show 0.25 mm of 'gap'. Where two members agree on dark interframe bands, it moves film by a model the owner has since measured to be wrong.",
+    "recommendation": "Pick one geometry: derive TARGET, the right-edge conversion and MAX_CORRECTION from FRAME_WIDTH_UNITS, or retire the legacy StripWalk detectors. Gate `correct` by film type exactly as frame_edges does, so the fallback never aims film that the current detector refuses. Correct the module docstring."
+   },
+   {
+    "id": "FU-08",
+    "title": "SEARCH_MM (9.0 mm) is smaller than the largest single command the sheet can ask for (param 87, 9.39 mm), so such holds can never verify",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "rps7200/framing.py:841-857",
+     "rps7200/framing.py:1061-1063",
+     "tools/gui.py:217-230",
+     "rps7200/session.py:93-95",
+     "rps7200/direct.py:3123"
+    ],
+    "evidence": "framing.py:854-857: 'Just over MAX_TRAVEL_MM, so any displacement the transport can produce is inside the window.' ... `SEARCH_MM = 9.0`. gui.py:230 `MAX_TRAVEL_MM = MAX_FINE_MM`, where session.py:94 `FINE_MAX_MM = (STEP_MM * MAX_CORRECTION_PARAM + OVERHEAD_MM)`, which is 0.1057*87 + 0.1945 = 9.39 mm. direct.py:3123 `MAX_CORRECTION_PARAM = 87`. measure_shift_mm: `reach = int(SEARCH_MM / max(mm_per_px, 1e-9))`, which is 105 px at 428 columns, while param 87 is about 110 px.",
+    "description": "When the cap was raised from 8 to 87, MAX_TRAVEL_MM grew past SEARCH_MM, and the comment was not revisited. `snap_offset` lets the sheet and adjuster set positions up to ±88.8 units. After the hold loop delivers such a move, the true displacement lies outside `register`'s search window, so the correlation peak cannot be found. The frame reads 'unverified' and counts as a miss, and three in a row turn holding off for the roll. The advance error at arrival adds to the displacement, so the practical limit is below 85 units. SEARCH_MM cannot simply be raised, because CONFIDENCE_FLOOR is calibrated at this reach.",
+    "failure_scenario": "CyberView-style 6 mm drift on a strip. The operator sets 88 units on three consecutive frames. Each is moved correctly but logged 'unverified'. The third miss switches holding off, so later frames that needed ordinary corrections are scanned uncorrected.",
+    "recommendation": "Clamp sheet and adjuster positions to what can be verified (below SEARCH_MM minus a margin for advance error), or re-fit CONFIDENCE_FLOOR at a reach above LARGEST command + margin with tools/registration_margin.py. Fix the comment either way."
+   },
+   {
+    "id": "FU-09",
+    "title": "DemoScanner.scan_roll diverges from DirectScanner.scan_roll in its framing steps",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:597-613",
+     "rps7200/demo.py:708",
+     "rps7200/demo.py:720-726",
+     "rps7200/demo.py:747-754",
+     "rps7200/demo.py:765-777",
+     "rps7200/direct.py:3493-3530",
+     "rps7200/direct.py:3509",
+     "rps7200/direct.py:3653-3655",
+     "rps7200/direct.py:3664-3677"
+    ],
+    "evidence": "demo.py:708 `prescan, _ = self.prescan(film=film)`: the default 300 dpi; `prescan_resolution` and `max_failures` fall into `**kw`. demo.py:723 `index, prescan, 300, held, keep_raw=False,` and 752 `index, prescan, 300, walk,` hard-code 300, pass no `should_stop` and no `source=`. demo.py:750 `marks[\"base\"] = walk.observe(index, prescan)` runs only in the `elif walk is not None:` branch, whereas direct.py:3518 observes every frame before branching. The demo has no `contrast < blank_contrast` end (direct.py:3509), no per-frame try/except or max_failures (direct.py:3664-3677), does not set `meta[\"roll_index\"]` or `meta[\"registration\"]` (direct.py:3653-3655), and never yields `prescan_before`.",
+    "description": "CLAUDE.md requires the demo to change only what is fed, not what is done. The framing-relevant differences are these. (1) A walk or roll at 600/900 dpi prescan runs at 300 in the demo, so the demo shows proposals and aiming working where the hardware's detector refuses (FU-05), and holds use a different resolution than real. (2) StripWalk/WalkReader context differs when some frames are approved. (3) A blank frame does not end the demo roll. (4) One detector or decode exception ends the demo roll instead of costing one frame. (5) Demo library entries lack the registration block and roll index that real ones carry. (6) Session code that files prescan_before cannot be reached from `make run-demo`. (7) Machine positions are logged as 'operator'.",
+    "failure_scenario": "Stefan tests '600 dpi prescan + correct' in `--demo` and sees frames being centred. On the scanner, every frame abstains, because 860 is not a multiple of 428. The demo reported a plausible and wrong behaviour, which is the failure CLAUDE.md describes.",
+    "recommendation": "Take the prescan resolution from the job: pass `prescan_resolution` through, and let DemoScanner.prescan serve the library's shape for that dpi via `_shape_for`. Call walk.observe for every frame, as the driver does. Share the blank-end, failure-count and meta-stamping steps, ideally by running DirectScanner.scan_roll's loop body against the demo's primitives."
+   },
+   {
+    "id": "FU-10",
+    "title": "Millimetres remain the internal, persisted and CLI unit for transport distances despite the prohibition",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "doc_reference": "CLAUDE.md:245-262 'Millimetres are prohibited ... express every sub-frame distance in units of the adjustment parameter'; rps7200/protocol.py:229 reinterprets it as 'prohibited in anything an operator reads'",
+    "locations": [
+     "rps7200/protocol.py:229-234",
+     "tools/scan_roll.py:102-107",
+     "tools/scan_roll.py:412",
+     "tools/scan_roll.py:517-526",
+     "tools/gui.py:2952",
+     "rps7200/session.py:814",
+     "rps7200/framing.py:263-273",
+     "rps7200/framing.py:1151-1169"
+    ],
+    "evidence": "scan_roll.py:102 `ap.add_argument(\"--nudge\", type=float, ... help=\"move the film this many mm ...` ; 412 `print(f\"offset the film by {sent:+.3f} mm in ...`; 517 `f\"offset {offset:+.2f} mm\"`; 520 `SHORT BY {short:.2f} mm`; 526 `f\" {aimed:+.2f} mm\"`. approved.json writes `\"offset_mm\": round(a.offset_mm, 4)` (gui.py:2952). `Approved.offset_mm` (session.py:814). registration() returns offset_mm/shortfall_mm/margin_mm. HOLD_TOLERANCE_MM, HOLD_HEADROOM_MM, ROLL_TRAVEL_LIMIT_MM and SEARCH_MM are all in mm.",
+    "description": "CLAUDE.md prohibits millimetres for sub-frame distances as a rule, not a preference, because each conversion has hidden mistakes. The code keeps mm as the working unit of the whole hold, aim and approve chain, and in every persisted record. protocol.py narrows the rule to operator-visible text. The CLI still prints mm and takes `--nudge` in mm. Legacy detector reasons (for example 'a N-column band is X.XX mm') are persisted in roll.json member details.",
+    "failure_scenario": "An operator reads 'offset the film by +0.300 mm' from scan_roll.py and compares it with the window's '+2.8 units'. Or a later reader of approved.json treats offset_mm as the transport's unit and converts it with a different law (0.1057 vs APERTURE/428*1.2423), which reintroduces the 0.2% drift the rule exists to prevent.",
+    "recommendation": "Hold distances as param units internally, including Approved and approved.json (with a versioned key such as offset_units), convert once at the edges, and make scan_roll.py print and accept units. Or amend CLAUDE.md to state the narrower rule that the code actually follows."
+   },
+   {
+    "id": "FU-11",
+    "title": "Constants with two homes and three coexisting unit scales",
+    "severity": "low",
+    "category": "design",
+    "doc_reference": "CLAUDE.md:264 'the aperture is 345.2 units' vs CLAUDE.md:460 '350.6 units against 344.5'",
+    "locations": [
+     "rps7200/framing.py:1151",
+     "rps7200/framing.py:1939",
+     "rps7200/framing.py:902",
+     "rps7200/framing.py:1368",
+     "rps7200/framing.py:1972-1980",
+     "rps7200/protocol.py:260",
+     "rps7200/protocol.py:277",
+     "tools/gui.py:202",
+     "rps7200/demo.py:393",
+     "rps7200/direct.py:3102",
+     "tools/frame_edges/centre.py:8-13"
+    ],
+    "evidence": "framing.py:1151 `HOLD_TOLERANCE_MM = 0.3002`, with the comment 'Duplicated rather than imported because `direct` imports this module', although framing already imports protocol, where MM_PER_UNIT and COMMAND_UNITS live. framing.py:1939 `COMMAND_COST = 1.84` and protocol.py:277 `COMMAND_UNITS = 1.84`. framing.py:902 `MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)`, while APERTURE_HEIGHT_MM computes 24.2992. gui.py:202 recomputes `APERTURE_MM`. demo.py:393 `swallowed = min(abs(asked), 2.2 * 0.1057)`. direct.py:3102 `CORRECTION_DEADBAND_MM = 0.15` is never used. The scales are MM_PER_UNIT = 0.1057 (mover and say_units), COLUMNS_PER_UNIT = 1.2423 (decide, frame_overhang), and APERTURE_MM/width (measure_shift_mm, columns_to_mm).",
+    "description": "The same physical quantity has two sources: the per-command ramp, the smallest move, and the aperture width. The aperture comes out as 345.2 units under MM_PER_UNIT and 344.5 under COLUMNS_PER_UNIT, and CLAUDE.md quotes both. A distance shown in the sheet (units_per_column) and the same distance in the log (say_units) differ by 0.2%. framing's own docstring for `units_per_column` calls APERTURE_MM/width 'wrong by 0.7%', yet that is still the hold loop's scale. Deadbands also differ: decide/_aim/GUI use a full SMALLEST_MOVE (2.84 units), plan_nudges and command_for use half (1.42), and CORRECTION_DEADBAND_MM is a dead third value. If protocol.COMMAND_UNITS is updated (stage 15 measured 1.948), framing.COMMAND_COST, and with it frame_edges' deadband, will silently keep the old value.",
+    "failure_scenario": "Someone updates protocol.COMMAND_UNITS to 1.948 after re-measurement. The mover and the log follow, but frame_edges.decide's deadband (framing.SMALLEST_MOVE) and HOLD_TOLERANCE_MM (a literal) do not. The hold loop's no-limit-cycle guarantee ('tolerance equals the smallest move') then quietly stops holding.",
+    "recommendation": "Make protocol the single home: import COMMAND_UNITS into framing, derive HOLD_TOLERANCE_MM and MAX_DY_MM from their definitions, import APERTURE_MM into the GUI and MM_PER_UNIT into the demo, delete CORRECTION_DEADBAND_MM, and decide one mm/column/unit law."
+   },
+   {
+    "id": "FU-12",
+    "title": "framing.command_for is an unused second command law whose 'verifiable' cap (160) contradicts the driver's measured cap (87)",
+    "severity": "low",
+    "category": "dead-code",
+    "locations": [
+     "rps7200/framing.py:1959-1969",
+     "rps7200/framing.py:1988-2046",
+     "rps7200/direct.py:3104-3123"
+    ],
+    "evidence": "framing.py:1969 `MAX_VERIFIABLE_PARAM = 160`: 'The largest param whose move can still be *verified*'. direct.py:3117-3121: 'param 160 moved 196 px at confidence **27** against a floor of 55 -- it goes somewhere and cannot say where'. `command_for`, `describe_command`, `LARGEST_MOVE`, `MAX_PARAM` (except in verify_protocol), `columns_per_unit`, `edge_band`, `Band` and `_row_runs` have no production callers, and `propose_offsets` is used only by tests.",
+    "description": "`command_for` calls itself 'The one SLIDE command' with 'the only rounding in this whole module', but the mover uses `DirectScanner.param_for_mm` with different rounding, a different deadband and a different cap. A future caller who takes framing's word would send param 88-160 moves that direct.py says cannot be verified. The dead detectors (`edge_band` and friends) also embody abandoned thresholds.",
+    "failure_scenario": "A contributor wires the sheet's 'large' step through `framing.command_for` because its docstring says it is the law. A correction of 150 units is sent in one command, and every one comes back unverified.",
+    "recommendation": "Delete command_for, describe_command and the unused constants and detectors, or make command_for the one law and have param_for_mm call it with cap 87."
+   },
+   {
+    "id": "FU-13",
+    "title": "registration() asserts 'offset 0, short by 0' when film_bounds abstains (most real prescans); logged and persisted every frame",
+    "severity": "low",
+    "category": "bug",
+    "doc_reference": "tools/scan_roll.py:511-514 comment: '`registration` abstains on a loaded strip -- and once it says so honestly rather than returning a fallback zero, these keys go missing'",
+    "locations": [
+     "rps7200/framing.py:114-139",
+     "rps7200/framing.py:254-273",
+     "rps7200/framing.py:836-839",
+     "rps7200/direct.py:3500-3507",
+     "rps7200/direct.py:3592-3603",
+     "rps7200/demo.py:1146-1160"
+    ],
+    "evidence": "film_bounds: `if median <= 0 or clear < median * clear_ratio: return lo, hi  # no empty aperture in view`. registration: `width = x1 - x0; offset = ...; shortfall = max(0, NOMINAL_FRAME_WIDTH - width)`, which gives offset 0 and shortfall 0 for the full window. framing.py:838-839: 'on real film `film_bounds` abstains on 97% of prescans'. direct.py:3502-3507 logs `offset {say_units(marks['offset_mm'])}, short by ...` for every frame.",
+    "description": "This is the failure framing.py itself warns about ('a positive assertion of correctness ... nothing downstream can tell from a measurement'). registration() never returns None, so on most frames it records a precise-looking 'offset +0.0 units, short by 0.0 units' into roll.json and library meta, and `drift_warning` can never fire on a loaded strip. The scan_roll.py comment describes an abstention that the code does not implement.",
+    "failure_scenario": "An auditor reads roll.json and sees every frame with offset 0 and margin 0, i.e. 'registered'. In fact the detector could not see the frame.",
+    "recommendation": "Return None or an explicit 'abstained' flag from registration() when film_bounds finds no aperture, and log 'offset --'. Otherwise stop logging and persisting it."
+   },
+   {
+    "id": "FU-14",
+    "title": "Detector exceptions other than ValueError abort a whole roll; combine() can raise TypeError on a tie",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/direct.py:3664-3677",
+     "tools/frame_edges/propose.py:234-246",
+     "rps7200/framing.py:1583-1588",
+     "rps7200/framing.py:1284"
+    ],
+    "evidence": "direct.py:3666 `except (UsbError, ScanReadError, CalibrationRequired, ShadingUnavailable, TimeoutError, ValueError) as exc:`. `walk.observe`/`walk.judge` call `WalkReader._read` -> `detect` -> four ported members with no try/except (only `roll.summarise` guards). framing.py:1584 `worst = max((abs(a.mm - b.mm) - gate(a, b), a, b) ...)`. When two pairs tie on the first element, Python compares `Reading` objects, and `@dataclass(frozen=True)` without order raises TypeError.",
+    "description": "EdgeWatch catches every exception per frame, but the roll path does not. An IndexError, TypeError or ZeroDivisionError from a detector member on one odd prescan, or the rare tie in combine on the legacy path, propagates out of the scan_roll generator. It ends an unattended multi-hour roll instead of costing the frame. It is not a wedge, because it happens between prescan and scan.",
+    "failure_scenario": "Frame 17 of 38 has a prescan on which a member indexes an empty array. The roll ends with 'failed' and frames 18-38 are not scanned overnight.",
+    "recommendation": "Wrap walk.observe, walk.judge and rejudge in a broad except that records the error in marks and abstains for that frame. Compare by key in combine (`max(..., key=lambda t: t[0])`)."
+   },
+   {
+    "id": "FU-15",
+    "title": "Shortcut settings: a malformed hand-edited sequence prevents the window opening after the scanner thread has started; conflicts are unchecked on load; misleading adjuster label",
+    "severity": "low",
+    "category": "user-error",
+    "doc_reference": "rps7200/shortcuts.py:187-190 'this file is meant to be edited by hand and a mistake in it should cost a key rather than the window'",
+    "locations": [
+     "rps7200/shortcuts.py:183-195",
+     "rps7200/shortcuts.py:148-149",
+     "tools/gui.py:542-543",
+     "tools/gui.py:857-875"
+    ],
+    "evidence": "`resolve` accepts any `str` for a known id. `_bind_shortcuts` does `self.root.bind(sequence, self._runner(run, sequence))` with no TclError guard (only unbind is guarded). In `__init__` it runs right after `self.session.start()` (542-543), which starts the thread that opens the scanner. shortcuts.py:148 `Action(\"adjust_left\", \"adjuster\", \"Move the film one step left\", \"<Left>\")`, but `_step` only changes the planned offset.",
+    "description": "A typo like '<Contrl-Key-r>' in gui-settings.json raises TclError during window construction. The window never appears, while the session thread is already opening the device and running INQUIRY. Two actions set by hand to the same key in one scope are not reported: the later bind wins silently. The adjuster's arrow label says it moves the film, which contradicts the module rule that no key moves film and misleads the operator about what the key does.",
+    "failure_scenario": "Stefan hand-edits a shortcut and mistypes a modifier. Next launch, the GUI crashes with a Tcl traceback while the scanner thread is mid-open.",
+    "recommendation": "Guard each bind with try/except TclError, drop the bad entry and log it. Run `conflicts()` on the resolved keys at load. Relabel adjust_left/right as 'Set the position one step left/right'."
+   },
+   {
+    "id": "FU-16",
+    "title": "Stale statements about the command law, caps and widths in docs and docstrings",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "doc_reference": "CLAUDE.md:420 '`param 1` (~2.6 units) is the finest move' vs CLAUDE.md:265 '2.84'; README.md:447 '300 | 431 x 287'",
+    "locations": [
+     "rps7200/protocol.py:253-257",
+     "rps7200/protocol.py:287-291",
+     "rps7200/session.py:672-693",
+     "tools/gui.py:5288-5296",
+     "tools/gui.py:5318-5320",
+     "tools/gui.py:4531",
+     "tools/gui.py:4565-4570",
+     "tools/scan_roll.py:396-401",
+     "tests/test_roll.py:1041-1046",
+     "CLAUDE.md:420",
+     "README.md:447"
+    ],
+    "evidence": "protocol.py:290 'so `param 1` travels 2.57' (the code gives 2.84). protocol.py:253 '`framing.COMMAND_COST` carries 1.84 for the same term, from a later session' (both are now 1.84). session.py:674-676 'for an integer param in 1..8' and '`DirectScanner.param_for_mm` already clamps silently at param 8' (the cap is 87). gui.py:5293-5295 'Clamped to what eight commands can chain, which is `MAX_TRAVEL_MM`' (now one command). gui.py:5319 'the lattice is 2.57 units off zero'. gui.py:4531 `_aim` 'becomes the centre of the frame' (it aims at an edge). gui.py:4566 'would take more than {MAX_FINE_STEPS} sub-frame moves'. scan_roll.py:397 'one command reaches only 1.0118 mm'. test_roll.py:1043 '17% larger ramp'.",
+    "description": "The prose around the unit law was not updated when COMMAND_UNITS moved from 1.572 to 1.84 and MAX_CORRECTION_PARAM from 8 to 87. Several messages shown to the operator (the `_aim` refusal text) and many docstrings now describe limits that no longer exist. That is how the next change gets reasoned from a wrong premise.",
+    "failure_scenario": "A reader trusts session.plan_nudges' docstring ('param in 1..8') and builds a UI that chains commands for moves over 1 mm, the pattern framing.command_for says 'should not come back'.",
+    "recommendation": "Update or remove these statements, and derive numeric text from the constants instead of quoting numbers."
+   },
+   {
+    "id": "FU-17",
+    "title": "Refused frames get positions extrapolated from the strip's line with no bound",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "tools/frame_edges/propose.py:153-166",
+     "rps7200/framing.py:800-829",
+     "tools/frame_edges/watch.py:261"
+    ],
+    "evidence": "`fill_refused`: `filled = fill_from_neighbours(offsets, unplaced)`, then `offsets[n] = filled[n]` with source 'neighbours'. `fill_from_neighbours` returns `slope * float(n) + intercept` for any n, including frames outside the measured range, with no magnitude check. The legacy combine() bound (MAX_CORRECTION_MM) is not applied on the frame_edges path.",
+    "description": "A strip whose frames 1-8 were read with a small slope gets frames 30-38 extrapolated far past the data. The result is snapped to up to ±88.8 units and proposed as 'read from the frames either side', although nothing lies on one side. The hold loop then drives the film there. EdgeWatch applies the same fill to partial walks while they are still arriving.",
+    "failure_scenario": "The reader refuses the last 10 frames of a roll (dense night scenes). A 0.08 mm/frame slope fitted on frames 1-12 proposes -2.6 mm for frame 38, which the operator may not inspect.",
+    "recommendation": "Interpolate only between placed frames (or allow at most one frame beyond them), bound the result by the spread of measured offsets, and label extrapolations distinctly."
+   },
+   {
+    "id": "FU-18",
+    "title": "'N frames in a row did not reach the position' counts misses across in-place and abstained frames",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "rps7200/direct.py:2992-3005",
+     "rps7200/direct.py:3053-3056",
+     "rps7200/framing.py:1649-1664"
+    ],
+    "evidence": "`_aim_frame` returns early for `decision is None` (2992) and `abs(decision) < HOLD_TOLERANCE_MM` (2998) without calling `walk.landed()`. Only a held move resets `misses` (3054). `missed()` stops aiming at `self.misses >= give_up` with the message 'frames in a row'.",
+    "description": "A frame that is already in place, or that the detector abstains on, does not reset the consecutive-miss counter. Three misses spread over, say, eight frames with successes of the in-place kind in between switch aiming off for the rest of the roll, with a message that claims the misses were consecutive.",
+    "failure_scenario": "On a strip with a slipping frame every few frames and correctly placed frames between them, aiming is switched off at the third miss, and the rest of the roll scans uncorrected.",
+    "recommendation": "Call walk.landed() for 'in_place', and decide explicitly whether 'abstained' resets or neutrally skips the counter."
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Operator- and machine-decided per-frame positions for a commissioned roll",
+    "path_pattern": "<rolls>/<roll>/approved.json",
+    "format": "JSON {roll, numbering, frames:[{number, offset_mm (float, round 4), rotation, flipped, reference_entry, source}]}",
+    "raw_or_corrected": "decision (not derivable); mm, in the APERTURE_MM/width scale",
+    "written_by": "tools/gui.py:_write_approved (2930-2967), plain write_text, not atomic, only when a roll is commissioned from the sheet",
+    "read_by": "tools/gui.py:read_approved (4924-4971) via read_survey and export; not by tools/scan_roll.py, which recomputes from the prescans",
+    "exact": "No. Zero offsets are dropped on read (truthiness, 4963). Rounded to 1e-4 mm. No record of which detector, constants (FRAME_WIDTH_UNITS, COLUMNS_PER_UNIT) or edges produced a machine position. No prescan resolution. Unread frames are labelled 'operator'."
+   },
+   {
+    "what": "Per-frame framing marks: registration(), contrast, StripWalk/WalkReader observe detail, hold-loop outcome (target_mm, history of measure_shift details, spent_mm, final_mm, residual_mm, clamped, source), aim outcome (decision_mm, ensemble notes incl. edges, units, columns)",
+    "path_pattern": "<rolls>/<roll>/survey.json (dry run) or roll.json; frames[].registration",
+    "format": "JSON, json.dumps(indent=2, default=str), rewritten whole after every frame",
+    "raw_or_corrected": "derived measurements (rounded: confidence 2 dp, mm 4 dp, units/columns 3 dp, contrast 4 dp)",
+    "written_by": "rps7200/session.py:_roll (1895-1926); tools/scan_roll.py checkpoint() for CLI runs",
+    "read_by": "tools/gui.py:read_survey (Result.registration), session.renumbered/walked_prescans, tools/scan_roll.py",
+    "exact": "No. Not atomic, so a crash mid-write corrupts the manifest. default=str turns non-JSON numpy scalars into strings. The prescans these numbers were computed from are only partly kept (FU-01), so the numbers cannot be recomputed."
+   },
+   {
+    "what": "Walk prescans used as the sheet's pictures, the frame-edge detector's input and the hold loop's references",
+    "path_pattern": "<rolls>/<roll>/prescanNN.tif",
+    "format": "TIFF, uint8 RGB, about 428x287 at 300 dpi",
+    "raw_or_corrected": "corrected (shading applied in prescan) and oriented by the session's rotation/flip at write time",
+    "written_by": "rps7200/session.py:_roll dry-run branch (1818-1833) -> FrameWriter (orient 1067)",
+    "read_by": "tools/gui.py:read_survey (un-orients with the manifest's single rotation, 4740); tools/scan_roll.py:hold_from_walk (does NOT un-orient, 243); EdgeWatch.load; demo picture signatures",
+    "exact": "No. Orientation is not recorded per file, and a mid-walk rotate breaks un-orienting (FU-02). The library copy of the same pass (dry run only) does carry raw bytes."
+   },
+   {
+    "what": "The prescan a correction replaced",
+    "path_pattern": "<rolls>/<roll>/prescanNN-before.tif",
+    "format": "TIFF uint8 RGB",
+    "raw_or_corrected": "corrected; no library entry, no raw",
+    "written_by": "rps7200/session.py:1834-1853 (dry run only, file_entry=False); tools/scan_roll.py:502-508",
+    "read_by": "nobody in code (for humans)",
+    "exact": "No. It is filed with the replacement pass's prescan_meta, has no raw bytes, and is never written for real rolls."
+   },
+   {
+    "what": "The frame's final framing prescan inside its library entry",
+    "path_pattern": "<library>/<entry>/prescan.tif + scan.json 'prescan' {file, read_direction, carriage_state} + scan meta 'registration', 'roll_index', 'roll_position'",
+    "format": "TIFF uint8 + JSON",
+    "raw_or_corrected": "corrected, 'no raw bytes of its own' (library.py:161-162)",
+    "written_by": "rps7200/library.save via session._file (frame entries); registration/roll_index added by direct.scan_roll (3653-3655), absent in demo entries",
+    "read_by": "library.migrate/reversal checks, demo picture_signature, anything re-deriving framing",
+    "exact": "No. Only the last hold pass is kept. The arrival prescan and intermediate verification passes are lost unless RPS7200_DEBUG is on (FU-01). A library migration may flip it in place (library.py:622)."
+   },
+   {
+    "what": "Sheet state per walked roll: ticks, offsets, sources, rotations, flips, options",
+    "path_pattern": "gui-settings.json -> 'sheet' -> <roll key>",
+    "format": "JSON (string frame keys, cast back by _clean_sheet_state)",
+    "raw_or_corrected": "decisions",
+    "written_by": "tools/gui.py:_store_sheet_state -> settings.save (whole payload)",
+    "read_by": "tools/gui.py:_recall_sheet_state/_clean_sheet_state -> _open_sheet -> _merge_kept",
+    "exact": "No. Zero offsets are not stored as offsets, so an operator's 'as surveyed' zero is lost on reopen (FU-04)."
+   },
+   {
+    "what": "Keyboard shortcut overrides",
+    "path_pattern": "gui-settings.json -> 'shortcuts'",
+    "format": "JSON {action_id: Tk sequence string}",
+    "raw_or_corrected": "n/a",
+    "written_by": "tools/gui.py:set_keys -> _remember (shortcuts.overrides_from, only differences from defaults)",
+    "read_by": "tools/gui.py:_restore -> shortcuts.resolve",
+    "exact": "Yes as stored. Unknown ids and non-strings are dropped, but a malformed string is not validated and breaks window construction (FU-15)."
+   },
+   {
+    "what": "CLI hold note",
+    "path_pattern": "<rolls>/<roll>/roll.json or survey.json -> 'held' {offsets (round 4 mm), sources, walked, from}",
+    "format": "JSON",
+    "raw_or_corrected": "derived",
+    "written_by": "tools/scan_roll.py:hold_from_walk/main checkpoint()",
+    "read_by": "humans; manifest_settings merges the settings block",
+    "exact": "No. The offsets were computed on possibly mis-oriented prescans (FU-03)."
+   },
+   {
+    "what": "Frame-edge detector state (EdgeWatch frames, summaries, readings; WalkReader summaries; StripWalk bands, placed, settled, travel)",
+    "path_pattern": "in memory only",
+    "format": "python objects",
+    "raw_or_corrected": "derived",
+    "written_by": "tools/frame_edges/watch.py, propose.py:WalkReader, rps7200/framing.py:StripWalk",
+    "read_by": "GUI sheet (take_readings), DirectScanner._aim_frame",
+    "exact": "Not persisted by design: proposals are recomputed on every launch from prescanNN.tif. The only record of a machine proposal is the snapped offset and source in approved.json."
+   }
+  ],
+  "user_actions": {
+   "can_do": [
+    "Walk a strip as a dry-run Roll from the window (Roll with 'dry run') or `tools/scan_roll.py --dry-run`, at prescan dpi 300/600/900 from the GUI ladder or any typed 25-7200.",
+    "Open the contact sheet with the button or Cmd/Ctrl-K. The key works even while a walk is still running, as long as some frames exist.",
+    "Rotate or flip any prescan with keys or the menu, in the main window or the sheet, at any time, including during a walk.",
+    "Set per-frame positions in the adjuster: arrows (finest, small = param 3, medium = 8, large = 20), drag, Cmd-C 'as surveyed' (0), or reset to the detector. Values snap to reachable positions up to ±88.8 units (one param-87 command).",
+    "Tick or untick frames, change the sheet's scan options (dpi, prescan dpi, film, meter, IR, correct), and commission 'Scan chosen frames'. It asks first, and the prescan dpi is pinned to the survey's.",
+    "Tick 'correct' or 'correct dry run' so the roll aims frames itself with the frame-edge reader, or with the legacy strip detector for films the reader refuses.",
+    "Reopen a stored walk with --open-roll or make run-sheet. Machine positions are re-measured on every launch; operator positions are kept.",
+    "CLI: `--approved <folder>` holds to positions proposed from a walk's prescanNN.tif; `--nudge <mm>` moves the film before a run; `--prescan-dpi`; `--correct`/`--correct-dry-run`.",
+    "Click in the main preview to aim a point at the nearer aperture edge. It asks first, then moves film immediately.",
+    "Edit shortcuts in the editor, or by hand in gui-settings.json."
+   ],
+   "should_not_do": [
+    "Do not rotate or flip prescans while a dry-run walk is running. It duplicates survey entries and makes later prescanNN.tif files disagree with the manifest's single rotation (FU-02).",
+    "Do not walk at 600 or 900 dpi prescan if you want frame-edge proposals or in-roll aiming. The detector refuses those widths (FU-05).",
+    "Do not use `tools/scan_roll.py --approved` on a folder walked in the window with a rotation or flip set (FU-03). Do not pass a `--prescan-dpi` different from the walk's.",
+    "Do not set positions near the adjuster's maximum (above about 85 units) and expect them to be verified (FU-08).",
+    "Do not rely on Cmd-C ('as surveyed') surviving a sheet close/reopen or a roll reopen when the detector proposes a move (FU-04).",
+    "Do not commission from the sheet while the edge light is still blue if every frame should be placed. Unread frames get 0, attributed to 'operator'.",
+    "Do not enable 'correct' on slide or Kodachrome film. The legacy 36 mm-frame detector runs there instead of the refusing frame-edge reader (FU-07).",
+    "Do not hand-edit shortcut sequences in gui-settings.json unless they are valid Tk sequences (FU-15)."
+   ],
+   "unguarded_mistakes": [
+    "Rotate, flip or sheet turns during a walk: no guard. remember_arrangement appends the survey entry again and re-adds it to EdgeWatch, and session.rotation changes mid-roll without the manifest.",
+    "Opening the contact sheet mid-walk with Cmd/Ctrl-K: only `self.survey` non-empty is checked, not whether a walk is still running.",
+    "Choosing 600 or 900 dpi prescan: the GUI offers it and nothing warns that the frame-edge detector will refuse every frame.",
+    "Setting an adjuster position between about 85 and 88.8 units: accepted and snapped, but unverifiable by the hold loop.",
+    "Resetting a frame to 'as surveyed' (0): stored as 'absent', so the detector's value comes back on reopen with no prompt.",
+    "`--approved` pointing at a GUI-walked folder with rotation or flip set: no check against the manifest's rotation or flipped.",
+    "`--nudge` in millimetres with no unit check: a value meant in units (for example 20) is taken as 20 mm and refused only if the planner raises.",
+    "'correct' on film the frame-edge reader refuses: silently falls back to the legacy detector, with no film gate.",
+    "A malformed shortcut in gui-settings.json: the window fails to build after the scanner thread has started.",
+    "Commissioning while EdgeWatch is still reading: the dialog mentions it, but frames without readings are recorded with source 'operator'."
+   ]
+  },
+  "dataflow_notes": "1. Acquisition.\n- DirectScanner.prescan (direct.py:1682) calls scan(depth 8, FULL_FRAME, shading=True).\n- The result is a shading-corrected uint8 RGB array, 428 wide at 300 dpi and 860/1292 at 600/900 per demo.py:907. last_pixels_raw holds the pre-shading decode.\n\n2. Per-frame measurement in DirectScanner.scan_roll (direct.py:3493-3530).\n- frame_contrast (framing.py:51): below BLANK_CONTRAST the roll ends.\n- registration (framing.py:230, via film_bounds framing.py:86) produces marks in scanner coordinates and *_mm, logged through say_units.\n- If correct or correct_dry_run is set, StripWalk.observe (framing.py:1671) runs.\n  - With a reader: WalkReader.observe (propose.py:228) -> summary -> _downscaled -> roll.summarise.\n  - Without one: edge_bands/film_base_from.\n\n3. Approved branch: _hold_to_approved (direct.py:2837).\n- measure_shift_mm(reference, prescan) (framing.py:1007) calls uniformity.register at SEARCH_MM reach, upright and row-flipped, applies the floor and the dy gate, and returns mm in the APERTURE_MM/width scale.\n- hold_plan (framing.py:1172) decides the next step.\n- nudge (direct.py:3138) -> param_for_mm (round, clamp 1..87) -> slide 00/01 param 00 04.\n- The loop re-prescans up to MAX_HOLD_MOVES times. Its out dict becomes marks['approved'], and the last prescan replaces the frame's prescan.\n\n4. Aim branch: _aim_frame (direct.py:2960) -> walk.judge (framing.py:1725).\n- Reader path: propose.WalkReader.judge -> detect (vote.detect over 4 members, scaled by k) -> centring (propose.py:119) -> centre.decide (units via COLUMNS_PER_UNIT) -> columns -> columns_to_mm (APERTURE_MM/width).\n- Legacy path: combine(frame_offset_mm, right_gap_closure, predict_offset).\n- Then affordable (ROLL_TRAVEL_LIMIT_MM), then _hold_to_approved(_Aim(reference=same image)) with _rejudge_for.\n- Afterwards walk.record/landed/missed run. marks['correction'] is filled, and prescan_before is set.\n\n5. Filing: RollFrame -> session._roll (session.py:1793-1926).\n- _deliver sends a downscaled working copy to the UI.\n- Dry run: _file(prescan, raw_image=raw_prescan) makes a library entry and prescanNN.tif oriented by the current session.rotation/flip. prescan_before is written as a TIFF only.\n- Real roll: _file(frame, raw_image, prescan=final corrected prescan). The prescan raw is dropped.\n- The manifest record, with registration marks, is rewritten after every frame (write_text, default=str).\n\n6. GUI, live walk.\n- Event 'result' -> remember_arrangement (gui.py:3498): if surveying, survey.append and EdgeWatch.add (watch.py:110).\n- The EdgeWatch worker thread runs summaries first, then read_frame against the frames already summarised.\n- After finish(), frames are re-read against all others.\n- _progress runs fill_refused (fill_from_neighbours) and builds Progress(offsets_mm, notes).\n- The pump calls _edges_changed (gui.py:3088) -> sheet.take_readings (7805) -> _snap_proposals (snap_offset -> session.plan_nudges -> DirectScanner.param_for_mm).\n- Machine offsets go into sheet.offsets and proposals. Adjuster _set (6706) snaps, pops zeros and marks the frame 'operator'.\n- _scan -> approved_from_sheet (5791) -> on_scan_chosen -> _write_approved (approved.json) -> Roll(approved, prescan_resolution pinned to the survey).\n- session: approved keyed by number-1 -> scan_roll.\n\n7. Reopen.\n- read_survey (gui.py:4655) -> walked_prescans -> tiff.read prescanNN.tif -> preview.unorient(manifest rotation) -> Results.\n- read_approved drops zero offsets.\n- EdgeWatch.load re-measures, then _open_sheet -> _merge_kept, where only non-zero kept offsets win.\n\n8. CLI: scan_roll.py --approved -> hold_from_walk -> walked_prescans -> tiff.read (no unorient) -> propose_centred -> Approved (unsnapped) -> DirectScanner.scan_roll(approved, edge_reader=walk_reader).\n\n9. Demo: DemoScanner.scan_roll (demo.py:597).\n- Its prescans are library prescan.tif, np.roll-shifted by _film_mm through APERTURE_MM/width, always at 300 dpi.\n- _marks uses the real registration.\n- It borrows _hold_to_approved, _aim_frame, _rejudge_for and param_for_mm from DirectScanner.\n- nudge models backlash with a retyped 0.1057.\n\n10. Unit chain.\n- Detector columns -> units (framing.units_per_column, COLUMNS_PER_UNIT 1.2423) -> columns -> mm (APERTURE_MM/width) -> hold loop mm -> param (protocol MM_PER_UNIT 0.1057 plus MM_PER_COMMAND) -> byte.\n- Display uses say_units (MM_PER_UNIT) in logs and units_per_column in the sheet's overhang caption, which differ by about 0.2%.\n\n11. Threads and shortcuts.\n- EdgeWatch: all state is under a Condition(RLock). The worker releases the lock while computing and discards results if the generation or version changed. version and generation are read without the lock (ints). No shared mutable dicts escape to the GUI.\n- StripWalk is used only on the scanner thread.\n- shortcuts.py is pure data. gui._bind_shortcuts binds the resolved table on root and toplevels. NEVER_BOUND is enforced by tests, not by code."
+ }
+}
