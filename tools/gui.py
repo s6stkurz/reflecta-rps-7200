@@ -91,6 +91,7 @@ from rps7200.session import (                              # noqa: E402
     legacy_shift,
     plan_nudges,
     renumbered,
+    walked_prescans,
 )
 
 #: Resolutions this scanner has actually been driven at, plus the optical
@@ -2461,7 +2462,7 @@ class ScannerGui:
         self._note_roll_opened(folder)
         self._loaded_roll = folder
         try:
-            out = read_survey(folder)
+            out = read_survey(folder, say=self._say)
         except (OSError, ValueError, KeyError) as exc:
             messagebox.showerror(
                 "Open a roll",
@@ -4475,7 +4476,7 @@ def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
     return out
 
 
-def read_survey(folder) -> dict:
+def read_survey(folder, say=None) -> dict:
     """A walked strip, read back off disk so it need not be walked again.
 
     A survey costs four minutes of transport and is the thing the contact
@@ -4497,6 +4498,9 @@ def read_survey(folder) -> dict:
     `prescanNN.tif`, so this arithmetic stays true however many frames were
     turned individually. The per-frame turns come back as `rotations`, which
     the sheet lays over the results afterwards.
+
+    ``say`` hears anything the renumbering of an old walk could not settle;
+    see `session.renumbered`.
     """
     folder = Path(folder)
     # Two manifests, one directory, and both matter. `survey.json` is the walk
@@ -4526,7 +4530,7 @@ def read_survey(folder) -> dict:
     # positions, its shift is the file's, even when a later walk into the
     # same folder has replaced the survey it was decided on.
     decided = legacy_shift(progress) if progress else None
-    manifest = renumbered(manifest)
+    manifest = renumbered(manifest, say=say)
     progress = renumbered(progress, fallback=shift)
     # Merged, because `tools/scan_roll.py` writes these only inside `settings`
     # and this reader wanted them at the top level. See `manifest_settings`:
@@ -4540,12 +4544,11 @@ def read_survey(folder) -> dict:
         folder, legacy=shift if decided is None else decided)
 
     results = []
-    for record in manifest.get("frames", []):
-        name = record.get("prescan")
-        if not name or not (folder / name).exists():
-            continue
-        number = int(record["number"])
-        image = tiff.read(str(folder / name))
+    # The walk's own records, as the roll tool's `--approved` reads them, so
+    # the two cannot key one folder two ways. A stray prescan an earlier walk
+    # left in the folder is not in them.
+    for number, path, record in walked_prescans(folder, manifest):
+        image = tiff.read(str(path))
         result = Result(
             seq=-number,                     # negative: never a live pass's seq
             kind="prescan",

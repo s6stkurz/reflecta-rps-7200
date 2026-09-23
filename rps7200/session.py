@@ -335,14 +335,26 @@ def legacy_shift(manifest: dict) -> int | None:
     return max(seen, key=lambda k: seen[k])
 
 
-def renumbered(manifest: dict, fallback: int = 0) -> dict:
+def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
     """A manifest with its frame numbers moved onto the strip's.
 
-    Mapped by each frame's recorded transport position where it has one, and
-    by the manifest's own shift otherwise -- never by the number alone, which
-    is what was relative. ``fallback`` is the shift to use when the manifest
-    cannot say: a roll that died before its first frame is numbered the way the
-    walk beside it was, because that is where its frame numbers came from.
+    Moved by the manifest's own shift -- :func:`legacy_shift`, the commonest
+    its recorded transport positions give -- and never left as they were,
+    which is what was relative. ``fallback`` is the shift to use when the
+    manifest cannot say: a roll that died before its first frame is numbered
+    the way the walk beside it was, because that is where its frame numbers
+    came from.
+
+    One shift for every frame, a frame whose own recorded position disagrees
+    included. Numbers then were counted once per advance, so within one
+    manifest they sit one apart whatever the counter read; following one
+    disagreeing position instead handed it the number a neighbour already had
+    -- positions 5, 5, 7 came back as frames 6, 6 and 8, two pictures under
+    one number. The disagreement is told to ``say`` rather than resolved: a
+    misread counter and a film that really jumped look the same here, and
+    this reading is wrong about the second. Nothing stored has either -- every
+    manifest under `rolls/` with positions has one shift throughout, 213
+    frames across 25 of them, checked 2026-09-23 -- so it is only said.
 
     Returns the manifest unchanged when it already numbers by the strip, and a
     copy otherwise; nothing on disk is rewritten.
@@ -367,10 +379,20 @@ def renumbered(manifest: dict, fallback: int = 0) -> dict:
     for record in manifest.get("frames") or ():
         record = dict(record)
         position = record.get("transport_position")
-        if position is not None:
+        if "number" in record:
+            counted = record["number"]
+            record["number"] = moved(counted)
+            if (say is not None and position is not None
+                    and isinstance(record["number"], int)
+                    and int(position) + 1 != record["number"]):
+                say(f"frame {counted} of {manifest.get('roll') or 'a roll'} "
+                    f"recorded the transport on frame {int(position) + 1}, "
+                    f"where the rest of its walk puts it on frame "
+                    f"{record['number']}; numbered as frame "
+                    f"{record['number']} -- look at its prescan before "
+                    "trusting either")
+        elif position is not None:
             record["number"] = int(position) + 1
-        elif "number" in record:
-            record["number"] = moved(record["number"])
         if isinstance(record.get("number"), int):
             record["index"] = record["number"] - 1
         frames.append(record)
@@ -389,6 +411,37 @@ def renumbered(manifest: dict, fallback: int = 0) -> dict:
             settings["start_at"] = moved(settings["start_at"])
         out["settings"] = settings
     out["numbering"] = NUMBERING
+    return out
+
+
+def walked_prescans(folder, manifest: dict,
+                    say=None) -> list[tuple[int, Path, dict]]:
+    """A walk's prescans, each as ``(frame number, file, record)``.
+
+    Taken from the walk's own records -- the frames it lists with a `prescan`
+    file that is still there, numbered through :func:`renumbered` -- and never
+    from the files in the folder. A second walk into the same date-named
+    folder rewrites `survey.json` and leaves the first walk's extra
+    `prescanNN.tif` behind, named by *that* walk's count: `rolls/2026-09-23`
+    holds prescan01-02 from the walk its survey lists, at transport positions
+    5 and 6, beside prescan03-06 from an earlier walk, at 2 to 5. Read by file
+    name and one shift, those four were frames 8 to 11, and prescan06 was a
+    second picture of the place prescan01 shows.
+
+    The window's contact sheet and the roll tool's ``--approved`` both read a
+    walk through this, so they cannot key one folder two ways.
+    """
+    folder = Path(folder)
+    out: list[tuple[int, Path, dict]] = []
+    for record in renumbered(manifest, say=say).get("frames") or ():
+        name = record.get("prescan")
+        try:
+            number = int(record["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not name or not (folder / name).exists():
+            continue
+        out.append((number, folder / name, record))
     return out
 
 
@@ -1322,7 +1375,8 @@ class ScanSession:
             # and frame 6 of this one could be the same picture. Moved onto the
             # strip's numbering by their recorded positions first; a roll that
             # recorded none is numbered as the walk beside it was.
-            earlier = renumbered(earlier, fallback=self._walk_shift(out))
+            earlier = renumbered(earlier, fallback=self._walk_shift(out),
+                                 say=lambda m: self._emit("log", text=m))
         manifest: dict[str, Any] = {
             "roll": name,
             # Says the numbers below are places on the strip, so a reader can

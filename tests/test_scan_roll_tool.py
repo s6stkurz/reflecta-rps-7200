@@ -355,7 +355,8 @@ def test_an_old_walks_prescans_are_held_under_the_strips_numbers(
         tiff.write(str(folder / f"prescan{n:02d}.tif"),
                    np.full((4, 6, 3), 40 + n, np.uint8))
     (folder / "survey.json").write_text(json.dumps({"frames": [
-        {"number": n, "transport_position": n + 13} for n in (1, 2, 3)]}),
+        {"number": n, "transport_position": n + 13,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]}),
         encoding="utf-8")
     monkeypatch.setattr(
         scan_roll.framing, "propose_offsets",
@@ -364,6 +365,45 @@ def test_an_old_walks_prescans_are_held_under_the_strips_numbers(
     held, _note = scan_roll.hold_from_walk(folder)
     assert sorted(held) == [15, 16, 17]
     assert all(a.number == n for n, a in held.items())
+
+
+def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(
+        tmp_path, monkeypatch):
+    """`rolls/2026-09-23` as it is on disk. The survey lists the second walk:
+    prescan01 and 02, at transport positions 5 and 6. prescan03 to 06 were
+    left by an earlier walk into the same folder, at positions 2 to 5. Read
+    by file name with the survey's one shift, those four became frames 8 to
+    11 -- prescan06 a second picture of prescan01's place, held as frame 11
+    -- where the window's sheet shows frames 6 and 7. The tool and the window
+    read one folder one way."""
+    import json
+
+    from rps7200 import tiff
+
+    folder = tmp_path / "2026-09-23"
+    folder.mkdir()
+    for n in range(1, 7):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "2026-09-23", "dry_run": True,
+        "settings": {"start_at": 1, "only": None, "prescan_resolution": 300},
+        "frames": [{"number": n, "transport_position": n + 4,
+                    "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder)
+    assert sorted(held) == [6, 7]
+    assert note["walked"] == 2
+    assert np.array_equal(held[6].reference,
+                          tiff.read(str(folder / "prescan01.tif")))
+
+    gui = load_tool("gui")
+    shown = [r.number for r in gui.read_survey(folder)["results"]]
+    assert sorted(held) == shown, "the tool and the window disagree"
 
 
 # --- winding the film back, and refusing to go on if it did not -------------

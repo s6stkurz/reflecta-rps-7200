@@ -52,9 +52,9 @@ from rps7200.session import (
     Approved,
     FilmNotPlaced,
     FrameWriter,
-    legacy_shift,
     plan_nudges,
     seek,
+    walked_prescans,
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
 from rps7200.session import rewind as _rewind
@@ -209,28 +209,33 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     however exactly the transport came back.
 
     The frames are keyed by their place on the strip, as the roll numbers
-    them. A walk made before frame numbers meant that named its prescans from
-    wherever it started -- `registration-F` calls the counter's 14 its frame 1
-    -- so those names are moved by the shift its `survey.json` records.
+    them, and read from the walk's own records the way the window's contact
+    sheet reads them -- `session.walked_prescans`, one reader for both -- never
+    from the file names in the folder. A walk made before frame numbers meant
+    that named its prescans from wherever it started (`registration-F` calls
+    the counter's 14 its frame 1), and a second walk into the same folder
+    leaves the first one's extra prescans beside its own, named by the other
+    walk's count: `rolls/2026-09-23` was held as frames 6 to 11 here while the
+    window showed it as 6 and 7, and two of those six were one picture.
     """
-    shift = 0
-    walked = folder / "survey.json"
-    if walked.exists():
-        try:
-            shift = legacy_shift(
-                json.loads(walked.read_text(encoding="utf-8"))) or 0
-        except (OSError, ValueError):
-            shift = 0
-    frames = []
-    for path in sorted(folder.glob("prescan*.tif")):
-        if path.stem.endswith("-before"):
-            continue                      # the picture a correction replaced
-        number = int("".join(c for c in path.stem if c.isdigit()) or 0)
-        if number:
-            frames.append((number + shift, tiff.read(str(path))))
+    manifest: dict = {}
+    for name in ("survey.json", "roll.json"):
+        # The walk first, as the window reads it; a roll's own manifest only
+        # where there is no walk, and it lists no prescans unless it was one.
+        if (folder / name).exists():
+            try:
+                manifest = json.loads(
+                    (folder / name).read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise SystemExit(f"{folder / name} cannot be read: {exc}")
+            break
+    frames = [(number, tiff.read(str(path)))
+              for number, path, _ in walked_prescans(folder, manifest,
+                                                     say=print)]
     if len(frames) < 2:
-        raise SystemExit(f"{folder} holds {len(frames)} prescan(s); a strip is "
-                         "needed to propose positions from")
+        raise SystemExit(f"{folder}'s walk lists {len(frames)} prescan(s) "
+                         "that are still there; a strip is needed to propose "
+                         "positions from")
 
     offsets, notes = framing.propose_offsets(
         [(n, im.astype(float)) for n, im in frames])

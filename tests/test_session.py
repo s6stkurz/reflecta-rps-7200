@@ -1395,6 +1395,24 @@ def test_the_old_numbering_is_mapped_by_position_not_by_number():
     assert session.renumbered(new) is new, "already on the strip's numbers"
 
 
+def test_one_misread_position_does_not_give_two_frames_one_number():
+    """Numbers in an old manifest were counted once per advance, so they sit
+    one apart. Following a lone disagreeing position gave its frame the
+    number its neighbour already had -- 5, 5, 7 came back as 6, 6, 8 -- and
+    two pictures under one number. The walk's own shift is taken for every
+    frame, and the disagreement is said rather than hidden."""
+    old = {"roll": "misread",
+           "frames": [{"number": 1, "transport_position": 5},
+                      {"number": 2, "transport_position": 5},
+                      {"number": 3, "transport_position": 7}]}
+    assert session.legacy_shift(old) == 5
+    new = session.renumbered(old)
+    assert [f["number"] for f in new["frames"]] == [6, 7, 8]
+    said = []
+    session.renumbered(old, say=said.append)
+    assert len(said) == 1 and "frame 2 of misread" in said[0], said
+
+
 def test_a_manifest_that_recorded_no_positions_borrows_its_walks_shift():
     died = {"wanted": [1, 2], "frames": [{"number": 1, "done": False}]}
     assert session.legacy_shift(died) is None
