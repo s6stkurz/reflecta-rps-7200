@@ -8041,7 +8041,9 @@ def main() -> int:
                     help="where scans are filed (default: library, or "
                          "demo/library with --demo)")
     ap.add_argument("--demo-source", default="library",
-                    help="which library --demo shows pictures from")
+                    help="which library --demo shows pictures from; a roll "
+                         "after the first also draws on every library beside "
+                         "it, such as 'library 2'")
     ap.add_argument("--demo-entry", default=None,
                     help="a specific library entry for --demo to show; by "
                          "default the highest-resolution one that has both a "
@@ -8103,13 +8105,18 @@ def main() -> int:
     # sheet; `rps7200` is handed it, never imports it.
     session.edge_reader = frame_edges.walk_reader
     if args.demo:
-        from rps7200.demo import DemoScanner
+        from rps7200.demo import DemoScanner, libraries_beside
         source, entry = args.demo_source, args.demo_entry
+        # A roll after the first draws other photographs, from every library
+        # beside the one shown -- `library 2` beside `library` -- and the
+        # likenesses that tell them apart are kept under demo/ between runs.
+        libraries = libraries_beside(source)
         # `--look-only` is a fact about the film, so it goes to the thing that
         # would know. The backend refuses and the window reports it the way it
         # reports any other transport fault.
         session._open_scanner = lambda: DemoScanner(
-            source, entry=entry, no_film=args.look_only)
+            source, entry=entry, no_film=args.look_only,
+            libraries=libraries, cache=home / "pictures.npz")
 
     root = tk.Tk()
     ScannerGui(root, session, demo=args.demo, settings_path=settings_path,

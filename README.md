@@ -224,6 +224,12 @@ film type, answers at the resolution asked for, refuses what the device refuses,
 it cannot honour a request with the bytes in hand it drops them and says so rather than
 filing raw that decodes to a different photograph. Its output goes under `demo/`.
 
+The first roll in a demo session walks the same strip it always has. Every roll started
+from the Roll button after that loads another strip. It is drawn from every library next
+to the one shown, such as `library 2`, one entry per photograph, with pictures not shown
+yet coming first. Here that is 125 photographs, so the second and third rolls are new
+throughout. Scanning chosen frames from the contact sheet scans the strip that was walked.
+
 Prescan, scan, walk a roll, and look at what came off. The filmstrip along the bottom
 holds every pass of the session; the channel selector switches between RGB and R, G, B or
 **infrared alone**, which is the one plane no ordinary viewer will show you. The preview

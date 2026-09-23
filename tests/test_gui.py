@@ -3764,6 +3764,25 @@ def test_no_film_is_told_to_the_backend(monkeypatch, tmp_path):
     assert [kw["no_film"] for kw in opened] == [True, False]
 
 
+def test_the_demo_is_handed_every_library_beside_its_own(monkeypatch, tmp_path):
+    """A roll after the first draws other photographs, from `library 2` as
+    well as `library`; the likenesses are kept under the demo's own folder."""
+    import rps7200.demo
+
+    for name in ("library", "library 2"):
+        entry_dir = tmp_path / name / "20260101T000000Z_x"
+        entry_dir.mkdir(parents=True)
+        (entry_dir / "scan.json").write_text("{}", encoding="utf-8")
+    opened = []
+    monkeypatch.setattr(rps7200.demo, "DemoScanner",
+                        lambda *args, **kwargs: opened.append((args, kwargs)))
+    _launch(monkeypatch, tmp_path, "--demo", "--demo-source",
+            str(tmp_path / "library"))._open_scanner()
+    (source,), kwargs = opened[0]
+    assert kwargs["libraries"] == [tmp_path / "library", tmp_path / "library 2"]
+    assert kwargs["cache"] == gui.DEMO_ROOT / "pictures.npz"
+
+
 def test_an_empty_transport_refuses_where_the_transport_would():
     """Not a disabled button: a raised error, from the thing that would raise
     it, carrying a sentence a person can act on."""

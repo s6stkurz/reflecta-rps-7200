@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import json
 import random
+import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +65,99 @@ from .usb_transport import UsbError
 SPEED = 120.0
 
 
+#: How alike two pictures must be to count as one photograph. Their middles
+#: are compared as small grey grids, allowing the picture to have moved
+#: sideways by up to a quarter of the frame -- which is how two scans of one
+#: frame differ. Measured over both libraries here: 500 negative entries,
+#: 129 photographs.
+SAME_PICTURE = 0.85
+SIGNATURE_ROWS, SIGNATURE_COLUMNS, SIGNATURE_REACH = 24, 48, 12
+
+
+def libraries_beside(root: str | Path) -> list[Path]:
+    """``root`` and every library next to it, with any nested ones.
+
+    `library 2` beside `library`, and its `300dpi` and `600dpi` folders, which
+    hold entries of their own. What a roll in the demo draws its pictures
+    from, so a second roll has other photographs to show.
+    """
+    root = Path(root)
+    found: list[Path] = []
+    siblings = sorted(p for p in root.parent.glob(f"{root.name} *") if p.is_dir())
+    for library_dir in [root, *siblings]:
+        if not library_dir.is_dir():
+            continue
+        if any(library_dir.glob("*/scan.json")):
+            found.append(library_dir)
+        for sub in sorted(p for p in library_dir.iterdir() if p.is_dir()):
+            if not (sub / "scan.json").exists() and any(sub.glob("*/scan.json")):
+                found.append(sub)
+    return found
+
+
+def picture_signature(entry: Path) -> np.ndarray | None:
+    """One photograph's likeness, small enough to compare hundreds of.
+
+    The middle of the picture as a grey grid: from the entry's prescan where
+    it kept one, else from its scan when that is no larger than 600 dpi.
+    None where there is nothing small enough to read quickly.
+    """
+    source = entry / "prescan.tif"
+    if not source.exists():
+        try:
+            record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+            if int((record.get("scan") or {}).get("resolution_dpi") or 0) > 600:
+                return None
+        except (OSError, ValueError, TypeError):
+            return None
+        source = entry / "scan.tif"
+    try:
+        image = tiff.read(str(source))
+    except Exception:                                    # noqa: BLE001
+        return None
+    if image.ndim != 3 or min(image.shape[:2]) < 32:
+        return None
+    grey = image[..., :3].astype(np.float32).mean(axis=2)
+    h, w = grey.shape
+    grey = grey[h // 8: h - h // 8, w // 8: w - w // 8]
+    rows = np.linspace(0, grey.shape[0] - 1, SIGNATURE_ROWS).astype(int)
+    columns = np.linspace(0, grey.shape[1] - 1, SIGNATURE_COLUMNS).astype(int)
+    grid = grey[np.ix_(rows, columns)]
+    return grid if float(grid.std()) > 0 else None
+
+
+def _windows(signature: np.ndarray) -> np.ndarray:
+    """The signature's middle at every sideways shift, each normalised."""
+    reach, width = SIGNATURE_REACH, SIGNATURE_COLUMNS - 2 * SIGNATURE_REACH
+    out = np.stack([signature[:, reach + s: reach + s + width].ravel()
+                    for s in range(-reach, reach + 1)]).astype(np.float64)
+    out -= out.mean(axis=1, keepdims=True)
+    norms = np.linalg.norm(out, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return out / norms
+
+
+def group_pictures(signatures: Sequence[np.ndarray]) -> list[int]:
+    """Which photograph each signature shows, as a group number per signature.
+
+    Greedy, in the order given: a signature joins the first photograph whose
+    middle it matches at some sideways shift, or starts a new one.
+    """
+    centres: list[np.ndarray] = []
+    labels: list[int] = []
+    for signature in signatures:
+        windows = _windows(signature)
+        if centres:
+            scores = (np.stack(centres) @ windows.T).max(axis=1)
+            best = int(scores.argmax())
+            if scores[best] > SAME_PICTURE:
+                labels.append(best)
+                continue
+        centres.append(windows[SIGNATURE_REACH])
+        labels.append(len(centres) - 1)
+    return labels
+
+
 class _FakeTransport:
     """Just enough of `Transport` for `ScanSession.force_abort` to work on."""
 
@@ -83,8 +178,20 @@ class DemoScanner:
 
     def __init__(self, root: str | Path = "library", speed: float = SPEED,
                  entry: str | Path | None = None, no_film: bool = False,
-                 seed: int | None = None):
+                 seed: int | None = None,
+                 libraries: Sequence[str | Path] | None = None,
+                 cache: str | Path | None = None):
         self.root = Path(root)
+        #: Where a roll after the first draws its pictures from: ``root`` and,
+        #: as the window passes them, every library beside it
+        #: (`libraries_beside`). Single passes keep to ``root``.
+        self.libraries = [Path(p) for p in (libraries or [root])]
+        #: Where each entry's picture signature is kept between sessions, so
+        #: telling the photographs apart costs once rather than every launch.
+        self.cache = Path(cache) if cache else None
+        #: entry -> signature, filled on a thread `open` starts.
+        self._signatures: dict[Path, np.ndarray] = {}
+        self._signing: threading.Thread | None = None
         #: The entry chosen for each film, so a prescan and the scan after it
         #: show one picture rather than two.
         #: An empty transport. The film is what a demo cannot have when it
@@ -103,8 +210,8 @@ class DemoScanner:
         #: The strip in the transport, per film: one entry per frame, frame N
         #: showing entry N. What a roll walks. See `_next_strip`.
         self._strips: dict[str, list[Path]] = {}
-        #: Every entry that kept a prescan, per film -- what a strip is laid
-        #: from -- and those a strip has already shown this session.
+        #: Every entry that kept a prescan in ``root``, per film -- what the
+        #: first strip is -- and the entries strips have shown this session.
         self._pools: dict[str, list[Path]] = {}
         self._shown: dict[str, set[Path]] = {}
         #: Rolls run this session. The first walks the strip as it always has;
@@ -175,6 +282,12 @@ class DemoScanner:
         self._entries = sorted(
             p.parent for p in self.root.glob("*/scan.json")
         ) if self.root.exists() else []
+        # Off the thread that answers the window: reading every library's
+        # pictures takes a while the first time, and only a second roll needs
+        # them.
+        self._signing = threading.Thread(target=self._sign_pictures, daemon=True,
+                                         name="demo-pictures")
+        self._signing.start()
         if self.pair is None:
             self.pair = best_pair(self.root)
         if self.pair is not None:
@@ -849,23 +962,32 @@ class DemoScanner:
         break, and `capture_record` below can hand the session genuine bytes to
         file -- which a TIFF read could never do.
 
-        Returns ``(image, capture)`` or None when the entry has no bytes.
+        An entry filed without its bytes -- older ones, and some a roll filed
+        -- has nothing to decode, and its `scan.tif` is then shown instead:
+        that is the decode, stored when it was taken, and it is this entry's
+        photograph, where falling back to another entry would show a frame's
+        prescan and its scan as two different pictures. Its capture carries
+        no bytes, so nothing filed from it pretends to have any.
+
+        Returns ``(image, capture)``, or None when neither can be read.
         """
         raw = library.read_raw(path)
-        if raw is None:
-            return None
         try:
             record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-            layout = (record.get("raw") or {}).get("layout") or {}
-            params = ScanParameters(
-                width=int(layout["width"]),
-                lines=int(layout["lines"]),
-                bytes_per_line=int(layout["bytes_per_line"]),
-                filter_offset1=0, filter_offset2=0, available_lines=0,
-            )
-            image = DirectScanner._deinterleave(
-                raw, params, int(layout["channels"])
-            )
+            if raw is None:
+                image = tiff.read(str(path / "scan.tif"))
+                layout = None
+            else:
+                layout = (record.get("raw") or {}).get("layout") or {}
+                params = ScanParameters(
+                    width=int(layout["width"]),
+                    lines=int(layout["lines"]),
+                    bytes_per_line=int(layout["bytes_per_line"]),
+                    filter_offset1=0, filter_offset2=0, available_lines=0,
+                )
+                image = DirectScanner._deinterleave(
+                    raw, params, int(layout["channels"])
+                )
         except Exception as exc:                         # noqa: BLE001
             self._log(f"could not decode {path.name}: {exc}")
             return None
@@ -890,8 +1012,10 @@ class DemoScanner:
         self._source_dpi = int(
             (record.get("scan") or {}).get("resolution_dpi") or 0
         )
-        self._log(f"{path.name}: {len(raw) / 1e6:.1f} MB of raw bytes "
-                  f"-> {image.shape}")
+        self._log(f"{path.name}: "
+                  + (f"{len(raw) / 1e6:.1f} MB of raw bytes" if raw is not None
+                     else "no raw bytes, its stored scan.tif")
+                  + f" -> {image.shape}")
         return image, {
             "reference": reference, "ccd_mask": mask,
             "raw": raw, "raw_layout": layout,
@@ -910,28 +1034,91 @@ class DemoScanner:
         return self._strips[film]
 
     def _next_strip(self, film: str) -> list[Path]:
-        """Put another strip in the transport: other pictures, in another order.
+        """Put another strip in the transport: other photographs, in another order.
 
         Stefan: the first roll is the one it always was, and a second roll in
-        the same session reads other pictures. So a new strip takes pictures
-        no strip has shown yet first, then fills up from the ones already
-        seen, and shuffles the lot -- a library with fewer pictures than a
-        strip has frames repeats some, but never in the same places.
+        the same session reads other pictures. So a new strip is laid from
+        every library the demo was given, one entry per *photograph* -- the
+        same frame scanned six times is one picture, not six -- taking the
+        photographs no strip has shown yet first, then the ones already seen,
+        shuffled. Only when the libraries run out of new ones does a strip
+        repeat any, and never in the same places.
         """
         self._strip_for(film)                   # the first strip, if not yet laid
-        pool = self._pool_for(film)
-        shown = self._shown.setdefault(film, set())
-        fresh = [e for e in pool if e not in shown]
-        seen = [e for e in pool if e in shown]
+        pictures = self._pictures_for(film)
+        shown_entries = self._shown.setdefault(film, set())
+        shown = {group for group, entries in pictures.items()
+                 if shown_entries & set(entries)}
+        fresh = [g for g in pictures if g not in shown]
+        seen = [g for g in pictures if g in shown]
         self._rng.shuffle(fresh)
         self._rng.shuffle(seen)
-        strip = (fresh + seen)[: self.LAST_POSITION + 1]
-        self._rng.shuffle(strip)
+        chosen = (fresh + seen)[: self.LAST_POSITION + 1]
+        self._rng.shuffle(chosen)
+        strip = [self._rng.choice(pictures[g]) for g in chosen]
+        if not strip:                           # nothing readable anywhere
+            strip = list(self._pool_for(film))
         self._strips[film] = strip
-        shown.update(strip)
+        shown_entries.update(strip)
         self._log(f"a new strip in the transport: {len(strip)} pictures, "
-                  f"{min(len(fresh), len(strip))} not shown before")
+                  f"{min(len(fresh), len(strip))} not shown before, from "
+                  f"{len(pictures)} photographs in {len(self.libraries)} "
+                  f"librar{'y' if len(self.libraries) == 1 else 'ies'}")
         return strip
+
+    def _sign_pictures(self) -> None:
+        """Every entry's picture signature, from the cache where it has one."""
+        known: dict[str, np.ndarray] = {}
+        if self.cache is not None and self.cache.exists():
+            try:
+                with np.load(self.cache) as data:
+                    known = dict(zip(data["paths"].tolist(), data["signatures"]))
+            except (OSError, ValueError, KeyError):
+                known = {}
+        entries = sorted({p.parent for lib in self.libraries
+                          for p in lib.glob("*/scan.json")})
+        added = False
+        for entry in entries:
+            key = entry.as_posix()
+            signature = known.get(key)
+            if signature is None:
+                signature = picture_signature(entry)
+                if signature is None:
+                    continue
+                known[key], added = signature, True
+            self._signatures[entry] = signature
+        if added and self.cache is not None and known:
+            try:
+                self.cache.parent.mkdir(parents=True, exist_ok=True)
+                np.savez(self.cache, paths=np.array(list(known)),
+                         signatures=np.stack(list(known.values())))
+            except OSError as exc:
+                self._log(f"could not keep the picture signatures: {exc}")
+
+    def _pictures_for(self, film: str) -> dict[int, list[Path]]:
+        """This film's photographs across the libraries: group -> its entries.
+
+        Entries of the right film where there are two or more, as for the first
+        strip; each photograph lists every entry that shows it, and a strip
+        takes one of them.
+        """
+        if self._signing is not None:
+            self._signing.join()
+        entries = sorted(self._signatures)
+        films = {}
+        for entry in entries:
+            try:
+                record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+                films[entry] = (record.get("scan") or {}).get("film")
+            except (OSError, ValueError):
+                continue
+        matching = [e for e in entries if films.get(e) == film]
+        chosen = matching if len(matching) >= 2 else [e for e in entries if e in films]
+        labels = group_pictures([self._signatures[e] for e in chosen])
+        pictures: dict[int, list[Path]] = {}
+        for entry, label in zip(chosen, labels):
+            pictures.setdefault(label, []).append(entry)
+        return pictures
 
     def _pool_for(self, film: str) -> list[Path]:
         """Every entry a strip of this film can be laid from, in library order.
