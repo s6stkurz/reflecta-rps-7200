@@ -1,0 +1,575 @@
+{
+ "type": "result",
+ "key": "v2:a19e8d8b7a5056d412f7b2ffb921515973bbc5089b99ef5885200249c9c9636e",
+ "agentId": "a812991cb374512b7",
+ "result": {
+  "area_summary": "Output area: rps7200/tiff.py (hand-written TIFF reader/writer plus an optional tifffile path), export.py (delivered TIFF/JPEG plus a DNG companion for infrared), dng.py (4-sample LinearRaw writer), preview.py (display stretch, orientation, histogram and clipping), mono.py (single-plane delivery), bracket.py (inverse-variance bracket merge), settings.py (GUI JSON settings), console.py (UTF-8 stdout) and __init__.py. I also followed their callers: session.FrameWriter, tools/gui.py Save As / Save all / histogram, tools/scan.py, tools/make_comparison.py, and library.save / corrected / migrate_direction.\n\nThe pixel codecs hold up. Reads and writes are lossless on both TIFF paths, byte order is handled, predictor-2 reads wrap correctly, and JPEG is a plain >>8 shift.\n\nThe serious problems are in how these writers are used:\n1. A GUI single scan files its shading-corrected pixels in the library labelled as raw. Save As and Save all then correct them a second time.\n2. FrameWriter writes the delivered files before the library entry. Any delivery failure (full or unplugged output drive, a bad name, a bad rotation) therefore drops the frame's raw bytes for good.\n3. The bracket merge judges saturation on shading-corrected values. With --ir it also mixes in an RGBI pass whose blue is about 5x different from the RGB passes.\n4. The GUI compresses and gzips every entry while the scanner is open and idle. That contradicts CLAUDE.md's hardware rule.\n\nSecondary: the clipping readout is measured on corrected pixels. Save As writes no dpi. tiff.write and dng.write are not atomic and are used to rewrite prescan.tif in place, a file that has no checksum and no raw backup. The JPEG-to-TIFF fallback and the DNG companion overwrite existing files silently. A corrupt settings file is dropped and overwritten silently. make_comparison does not run the production correction. Several docstring claims are stale.",
+  "findings": [
+   {
+    "id": "OUT-01",
+    "title": "GUI single scans file shading-corrected pixels as raw; Save As/Save all then double-correct them",
+    "severity": "critical",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1443-1458",
+     "rps7200/session.py:1086-1101",
+     "rps7200/direct.py:2708",
+     "rps7200/direct.py:2733",
+     "rps7200/library.py:373-391",
+     "tools/gui.py:3864",
+     "tools/gui.py:4110"
+    ],
+    "evidence": "session._scan: `image, meta = self._scanner.scan(..., shading=job.shading, ..., keep_raw=True)` then session.py:1456 `self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + (\"gui\",), mono=wants_mono(job.mono, job.film), mono_channel=job.mono_channel)` -- no raw_image. DirectScanner.scan returns the corrected array (direct.py:2708 `raw_pixels = image`, 2733 `image, shading_report = apply_shading(image, self._shading, ccd_mask)`, 2830 `return image, meta`). FrameWriter: `entry = library.save(job[\"image\"] if raw_image is None else raw_image, job[\"meta\"], ..., **job[\"capture\"])` with no `corrections=`. library.corrected: `if \"shading\" in applied: ... return image` else `image, report = apply_shading(image, record[\"reference\"], record[\"ccd_mask\"])`.",
+    "description": "Unlike _prescan (session.py:1415) and the roll path (raw_image=rf.raw_image), the GUI's single Scan job never passes the pass's last_pixels_raw. FrameWriter falls back to job[\"image\"], which is the corrected picture, and files it with corrections_applied: []. The capture still carries the pass's raw bytes, so the entry's scan.tif and raw.bin.gz disagree. library.corrected() believes the pixels are raw and divides by the shading reference a second time. That feeds Save As, Save all and the full-resolution 1:1 view. The shape-mismatch fallback at session.py:2115-2120 knowingly does the same thing ('filing the corrected pixels instead') without labelling it.",
+    "failure_scenario": "The operator calibrates and presses Scan in the GUI at 1800 dpi. The output-folder TIFF (FrameWriter) is corrected once. The library scan.tif is corrected but recorded as raw. Save As on that pass writes a double-corrected file: edge columns get gain^2, and more highlights clip. It no longer matches the output-folder copy of the same scan. `tools/library.py reconstruct` reports a changed decode on every GUI scan, and `migrate-raw` lists them as mislabelled. tests/test_session.py never checks that a Scan job's entry equals last_pixels_raw.",
+    "recommendation": "In _scan, read `raw = getattr(self._scanner, 'last_pixels_raw', None)` right after scan() and pass `raw_image=raw` to _file, as _prescan does. When FrameWriter has to file job[\"image\"] and meta[\"shading\"] is set, pass `corrections=[\"shading\"]` to library.save; the same applies to the shape-mismatch fallback. Add a test that a GUI Scan entry's scan.tif equals the scanner's last_pixels_raw. Repair existing entries with `migrate-raw --write`.",
+    "doc_reference": "CLAUDE.md:108-128 ('The library holds raw pixels ... library.save takes raw pixels and corrections= is how a caller admits it is handing over something else'); session.py:1060-1066 ('the library entry below carries neither'); preview.py:3-5 ('The scans this driver files are raw negatives and stay that way')"
+   },
+   {
+    "id": "OUT-02",
+    "title": "FrameWriter writes delivered files before the library entry, so any delivery failure loses the raw bytes",
+    "severity": "critical",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1059-1101",
+     "rps7200/session.py:1045-1056",
+     "rps7200/export.py:130-139",
+     "rps7200/export.py:181-193",
+     "tools/gui.py:2307-2313",
+     "tests/test_roll_writer.py:67-83"
+    ],
+    "evidence": "FrameWriter._write: `turned = preview.orient(...)`; `delivered = (to_monochrome(...) if job.get(\"mono\") else turned)`; `for path in job.get(\"paths\") or (): Path(path).parent.mkdir(parents=True, exist_ok=True); note = export.write(str(path), delivered, ...)` and only afterwards `if job[\"library\"]: ... entry = library.save(...)`. _run: `except Exception as exc: self.errors.append(f\"picture {job['number']}: {exc}\")`.",
+    "description": "The library entry is the only irreplaceable record: raw bytes are held only in memory in job[\"capture\"][\"raw\"]. It is written last. Any exception raised by orient, to_monochrome, mkdir or export.write aborts _write before library.save runs. The exception is collected and the next frame proceeds, so a persistent delivery fault costs the library entry of every following frame. export.py's own docstring promises the opposite ordering.",
+    "failure_scenario": "The output folder is on a USB stick or network share. Mid-roll it fills up or disconnects. From then on every frame's export.write raises OSError, and library.save never runs, so the raw bytes and raw pixels of those frames are discarded while the roll keeps scanning. Other triggers: a mono_channel the scan lacks (to_monochrome ValueError), or a hand-edited sheet rotation of 45 in gui-settings.json. _clean_sheet_state casts it with int() and never checks for quarter turns, so preview.rotate raises. The test for an unwritable frame (test_roll_writer.py:67) runs with library=None, so it never sees the lost entry.",
+    "recommendation": "File the library entry first, then deliver. Wrap each delivered path in its own try so one bad destination costs one file, and report delivery failures as notes or errors without skipping the filing.",
+    "doc_reference": "export.py:133-138 ('the picture is on disk by now and the library entry is still to come, so a full disk or a read-only folder must cost the infrared plane and not the scan'); FrameWriter docstring session.py:1026-1028 ('a frame that cannot be filed should cost that frame')"
+   },
+   {
+    "id": "OUT-03",
+    "title": "Debug flush deletes the spooled raw data even when library.save (tiff.write) failed",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:694-760",
+     "rps7200/library.py:179",
+     "rps7200/tiff.py:164-168"
+    ],
+    "evidence": "`except Exception as exc: self._log(f\"debug: could not file scan {n} ({exc})\")` followed by `finally: image = None; for key in (\"image_path\", \"raw_path\"): ... Path(path).unlink(missing_ok=True)`.",
+    "description": "Debug filing (RPS7200_DEBUG=1, which CLAUDE.md requires for Claude's scripts) spools each pass to a temp dir and files it after close(). If library.save raises, for example because tiff.write fails on a full disk, a permission error or a tifffile incompatibility, the finally block still unlinks the spooled image and raw bytes. A failure in the output writer is thereby turned into permanent data loss.",
+    "failure_scenario": "A 7200 dpi roll under RPS7200_DEBUG=1 fills the library disk during the flush. tiff.write raises on scan.tif, and the finally clause deletes the 1.1 GB spool of that frame. The same happens for every remaining frame, each logged as 'could not file scan'.",
+    "recommendation": "Unlink the spool only after a successful save. On failure, keep it and log its path so it can be filed later. Consider a `library.py file-spool` recovery command."
+   },
+   {
+    "id": "OUT-04",
+    "title": "Bracket merge judges saturation on shading-corrected values",
+    "severity": "high",
+    "category": "bug",
+    "locations": [
+     "rps7200/bracket.py:37-46",
+     "rps7200/bracket.py:125-134",
+     "rps7200/bracket.py:214-217",
+     "rps7200/bracket.py:315-326",
+     "rps7200/shading.py:260-280",
+     "rps7200/direct.py:2392-2401",
+     "tools/scan.py:205-221"
+    ],
+    "evidence": "`CLIP_START = 0.80 * FULL_SCALE`; `clip_w = 1.0 - _smoothstep((raw - CLIP_START) / max(CLIP_END - CLIP_START, 1e-12))`; solve_relation `usable = (a > SNR_FLOOR) & (a < CLIP_START) & (b > SNR_FLOOR) & (b < CLIP_START)`; the frames come from `self.scan(..., shading=shading)`, i.e. `vals = (image[...] - dark) * gain` with `gain = (mean - dark_mean) / (light - dark)` and then `np.clip(vals, 0, maxval)`.",
+    "description": "The sensor rails at raw 65535. After per-column shading a railed sample becomes 65535*gain_j. The raw lamp falloff is about 39%, and columns brighter than the mean have gain < 1. There a railed sample lands at roughly 0.8-0.9 of full scale and keeps confidence of about 0.5-1.0 instead of 0, and solve_relation fits it as if it were linear. In edge columns with gain > 1, unsaturated samples are zero-weighted, and the correction's own clamp is taken for sensor saturation. The later gates (luminance z, misalignment) average the three channels, so single-channel (blue) railing is diluted.",
+    "failure_scenario": "`tools/scan.py --bracket 3 --stops 2` on a thin colour negative. The longest pass rails in the thin areas. In the centre columns those railed samples carry about r^2 times the reference's weight and pull the merged highlights down by a column-dependent amount, giving banded, biased highlights. MergeStats still reports a normal-looking merge. The plan's requirement that a fully clipped pass be 'ignored, not averaged in' holds only on the synthetic, unshaded test data.",
+    "recommendation": "Compute confidence and the fit mask from each pass's raw pixels (last_pixels_raw, captured in on_pass, or the library scan.tif) and apply them to the corrected values. Alternatively, carry a saturation mask (raw >= rail) out of scan() for each pass.",
+    "doc_reference": "docs/exposure-negative-plan.md:53-55 ('The correction's per-column gain exceeds 1 wherever the lamp falls off, so it pushes near-rail values around'); docs/multi-exposure-plan.md:153 ('c_i = confidence(raw_i)'); docs/multi-exposure-plan.md:367 ('one pass fully clipped (ignored, not averaged in)')"
+   },
+   {
+    "id": "OUT-05",
+    "title": "--bracket with --ir merges one RGBI pass (blue about 5x brighter) using a ratio fitted on green only",
+    "severity": "high",
+    "category": "bug",
+    "locations": [
+     "rps7200/direct.py:2373-2401",
+     "rps7200/direct.py:2518-2522",
+     "rps7200/bracket.py:291-301",
+     "rps7200/bracket.py:315-326",
+     "tools/scan.py:252-258"
+    ],
+    "evidence": "scan_bracket: `scales = self.auto_exposure(film=film, infrared=infrared)`; `pass_scale = [s * k for s in scales[:3]]`; `infrared=infrared and last`. merge_bracket: `slope, intercept = solve_relation(ref[..., 1], np.asarray(frame)[..., 1])` and then `scaled.append(raw / r)` for all three channels. direct.py:2518-2520: 'Blue ... coming back about 5x brighter at the same exposure ... handled by metering blue lower when an RGBI scan follows'.",
+    "description": "Metering for an RGBI scan lowers blue by blue_rgbi_headroom (5.2 on negative, 11 on other films), and those scales are reused on every RGB pass of the bracket. Only the last pass is RGBI, and in it blue returns about 5x brighter at the same exposure. merge_bracket solves one slope and intercept on green and applies them to R, G and B. The RGBI pass's blue therefore lands about 5x too high on the reference scale, or is railed without metering. Meanwhile every RGB pass's blue is roughly 2.4 stops underexposed. Separately, the fitted intercept (the 425*(r-1) over-subtraction in the docstring) comes from dark levels that differ per channel, yet green's intercept is used for all three.",
+    "failure_scenario": "`tools/scan.py --bracket 3 --ir --auto-exposure --film negative`. The merged blue is wrong wherever the RGBI pass carries weight, and it is the highest-weight pass. Where the luminance gate does fire, the pixel falls back to the darkest pass, whose blue was deliberately underexposed. The delivered file shows a blue cast or blotches while `bracket:` prints a normal summary.",
+    "recommendation": "Refuse --bracket together with --ir until Phase 2 is done. Otherwise, fit slope and intercept per channel, take only the IR plane from the RGBI pass, and meter the RGB passes without the RGBI blue headroom.",
+    "doc_reference": "docs/multi-exposure-plan.md:348 ('Phase 2 — infrared, only after Phase 1 passes'); direct.py:2347-2351"
+   },
+   {
+    "id": "OUT-06",
+    "title": "GUI compresses TIFFs and gzips raw bytes while the scanner is open and idle",
+    "severity": "high",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/session.py:1311",
+     "rps7200/session.py:1013-1020",
+     "rps7200/session.py:1059-1101",
+     "rps7200/session.py:1329-1333",
+     "rps7200/tiff.py:149-153",
+     "rps7200/library.py:186-205",
+     "tools/gui.py:3820-3839"
+    ],
+    "evidence": "`self._writer = FrameWriter(on_done=self._filed)` is created after `self._scanner.open()` and lives for the whole session. _scan and _prescan submit to it immediately, and _write runs export.write (tifffile zlib + predictor) and library.save (`gzip.open(..., compresslevel=6)`) right away. The comment at session.py:1329 says 'Order matters: the device closes first, and only then does the writer get to spend time gzipping', but that ordering only covers what is still queued at shutdown.",
+    "description": "On a roll, FrameWriter's work overlaps the next frame's scan. For single GUI scans and prescans there is no next scan: the device stays open and idle while tens to hundreds of MB are deflated and gzipped. That is the state CLAUDE.md names as having preceded a wedge. Save all also re-corrects and compresses every pass with the session open.",
+    "failure_scenario": "The operator scans one 3600 dpi RGBI frame in the window and then studies it. For tens of seconds the writer thread compresses a ~140 MB TIFF and gzips the raw bytes while the scanner sits open and idle.",
+    "recommendation": "For non-roll jobs, spool the raw data uncompressed and compress after close, as debug filing does. Or measure the idle case with tools/filing_load_test.py before trusting it. At minimum, correct the FrameWriter docstring and CLAUDE.md.",
+    "doc_reference": "CLAUDE.md:160-163 ('A single scan compresses nothing while the device is open ... gzipped after close()'); CLAUDE.md:240-241 ('Do not hold the session open through heavy local work'); session.py:1017-1020 ('overlaps the next frame's scan, so the device is busy rather than idle throughout')"
+   },
+   {
+    "id": "OUT-07",
+    "title": "Clipping and histogram readout counts corrected pixels, so it does not show sensor saturation",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "rps7200/preview.py:349-371",
+     "tools/gui.py:3949-3976",
+     "tools/gui.py:4110",
+     "rps7200/shading.py:273-280"
+    ],
+    "evidence": "`clipping`: `[(planes[..., c] == 0).sum(), (planes[..., c] == top).sum(), (planes[..., c] >= near).sum()]`. The GUI calls `pixels = rgb_only(pixels)`; `clipped = preview.clipping(pixels)` on result.image or on `library.corrected(entry)`.",
+    "description": "After shading, a value of 65535 means the correction clamped a column with gain > 1, not that the sensor saturated. A raw-railed sample in a gain < 1 column reads about 0.8-0.9 of full scale and is not even counted as 'near'. The shading report's `clipped` count is also taken after correction. No readout reports raw rail counts.",
+    "failure_scenario": "With a fixed exposure set too high, blue rails across the centre of the frame. The histogram panel shows well under 1% at or near full scale, and the operator keeps the setting and loses highlight detail on every frame of the roll.",
+    "recommendation": "Count the rail on raw pixels (last_pixels_raw or the library scan.tif) at scan time, record it in meta, and show it in the panel.",
+    "doc_reference": "preview.py:352-358 ('*At* full scale is information already destroyed')"
+   },
+   {
+    "id": "OUT-08",
+    "title": "Save As / Save all write no dpi, and the two TIFF writers disagree on the default resolution",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/gui.py:3868",
+     "tools/gui.py:3879-3882",
+     "rps7200/tiff.py:146-148",
+     "rps7200/tiff.py:241-245",
+     "rps7200/dng.py:216-218",
+     "rps7200/library.py:181"
+    ],
+    "evidence": "`note = export.write(path, full, quality=quality)` passes no resolution. The built-in writer does `res = int(resolution) if resolution else 72`. The tifffile path only sets `kwargs[\"resolution\"]` and `\"resolutionunit\"` `if resolution:`.",
+    "description": "Every Save As and Save all file, and its DNG companion, is written without the scan's dpi. The built-in writer then stamps 72 dpi/inch; the tifffile path leaves tifffile's own default. The same pass written by FrameWriter gets resolution=job[\"dpi\"], so two deliveries of one pass carry different metadata. Library prescan.tif is written the same way.",
+    "failure_scenario": "Save As on a 3600 dpi frame produces a TIFF that says 72 dpi, or nothing, depending on whether tifffile happens to be installed. A consumer that sizes by dpi gets a frame 50x too large, and the TIFF's metadata differs between machines.",
+    "recommendation": "Pass `resolution=(result.meta or {}).get('resolution_dpi')` in _deliver_one, and pass the prescan dpi in library.save. Make both writers emit identical resolution tags when none is given.",
+    "doc_reference": "tiff.py:15-18 ('*Equivalent* is the load-bearing word ... the two must not disagree'); gui.py:3848-3853 ('Save as ... and Save all ... cannot disagree')"
+   },
+   {
+    "id": "OUT-09",
+    "title": "Non-atomic tiff.write is used to rewrite library files in place; prescan.tif has no checksum",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/tiff.py:164",
+     "rps7200/tiff.py:167-168",
+     "rps7200/dng.py:145-146",
+     "rps7200/library.py:620-623",
+     "rps7200/library.py:572-574",
+     "tools/library.py:196-198",
+     "rps7200/library.py:297-301",
+     "rps7200/library.py:776-817"
+    ],
+    "evidence": "tiff.write: `tifffile.imwrite(path, ...)` or `with open(path, \"wb\") as fh: _write_builtin(...)`, writing straight to the final name. migrate_direction: `if write: tiff.write(str(path / \"prescan.tif\"), np.ascontiguousarray(prescan[::-1]))`, with scan.json written afterwards. The prescan record is `{\"file\": \"prescan.tif\", \"read_direction\": ..., \"carriage_state\": ...}` with no sha256, and verify() never inspects prescan.tif.",
+    "description": "Opening for write truncates the destination before the new data exists. scan.tif rewrites can be regenerated from raw.bin.gz. prescan.tif, however, has no raw bytes of its own (library.save docstring), so an interrupted rewrite destroys the only copy. Because the record carries no checksum, `verify` cannot detect the damage. An interruption between the TIFF write and the scan.json write also leaves pixels and record out of step.",
+    "failure_scenario": "`tools/library.py migrate-direction --write` over a large library is stopped with Ctrl-C, hits a full disk, or crashes while turning a prescan. That entry's prescan.tif is left truncated or empty, and `verify` still reports the entry as fine.",
+    "recommendation": "In tiff.write and dng.write, write to a temporary sibling and os.replace it into place, as settings.save already does. Record and verify sha256 for prescan.tif, shading.npz and ccd_mask.bin."
+   },
+   {
+    "id": "OUT-10",
+    "title": "make_comparison.py does not run the production correction, although it is the by-eye acceptance test",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "tools/make_comparison.py:92-122",
+     "rps7200/direct.py:30-32"
+    ],
+    "evidence": "`raw = tiff.read(scan_path)` (any TIFF; default 'scans/negatives/state_1800dpi.tif'); `corrected = destripe(raw, defects, margin=12, dilate=5)`; then `tiff.write(\"2_corrected.tif\", corrected, ...)`. There is no apply_shading or library.corrected, and destripe is imported by direct.py but never called in the scan path.",
+    "description": "The three comparison files are made by column destriping of whatever TIFF is given. The shading correction the product actually applies is not run, the file the product delivers is not measured, and '1_nothing_done.tif' is only raw if the input happens to be raw. A delivered TIFF is already shading-corrected.",
+    "failure_scenario": "After a change to apply_shading, the files are regenerated as CLAUDE.md asks, from a delivered TIFF. They show neither the change nor what the software ships, and Stefan's authoritative by-eye verdict is given on a different pipeline.",
+    "recommendation": "Build the files from a library entry: raw = its scan.tif; corrected = library.corrected(entry), written through export.write so the delivered write path is included. Keep destripe as an optional, clearly labelled extra stage.",
+    "doc_reference": "CLAUDE.md:178-185 ('Regenerate the three comparison files after any significant change to the scan or correction path'); docs/vignette-plan.md:208-210 ('2_corrected.tif stage: shading applied, defect interpolation applied'); make_comparison.py:4 ('the scan as it came off the scanner')"
+   },
+   {
+    "id": "OUT-11",
+    "title": "A corrupt settings file is discarded silently and overwritten; save failures are silent",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/settings.py:58-79",
+     "rps7200/settings.py:82-97",
+     "rps7200/settings.py:22-24",
+     "tools/gui.py:377",
+     "tools/gui.py:666-697",
+     "tools/gui.py:3039-3049"
+    ],
+    "evidence": "load: `except (OSError, json.JSONDecodeError, ValueError): return blank`. save: `temporary = target.with_name(target.name + \".part\")` ... `except (OSError, TypeError, ValueError): return None`. gui._remember calls `settings.save({...}, self._settings_path)` and ignores the return value; it runs on close, on preset and shortcut changes, on roll open, and on sheet state changes.",
+    "description": "The file holds presets, shortcut overrides, per-roll 'rolls' history and the contact sheet's uncommissioned decisions (ticks, offsets, rotations). A single hand-edit error makes load return defaults with no message, and the first _remember then replaces the file. A non-serialisable value makes save return None, so nothing is written and nothing is said: the 'could not save' message only fires on exceptions. Two windows share one fixed '.part' name. DEFAULT_PATH is relative to the working directory, not to the checkout or the library.",
+    "failure_scenario": "Stefan hand-edits gui-settings.json and leaves a trailing comma. The next launch opens on defaults without comment, and on quit every preset, shortcut and unsaved contact-sheet decision is gone for good.",
+    "recommendation": "On a parse failure, rename the file to *.corrupt-<timestamp> and tell the operator. Have _remember report a None return. Use a unique temp name. Resolve the default path relative to the library root.",
+    "doc_reference": "settings.py:3-6 ('Losing this file costs a few seconds of resetting controls'); settings.py:12-13 ('meant to be readable and editable by hand'); settings.py:22-23 ('Beside the library ... belongs to this checkout')"
+   },
+   {
+    "id": "OUT-12",
+    "title": "tools/scan.py --bracket silently ignores a single-value --exposure-scale",
+    "severity": "medium",
+    "category": "user-error",
+    "locations": [
+     "tools/scan.py:143-146",
+     "tools/scan.py:205-218",
+     "rps7200/direct.py:2373-2378"
+    ],
+    "evidence": "`exposure_scale = parts[0] if len(parts) == 1 else parts`; `auto_exposure=args.auto_exposure and not args.exposure_scale`; `exposure_scale=(list(exposure_scale) if isinstance(exposure_scale, list) else None)`. scan_bracket then falls to `else: scales = [1.0, 1.0, 1.0]`.",
+    "description": "A single float is dropped and metering is switched off, so the bracket runs at the device's base exposure. There is no warning, although the help text promises to 'hold exposure at this multiple'.",
+    "failure_scenario": "`--bracket 3 --exposure-scale 1.5` scans a ladder around 1.0x. The passes are not the requested measurement, and only the per-pass exposure_scale in meta reveals it.",
+    "recommendation": "Pass `[exposure_scale] * 3` when a float was given, or refuse the combination."
+   },
+   {
+    "id": "OUT-13",
+    "title": "Bracket membership, merge parameters and metering are not recorded in the library, so a bracket cannot be re-merged offline",
+    "severity": "medium",
+    "category": "library-completeness",
+    "locations": [
+     "rps7200/direct.py:2402-2405",
+     "rps7200/library.py:237-261",
+     "tools/scan.py:238-246",
+     "tools/scan.py:261-265",
+     "tools/scan.py:280-281",
+     "rps7200/direct.py:2805-2806"
+    ],
+    "evidence": "scan_bracket sets `meta[\"bracket_index\"]`, `[\"bracket_ratio\"]`, `[\"bracket_passes\"]`, `[\"bracket_stops\"]`, but the library `scan` whitelist ('resolution_dpi', 'frame', ... 'filter_offsets') omits all four. Entries are saved with `tags=args.tags`. The merge record `meta[\"bracket\"] = {passes, ratios, stops, stats}` exists only in `out.with_suffix(\".json\")`. Each pass runs scan() with auto_exposure=False, so `if auto_exposure and self.last_metering` never attaches the bracket's metering.",
+    "description": "The passes are filed, but nothing says which entries form one bracket, their order, the commanded ratios or the metering behind them. The merged picture and its parameters live only in the delivered sidecar, which the next run with the default --out overwrites.",
+    "failure_scenario": "A year later someone wants to re-merge a bracket with a fixed merge_bracket. Two brackets of the same frame on the same day are indistinguishable except by timestamps, and the metering evidence is gone.",
+    "recommendation": "Add the bracket_* fields and a bracket id to the record whitelist, tag the entries, attach last_metering to every pass, and record the merge parameters.",
+    "doc_reference": "docs/multi-exposure-plan.md:345-346 ('Every pass files in the library ... so a bracket can be re-merged offline later without rescanning')"
+   },
+   {
+    "id": "OUT-14",
+    "title": "The demo files corrected prescans and roll frames as raw, a branch the real scanner does not take",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:176",
+     "rps7200/demo.py:455-477",
+     "rps7200/demo.py:771-779",
+     "rps7200/demo.py:1001-1003",
+     "rps7200/session.py:1415",
+     "rps7200/session.py:1086-1091"
+    ],
+    "evidence": "DemoScanner is not a DirectScanner subclass and never sets last_pixels_raw, so `raw_image = getattr(self._scanner, \"last_pixels_raw\", None)` gives None. The demo builds `RollFrame(index=..., image=image, meta=..., prescan=prescan, ...)` without raw_image or raw_prescan. Its images are corrected: `image, self._shading_report = apply_shading(image, reference, mask)`.",
+    "description": "In the demo every prescan and roll frame reaches FrameWriter's `job[\"image\"] if raw_image is None` fallback. Corrected pixels are filed as raw, next to raw bytes that decode to the uncorrected image. The real path files raw_image, so the demo exercises different filing code, contrary to the rule that the demo only changes the inputs.",
+    "failure_scenario": "`make run-demo` fills demo/library with entries that `reconstruct` calls changed decodes. A regression in the real raw_image filing path cannot show up in the demo.",
+    "recommendation": "Have DemoScanner publish last_pixels_raw (its decode before apply_shading) and fill RollFrame.raw_image and raw_prescan the way DirectScanner does.",
+    "doc_reference": "CLAUDE.md:190-196 ('--demo may change what the software is fed. It may not change what the software does.')"
+   },
+   {
+    "id": "OUT-15",
+    "title": "A roll frame's library prescan.tif is the corrected prescan, unlabelled",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:3493-3497",
+     "rps7200/direct.py:3656-3660",
+     "rps7200/session.py:1880-1890",
+     "rps7200/library.py:180-181",
+     "rps7200/library.py:297-301"
+    ],
+    "evidence": "`prescan_image, _ = self.prescan(...)` (prescan calls `self.scan(..., shading=True)`), `RollFrame(..., prescan_image, marks, raw_image=..., raw_prescan=raw_prescan, ...)`, then `self._file(..., prescan=rf.prescan, ...)` and `tiff.write(str(path / \"prescan.tif\"), prescan)`. The prescan record has no corrections field.",
+    "description": "The frame entry stores the shading-corrected prescan while the rest of the entry is raw, and nothing in the record says so. The raw prescan (rf.raw_prescan) is available but is not what gets stored there.",
+    "failure_scenario": "Later analysis compares scan.tif (raw) with prescan.tif (corrected) as like with like, and migrate_direction judges orientation on mixed data.",
+    "recommendation": "Store rf.raw_prescan, or record prescan.corrections_applied = ['shading']."
+   },
+   {
+    "id": "OUT-16",
+    "title": "JPEG-to-TIFF fallback and the DNG companion overwrite existing files; _unclaimed and Save all's promise do not cover them",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "rps7200/export.py:146-149",
+     "rps7200/export.py:186-190",
+     "rps7200/session.py:2071",
+     "tools/gui.py:3805-3810",
+     "tools/gui.py:3826"
+    ],
+    "evidence": "`path = path.with_suffix(SUFFIXES[\"tiff\"]); tiff.write(str(path), image, resolution=resolution)`; `companion = infrared_path(path)` followed by `dng.write(companion, ...)`; `paths.append(_unclaimed(where / self._out_name(number, meta, roll)))` probes only the .jpg name. Save all tells the operator 'Nothing already there is overwritten'.",
+    "description": "Only the requested name is checked for a clash. The TIFF the export falls back to and the .dng written beside a JPEG replace whatever already sits at those names.",
+    "failure_scenario": "Frames were delivered as TIFF, then the output is switched to JPEG on a machine without Pillow and a frame is rescanned. The .jpg name is free, so the fallback .tif silently replaces the earlier delivery. Likewise, an x.dng kept after x.jpg was deleted is replaced.",
+    "recommendation": "Work out every file a delivery will create (fallback .tif, companion .dng) before choosing names, and apply _unclaimed to all of them."
+   },
+   {
+    "id": "OUT-17",
+    "title": "tools/scan.py checks the output name only after scanning, and the default --out overwrites the previous scan",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/scan.py:40-43",
+     "tools/scan.py:267-281",
+     "rps7200/export.py:66-79",
+     "tools/gui.py:3754-3768"
+    ],
+    "evidence": "`ap.add_argument(\"--out\", default=\"scan.tif\", ...)`; after the scanner closes: `note = export.write(out, delivered, ...)` (format_of raises ValueError on '.png'), then `out.with_suffix(\".json\").write_text(...)`. on_save_as calls _deliver_one without try, and there is no report_callback_exception handler.",
+    "description": "A bad extension is found only after minutes of scanning, and the delivered file is then missing (the library entries are already filed). Re-running with the default --out silently replaces scan.tif and scan.json. In the GUI, typing an unsupported extension in Save As raises inside a Tk callback: a traceback goes to stderr and the window says nothing.",
+    "failure_scenario": "`tools/scan.py --dpi 3600 --ir --out frame.png` spends about 4 minutes and then dies with ValueError. With --no-library, a second default run destroys the first delivered scan.",
+    "recommendation": "Call export.format_of(args.out) straight after argument parsing. Refuse an existing --out, or pick a free name. Catch errors in on_save_as and show them in the window."
+   },
+   {
+    "id": "OUT-18",
+    "title": "_z_medians casts every full frame to float64 before subsampling",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "rps7200/bracket.py:304-307",
+     "rps7200/bracket.py:229-233",
+     "rps7200/bracket.py:73-75"
+    ],
+    "evidence": "`medians = _z_medians([np.asarray(f).astype(np.float64) - o for f, o in zip(frames, offsets)], ratios, alpha, beta)`; _z_medians subsamples only afterwards.",
+    "description": "This allocates one full-size float64 copy per pass, plus temporaries. That defeats the CHUNK_ROWS banding meant to avoid 'several full-frame float32 planes at once'.",
+    "failure_scenario": "A 9-pass 3600 dpi bracket (about 52M samples per pass) needs about 3.8 GB just for this step and can hit MemoryError after roughly 25 minutes of scanning. The passes are already filed, but there is no delivered file.",
+    "recommendation": "Subsample each frame first and then cast and subtract the offset."
+   },
+   {
+    "id": "OUT-19",
+    "title": "The bracket noise model always uses the fallback constants; fit_noise_params is never called",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/bracket.py:12-15",
+     "rps7200/bracket.py:52-56",
+     "tools/scan.py:254"
+    ],
+    "evidence": "The only caller is `merged, stats = merge_bracket([f[..., :3] for f in frames], ratios)`, with no alpha or beta. fit_noise_params is referenced only in tests/test_bracket.py.",
+    "description": "The weights use DEFAULT_ALPHA=1.0 and DEFAULT_BETA=4096, which the module itself calls the no-flats fallback. The chosen alpha and beta are not recorded either.",
+    "failure_scenario": "Merges are weighted with made-up noise constants while the documentation says they are measured, and results cannot be reproduced against a later fitted model.",
+    "recommendation": "Fit from library flats, or pass stored measured constants, and record them in meta[\"bracket\"]. Otherwise, fix the docstring.",
+    "doc_reference": "bracket.py:13-15 ('whose two constants are measured from our own flats by fit_noise_params rather than assumed')"
+   },
+   {
+    "id": "OUT-20",
+    "title": "Merged bracket output is truncated rather than rounded",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "rps7200/bracket.py:372",
+     "rps7200/mono.py:103-106",
+     "rps7200/shading.py:274-276"
+    ],
+    "evidence": "`out[y0:y1] = np.clip(chunk, 0, FULL_SCALE).astype(np.uint16)` truncates, while the rest of the driver uses `np.floor(vals + 0.5)`.",
+    "description": "Every merged sample is biased by -0.5 DN on average, inconsistent with the rounding rule used elsewhere.",
+    "failure_scenario": "A small systematic offset between merged and single-pass deliveries of the same frame.",
+    "recommendation": "Use np.floor(chunk + 0.5) before the cast."
+   },
+   {
+    "id": "OUT-21",
+    "title": "The built-in TIFF/DNG writer copies the whole image into memory, defeating the mmap in debug flush",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/tiff.py:190",
+     "rps7200/tiff.py:273",
+     "rps7200/dng.py:252",
+     "rps7200/direct.py:716-718"
+    ],
+    "evidence": "`data = np.ascontiguousarray(image, dtype=...)`; `fh.write(data.tobytes())`. direct.py:716: 'mmap the image rather than loading it: tiff.write walks it once, so a 570 MB frame need not be resident.'",
+    "description": "tobytes() builds a full in-memory copy (570 MB for a 7200 dpi RGBI frame), so on a machine without tifffile the mmap saves nothing.",
+    "failure_scenario": "Filing a 7200 dpi roll through debug flush without tifffile peaks at the frame's full size in RAM for every frame.",
+    "recommendation": "Use data.tofile(fh), or write strip by strip."
+   },
+   {
+    "id": "OUT-22",
+    "title": "The built-in TIFF writer can place the IFD at an odd offset",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "rps7200/tiff.py:193-194",
+     "rps7200/tiff.py:255-257"
+    ],
+    "evidence": "`ifd_offset = data_offset + data_size`, with data_size = H*W*C*bytes and no padding.",
+    "description": "For uint8 images where H*W*C is odd, such as 3-channel prescans with odd width and height, the IFD and the out-of-line values start on an odd byte. TIFF 6.0 requires a word boundary.",
+    "failure_scenario": "Strict TIFF readers warn about or refuse prescan.tif files and delivered prescans written on a machine without tifffile.",
+    "recommendation": "Pad the pixel data to an even length before the IFD."
+   },
+   {
+    "id": "OUT-23",
+    "title": "The tifffile version floor predates the resolutionunit keyword that tiff.write uses (not verified locally)",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "pyproject.toml:36",
+     "pyproject.toml:59",
+     "rps7200/tiff.py:146-148"
+    ],
+    "evidence": "`tifffile = [\"tifffile>=2021.7.2\"]`; `kwargs[\"resolution\"] = (resolution, resolution); kwargs[\"resolutionunit\"] = \"inch\"`.",
+    "description": "By tifffile's changelog, `resolutionunit` arrived in 2022.7.28; older releases took the unit as a third element of `resolution`. No tifffile is installed here, so this could not be run. The lock file pins 2025+, but a pip install of `rps7200[tifffile]` into an environment with an older tifffile satisfies the declared floor.",
+    "failure_scenario": "With tifffile 2021.7-2022.6, every tiff.write with a resolution raises TypeError. library.save fails for every scan; in debug flush the spool is then deleted (OUT-03), and in FrameWriter the entry is lost.",
+    "recommendation": "Raise the floor to the first version with resolutionunit and test that floor in CI, or fall back to the 3-tuple form on TypeError."
+   },
+   {
+    "id": "OUT-24",
+    "title": "Stale '~212 s floor' cost claims for infrared",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/export.py:21-23",
+     "rps7200/dng.py:3-4",
+     "tools/scan.py:120-128"
+    ],
+    "evidence": "export.py: 'the fourth plane is the reason an infrared pass costs its ~212 s floor'; tools/scan.py ap.error: 'the pass would spend its ~212 s floor a frame'. Yet `--fast-ir` defaults to True in tools/scan.py (`default=True`).",
+    "description": "Infrared is tied to the resolution by default, costing about 25 s at 300 dpi and 110 s at 1800. The 212 s figure applies only to --no-fast-ir.",
+    "failure_scenario": "Operators and reviewers overestimate the cost of infrared and make decisions on a wrong number.",
+    "recommendation": "Update the wording to describe tied versus untied cost.",
+    "doc_reference": "CLAUDE.md:220-227 (IR tied to resolution is the default; untied ~220 s)"
+   },
+   {
+    "id": "OUT-25",
+    "title": "The DNG companion lacks ColorMatrix1, which the DNG spec requires for non-monochrome files",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/dng.py:19-21",
+     "rps7200/dng.py:33-37",
+     "rps7200/dng.py:199-230"
+    ],
+    "evidence": "The tag list covers NewSubfileType through UniqueCameraModel, with PhotometricInterpretation 34892 (LinearRaw), 4 samples, ExtraSamples [0,0,0], and no ColorMatrix1.",
+    "description": "The module argues that 'a file that only one reader in the world accepts should not be wearing the .dng extension', yet it emits a non-monochrome LinearRaw file without the required colour matrix. In practice only NegPy's peek path is known to read it.",
+    "failure_scenario": "The operator opens the delivered .dng in Lightroom or another DNG SDK-based tool and it is rejected or misread, so the infrared plane is effectively reachable only through NegPy.",
+    "recommendation": "Either add a neutral ColorMatrix1 and AsShotNeutral, or document that this file is a NegPy-only container."
+   },
+   {
+    "id": "OUT-26",
+    "title": "Mono delivery drops the infrared plane without a note",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "rps7200/session.py:1072-1073",
+     "rps7200/export.py:144-145",
+     "tools/scan.py:272-277",
+     "rps7200/mono.py:94-99"
+    ],
+    "evidence": "`delivered = (to_monochrome(turned, ...) if job.get(\"mono\") else turned)` returns (H, W); `_write_infrared`: `if image.ndim != 3 or image.shape[2] <= JPEG_MAX_CHANNELS: return \"\"`.",
+    "description": "An RGBI scan delivered as mono (for example chromogenic B&W scanned as 'negative' with mono ticked) loses its IR plane from the delivered file, and no note says so. The library keeps it.",
+    "failure_scenario": "The operator expects to run dust removal on a C-41 B&W frame, and the delivered TIFF has no IR.",
+    "recommendation": "When mono is chosen and IR is present, write the IR as a sidecar, or at least return a note."
+   },
+   {
+    "id": "OUT-27",
+    "title": "Delivery parameters are not recorded in the library entry",
+    "severity": "info",
+    "category": "library-completeness",
+    "locations": [
+     "rps7200/session.py:2111",
+     "rps7200/library.py:237-261"
+    ],
+    "evidence": "`meta = dict(meta, rotation=turn, flipped=flip)`. The record whitelist has rotation, flipped and reversal, but no mono, mono_channel, format, JPEG quality or delivered paths.",
+    "description": "From the library you can recover the raw data but not what was actually delivered, or where.",
+    "failure_scenario": "You cannot trace a delivered JPEG back to its entry, or regenerate it identically.",
+    "recommendation": "Record the delivery (format, quality, mono choice, paths) in the entry, or in a small delivered.json beside it."
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Delivered picture (TIFF)",
+    "path_pattern": "<out_dir>/<roll>_frameNN_<dpi>dpi[_ir].tif, <out_dir>/<PRESCAN_SUBDIR>/..., rolls/<roll>/frameNN.tif, rolls/<roll>/prescanNN[-before].tif, Save As/Save all destinations, tools/scan.py --out (default ./scan.tif)",
+    "format": "TIFF, classic, little-endian, chunky. tifffile present: deflate (8) + horizontal predictor. tifffile absent: uncompressed. uint16 (scans) or uint8 (prescans). (H,W) mono, (H,W,3) RGB, or (H,W,4) RGB plus 1 ExtraSample 'unspecified' for IR. Software='rps7200'; X/YResolution only when passed (built-in writer defaults to 72 dpi)",
+    "raw_or_corrected": "corrected (shading), oriented (rotation/flip/reversal), optionally mono",
+    "written_by": "export.write -> tiff.write (session.FrameWriter._write session.py:1079; gui._deliver_one gui.py:3868/3879; tools/scan.py:278; scan_roll dry-run prescans via tiff.write directly)",
+    "read_by": "NegPy; tiff.read in tools/scan_roll.py:243 (read_survey), demo, research tools",
+    "exact": "Lossless for the corrected array. Not atomic (truncate-then-write). Overwrites the fallback .tif and roll-dir files without checks. dpi missing on Save As / Save all"
+   },
+   {
+    "what": "Delivered picture (JPEG)",
+    "path_pattern": "same names with .jpg (or .jpeg)",
+    "format": "JPEG via Pillow, 8-bit from a plain >>8 shift, quality default 95 (GUI clamps to 60-100; CLI unclamped), 4:4:4, optimize; first 3 channels only",
+    "raw_or_corrected": "corrected, not inverted or stretched",
+    "written_by": "export._write_jpeg",
+    "read_by": "NegPy / viewers",
+    "exact": "Lossy (8-bit, JPEG). Without Pillow it falls back to a same-stem .tif (overwrites)"
+   },
+   {
+    "what": "Infrared companion DNG",
+    "path_pattern": "<stem>.dng beside a JPEG delivery of a 4-channel pass",
+    "format": "Uncompressed LinearRaw (34892) TIFF/DNG 1.4, 4 samples R,G,B,IR, uint16/uint8, ExtraSamples [0,0,0], Make/Model/UniqueCameraModel, Orientation 1, resolution or 72; no ColorMatrix1",
+    "raw_or_corrected": "corrected, oriented",
+    "written_by": "export._write_infrared -> dng.write (never raises; failure becomes a note)",
+    "read_by": "NegPy RawpyLoader._peek_linearraw_4ch; tiff.read",
+    "exact": "Lossless for the corrected array; not atomic; overwrites an existing .dng"
+   },
+   {
+    "what": "Library scan.tif",
+    "path_pattern": "library/<YYYYmmddTHHMMSSZ>_<stock>_[f<frame>_]<dpi>dpi[_ir][-n]/scan.tif",
+    "format": "tiff.write (deflate+predictor when tifffile is present), uint16/uint8, (H,W,C); sha256 in scan.json image.sha256",
+    "raw_or_corrected": "Meant to be raw. GUI single scans actually hold CORRECTED pixels with corrections_applied [] (OUT-01). Demo prescans and roll frames are also corrected (OUT-14)",
+    "written_by": "library.save (library.py:179); rewritten in place by library.migrate_direction (library.py:573) and tools/library.py migrate-raw (198)",
+    "read_by": "library.load/corrected/reconstruct/verify, demo._decode fallback, GUI 1:1 view and Save As via library.corrected",
+    "exact": "Pixel-lossless; not atomic"
+   },
+   {
+    "what": "Library prescan.tif",
+    "path_pattern": "library/<id>/prescan.tif",
+    "format": "tiff.write, uint8 (H,W,3), no resolution, no checksum",
+    "raw_or_corrected": "corrected for roll frames (rf.prescan) and unlabelled (OUT-15)",
+    "written_by": "library.save (library.py:181); rewritten in place (row-reversed) by migrate_direction (library.py:622)",
+    "read_by": "migrate_direction, demo._pair_image",
+    "exact": "Lossless but no raw bytes and no checksum, and in-place rewrites are non-atomic (OUT-09)"
+   },
+   {
+    "what": "GUI settings",
+    "path_pattern": "./gui-settings.json (relative to CWD), $RPS7200_SETTINGS, demo/gui-settings.json under --demo, --settings; temp gui-settings.json.part",
+    "format": "JSON object with sections controls, film, output (str), window, presets, shortcuts, rolls, sheet (per roll folder name: ticks/offsets/rotations/flips/sources/options, int keys stored as strings)",
+    "raw_or_corrected": "n/a (operator state)",
+    "written_by": "settings.save via ScannerGui._remember (on close, preset save/delete, shortcut change, roll open, sheet state)",
+    "read_by": "settings.load in ScannerGui.__init__; _restore, _clean_sheet_state",
+    "exact": "Written atomically (.part + replace). Corrupt file silently treated as empty and later overwritten. Save failure (None) silently ignored. Unknown sections dropped on load"
+   },
+   {
+    "what": "tools/scan.py delivered sidecar",
+    "path_pattern": "<out stem>.json (default ./scan.json)",
+    "format": "JSON of the last pass's meta (default=str), plus bracket {passes, ratios, stops, stats} and, for mono, mono_channel/channel_order/channels",
+    "raw_or_corrected": "metadata",
+    "written_by": "tools/scan.py:280-281",
+    "read_by": "humans",
+    "exact": "Only record of a bracket merge. Overwritten by the next run with the same --out; not atomic"
+   },
+   {
+    "what": "Comparison files",
+    "path_pattern": "./1_nothing_done.tif, ./2_corrected.tif, ./3_corrected_inverted.tif, previews/cmp_before.png, previews/cmp_after.png",
+    "format": "tiff.write uint16; PNG 8-bit half size",
+    "raw_or_corrected": "whatever TIFF was given; 2_ is a destripe of it, not shading; 3_ is a percentile-stretched inversion",
+    "written_by": "tools/make_comparison.py",
+    "read_by": "Stefan by eye",
+    "exact": "Lossless TIFF, but not the product's correction path (OUT-10)"
+   }
+  ],
+  "user_actions": {
+   "can_do": [
+    "Choose TIFF or JPEG for the output folder and set JPEG quality. The GUI clamps quality to 60-100; tools/scan.py --quality is unclamped and Pillow clamps it.",
+    "Save As a single pass to any .tif/.tiff/.jpg/.jpeg path, or Save all passes into a folder. Passes that are not yet filed are written from the reduced on-screen copy (at most 1400 px, or 512 for archived results).",
+    "Rotate or flip a pass, which carries over to later passes. Delivered files are turned; the library entry keeps the scanner's orientation.",
+    "Deliver black and white as one plane (average, R, G or B) with --mono/--mono-channel or the GUI control; the library keeps all channels.",
+    "Run tools/scan.py --bracket 2-9 --stops X to take and merge an exposure bracket; every pass is filed in the library before the merge.",
+    "Hand-edit or relocate gui-settings.json (RPS7200_SETTINGS or --settings); the demo uses demo/gui-settings.json.",
+    "Run tools/make_comparison.py on any two TIFFs to write the three comparison files into the current directory."
+   ],
+   "should_not_do": [
+    "Do not point the output folder at a removable, network or nearly full drive during a roll. A failed delivery currently discards the frame's library entry and raw bytes (OUT-02).",
+    "Do not use Save As or Save all on passes from GUI single scans and treat the result as correct: it is double shading-corrected (OUT-01).",
+    "Do not combine --bracket with --ir (OUT-05), and do not trust bracket highlights while saturation is judged on corrected pixels (OUT-04).",
+    "Do not use --no-library with tools/scan.py; the raw bytes and calibration are then gone for good.",
+    "Do not read the histogram panel's 'at/near full scale' figures as sensor saturation; they are measured after shading (OUT-07).",
+    "Do not interrupt `tools/library.py migrate-direction --write`; it rewrites prescan.tif in place and non-atomically (OUT-09).",
+    "Do not run two GUI windows against the same settings file, and do not hand-edit it without a backup (OUT-11).",
+    "Do not keep 'reuse the cached reference' selected across power cycles. It is remembered between launches, while shading is meant to be measured per session.",
+    "Do not judge a correction change by make_comparison output built from a delivered TIFF (OUT-10)."
+   ],
+   "unguarded_mistakes": [
+    "tools/scan.py --out with an unsupported extension (.png) is only rejected after the whole scan, leaving no delivered file (OUT-17).",
+    "Running tools/scan.py twice with the default --out overwrites the previous scan.tif and scan.json without warning.",
+    "tools/scan.py --bracket with a single-value --exposure-scale silently scans at 1.0x base exposure (OUT-12).",
+    "Delivering JPEG without Pillow silently overwrites an existing same-stem .tif; a JPEG with IR silently overwrites an existing same-stem .dng (OUT-16).",
+    "Typing an unsupported extension in the Save As dialog raises inside a Tk callback; the window shows nothing and the traceback goes to stderr.",
+    "A syntax error in gui-settings.json silently resets presets, shortcuts and contact-sheet decisions and is written back over the file on quit (OUT-11).",
+    "A hand-edited sheet rotation that is not a quarter turn passes _clean_sheet_state (int cast) and later makes preview.rotate raise inside FrameWriter, losing the library entry (OUT-02).",
+    "Ticking mono on an RGBI scan drops IR from the delivered file without any note (OUT-26).",
+    "Save all of passes not yet filed writes reduced previews under names that carry the full dpi (batch_name uses meta resolution_dpi)."
+   ]
+  },
+  "dataflow_notes": "Capture to library and delivery (GUI):\n- DirectScanner.scan (direct.py:2423) decodes the pass into raw_pixels (direct.py:2708), applies shading with apply_shading (direct.py:2733; shading.py:196-283: (raw-dark)*gain, floor(x+0.5), clamp to 65535) and returns the corrected image plus meta.\n- It also publishes last_pixels_raw (direct.py:2818) and, via capture_record (direct.py:631), the last_raw bytes, shading reference and CCD mask.\n- ScanSession passes the result to _deliver (a reduced copy for the window) and to _file (session.py:2032). _file builds the delivered paths with _unclaimed(out_dir/_out_name) plus any roll path, checks the capture layout against the image shape, composes the reversal with the operator's orientation, and submits a job to FrameWriter.\n- The FrameWriter thread (session.py:1059) does, in order: preview.orient (mirror, then quarter turn), mono.to_monochrome if mono (floor(mean+0.5) of R,G,B, or one plane), export.write for each path, then library.save(raw_image or image, ...).\n- library.save writes scan.tif via tiff.write, prescan.tif, shading.npz, ccd_mask.bin, raw.bin.gz (gzip level 6, sha256) and scan.json (whitelisted meta fields), then reindex.\n- _prescan and roll jobs pass raw_image; _scan does not (OUT-01).\n- export.write (export.py:158) picks the format from the suffix. TIFF goes to tiff.write: with tifffile installed, tifffile.imwrite with zlib and predictor (tiff.py:133-165); otherwise _write_builtin (tiff.py:171-279), uncompressed with 8 MiB strips, '<' byte order, and pixels written before the IFD. JPEG goes to _write_jpeg (to_8bit >>8, first 3 channels, Pillow q95 4:4:4) and, if more than 3 channels, _write_infrared -> dng.write of R,G,B,IR (dng.py:119). Without Pillow it falls back to tiff.write under the .tif name.\n\nDisplay: session results give result.image (corrected and reduced), which goes through preview.levels (exact percentiles 0.5/99.5 per channel), preview.render (LUT stretch, invert for display only), preview.to_ppm and then Tk. The histogram and clipping panel (gui.py:3949) measure the same corrected pixels, or library.corrected(entry) at full resolution (gui.py:4110).\n\nSave As / Save all (gui.py:3848): library.corrected(entry) (library.py:338: tiff.read scan.tif, then apply_shading unless labelled) -> orient -> mono -> export.write with no resolution.\n\ntools/scan.py:\n- Opens DirectScanner (debug=False) and calls scan or scan_bracket (direct.py:2323: meter once, geometric ladder capped at the timer ceiling, only the last pass RGBI).\n- hold() captures last_pixels_raw and capture_record for each pass (scan.py:176-194). After the device closes, it saves library entries (scan.py:238-246).\n- Then merge_bracket (bracket.py:257) runs on the corrected frames[..., :3], using a green-only fitted slope and intercept, confidence on corrected values, IVW, residual and misalignment gates, and a uint16 clip. The IR plane of the last pass is dstacked, mono applied, and the result goes through export.write(out) plus the out.json sidecar.\n\nReadback: tiff.read (tiff.py:282) uses tifffile.imread when installed, otherwise _read_builtin (strip/deflate/predictor-2 cumsum in dtype, big-endian converted to native, a trailing length-1 axis squeezed). It is used by library.load, the demo, scan_roll read_survey and the migrate tools.\n\nSettings: settings.load (settings.py:58) at ScannerGui.__init__ (gui.py:377) feeds _restore (Tk vars; bad Tcl types skipped), _clean_sheet_state and presets. _remember (gui.py:666) writes the whole payload through settings.save (settings.py:82: .part then replace) on close and on preset, shortcut, roll or sheet changes.\n\nConsole: use_utf8_stdout (console.py:31) reconfigures stdout/stderr to UTF-8 with errors='replace'. It is called at the top of each tools/*.py main and in gui.py:8114, but not by the rps7200 package itself."
+ }
+}
