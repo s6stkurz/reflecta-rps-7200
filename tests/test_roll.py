@@ -1609,3 +1609,91 @@ def test_a_reversed_pass_is_read_at_a_finer_prescan_too():
     mm, detail = measure_shift_mm(reference, shifted[::-1])
     assert mm is not None, detail["reason"]
     assert detail["row_reversed"] is True
+
+
+# --------------------------------------------------------------------------
+# a frame is numbered by where the film is
+# --------------------------------------------------------------------------
+#
+# A roll counts one place per advance, and every file and record is named by
+# that count. When an advance moved the film two places, the counter said so
+# and the log said so -- and the frame was filed under the other picture's
+# number anyway, where a sheet's tick or an approved position then reached the
+# wrong photograph. These run the driver's own advance, wait and READ_STATE
+# on a transport that double-steps once.
+
+
+def _walked(scanner, **kw):
+    kw.setdefault("dry_run", True)
+    kw.setdefault("meter", METER_NONE)
+    return [(f.index, f.position, f.prescan)
+            for f in scanner.scan_roll(infrared=False, **kw)]
+
+
+def test_a_frame_after_a_double_step_is_filed_where_the_film_is(
+        monkeypatch):
+    """The advance from place 2 lands on 4. That picture is frame 5 of the
+    strip, and was being filed as frame 4 -- whose picture nobody took."""
+    from conftest import NoWaiting, ScannerOnStrip, strip_picture
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, double_steps={2})
+    walked = _walked(s, frames=6)
+    assert [(i, p) for i, p, _ in walked] == [(0, 0), (1, 1), (2, 2),
+                                             (4, 4), (5, 5)]
+    for index, _, prescan in walked:
+        assert np.array_equal(prescan, strip_picture(index)), index
+    said = " ".join(s.logged)
+    assert "filed as frame 5" in said
+    assert "went past frame 4 without it being scanned" in said
+
+
+def test_a_double_step_past_the_end_of_a_roll_ends_it(monkeypatch):
+    """Frames 1 to 4, and the film jumps from 3 to 5: frame 5 is not in the
+    roll, so it is neither scanned nor filed as frame 4."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    walked = _walked(ScannerOnStrip(at=0, double_steps={2}), frames=4)
+    assert [(i, p) for i, p, _ in walked] == [(0, 0), (1, 1), (2, 2)]
+
+
+def test_a_chosen_frame_is_held_to_its_own_position_after_a_jump(
+        monkeypatch):
+    """Ticked 3 and 4, and the film jumps from 2 to 4 while passing frames
+    nobody chose. The picture now in the gate is frame 4's, so it is held to
+    frame 4's approved position and filed as 4 -- not held to frame 3's and
+    filed as 3 -- and the log says 3 went by unscanned."""
+    from conftest import NoWaiting, ScannerOnStrip
+    from rps7200 import direct
+    from rps7200.session import Approved
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = ScannerOnStrip(at=0, double_steps={1})
+    approved = {2: Approved(number=3), 3: Approved(number=4)}
+    walked = _walked(s, only=(2, 3), approved=approved)
+    assert [(i, p) for i, p, _ in walked] == [(3, 3)]
+    assert s.held == [(3, 4)], "held to its own reference"
+    assert any("went past frame 3 without it being scanned" in line
+               for line in s.logged), s.logged
+
+
+def test_a_counter_no_strip_has_does_not_renumber_a_frame():
+    """A stale reading is logged, and the count kept."""
+    assert DirectScanner.place_on_strip(3, 72)[0] == 3
+    assert DirectScanner.place_on_strip(3, None) == (3, None)
+    assert DirectScanner.place_on_strip(3, 3) == (3, None)
+
+
+def test_the_roll_log_counts_frames_the_way_the_window_does():
+    """From 1. The log said 'frame 0: contrast ...' beside a window calling
+    the same picture frame 1."""
+    s = FakeRoll([picture(seed=i) for i in range(3)])
+    lines = []
+    s.log_hook = lines.append
+    list(s.scan_roll(frames=2, dry_run=True, meter=METER_NONE))
+    contrast = [line for line in lines if "contrast" in line]
+    assert [line.split(":")[0] for line in contrast] == ["frame 1", "frame 2"]
+    assert not any(line.startswith("frame 0") for line in lines), lines

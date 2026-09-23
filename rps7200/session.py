@@ -163,13 +163,10 @@ def rewind(scanner, frames: int, say=None) -> int | None:
     return now if end is None else end
 
 
-#: The highest transport position taken at its word. READ_STATE byte 2 counts
-#: whole frames from where the strip went in, and a 36-exposure roll is about
-#: 38 of them -- the longest this driver is written for. The one reading ever
-#: seen past that was a stale 72, left over with no strip in and reset to 0
-#: when one went in (`docs/protocol.md` section 9). A number no strip can have
-#: is not a place to count frames from, so above this the position is unknown.
-LAST_PLAUSIBLE_POSITION = 39
+#: The highest transport position taken at its word -- see
+#: `DirectScanner.LAST_PLAUSIBLE_POSITION`, which is its home because both
+#: roll loops decide with it. Named here too for the window and the seek.
+LAST_PLAUSIBLE_POSITION = DirectScanner.LAST_PLAUSIBLE_POSITION
 
 #: How often, and how far apart, the transport is asked where the film is
 #: before a roll gives up on knowing. A READ_STATE sent right after a
@@ -222,7 +219,7 @@ def _ask_position(scanner) -> int | None:
 
 def plausible(position: int | None) -> bool:
     """Whether a counter reading is a place on a strip at all."""
-    return position is not None and 0 <= position <= LAST_PLAUSIBLE_POSITION
+    return DirectScanner.plausible_position(position)
 
 
 def seek(scanner, target: int, say=None) -> int:

@@ -289,6 +289,34 @@ def test_the_transport_law_is_the_drivers_own_and_not_a_copy():
     assert DemoScanner.MAX_CORRECTION_PARAM is DirectScanner.MAX_CORRECTION_PARAM
 
 
+def test_when_a_roll_ends_is_the_drivers_decision_and_not_a_copy():
+    """The demo's roll loop retyped the driver's end-of-roll rule, and the
+    copy drifted three ways -- a six-frame default, the end of `only`
+    ignored, walking past its own strip -- before it was retyped again. It
+    is taken now, as `param_for_mm` is, and so is what a frame is numbered
+    when the counter disagrees with the count."""
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    assert DemoScanner.roll_ends is DirectScanner.roll_ends
+    assert DemoScanner.place_on_strip is DirectScanner.place_on_strip
+
+
+def test_the_demo_roll_logs_distances_in_the_transports_units(tmp_path):
+    """As the real loop does. It said 'offset +0.00 mm' where the scanner's
+    own log says units, in lines a person reads beside each other."""
+    lines = []
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        s.log_hook = lines.append
+        list(s.scan_roll(frames=2, dry_run=True))
+    measured = [line for line in lines if "contrast" in line]
+    assert len(measured) == 2
+    for line in measured:
+        assert " mm" not in line, line
+        assert "units" in line, line
+    assert measured[0].startswith("frame 1:"), "counted from 1, as shown"
+
+
 def test_a_nudge_picks_the_same_param_the_scanner_would():
     """The distance the operator asks for becomes the same byte either way.
 

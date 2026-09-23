@@ -50,7 +50,7 @@ if os.environ.get("RPS7200_NO_TIFFFILE"):
 
 import numpy as np  # noqa: E402
 
-from rps7200.direct import RollFrame, Settings  # noqa: E402
+from rps7200.direct import DirectScanner, RollFrame, Settings  # noqa: E402
 from rps7200.usb_transport import CheckCondition  # noqa: E402
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
@@ -220,9 +220,10 @@ class StripScanner(FilmOnFrame):
             if self.advance() is None:
                 return
             index += 1
-        end = None if frames is None else first_index + skip + frames
-        last_wanted = max(only) if only else None
-        while end is None or index < end:
+        # The driver's own end rule, so this double cannot drift from it the
+        # way the demo's retyped copy did.
+        finished = DirectScanner.roll_ends(first_index, skip, frames, only)
+        while not finished(index):
             if only is None or index in only:
                 prescan, _ = self.prescan()
                 image, meta = ((None, {}) if dry_run
@@ -230,12 +231,138 @@ class StripScanner(FilmOnFrame):
                 yield RollFrame(index=index, position=self.at, image=image,
                                 meta=meta, prescan=prescan, registration={})
             index += 1
-            if end is not None and index >= end:
-                return
-            if last_wanted is not None and index > last_wanted:
+            if finished(index):
                 return
             if self.advance() is None:
                 return
+
+
+def strip_picture(place: int) -> np.ndarray:
+    """A 300 dpi-ish negative, different at every place on a strip.
+
+    The levels are the film's own from a real prescan (34/15/7), with enough
+    grain that `frame_contrast` reads it as a picture rather than clear film.
+    """
+    rng = np.random.default_rng(place + 1)
+    varied = np.array((34, 15, 7)) * (1 + rng.normal(0, 0.55, (40, 60, 3)))
+    return np.clip(varied, 0, 255).astype(np.uint8)
+
+
+class StripTransport:
+    """A strip under the transport, answering at the level the driver speaks.
+
+    `SLIDE_NEXT` and `SLIDE_PREV` move the film, and READ_STATE byte 2 says
+    where it is -- empty on the read straight after a move, as the device's
+    is -- so `DirectScanner`'s own advance, retreat, wait and position run on
+    it unchanged. Nothing above the transport is imitated.
+
+    ``double_steps`` are the places whose advance moves the film two: the one
+    failure a roll's own count cannot see, and the counter can.
+    """
+
+    def __init__(self, at=0, last=16, double_steps=()):
+        self.at, self.last = at, last
+        self.double_steps = set(double_steps)
+        self.sent = []
+        self.closed = False
+        self._empty = 0
+
+    def command(self, command, data=None, read_size=0, timeout_ms=0,
+                max_wait_s=60.0):
+        from rps7200.protocol import (SCSI_READ_STATE, SCSI_SLIDE,
+                                      SLIDE_NEXT, SLIDE_PREV)
+
+        opcode = command[0]
+        self.sent.append((opcode, bytes(data) if data else b""))
+        if opcode == SCSI_SLIDE and data:
+            if data[0] == SLIDE_NEXT and self.at < self.last:
+                step = 2 if self.at in self.double_steps else 1
+                self.at = min(self.last, self.at + step)
+            elif data[0] == SLIDE_PREV and self.at > 0:
+                self.at -= 1
+            self._empty = 1
+            return b""
+        if opcode == SCSI_READ_STATE:
+            if self._empty:
+                self._empty -= 1
+                raise CheckCondition(opcode)
+            blob = bytearray(13)
+            blob[2] = self.at
+            return bytes(blob)
+        return b""
+
+    def close(self):
+        self.closed = True
+
+
+class ScannerOnStrip(DirectScanner):
+    """The real driver on a `StripTransport`, with its passes stood in for.
+
+    Only the passes are replaced -- a prescan is `strip_picture` of the place
+    the film is on, so a test can say which picture was filed under which
+    number. Every transport command and every roll decision is the driver's.
+    ``held`` records each approved position the roll reached for, as
+    ``(index, the Approved's number)``.
+    """
+
+    def __init__(self, at=0, last=16, double_steps=()):
+        super().__init__(transport=StripTransport(at, last, double_steps),
+                         verbose=False, debug=False)
+        self.held = []
+        self.logged = []
+        self.log_hook = self.logged.append
+
+    def open(self):
+        return self
+
+    def close(self):
+        pass
+
+    def inquiry(self, refresh=False):
+        return "STRIP  transport-level double"
+
+    def capture_record(self):
+        return {"reference": None, "ccd_mask": None, "raw": None,
+                "raw_layout": None}
+
+    def get_gain_offset(self):
+        return settings(9604, 6506, 6506, 7745)
+
+    def set_gain_offset(self, s, infrared=False):
+        pass
+
+    def prescan(self, resolution=300, frame=None, keep_raw=False, **kw):
+        self.last_scan_meta = {"resolution_dpi": resolution,
+                               "channel_order": ["R", "G", "B"]}
+        return strip_picture(self.t.at), None
+
+    def _hold_to_approved(self, index, image, prescan_resolution, approved,
+                          **kw):
+        self.held.append((index, approved.number))
+        return {"outcome": "held", "moves": 0, "prescan": None}
+
+
+class NoWaiting:
+    """`time` for the driver, with the waiting taken out.
+
+    `_whole_frames` sleeps between READ_STATEs and `_query` after an empty
+    one; on a double those are only wall-clock. The clock still moves, by what
+    each sleep asked for, so a timeout is reached exactly as it would be.
+    """
+
+    def __init__(self):
+        import time as real
+        self._real = real
+        self.now = 0.0
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
 
 
 def frame_of(value=0, shape=(4, 4, 3), dtype=np.uint16) -> np.ndarray:

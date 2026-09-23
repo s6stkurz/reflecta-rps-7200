@@ -1317,6 +1317,26 @@ def test_resuming_a_roll_numbered_the_old_way_renumbers_it_by_position(
     assert manifest["numbering"] == session.NUMBERING
 
 
+def test_a_walk_files_each_picture_under_its_own_place(tmp_path,
+                                                        monkeypatch):
+    """The transport double-steps from frame 3 to frame 5, under the real
+    driver's roll and the real session. The picture at frame 5 was filed as
+    `prescan04.tif`, frame 4's name -- so a sheet ticking 4 commissioned a
+    seek to a picture it had never shown."""
+    from conftest import NoWaiting, ScannerOnStrip, strip_picture
+    from rps7200 import direct, tiff
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = ScannerOnStrip(at=0, double_steps={2})
+    _, frames = walk(Roll(frames=5, start_at=1, dry_run=True, name="strip",
+                          infrared=False), tmp_path, scanner, monkeypatch)
+    assert frames == [(1, 0), (2, 1), (3, 2), (5, 4)]
+    folder = tmp_path / "rolls" / "strip"
+    assert not (folder / "prescan04.tif").exists()
+    assert np.array_equal(tiff.read(str(folder / "prescan05.tif")),
+                          strip_picture(4))
+
+
 # --- the seek itself, and the numbering it gives manifests -------------------
 
 

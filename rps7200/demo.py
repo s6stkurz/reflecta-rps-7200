@@ -423,13 +423,9 @@ class DemoScanner:
         if wanted is not None and not wanted:
             self._log("no frames were chosen, so there is nothing to scan")
             return
-        last_wanted = max(wanted) if wanted else None
-        end = None if frames is None else first_index + skip + frames
-
-        def finished(index: int) -> bool:
-            if end is not None and index >= end:
-                return True
-            return last_wanted is not None and index > last_wanted
+        # The driver's own decision, not a copy of it: this line was a retyped
+        # `finished` that had drifted three ways before it was retyped again.
+        finished = self.roll_ends(first_index, skip, frames, wanted)
 
         def stopping() -> bool:
             return should_stop is not None and should_stop()
@@ -449,6 +445,16 @@ class DemoScanner:
                 if stopping():
                     self._log("stopping before the next frame, as asked")
                     return
+                # Numbered by where the film is, as the real loop numbers it.
+                # This film never moves two places for one advance, so here it
+                # only ever agrees -- but the decision is the driver's, and a
+                # stand-in that skips it cannot show what the driver does.
+                index, moved = self.place_on_strip(index, self._position,
+                                                   wanted)
+                if moved is not None:
+                    self._log(moved)
+                    if finished(index):
+                        return
                 self._index = index
                 # Each frame starts where the advance left it, as the real one
                 # does; the offset an operator asked for is what the loop below
@@ -459,7 +465,8 @@ class DemoScanner:
                 if wanted is not None and index not in wanted:
                     # Advanced past, not looked at -- the whole point of
                     # picking frames off a contact sheet.
-                    self._log(f"frame {index}: not chosen, advancing past it")
+                    self._log(f"frame {index + 1}: not chosen, advancing "
+                              "past it")
                     index += 1
                     if finished(index) or stopping() or self.advance() is None:
                         return
@@ -474,10 +481,15 @@ class DemoScanner:
                 try:
                     prescan, _ = self.prescan(film=film)
                     marks = self._marks(prescan)
+                    # In the transport's units, as the real loop says it:
+                    # the two logs are the same software's, and millimetres
+                    # are a conversion away from anything the film did.
                     self._log(
-                        f"frame {index}: contrast {marks['contrast']:.3f}, "
-                        f"offset {marks['offset_mm']:+.2f} mm, "
-                        f"short by {marks['shortfall_mm']:.2f} mm"
+                        f"frame {index + 1}: contrast "
+                        f"{marks['contrast']:.3f}, "
+                        f"offset {say_units(marks['offset_mm'])}, "
+                        f"short by "
+                        f"{say_units(marks['shortfall_mm'], signed=False)}"
                     )
                     held = (approved or {}).get(index)
                     if held is not None and holding:
@@ -569,6 +581,10 @@ class DemoScanner:
     # plain function comes back through the class and assigning it here
     # would bind  as its first argument.
     param_for_mm = staticmethod(DirectScanner.param_for_mm)
+    #: When a roll ends and what a frame is numbered, taken for the same
+    #: reason: the loop above is the demo's own, and its decisions are not.
+    roll_ends = staticmethod(DirectScanner.roll_ends)
+    place_on_strip = staticmethod(DirectScanner.place_on_strip)
     STEP_MM = DirectScanner.STEP_MM
     OVERHEAD_MM = DirectScanner.OVERHEAD_MM
     MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
