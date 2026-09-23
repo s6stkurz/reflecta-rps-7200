@@ -243,11 +243,12 @@ def seek(scanner, target: int, say=None) -> int:
     on. Returns the position it arrived at, which is ``target``.
 
     Waits for the lamp first. While it warms -- about 80 s from cold -- the
-    scanner answers NOT READY to every command, READ_STATE included, so a
-    roll started straight after power-on heard nothing from the counter and
-    refused, where the one before it had waited inside the calibration.
-    `wait_warm` sends only TEST UNIT READY, and REQUEST SENSE to read why one
-    was refused: no transport command and no scan.
+    scanner answers NOT READY to every command, READ_STATE included: that is
+    `DirectScanner.wait_warm`'s docstring, not a measurement made here. If it
+    holds, a roll started straight after power-on would hear nothing from the
+    counter and refuse -- shown on a test double built on that premise, never
+    seen on the scanner. `wait_warm` sends only TEST UNIT READY, and REQUEST
+    SENSE to read why one was refused: no transport command and no scan.
 
     Above the seam on purpose. It speaks only through `wait_warm`,
     `position`, `advance` and `retreat`, so the demo's stand-in runs it

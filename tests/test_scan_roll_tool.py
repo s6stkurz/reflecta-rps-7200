@@ -12,6 +12,7 @@ it stayed green against a tool that no longer produced that shape. What these
 hold it to is the thing that only driving `main()` can show: that a roll leaves
 files behind.
 """
+import json
 import sys
 from types import SimpleNamespace
 
@@ -339,45 +340,131 @@ def test_a_roll_the_tool_cannot_place_scans_nothing(tmp_path, monkeypatch):
     assert not list((tmp_path / "roll").glob("frame*.tif"))
 
 
-def test_a_roll_from_cold_calibrates_before_it_asks_where_the_film_is(
-        tmp_path, monkeypatch):
-    """8a9ba17 calibrated first, and the calibration waited the lamp out. The
-    seek then put in front of it asked the counter while the lamp warmed,
-    heard nothing -- the scanner is NOT READY to everything for ~80 s -- and
-    the tool exited 1 telling the operator to check the strip."""
+class _Cold(FakeRollScanner):
+    """Silent until its lamp is warm, and `wait_warm` is what warms it -- as
+    `DirectScanner.wait_warm` blocks until TEST UNIT READY succeeds. That the
+    counter says nothing meanwhile is `wait_warm`'s docstring's premise, not
+    a measurement. ``order`` is what the tool asked, in order."""
+
+    warm = False
+
+    def __init__(self, frames=2, at=0, order=None):
+        super().__init__(frames=frames)
+        self.at = at
+        self.order = [] if order is None else order
+
+    def wait_warm(self, timeout=300.0, poll=5.0):
+        self.order.append("wait_warm")
+        self.warm = True
+
+    def position(self):
+        self.order.append("position")
+        return self.at if self.warm else None
+
+    def ensure_shading(self, path, reuse=False, skip=False):
+        self.order.append("calibrate")
+        return super().ensure_shading(path, reuse, skip)
+
+
+def _tool(tmp_path, monkeypatch, *argv, make):
+    """Run the tool with ``make()`` standing where the scanner stands."""
     from rps7200 import session
 
-    order = []
     created = []
 
-    class Cold(FakeRollScanner):
-        warm = False
-
-        def position(self):
-            order.append("position")
-            return self.at if self.warm else None
-
-        def ensure_shading(self, path, reuse=False, skip=False):
-            # `calibrate_shading` waits for the lamp before it measures.
-            order.append("calibrate")
-            self.warm = True
-            return super().ensure_shading(path, reuse, skip)
-
-    class Patched(Cold):
-        def __init__(self, **kw):
-            super().__init__(frames=2)
-            created.append(self)
+    def opened(**kw):
+        created.append(make())
+        return created[-1]
 
     monkeypatch.setattr(session, "POSITION_POLL_S", 0.0)
-    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(scan_roll, "DirectScanner", opened)
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
-         "--reference", str(tmp_path / "shading.npz"), "--roll", "cold",
-         "--dry-run", "--frames", "2"])
-    assert scan_roll.main() == 0
-    assert order.index("calibrate") < order.index("position"), order
+         "--reference", str(tmp_path / "shading.npz"), "--roll", "roll",
+         *argv])
+    return scan_roll.main(), created
+
+
+def test_a_roll_from_cold_waits_for_the_lamp_before_it_asks_where_the_film_is(
+        tmp_path, monkeypatch):
+    """With the counter silent while the lamp warms, a seek that asked first
+    would hear nothing and refuse. The lamp is waited for with status queries
+    alone, then the film is placed, and only then is anything calibrated."""
+    order = []
+    code, created = _tool(tmp_path, monkeypatch, "--dry-run", "--frames", "2",
+                          make=lambda: _Cold(order=order))
+    assert code == 0
+    assert order[0] == "wait_warm", order
+    assert order.index("position") < order.index("calibrate"), order
     assert created[0].asked["first_index"] == 0
+
+
+def test_a_counter_no_strip_has_refuses_before_anything_is_calibrated(
+        tmp_path, monkeypatch):
+    """A stale 72 is the one reading of a transport with no strip in
+    (`full_17_strip`). The tool calibrated first and refused after, spending
+    3-4 minutes calibrating what may have been an empty transport -- the
+    state CLAUDE.md says preceded a wedge. It refuses first now."""
+    order = []
+    code, created = _tool(tmp_path, monkeypatch, "--dry-run", "--frames", "2",
+                          make=lambda: _Cold(at=72, order=order))
+    assert code == 1
+    assert "calibrate" not in order, order
+    assert created[0].asked == {}, "the roll never started"
+    assert created[0].moves is None, "nothing moved"
+    assert not (tmp_path / "roll").exists()
+
+
+def test_frames_0_does_not_calibrate(tmp_path, monkeypatch):
+    """A rewind alone is a transport job; a calibration there would spend
+    3-4 minutes of lamp on nothing."""
+    order = []
+
+    def warm():
+        scanner = _Cold(at=5, order=order)
+        scanner.warm = True
+        return scanner
+
+    code, created = _tool(tmp_path, monkeypatch, "--frames", "0",
+                          "--rewind", "2", make=warm)
+    assert code == 0
+    assert created[0].at == 3, "the rewind itself ran"
+    assert "calibrate" not in order, order
+
+
+def test_a_rewind_from_cold_waits_for_the_lamp_first(tmp_path, monkeypatch):
+    """`--rewind` is the first thing that talks to the transport, so the lamp
+    is waited for ahead of it as well. Ahead of a silent counter, the rewind
+    read every command as backlash and refused."""
+    order = []
+    code, created = _tool(tmp_path, monkeypatch, "--frames", "0",
+                          "--rewind", "2",
+                          make=lambda: _Cold(at=5, order=order))
+    assert code == 0
+    assert order[0] == "wait_warm", order
+    assert created[0].at == 3
+
+
+def test_a_calibration_that_fails_writes_nothing_and_exits_1(tmp_path,
+                                                             monkeypatch):
+    """The folder is today's date by default, the window's walks' name, so a
+    run that stops before its roll begins leaves the walk there alone."""
+    class Broken(_Cold):
+        def ensure_shading(self, path, reuse=False, skip=False):
+            raise TimeoutError("lamp still warming after 300s")
+
+    walked = tmp_path / "roll"
+    walked.mkdir()
+    before = {"roll": "roll", "frames": [{"number": 1, "prescan": "p.tif"}]}
+    (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
+    code, created = _tool(tmp_path, monkeypatch, "--dry-run", "--frames", "2",
+                          make=Broken)
+    assert code == 1
+    assert created[0].asked == {}, "nothing was scanned"
+    assert json.loads((walked / "survey.json").read_text(
+        encoding="utf-8")) == before
+    assert [p.name for p in walked.iterdir()] == ["survey.json"]
 
 
 def test_a_roll_that_cannot_be_placed_leaves_the_folder_as_it_was(
@@ -481,6 +568,49 @@ def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(
     gui = load_tool("gui")
     shown = [r.number for r in gui.read_survey(folder)["results"]]
     assert sorted(held) == shown, "the tool and the window disagree"
+
+
+def _prescans(folder, numbers):
+    from rps7200 import tiff
+
+    folder.mkdir()
+    for n in numbers:
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+
+
+def test_a_walk_with_only_its_roll_json_is_held_from_that(tmp_path,
+                                                          monkeypatch):
+    """A walk made before walks had a file of their own wrote `roll.json`.
+    With no `survey.json` beside it, that is the walk's record -- read by the
+    same reader, so its old numbers still become the strip's."""
+    folder = tmp_path / "old-walk"
+    _prescans(folder, (1, 2, 3))
+    (folder / "roll.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n + 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.framing, "propose_offsets",
+        lambda frames: ({n: 0.0 for n, _ in frames},
+                        {n: {"source": "measured"} for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder)
+    assert sorted(held) == [3, 4, 5]
+    assert note["walked"] == 3
+
+
+def test_a_walk_whose_survey_cannot_be_read_is_refused(tmp_path):
+    """Not quietly read from `roll.json` instead, and not held as nothing: a
+    walk that cannot be read says so before the scanner is even opened."""
+    folder = tmp_path / "torn"
+    _prescans(folder, (1, 2))
+    (folder / "survey.json").write_text('{"frames": [', encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n - 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
+        encoding="utf-8")
+    with pytest.raises(SystemExit, match="survey.json cannot be read"):
+        scan_roll.hold_from_walk(folder)
 
 
 # --- winding the film back, and refusing to go on if it did not -------------

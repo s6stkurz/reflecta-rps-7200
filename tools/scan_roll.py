@@ -9,12 +9,13 @@ Frame numbers are places on the strip: frame N is where the transport's own
 counter reads N-1, counted from where the strip went in. It has been seen
 resetting to 0 as a strip goes in -- once, in `full_17_strip` -- so the numbers
 are right as long as the strip is in the way it was when it was walked, which
-only the operator can see. Shading is calibrated first, once, and reused for the
-whole roll -- which is what the vendor does, and the reason a 17-pass session in
-the captures contains no calibration at all. The roll then starts at
-`--start-at` (frame 1 unless told otherwise) and winds or advances the film
-there, from wherever the transport says it is -- refusing, with nothing scanned
-and nothing written, if it cannot tell -- then advances between frames.
+only the operator can see. The roll starts at `--start-at` (frame 1 unless told
+otherwise) and winds or advances the film there, from wherever the transport
+says it is -- refusing, with nothing calibrated, nothing scanned and nothing
+written, if it cannot tell. Shading is then calibrated once, with the strip in,
+and reused for the whole roll -- which is what the vendor does, and the reason
+a 17-pass session in the captures contains no calibration at all -- and the
+film advances between frames.
 
 Every frame goes to disk the moment it exists: a library entry with the raw
 bytes, the shading reference and the CCD mask beside the pixels, plus a
@@ -325,9 +326,10 @@ def main() -> int:
 
     started = time.monotonic()
     scanned = failed = 0
-    #: Whether the film reached the roll's first frame, and so whether this
-    #: run has a manifest at all. Nothing is written before that, which is
-    #: `ScanSession._roll`'s "before the directory, before the manifest": the
+    #: Whether the film reached the roll's first frame and the calibration
+    #: after it succeeded, and so whether this run has a manifest at all.
+    #: Nothing is written before that, which is `ScanSession._roll`'s
+    #: "before the directory, before the manifest": the
     #: default roll name is today's date, the name the window's walks use,
     #: and the manifest used to be written before the device was even
     #: opened -- so a seek that refused replaced that day's survey.json with
@@ -349,32 +351,18 @@ def main() -> int:
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
 
-            # On a dry run too. A dry run still prescans, and a prescan
-            # still wants a shading reference -- so skipping this did not
-            # avoid the calibration, it only moved it inside `prescan()`,
-            # where it runs lazily on the first frame. Measured twice on this
-            # machine, that lazy calibration stalls: `bulk read of 16384 bytes
-            # failed after 0 bytes: LIBUSB_ERROR_PIPE`, right after the
-            # shading descriptor, and the device stops answering. Called from
-            # here it is the same call `tools/scan.py` and the window's
-            # Calibrate job make, both of which work.
-            #
-            # It also made `--reuse` inert on a dry run: the flag is read
-            # here and nowhere else, so the lazy path ignored it and
-            # recalibrated regardless.
-            #
-            # And first, before the film is moved or asked where it is. A
-            # calibration waits out the lamp, and while the lamp warms the
-            # scanner answers NOT READY to everything, READ_STATE included
-            # (`DirectScanner.wait_warm`) -- so a roll started from cold
-            # asked the counter, heard nothing eight times and refused, where
-            # 8a9ba17 had calibrated first and waited. Where the film sits
-            # does not matter to it: calibration measures the band below the
-            # film, `(0, 3431, 10343, 6888)`, with the strip in (CLAUDE.md,
-            # "Calibrate with the film loaded"). `seek` waits for the lamp
-            # too, for a run that reuses a reference or skips shading.
-            if args.frames != 0:
-                calibrate(s, args)
+            # The lamp first, with status queries only: TEST UNIT READY, and
+            # REQUEST SENSE when one is refused -- what `tools/hold_probe.py`
+            # and `tools/transport_truth.py` send before they move the film.
+            # `DirectScanner.wait_warm` says the scanner answers NOT READY
+            # to every command while the lamp warms, READ_STATE included;
+            # that is its docstring's premise, not something measured here.
+            # If it holds, a roll that asked the counter from cold would hear
+            # nothing and refuse, and a rewind would read "did not move" --
+            # shown on a test double, never seen on the scanner. The
+            # calibration waited the lamp out when it ran first, and it
+            # cannot run first: see below.
+            s.wait_warm()
             if args.rewind:
                 landed = rewind(s, args.rewind)
                 if landed is None:
@@ -428,8 +416,34 @@ def main() -> int:
                 print("nothing else asked for")
                 return 0
 
-            # The film is on the roll's first frame now, so there is a roll
-            # to record -- and not before. See `placed`.
+            # After the seek, never before it. The seek is what refuses a
+            # counter no strip can have -- `full_17_strip` read a stale 72
+            # before its strip went in (`docs/protocol.md` section 9) -- and
+            # in front of it this spent 3-4 minutes calibrating what may have
+            # been an empty transport before refusing: the state CLAUDE.md
+            # says preceded a wedge ("Calibrate with the film loaded"). With
+            # the film placed it measures the band below the film,
+            # `(0, 3431, 10343, 6888)`, strip in, as CyberView does. The
+            # window's Roll seeks before anything calibrates, too.
+            #
+            # On a dry run too. A dry run still prescans, and a prescan
+            # still wants a shading reference -- so skipping this did not
+            # avoid the calibration, it only moved it inside `prescan()`,
+            # where it runs lazily on the first frame. Measured twice on this
+            # machine, that lazy calibration stalls: `bulk read of 16384 bytes
+            # failed after 0 bytes: LIBUSB_ERROR_PIPE`, right after the
+            # shading descriptor, and the device stops answering. Called from
+            # here it is the same call `tools/scan.py` and the window's
+            # Calibrate job make, both of which work.
+            #
+            # It also made `--reuse` inert on a dry run: the flag is read
+            # here and nowhere else, so the lazy path ignored it and
+            # recalibrated regardless.
+            calibrate(s, args)
+
+            # The film is on the roll's first frame and the reference is in
+            # hand, so there is a roll to record -- and not before. See
+            # `placed`: a calibration that fails leaves the folder as it was.
             out.mkdir(parents=True, exist_ok=True)
             checkpoint()
             placed = True
@@ -590,10 +604,11 @@ def main() -> int:
         print(f"could not file {problem}", file=sys.stderr)
 
     if not placed:
-        # Stopped before the film reached the roll -- the device would not
-        # open, or calibrating failed -- so nothing was scanned and there is
-        # no roll to record. A manifest already in this folder is left as it
-        # was, for the reason `placed` gives.
+        # Stopped before the roll began -- the device would not open, the
+        # lamp never warmed, or the calibration after the seek failed -- so
+        # nothing was scanned and there is no roll to record. A manifest
+        # already in this folder is left as it was, for the reason `placed`
+        # gives.
         print("nothing was scanned, and nothing was written", file=sys.stderr)
         return 1
 

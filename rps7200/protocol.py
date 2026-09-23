@@ -24,8 +24,9 @@ from dataclasses import dataclass
 #    asked once more. Inside a roll READ STATE is read at the top of every
 #    frame, the ones advanced past unchosen included, where it was read only
 #    before a chosen frame's prescan, and a roll whose counter reads past its
-#    end or behind its count sends nothing more. And the roll tool
-#    calibrates before any of that rather than after it.
+#    end or behind its count sends nothing more. The roll tool polls TEST
+#    UNIT READY before its `--rewind` too, and still calibrates last --
+#    after the rewind, the seek and any `--nudge` -- as it did before.
 # 5: `MAX_CORRECTION_PARAM` 8 -> 87, so a sub-frame SLIDE correction can
 #    carry a param up to 87 in one command (df7d4e6).
 # 4: `scan()` now clears the fast-infrared quality bit on an RGB pass. It

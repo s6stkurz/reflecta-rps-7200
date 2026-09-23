@@ -1246,11 +1246,13 @@ def test_a_roll_refuses_when_the_transport_will_not_say(tmp_path, monkeypatch):
 
 
 def test_seek_waits_for_the_lamp_with_status_queries_only(monkeypatch):
-    """A roll started while the lamp warmed asked the counter, heard nothing
-    -- the scanner answers NOT READY to everything for its first ~80 s,
-    READ_STATE included -- and refused. It waits for the lamp now, and what
-    it sends while waiting is TEST UNIT READY and REQUEST SENSE: nothing that
-    moves the film and nothing that scans."""
+    """If the scanner answers NOT READY to everything for its first ~80 s,
+    READ_STATE included -- `DirectScanner.wait_warm`'s docstring says so, and
+    this double is built on it; nothing here measured it -- a roll started
+    while the lamp warmed would ask the counter, hear nothing and refuse. It
+    waits for the lamp now, and what it sends while waiting is TEST UNIT
+    READY and REQUEST SENSE: nothing that moves the film and nothing that
+    scans."""
     from conftest import NoWaiting, ScannerOnStrip
     from rps7200 import direct
     from rps7200.protocol import SCSI_REQUEST_SENSE, SCSI_TEST_UNIT_READY
