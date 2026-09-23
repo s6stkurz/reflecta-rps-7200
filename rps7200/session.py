@@ -324,6 +324,24 @@ def seek(scanner, target: int, say=None) -> int:
 NUMBERING = "strip"
 
 
+def _counted_shift(record) -> int | None:
+    """How far one old record's number sat behind the strip's, by its own
+    recorded position: frame ``n`` recorded on the counter's 5 was counted
+    ``5 - (n - 1)`` behind.
+
+    None for a record with no number, no position, or a position no strip
+    has -- the stale 72 of `docs/protocol.md` section 9 is a counter left over
+    from before the strip went in, and a shift worked out from it is 72 frames
+    of nothing.
+    """
+    try:
+        number = int(record["number"])
+        position = int(record["transport_position"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return position - (number - 1) if plausible(position) else None
+
+
 def legacy_shift(manifest: dict) -> int | None:
     """How far a manifest's frame numbers sit behind the strip's own.
 
@@ -332,8 +350,9 @@ def legacy_shift(manifest: dict) -> int | None:
     started on the counter's 5 was on 5 + (n - 1), a shift of 5. The commonest
     is taken, and it is only a best guess for what has no position of its own
     -- a roll's ``start_at`` and ``only``, `approved.json`, a roll that died
-    before its first frame. None when no frame recorded a position, which says
-    nothing either way.
+    before its first frame. None when no frame recorded a position a strip can
+    have, which says nothing either way; a reading no strip has is not
+    counted at all, so the stale 72 cannot outvote a short walk.
 
     One walk has one shift, because it numbered its frames once per advance
     from wherever it started. A `roll.json` need not: 8a9ba17 merged a resumed
@@ -347,18 +366,64 @@ def legacy_shift(manifest: dict) -> int | None:
         return 0
     seen: dict[int, int] = {}
     for record in manifest.get("frames") or ():
-        try:
-            number = int(record["number"])
-            position = record.get("transport_position")
-        except (KeyError, TypeError, ValueError):
-            continue
-        if position is None:
-            continue
-        shift = int(position) - (number - 1)
-        seen[shift] = seen.get(shift, 0) + 1
+        shift = _counted_shift(record)
+        if shift is not None:
+            seen[shift] = seen.get(shift, 0) + 1
     if not seen:
         return None
     return max(seen, key=lambda k: seen[k])
+
+
+def _runs(records: list[dict], shift: int, walk: bool) -> dict[int, int]:
+    """The shift of the run each old record sits in, by its place in the file.
+
+    A run is what one walk, or one roll, counted: its numbers went up once
+    per advance from wherever it started, so one shift holds across it.
+
+    A walk's file is one run -- each walk wrote `survey.json` afresh, and
+    ``walk`` says this is one -- so all of it is on ``shift``. A `roll.json`
+    can hold several: 8a9ba17 merged every roll into the file the last one
+    left under that name, and a roll with no name typed was named by the
+    date, so every such roll of a day went into one file. There a run is
+    records next to each other whose positions give one shift, and a lone
+    record is a run too: a roll of one frame, which is one way to take a
+    frame again. Except between two stretches of one shift it does not share,
+    which is read as one misread counter inside a run, 5, 5, 7, rather than
+    three rolls placed so that the first and the last agree. Neither has been
+    seen; the second takes more.
+
+    A record with no position a strip has goes with the runs either side of
+    it when they agree, or with the one beside it at an end of the file.
+    Between two that disagree it has none, and nor does anything in a file
+    where no record has a shift; those are left to the manifest's.
+    """
+    if walk:
+        return dict.fromkeys(range(len(records)), shift)
+    blocks: list[tuple[int, list[int]]] = []
+    for i, record in enumerate(records):
+        s = _counted_shift(record)
+        if s is None:
+            continue
+        if blocks and blocks[-1][0] == s:
+            blocks[-1][1].append(i)
+        elif (len(blocks) >= 2 and len(blocks[-1][1]) == 1
+              and blocks[-2][0] == s):
+            lone = blocks.pop()
+            blocks[-1][1].extend(lone[1] + [i])
+        else:
+            blocks.append((s, [i]))
+    spans = [(members[0], members[-1], s) for s, members in blocks]
+    run: dict[int, int] = {}
+    for first, last, s in spans:
+        run.update(dict.fromkeys(range(first, last + 1), s))
+    for i in range(len(records)):
+        if i not in run:
+            before = [s for _, last, s in spans if last < i][-1:]
+            after = [s for first, _, s in spans if first > i][:1]
+            sides = set(before + after)
+            if len(sides) == 1:
+                run[i] = sides.pop()
+    return run
 
 
 def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
@@ -366,11 +431,11 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
 
     Each frame goes where its own recorded transport position says it was --
     position + 1 -- and never stays at its number, which is what was relative.
-    A frame with no position is moved by the manifest's shift instead,
-    :func:`legacy_shift`, and ``fallback`` is the shift to use when the
-    manifest cannot say: a roll that died before its first frame is numbered
-    the way the walk beside it was, because that is where its frame numbers
-    came from.
+    A frame with no position is moved by the shift of the run it sits in (see
+    :func:`_runs`), or by the manifest's, :func:`legacy_shift`; ``fallback`` is
+    the shift to use when the manifest cannot say: a roll that died before its
+    first frame is numbered the way the walk beside it was, because that is
+    where its frame numbers came from.
 
     Its own position and not the manifest's one shift, because a manifest can
     hold two honestly: a `roll.json` 8a9ba17 merged across a "Start at N, same
@@ -380,17 +445,32 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
     the records of the frames really scanned replaced, and a scan filed under
     another frame's number.
 
-    Except where two frames' positions give the same number. A misread
-    counter looks like that: read by position alone, positions 5, 5, 7 for
-    frames counted 1, 2, 3 were frames 6, 6 and 8, two pictures under one
-    number. Frames that collide are moved by the manifest's shift instead,
-    since their numbers were counted once per advance and sit one apart -- 6,
-    7, 8 -- and each one whose number then differs from its own position is
-    told to ``say``: a misread counter and a film that really went back over
-    a place look the same here, and this reading is wrong about the second.
-    Nothing stored has either -- every manifest under `rolls/` with positions
-    has one shift throughout, 213 frames across 25 of them, checked
-    2026-09-23.
+    Two exceptions, and each is told to ``say``:
+
+    - **A position no strip has** -- the stale 72 -- is no place at all, so the
+      frame is numbered by its run, the way the roll loop keeps its count past
+      such a reading (`DirectScanner.place_on_strip`). Followed, it made frame
+      1 of a walk frame 73: past the end of every strip, so the sheet could
+      never scan it, and a resume wrote 73 back for good.
+    - **A frame whose position gives the number another frame's does**, when
+      its run puts it elsewhere. A misread counter looks like that: positions
+      5, 5, 7 for frames counted 1, 2, 3 were frames 6, 6 and 8, two pictures
+      under one number, and the run -- numbers counted once per advance, one
+      apart -- puts the middle one on 7. Only a frame that collided moves, and
+      only by its own run: the shift of a whole merged file belongs to one of
+      its runs, and moving by it filed a scan under a frame never scanned, then
+      pushed the frames it landed on along after it.
+
+    Where the runs themselves put two frames on one place, both are kept
+    there and it is said. That is the film going over a place twice -- wound
+    back, or the strip put in again, between two rolls into one file -- and
+    both pictures are of that frame; no two numbers that kept them apart
+    would both be true. A misread and a film that really went back look the
+    same here, and so do a misread at either end of a `roll.json` and a roll
+    of one frame, which this reads as the roll: it keeps the place its own
+    counter named. Nothing stored has any of it -- every manifest under
+    `rolls/` with positions has one shift throughout, 213 frames across 25 of
+    them, checked 2026-09-23.
 
     ``start_at``, ``only`` and ``wanted`` carry no positions and are moved by
     the manifest's shift.
@@ -404,9 +484,9 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
     if shift is None:
         shift = fallback
 
-    def moved(value):
+    def moved(value, by=None):
         try:
-            return int(value) + shift
+            return int(value) + (shift if by is None else by)
         except (TypeError, ValueError):
             return value
 
@@ -414,45 +494,76 @@ def renumbered(manifest: dict, fallback: int = 0, say=None) -> dict:
         return None if values is None else [moved(v) for v in values]
 
     records = [dict(record) for record in manifest.get("frames") or ()]
+    # `tools/scan_roll.py` writes it inside `settings`, the session at the
+    # top level.
+    walk = manifest.get("dry_run",
+                        (manifest.get("settings") or {}).get("dry_run"))
+    run = _runs(records, shift, walk=bool(walk))
     own: dict[int, int] = {}          # what each frame's position says
+    nowhere: dict[int, int] = {}      # a reading no strip has
     for i, record in enumerate(records):
         try:
-            own[i] = int(record["transport_position"]) + 1
+            position = int(record["transport_position"])
         except (KeyError, TypeError, ValueError):
-            pass
-    numbers = {i: own[i] if i in own else moved(record["number"])
-               for i, record in enumerate(records)
-               if i in own or "number" in record}
-    placed = set(own)                 # still numbered by its own position
-    # A frame that falls back can land on another's number in turn, so round
-    # again until no frame on its own position shares a number; each round
-    # takes at least one off its position, so it ends.
-    while True:
-        taken: dict[Any, int] = {}
-        for n in numbers.values():
-            taken[n] = taken.get(n, 0) + 1
-        clashing = [i for i in placed if taken[numbers[i]] > 1
-                    and isinstance(moved(records[i].get("number")), int)]
-        if not clashing:
-            break
-        for i in clashing:
-            numbers[i] = moved(records[i]["number"])
-            placed.discard(i)
+            continue
+        if plausible(position):
+            own[i] = position + 1
+        else:
+            nowhere[i] = position
+    held: dict[int, int] = {}
+    for n in own.values():
+        held[n] = held.get(n, 0) + 1
 
+    numbers: dict[int, Any] = {}
+    for i, record in enumerate(records):
+        if i in own:
+            numbers[i] = own[i]
+            # Its run, and not the file's commonest shift, which in a merged
+            # file can be the other run's. No round again: a frame that did
+            # not collide is where its own position put it, whatever lands
+            # beside it.
+            if held[own[i]] > 1 and i in run:
+                ran = moved(record.get("number"), run[i])
+                if isinstance(ran, int):
+                    numbers[i] = ran
+        elif "number" in record:
+            numbers[i] = moved(record["number"], run.get(i))
+
+    roll = manifest.get("roll") or "a roll"
+    counted = [record.get("number") for record in records]
     frames = []
     for i, record in enumerate(records):
         if i in numbers:
-            counted = record.get("number")
             record["number"] = numbers[i]
             if say is not None and i in own and own[i] != numbers[i]:
-                say(f"frame {counted} of {manifest.get('roll') or 'a roll'} "
-                    f"recorded the transport on frame {own[i]}, a number "
-                    "another of its frames has as well; numbered as frame "
-                    f"{numbers[i]}, where the rest of its walk puts it -- "
-                    "look at its prescan before trusting either")
+                say(f"frame {counted[i]} of {roll} recorded the transport on "
+                    f"frame {own[i]}, a number another of its frames has as "
+                    f"well; numbered as frame {numbers[i]}, where the frames "
+                    "around it put it -- look at its prescan before trusting "
+                    "either")
+            if say is not None and i in nowhere:
+                say(f"frame {counted[i]} of {roll} recorded the transport's "
+                    f"counter at {nowhere[i]}, which no strip has, so it is "
+                    f"numbered as frame {numbers[i]}, where the frames around "
+                    "it put it")
         if isinstance(record.get("number"), int):
             record["index"] = record["number"] - 1
         frames.append(record)
+    places: dict[int, list[int]] = {}
+    for i, n in numbers.items():
+        if isinstance(n, int):
+            places.setdefault(n, []).append(i)
+    for n, sharing in sorted(places.items()):
+        if say is None or len(sharing) < 2:
+            continue
+        named = ", ".join(str(counted[i]) for i in sharing[:-1])
+        both = "both" if len(sharing) == 2 else "all"
+        say(f"frames {named} and {counted[sharing[-1]]} of {roll} are {both} "
+            f"frame {n} of the strip: the film went over that place again -- "
+            "wound back, or the strip put in again, between two rolls filed "
+            "under one name -- or a counter misread. Kept, "
+            f"{both} as frame {n}; look at the pictures before trusting any "
+            "of them")
     out = dict(manifest)
     if "frames" in manifest:
         out["frames"] = frames
@@ -1455,10 +1566,11 @@ class ScanSession:
             # and frame 6 of this one could be the same picture. Moved onto the
             # strip's numbering first, each frame by its own recorded position
             # -- a file resumed under 8a9ba17 holds one shift per run -- and by
-            # the file's commonest shift where two positions give one number;
-            # a roll that recorded none is numbered as the walk beside it was.
-            # What this reads is what gets written back, under "strip", for
-            # good.
+            # its own run's shift where that position is no place on a strip,
+            # or gives a number another frame's does and the run puts it
+            # elsewhere; a roll that recorded none is numbered as the walk
+            # beside it was. What this reads is what gets written back, under
+            # "strip", for good.
             earlier = renumbered(earlier, fallback=self._walk_shift(out),
                                  say=lambda m: self._emit("log", text=m))
         manifest: dict[str, Any] = {

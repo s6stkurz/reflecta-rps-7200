@@ -507,8 +507,12 @@ that reads behind the roll's count ends the roll, naming the frames it went back
 rather than scan them twice. A roll used to start wherever the film happened to be and
 call that frame 1. Manifests written before this say so by lacking
 `"numbering": "strip"`, and each frame in them is moved onto the strip's numbers by its
-own recorded transport position rather than read by its number — by the file's commonest
-shift only where two positions give one number, which is how a misread counter looks.
+own recorded transport position rather than read by its number. Only two readings are not
+followed, and both are logged: a position no strip has, such as the stale 72, and one that
+gives a number another frame's does where the frames around it put it elsewhere, which is
+how a misread counter looks — those take the shift of their own walk or run. Two frames
+whose own runs put them on one place, because the film went over it twice between two
+rolls filed under one name, are both kept there, and that is logged too.
 
 `--start-at` resumes a roll that stopped, `--max-failures 3` gives up after three bad
 frames rather than grinding through a whole strip, and a resumed roll carries forward what

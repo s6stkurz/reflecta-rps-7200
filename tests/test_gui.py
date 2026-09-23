@@ -910,6 +910,59 @@ def test_a_roll_resumed_under_8a9ba17_reopens_with_the_frames_it_scanned(
     assert sorted(gui.roll_summary(folder)["done"]) == [1, 2, 3, 6, 7, 8]
 
 
+@pytest.mark.parametrize("which, scanned, said_about", [
+    ("rewound", [6, 7, 8, 9], ["frame 7", "frame 8"]),
+    ("reinserted", [4, 5, 6, 7, 8], ["frame 6"]),
+    ("one-frame", [6, 7, 8], ["frame 7"]),
+])
+def test_an_8a9ba17_roll_that_went_over_a_place_twice_reopens_as_scanned(
+        tmp_path, which, scanned, said_about):
+    """Two 8a9ba17 runs into one roll with the film taken back between them,
+    so some places were scanned twice. The window called strip frames 10 and
+    11 of the rewound roll done, 11 of the reinserted one and 9 of the last,
+    none of them ever scanned -- the one-frame roll's picture of frame 7 was
+    that 9. It says which places hold two scans, and the browser's list
+    agrees."""
+    from conftest import resumed_by_8a9ba17
+
+    folder = tmp_path / "r"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17(which)),
+                                      encoding="utf-8")
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == scanned
+    assert len(said) == len(said_about), said
+    for line, place in zip(said, said_about):
+        assert f"{place} of the strip" in line, line
+    assert sorted(gui.roll_summary(folder)["done"]) == scanned
+
+
+@pytest.mark.parametrize("positions, stale", [([72, 1, 2, 3], 1),
+                                              ([0, 1, 72, 3], 3)])
+def test_a_walk_that_recorded_the_stale_72_reopens_on_the_strips_numbers(
+        tmp_path, positions, stale):
+    """`docs/protocol.md` section 9's stale 72, recorded by one frame of an
+    old walk. The sheet showed that frame as 73 -- past the end of every
+    strip, so its tick could only ever be refused -- and nothing said why.
+    It comes back where the rest of its walk puts it, and the log says so."""
+    folder = tmp_path / "stale"
+    _write_survey(folder, frames=4)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["dry_run"] = True                   # as the session writes a walk
+    for record, position in zip(survey["frames"], positions):
+        record["transport_position"] = position
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert [(r.number, r.position) for r in out["results"]] == list(
+        zip([1, 2, 3, 4], positions))
+    assert len(said) == 1, said
+    assert f"frame {stale} of a-strip" in said[0], said
+    assert "72, which no strip has" in said[0], said
+
+
 def test_a_reopened_old_walk_sends_the_film_to_the_frame_it_showed(
         monkeypatch, tmp_path):
     """The reopen path, end to end: an old walk begun on the counter's 14

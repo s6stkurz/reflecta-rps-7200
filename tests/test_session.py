@@ -1520,6 +1520,98 @@ def test_one_misread_position_does_not_give_two_frames_one_number():
     assert len(said) == 1 and "frame 2 of misread" in said[0], said
 
 
+def _counted(roll, positions, **keys):
+    """An old manifest whose frames were counted 1, 2, ... at `positions`."""
+    return {"roll": roll, **keys,
+            "frames": [{"number": n, "index": n - 1, "transport_position": p,
+                        "registration": {}, "error": None, "done": True}
+                       for n, p in enumerate(positions, start=1)]}
+
+
+@pytest.mark.parametrize("positions, stale", [
+    ([72, 1, 2, 3], 1),
+    ([0, 1, 72, 3], 3),
+    ([72, 1], 1),
+])
+def test_a_position_no_strip_has_is_not_a_frame_number(positions, stale):
+    """`docs/protocol.md` section 9: the counter read a stale 72 before its
+    strip went in. An old record holding it was numbered by it -- frame 73,
+    past the end of every strip, so the sheet could never scan it, and a
+    resume wrote 73 back for good -- and nothing said so. It is numbered where
+    the frames around it put it, and said, the way the roll loop keeps its
+    count past such a reading. Nor is it counted towards the manifest's
+    shift: in a walk of two it tied with the real one, won, and moved
+    `start_at` to 73."""
+    old = _counted("stale", positions,
+                   settings={"start_at": 1, "only": None})
+    assert session.legacy_shift(old) == 0
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == list(
+        range(1, len(positions) + 1))
+    assert new["settings"]["start_at"] == 1
+    assert len(said) == 1, said
+    assert f"frame {stale} of stale" in said[0], said
+    assert "72, which no strip has" in said[0], said
+
+
+def test_a_position_no_strip_has_takes_the_shift_of_its_own_run():
+    """The last frame of the tied 8a9ba17 file, its counter read as 72. It
+    sits after the second run, strip frames 6 to 8, so it is frame 8. By the
+    file's commonest shift, the first run's, it would be 6, a place the second
+    run's first frame already holds; by its own reading it was 73."""
+    from conftest import resumed_by_8a9ba17
+
+    old = resumed_by_8a9ba17("tied")
+    old["frames"][-1]["transport_position"] = 72
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == [1, 2, 3, 6, 7, 8]
+    assert len(said) == 1 and "frame 6 of r" in said[0], said
+
+
+@pytest.mark.parametrize("positions", [[72, 1, 2, 3], [0, 1, 72, 3]])
+def test_a_resume_does_not_write_back_a_position_no_strip_has(tmp_path,
+                                                             positions):
+    """The write-back half, through the real session: frame 5 resumed into an
+    old roll.json one of whose records holds the stale 72. That record came
+    back under 'strip' as frame 73, where no roll will ever go."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "stale"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(
+        json.dumps(_counted("stale", positions, dry_run=False)),
+        encoding="utf-8")
+    events, frames = walk(Roll(frames=1, start_at=5, infrared=False,
+                               resolution=300, name="stale"), tmp_path,
+                          StripScanner(at=4))
+    assert frames == [*enumerate(positions, start=1), (5, 4)]
+    logged = [e.text for e in events
+              if e.kind == "log" and "which no strip has" in (e.text or "")]
+    assert len(logged) == 1, logged
+
+
+@pytest.mark.parametrize("where", ["top", "settings"])
+@pytest.mark.parametrize("positions", [[6, 6, 7], [5, 5, 7], [5, 6, 6]])
+def test_a_walks_misread_takes_the_walks_shift_wherever_it_is(positions,
+                                                              where):
+    """A walk's file is one run -- each walk wrote survey.json afresh -- so a
+    lone disagreeing position at either end of it is read as the middle one
+    is: a misread, on the walk's shift. At an end of a roll.json the same
+    record could be a roll of one frame, and is read as one. The session
+    says it is a walk at the top level, `tools/scan_roll.py` in `settings`."""
+    old = _counted("walk", positions)
+    if where == "top":
+        old["dry_run"] = True
+    else:
+        old["settings"] = {"dry_run": True}
+    said = []
+    new = session.renumbered(old, say=said.append)
+    assert [f["number"] for f in new["frames"]] == [6, 7, 8]
+    assert len(said) == 1, said
+
+
 @pytest.mark.parametrize("which, strip", [
     ("tied", [1, 2, 3, 6, 7, 8]),
     ("second-longer", [1, 2, 4, 5, 6]),
@@ -1559,6 +1651,65 @@ def test_a_resume_writes_back_the_frames_an_8a9ba17_roll_really_scanned(
                      StripScanner(at=7))
     assert frames == [(1, 0), (2, 1), (3, 2), (6, 5), (7, 6), (8, 7),
                       (4, 3), (5, 4)]
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["numbering"] == session.NUMBERING
+
+
+@pytest.mark.parametrize("which, strip, shared", [
+    ("rewound", [6, 7, 8, 7, 8, 9],
+     ["frames 2 and 4 of r are both frame 7 of the strip",
+      "frames 3 and 5 of r are both frame 8 of the strip"]),
+    ("reinserted", [6, 7, 8, 4, 5, 6],
+     ["frames 1 and 6 of r are both frame 6 of the strip"]),
+    ("one-frame", [6, 7, 8, 7],
+     ["frames 2 and 4 of r are both frame 7 of the strip"]),
+])
+def test_an_8a9ba17_roll_that_went_over_a_place_twice_keeps_both_there(
+        which, strip, shared):
+    """Two 8a9ba17 runs into one roll that overlap on the strip, the film
+    wound back or the strip put in again between them. The frames that
+    collided were moved by the file's commonest shift, which was the other
+    run's, and each then landed on a frame that had collided with nothing,
+    which was moved in turn: the rewound file read 6 to 11, filing the scan
+    of strip frame 9 as 11 -- never scanned -- and saying frame 6 of it had
+    collided when nothing shared its place. Each run keeps its own shift,
+    both scans of a place are kept on it, and only a place really shared is
+    said."""
+    from conftest import resumed_by_8a9ba17
+
+    said = []
+    new = session.renumbered(resumed_by_8a9ba17(which), say=said.append)
+    assert [f["number"] for f in new["frames"]] == strip
+    assert [f["index"] for f in new["frames"]] == [n - 1 for n in strip]
+    assert len(said) == len(shared), said
+    for line, start in zip(said, shared):
+        assert line.startswith(start), line
+
+
+@pytest.mark.parametrize("which, resume, film_at, written", [
+    ("rewound", 10, 8,
+     [(6, 5), (7, 6), (8, 7), (7, 6), (8, 7), (9, 8), (10, 9)]),
+    ("reinserted", 11, 10,
+     [(6, 5), (7, 6), (8, 7), (4, 3), (5, 4), (6, 5), (11, 10)]),
+])
+def test_a_resume_keeps_both_scans_of_a_place_an_8a9ba17_roll_went_over(
+        tmp_path, which, resume, film_at, written):
+    """The write-back half, through the real session, for the two files
+    above. The rewound one came back as frames 6 to 11 under 'strip', so
+    resuming frame 10 replaced the record of strip frame 8's second scan and
+    left the scan of frame 9 filed as 11 for good; the reinserted one filed
+    the second scan of strip frame 6 as 11, and resuming frame 11 replaced
+    it."""
+    from conftest import StripScanner, resumed_by_8a9ba17
+
+    folder = tmp_path / "rolls" / "r"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17(which)),
+                                      encoding="utf-8")
+    _, frames = walk(Roll(frames=1, start_at=resume, infrared=False,
+                          resolution=300, name="r"), tmp_path,
+                     StripScanner(at=film_at))
+    assert frames == written
     manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
     assert manifest["numbering"] == session.NUMBERING
 
