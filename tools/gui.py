@@ -4526,8 +4526,8 @@ def read_survey(folder, say=None) -> dict:
     turned individually. The per-frame turns come back as `rotations`, which
     the sheet lays over the results afterwards.
 
-    ``say`` hears anything the renumbering of an old walk could not settle;
-    see `session.renumbered`.
+    ``say`` hears anything the renumbering of an old walk, or of the roll
+    beside it, could not settle; see `session.renumbered`.
     """
     folder = Path(folder)
     # Two manifests, one directory, and both matter. `survey.json` is the walk
@@ -4561,7 +4561,13 @@ def read_survey(folder, say=None) -> dict:
     # same folder has replaced the survey it was decided on.
     decided = legacy_shift(progress) if progress else None
     manifest = renumbered(manifest, say=say)
-    progress = renumbered(progress, fallback=shift)
+    # The roll is said as well: a stale 72 in it, or two scans of one place,
+    # is what the operator needs before scanning more into it -- and each of
+    # the three session roll.json files under `rolls/` has a walk beside it,
+    # checked 2026-09-23. Only when there is one, though; alone, the
+    # roll.json was the manifest and has been said.
+    progress = renumbered(progress, fallback=shift,
+                          say=say if survey_path.exists() else None)
     # Merged, because `tools/scan_roll.py` writes these only inside `settings`
     # and this reader wanted them at the top level. See `manifest_settings`:
     # the one that matters is `prescan_resolution`, and reading it as None

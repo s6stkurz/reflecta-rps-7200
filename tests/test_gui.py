@@ -910,25 +910,46 @@ def test_a_roll_resumed_under_8a9ba17_reopens_with_the_frames_it_scanned(
     assert sorted(gui.roll_summary(folder)["done"]) == [1, 2, 3, 6, 7, 8]
 
 
+def _walk_beside(folder, positions):
+    """A walk's survey.json in `folder`, beside whatever roll.json is there,
+    as 8a9ba17's session left a date-named folder: `dry_run` at the top."""
+    _write_survey(folder, frames=len(positions))
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["dry_run"] = True
+    for record, position in zip(survey["frames"], positions):
+        record["transport_position"] = position
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+
+@pytest.mark.parametrize("beside", [False, True],
+                         ids=["roll alone", "walk beside"])
 @pytest.mark.parametrize("which, scanned, said_about", [
     ("rewound", [6, 7, 8, 9], ["frame 7", "frame 8"]),
     ("reinserted", [4, 5, 6, 7, 8], ["frame 6"]),
     ("one-frame", [6, 7, 8], ["frame 7"]),
 ])
 def test_an_8a9ba17_roll_that_went_over_a_place_twice_reopens_as_scanned(
-        tmp_path, which, scanned, said_about):
+        tmp_path, which, scanned, said_about, beside):
     """Two 8a9ba17 runs into one roll with the film taken back between them,
     so some places were scanned twice. The window called strip frames 10 and
     11 of the rewound roll done, 11 of the reinserted one and 9 of the last,
     none of them ever scanned -- the one-frame roll's picture of frame 7 was
     that 9. It says which places hold two scans, and the browser's list
-    agrees."""
+    agrees.
+
+    Said with a walk's survey.json beside the roll as well, which is where
+    each of the three session roll.json files under `rolls/` is: the roll
+    was read there with nothing to say to, so both scans sat on one number
+    without a word -- and said only once when the roll.json is alone, where
+    the window reads it as the walk too."""
     from conftest import resumed_by_8a9ba17
 
     folder = tmp_path / "r"
     folder.mkdir()
     (folder / "roll.json").write_text(json.dumps(resumed_by_8a9ba17(which)),
                                       encoding="utf-8")
+    if beside:
+        _walk_beside(folder, [5, 6, 7])
     said = []
     out = gui.read_survey(folder, say=said.append)
     assert sorted(out["scanned"]) == scanned
@@ -936,6 +957,29 @@ def test_an_8a9ba17_roll_that_went_over_a_place_twice_reopens_as_scanned(
     for line, place in zip(said, said_about):
         assert f"{place} of the strip" in line, line
     assert sorted(gui.roll_summary(folder)["done"]) == scanned
+
+
+@pytest.mark.parametrize("beside", [False, True],
+                         ids=["roll alone", "walk beside"])
+def test_an_old_rolls_stale_72_is_said_wherever_the_roll_is(tmp_path,
+                                                            beside):
+    """The last frame of the tied 8a9ba17 roll, its counter read as 72. It is
+    numbered where its run puts it, 8, and said once -- beside a walk too,
+    where the roll used to be read in silence."""
+    from conftest import resumed_by_8a9ba17
+
+    folder = tmp_path / "r"
+    folder.mkdir()
+    old = resumed_by_8a9ba17("tied")
+    old["frames"][-1]["transport_position"] = 72
+    (folder / "roll.json").write_text(json.dumps(old), encoding="utf-8")
+    if beside:
+        _walk_beside(folder, [0, 1, 2])
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert sorted(out["scanned"]) == [1, 2, 3, 6, 7, 8]
+    assert len(said) == 1, said
+    assert "frame 6 of r" in said[0] and "72, which no strip has" in said[0]
 
 
 def test_a_roll_the_tool_wrote_reopens_as_one_run(tmp_path):
