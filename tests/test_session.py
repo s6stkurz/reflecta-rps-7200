@@ -536,6 +536,41 @@ def test_the_driver_log_reaches_the_event_queue(tmp_path):
     assert any("shading calibrated" in e.text for e in kinds(events, "log"))
 
 
+def test_a_calibration_says_whether_it_left_a_reference(tmp_path):
+    """The window asks for a calibration before a scan until this says one
+    exists, so it has to say so for every way a calibration can end."""
+    s, _, events = run(Calibrate(mode="measure"), tmp_path)
+    assert [e.done for e in kinds(events, "calibrated")] == [1]
+    assert s.calibrated is True
+
+
+@pytest.mark.parametrize(("answer", "why"), [
+    ({"action": "calibrated", "reference": None, "summary": "no usable lines"},
+     "a measurement with nothing usable in it"),
+    ({"action": "skipped", "summary": "shading off"}, "raw pixels by request"),
+])
+def test_a_calibration_without_a_reference_is_not_one(tmp_path, answer, why):
+    scanner = FakeScanner()
+    scanner.ensure_shading = lambda *a, **k: answer
+    s, _, events = run(Calibrate(mode="measure"), tmp_path, scanner=scanner)
+    assert [e.done for e in kinds(events, "calibrated")] == [0], why
+    assert s.calibrated is False
+
+
+def test_a_calibration_that_fails_says_so_before_the_failure(tmp_path):
+    scanner = FakeScanner()
+
+    def broken(*a, **k):
+        raise OSError("the pass came back short")
+
+    scanner.ensure_shading = broken
+    s, _, events = run(Calibrate(mode="measure"), tmp_path, scanner=scanner)
+    order = [e.kind for e in events if e.kind in ("calibrated", "failed")]
+    assert order == ["calibrated", "failed"]
+    assert kinds(events, "calibrated")[0].done == 0
+    assert s.calibrated is False
+
+
 def test_progress_arrives_as_numbers_not_as_text(tmp_path):
     """A progress bar that parses the log line goes quietly dead the day the
     line is reworded."""

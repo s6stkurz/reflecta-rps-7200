@@ -804,7 +804,8 @@ def _stub_window(survey, transport, submitted, tmp_path):
         return types.SimpleNamespace(get=lambda: value)
 
     return types.SimpleNamespace(
-        busy=False, survey=survey, _transport=transport, _survey_start=1,
+        busy=False, sheet=None, _calibration_missing=lambda parent=None: False,
+        survey=survey, _transport=transport, _survey_start=1,
         _survey_predpi=300, orientations={},
         v_ir=var(False), v_fast_ir=var(True), v_film=var("negative"),
         v_meter=var("none"), v_correct=var(False), v_mono=var(False),
@@ -813,6 +814,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _per_frame_seconds=lambda **kw: 60.0,
         _approved_note=lambda *a: "", _options_note=lambda *a: "",
         _write_approved=lambda *a: None, _notes=FilmNotes,
+        _edges_pending=lambda: "", _update_roll_eta=lambda: None,
         _tags=lambda: (), _say=lambda *a: None,
         session=types.SimpleNamespace(submit=submitted.append,
                                       rolls=str(tmp_path / "rolls")),
@@ -1156,6 +1158,141 @@ def test_changing_the_monochrome_channel_changes_the_view(window):
         assert app.v_channel.get() == expected, channel
 
 
+# -- a calibration is asked for when a scan needs one, and only then ---------
+
+
+CONTROLS = ("TEntry", "TCombobox", "TCheckbutton", "TRadiobutton", "TButton",
+            "TSpinbox", "Scale", "TScale")
+
+
+def _toplevels(root) -> list:
+    return [w for w in root.winfo_children() if w.winfo_class() == "Toplevel"]
+
+
+def _prompt_button(app, text):
+    """The prompt's button with this label, found the way a person finds it."""
+    for widget in gui._descendants(app._calibrate_prompt):
+        if widget.winfo_class() == "TButton" and widget.cget("text") == text:
+            return widget
+    raise AssertionError(f"no {text!r} button in the prompt")
+
+
+def _never_confirm(*_a, **_k):
+    raise AssertionError("asked about the scan before the calibration")
+
+
+def test_without_a_calibration_nothing_is_asked_and_nothing_is_locked(window):
+    """Stefan could not change the frame count until he had calibrated. The
+    window opens with every setting live and no prompt in front of it; a
+    calibration changes the label on its own button and nothing else."""
+    from rps7200.session import Event
+
+    app, root = window
+    deadline = time.monotonic() + 10
+    while not app.session.inquiry_text and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    assert app.session.inquiry_text, "the demo scanner never opened"
+    for _ in range(10):                  # the old prompt came 50 ms after this
+        root.update()
+        time.sleep(0.02)
+    assert app._calibrate_prompt is None and not _toplevels(root)
+    assert app.b_calibrate.cget("text") == "Calibrate"
+
+    def states():
+        return {str(w): str(w.cget("state")) for w in gui._descendants(root)
+                if w.winfo_class() in CONTROLS}
+
+    before = states()
+    app._handle(Event(kind="calibrated", done=1))
+    root.update()
+    assert states() == before
+    assert app.b_calibrate.cget("text") == "Calibrate again"
+
+
+@pytest.mark.parametrize("press", ["on_prescan", "on_scan", "on_roll",
+                                   "the prescan key", "the sheet"])
+def test_a_scan_without_a_calibration_asks_for_one_and_scans_nothing(
+        window, monkeypatch, press):
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", _never_confirm)
+    monkeypatch.setattr(gui.messagebox, "showinfo", _never_confirm)
+    do = {"the prescan key": lambda: app._confirm_then(
+              "a prescan", lambda: "cost", app.on_prescan),
+          "the sheet": lambda: app.on_scan_chosen((1, 2))}.get(
+              press, getattr(app, press, None))
+    do()
+    root.update()
+    assert jobs == []
+    assert app._calibrate_prompt is not None
+    assert app._calibrate_prompt.winfo_exists()
+    do()                                   # pressed again: raised, not doubled
+    root.update()
+    assert len(_toplevels(root)) == 1
+
+
+def test_calibrate_now_starts_one_closes_the_prompt_and_scans_next_time(
+        window, monkeypatch):
+    from rps7200.session import Calibrate, Prescan
+
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.on_prescan()
+    _prompt_button(app, "Calibrate now").invoke()
+    root.update()
+    assert [type(j) for j in jobs] == [Calibrate]
+    assert jobs[0].mode == "measure"
+    assert app._calibrate_prompt is None and not _toplevels(root)
+    # Queued behind the calibration rather than asking a second time: the
+    # session runs its jobs in order.
+    app.on_prescan()
+    assert [type(j) for j in jobs] == [Calibrate, Prescan]
+
+
+def test_the_panels_calibrate_button_answers_the_prompt_too(window, monkeypatch):
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.on_scan()
+    assert app._calibrate_prompt is not None
+    app.b_calibrate.invoke()
+    root.update()
+    assert len(jobs) == 1
+    assert app._calibrate_prompt is None and not _toplevels(root)
+
+
+def test_not_now_leaves_it_to_be_asked_again(window, monkeypatch):
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.on_prescan()
+    _prompt_button(app, "Not now").invoke()
+    root.update()
+    assert jobs == [] and not _toplevels(root) and app.calibrated is False
+    app.on_prescan()
+    assert app._calibrate_prompt is not None
+
+
+def test_a_calibration_that_left_no_reference_is_asked_for_again(window,
+                                                               monkeypatch):
+    """Queued counts as calibrated; the session's answer when it ends is the
+    one that stands."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    app.on_calibrate("measure")
+    assert app.calibrated is True
+    app._handle(Event(kind="calibrated", done=0))
+    assert app.calibrated is False
+    assert app.b_calibrate.cget("text") == "Calibrate"
+    app.on_prescan()
+    assert app._calibrate_prompt is not None
+
+
 # -- the two live time estimates ---------------------------------------------
 #
 # _progress() and _update_roll_eta() are driven directly with controlled
@@ -1287,6 +1424,7 @@ def _press_roll(app, monkeypatch, frames="3", start_at="1", answer=True):
     monkeypatch.setattr(gui.messagebox, "showerror",
                         lambda *a, **k: errors.append(a))
     monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.calibrated = True             # the question here is the roll's own
     app.v_frames.set(frames)
     app.v_startat.set(start_at)
     app.v_dryrun.set(True)
@@ -2122,7 +2260,7 @@ def test_confirming_a_key_actually_gates_it():
     ran = []
     stub = types.SimpleNamespace(
         busy=False, root=None,
-        _say=lambda *a: None,
+        _say=lambda *a: None, _calibration_missing=lambda parent=None: False,
     )
     answers = iter([False, True])
     real = gui.messagebox.askokcancel
@@ -3223,38 +3361,12 @@ def test_the_line_is_thin_and_the_gap_is_wider_than_it():
 # -- the blue line that says where a frame is going ------------------------
 
 
-def test_the_mark_stands_off_the_edge_the_film_moves_toward():
-    """Backward from the left, forward from the right. The direction is half
-    the information -- a mark that ignored it would say the strip is offset
-    without saying which way."""
-    back = gui.adjustment_mark(-9.84 * 0.1057, 210)
-    fwd = gui.adjustment_mark(+9.84 * 0.1057, 210)
-    assert back is not None and fwd is not None
-    assert back < 210 // 2 < fwd
-    assert back + fwd == 210          # mirrored about the middle
 
 
-def test_the_mark_is_true_to_scale_and_not_exaggerated():
-    """A line drawn larger than the move would have the sheet claiming
-    something the transport is not going to do. A 9.84-unit correction is 2.9%
-    of the aperture, so on a 210 px thumbnail it is 6 px -- small, because the
-    correction is small."""
-    assert gui.adjustment_mark(-9.84 * 0.1057, 210) == 6
-    assert gui.adjustment_mark(-2.84 * 0.1057, 210) == 2
 
 
-def test_no_adjustment_draws_no_mark():
-    assert gui.adjustment_mark(0.0, 210) is None
-    assert gui.adjustment_mark(None, 210) is None
 
 
-def test_a_wild_reading_cannot_draw_itself_as_the_picture():
-    """Clamped at half the width, and never on the edges where it would be
-    invisible -- the same bargain the rest of the sheet makes with a detector
-    it cannot fully trust."""
-    assert gui.adjustment_mark(-999.0, 210) == 105
-    assert 1 <= gui.adjustment_mark(-0.001, 210) <= 208
-    assert gui.adjustment_mark(-9.84 * 0.1057, 3) is None
 
 
 # -- the cell's caption, which had no tests while carrying four mistakes ----
@@ -3485,14 +3597,11 @@ class _Walked:
 
 
 def _strip(count=8, gap=18):
-    import numpy as np
-    out = []
-    for n in range(1, count + 1):
-        rng = np.random.default_rng(n)
-        a = rng.random((40, 428, 3)) * 90 + 15
-        a[:, :gap] = 37.0 + rng.random((40, gap, 3)) * 0.6
-        out.append(_Walked(n, a))
-    return out
+    """A walked strip of realistic negatives, each showing ``gap`` columns of
+    base at its left edge -- off centre, so the detector proposes a move for
+    every one. A flat grey band is not film base and no longer reads as one."""
+    from conftest import negative_prescan
+    return [_Walked(n, negative_prescan(float(gap), seed=n)) for n in range(1, count + 1)]
 
 
 def _walked_folder(tmp_path, count=8):
@@ -3584,7 +3693,8 @@ def test_the_launch_path_does_not_consult_the_sheet_cache():
     import inspect
 
     body = inspect.getsource(gui.ScannerGui.open_roll)
-    assert "_propose_positions(" in body
+    # the whole walk goes to the background reader, which measures it
+    assert "edge_watch.load(" in body
     assert "_recall_sheet_state" not in body
 
 
@@ -3722,11 +3832,15 @@ def test_a_position_the_operator_set_is_never_re_proposed():
     assert notes[3]["source"] == "operator"
 
 
-def test_a_walk_too_short_to_fit_proposes_nothing_and_still_opens():
+def test_a_single_frame_is_read_on_its_own():
+    """The detector reads a frame's own edges, so one prescan is enough -- the
+    old strip-level detector needed two to calibrate a base level at all."""
     from tools.gui import _propose_positions
 
     offsets, notes = _propose_positions(_strip(1), {})
-    assert offsets == {} and notes == {}
+    assert set(offsets) == {1}
+    assert notes[1]["source"] == "measured"
+    assert offsets[1] < 0, "base at the left: the picture goes left, toward it"
 
 
 def test_a_detector_that_raises_does_not_stop_the_sheet_opening():
@@ -3737,3 +3851,272 @@ def test_a_detector_that_raises_does_not_stop_the_sheet_opening():
     broken = [_Walked(1, "not an image"), _Walked(2, "nor this")]
     offsets, notes = _propose_positions(broken, {2: 0.5})
     assert offsets == {2: 0.5}
+
+
+def test_the_big_frame_shows_the_detectors_edge_dotted_red(window, tmp_path):
+    """Opening a frame big shows where the frame-edge detector read the picture
+    ending: a red dotted line, heavier than the aperture guides, drawn on the
+    film so it moves with the picture -- with the proposed move applied it sits
+    just outside the guide, since the frame is wider than the aperture."""
+    app, root = window
+    out = gui.read_survey(_walked_folder(tmp_path))
+    offsets, notes = gui._propose_positions(out["results"], {}, film="negative")
+    sheet = gui._ContactSheet(app, out["results"], offsets=offsets, proposals=notes)
+    root.update()
+    sheet.adjust(0)
+    adj = sheet._adjuster
+    root.update()
+    adj._draw()
+    c = adj.canvas
+    red = [it for it in c.find_all()
+           if c.type(it) == "line" and c.itemcget(it, "fill") == sheet.EDGE_LINE]
+    guides = sorted(c.coords(it)[0] for it in c.find_all()
+                    if c.type(it) == "line" and c.itemcget(it, "fill") == adj.GUIDE)
+    assert len(red) == 1, "the strip shows base at the left only"
+    assert c.itemcget(red[0], "dash") and float(c.itemcget(red[0], "width")) == 3.0
+    x = c.coords(red[0])[0]
+    # the edge sits a few columns outside the left guide once the move is applied
+    assert guides[0] - 20 < x < guides[0]
+    sheet.top.destroy()
+
+
+def test_every_frame_keeps_the_detectors_edges_whoever_set_its_position():
+    """A remembered position -- in the settings or `approved.json` -- used to
+    replace the frame's note and throw the detector's reading away, so a sheet
+    reopened with remembered positions drew no edge line on any frame."""
+    walked = _strip()
+    fresh, fresh_notes = gui._propose_positions(walked, {})
+    kept = {1: 0.1234, 2: 0.5116}
+    offsets, notes = gui._propose_positions(walked, kept, {1: "operator", 2: "measured"})
+    # his stays his, and still shows where the detector read the edge
+    assert offsets[1] == 0.1234 and notes[1]["source"] == "operator"
+    assert notes[1]["edges"] == fresh_notes[1]["edges"]
+    # the machine's is read again: today's detector, not a remembered number
+    assert offsets[2] == fresh[2] and notes[2]["source"] == "measured"
+    assert all(notes[n].get("edges") for n in notes)
+
+
+@pytest.mark.parametrize("degrees", [0, 90, 180, 270])
+@pytest.mark.parametrize("flipped", [False, True])
+def test_the_edge_is_painted_dotted_red_where_it_was_read(degrees, flipped):
+    """On the thumbnail itself, so it shows wherever the cell does, turned
+    with the picture and broken into dots so the base under it still shows."""
+    from rps7200 import preview
+
+    arr = np.zeros((140, 210, 3), dtype=np.uint8)
+    read = {"width": 428, "edges": {"left": {"state": "edge", "x": 107.0},
+                                    "right": {"state": "picture_to_border", "x": None}}}
+    turned = preview.orient(arr, degrees, flipped)
+    painted = gui.paint_edges(turned, read, degrees, flipped)
+    red = np.all(painted == gui.EDGE_RGB, axis=2)
+    axis, f = gui.axis_mark(107.0 / 428, degrees, flipped)
+    h, w = painted.shape[:2]
+    if axis == "x":
+        cols = np.flatnonzero(red.any(axis=0))
+        assert abs(cols.mean() - f * w) <= 1.5
+        assert 0 < red[:, cols[0]].sum() < h, "dotted, not solid"
+    else:
+        rows = np.flatnonzero(red.any(axis=1))
+        assert abs(rows.mean() - f * h) <= 1.5
+        assert 0 < red[rows[0], :].sum() < w, "dotted, not solid"
+    assert not np.any(painted[red == 0]), "nothing else is touched"
+
+
+def test_a_border_side_paints_nothing():
+    arr = np.zeros((10, 20, 3), dtype=np.uint8)
+    read = {"width": 428, "edges": {"left": {"state": "picture_to_border", "x": None}}}
+    assert np.array_equal(gui.paint_edges(arr, read), arr)
+    assert np.array_equal(gui.paint_edges(arr, None), arr)
+
+
+def test_the_big_frame_shows_the_edge_on_a_frame_he_positioned(window, tmp_path):
+    """The case that hid the line: a sheet opened with remembered positions."""
+    app, root = window
+    out = gui.read_survey(_walked_folder(tmp_path))
+    kept = {n: 0.3 for n in range(1, 9)}
+    offsets, notes = gui._propose_positions(out["results"], kept,
+                                            {n: "operator" for n in kept}, film="negative")
+    sheet = gui._ContactSheet(app, out["results"], offsets=offsets, proposals=notes)
+    root.update()
+    sheet.adjust(0)
+    adj = sheet._adjuster
+    root.update()
+    adj._draw()
+    c = adj.canvas
+    red = [it for it in c.find_all()
+           if c.type(it) == "line" and c.itemcget(it, "fill") == sheet.EDGE_LINE]
+    assert len(red) == 1
+    sheet.top.destroy()
+
+
+# -- the frame edges are read in the background ------------------------------
+
+
+def test_the_header_says_which_frame_of_the_roll_it_is_on():
+    assert gui.frame_status(0, 36) == "frame 1 of 36"
+    assert gui.frame_status(11, 36) == "frame 12 of 36"
+    assert gui.frame_status(36, 36) == "frame 36 of 36"
+    assert gui.frame_status(4, None) == "frame 5", "to the end of the strip"
+
+
+def test_the_edge_count_says_how_far_the_reader_has_got():
+    from tools import frame_edges
+
+    def said(state, done=0, total=0, film="negative"):
+        return gui.edges_label(frame_edges.Progress(1, state, done, total, film=film))
+
+    assert said(frame_edges.IDLE) == "frame edges"
+    assert said(frame_edges.READING, 12, 36) == "frame edges 12/36"
+    assert said(frame_edges.DONE, 36, 36) == "frame edges 36/36"
+    assert "failed" in said(frame_edges.FAILED, 36, 36)
+    assert said(frame_edges.SKIPPED, film="positive") == (
+        "frame edges: not read on positive")
+    assert set(gui.EDGE_LIGHT) == {frame_edges.IDLE, frame_edges.READING,
+                                   frame_edges.DONE, frame_edges.FAILED,
+                                   frame_edges.SKIPPED}
+
+
+def _settle(app, root, seconds=60.0):
+    """Pump the window until the frame-edge reader has finished."""
+    from tools import frame_edges
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        root.update()
+        finished = app.edge_watch.progress().state in (frame_edges.DONE,
+                                                        frame_edges.FAILED)
+        # and the window's pump has shown that answer, not only reached it
+        if finished and app._edge_seen == app.edge_watch.version:
+            return app.edge_watch.progress()
+        time.sleep(0.02)
+    raise AssertionError("the frame-edge reader never finished")
+
+
+def test_opening_a_roll_opens_its_sheet_before_the_edges_are_read(
+        window, tmp_path, monkeypatch):
+    """The detector used to run when the sheet was asked for, and the sheet
+    waited for it. Now the sheet is there at once and the positions arrive
+    in it, with the light going blue to green."""
+    from tools import frame_edges
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path)
+    app.open_roll(folder)
+    assert app.sheet is not None and app.sheet.alive(), "no waiting for the reader"
+    progress = _settle(app, root)
+    assert progress.state == frame_edges.DONE
+    assert app.v_edges.get() == "frame edges 8/8"
+    assert app.edge_light.itemcget(app._edge_bulb, "fill") == gui.EDGE_LIGHT[
+        frame_edges.DONE]
+    assert app.sheet.v_edges.get() == "frame edges 8/8"
+    want, want_notes = gui._propose_positions(
+        gui.read_survey(folder)["results"], {}, film="negative")
+    assert app.sheet.offsets == want
+    assert {n: v["source"] for n, v in app.sheet.proposals.items()} == {
+        n: v["source"] for n, v in want_notes.items()}
+    assert set(app.sheet.edges) == set(want_notes)
+    app.sheet.top.destroy()
+
+
+def _sheet_with_readings(app, tmp_path, kept=None):
+    from tools import frame_edges
+
+    out = gui.read_survey(_walked_folder(tmp_path))
+    frames = [(r.number, r.image) for r in out["results"]]
+    offsets, notes = frame_edges.propose_centred(frames, film="negative")
+    mine, mine_notes = gui._merge_kept({}, {}, kept or {},
+                                       {n: "operator" for n in (kept or {})})
+    sheet = gui._ContactSheet(app, out["results"], offsets=mine,
+                              proposals=mine_notes, readings=({}, {}))
+    return sheet, offsets, notes
+
+
+def test_a_reading_that_arrives_late_fills_the_sheet_and_leaves_his_alone(
+        window, tmp_path):
+    app, root = window
+    sheet, offsets, notes = _sheet_with_readings(app, tmp_path, kept={2: 0.5116})
+    root.update()
+    assert sheet.offsets == {2: 0.5116} and not sheet.edges
+    sheet.take_readings(offsets, notes)
+    root.update()
+    snapped, _ = gui._snap_proposals(offsets, notes)
+    assert sheet.offsets[1] == snapped[1]
+    assert sheet.proposals[1]["source"] == "measured"
+    # his position stands; the detector's edge lines are drawn on it anyway
+    assert sheet.offsets[2] == 0.5116 and sheet.proposals[2]["source"] == "operator"
+    assert sheet.edges[2]["edges"] == notes[2]["edges"]
+    sheet.top.destroy()
+
+
+def test_reset_in_the_big_view_puts_that_frame_back_and_no_other(window, tmp_path):
+    app, root = window
+    sheet, offsets, notes = _sheet_with_readings(app, tmp_path)
+    sheet.take_readings(offsets, notes)
+    detected = dict(sheet.offsets)
+    sheet.adjust(0)
+    root.update()
+    adj = sheet._adjuster
+    adj._set(0.9)
+    adj._go(1)
+    adj._set(0.9)
+    assert sheet.proposals[1]["source"] == sheet.proposals[2]["source"] == "operator"
+    adj._reset()
+    assert sheet.offsets[2] == detected[2]
+    assert sheet.proposals[2]["source"] == "measured"
+    assert sheet.proposals[1]["source"] == "operator", "the other frame keeps his"
+    sheet.top.destroy()
+
+
+def test_reset_positions_puts_the_whole_roll_back_after_asking(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    sheet, offsets, notes = _sheet_with_readings(app, tmp_path,
+                                                 kept={1: 0.9, 3: -0.9})
+    sheet.take_readings(offsets, notes)
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesno",
+                        lambda title, message, **k: asked.append(message) or False)
+    sheet.reset_all()
+    assert "1, 3" in asked[0]
+    assert sheet.offsets[1] == 0.9, "no is no"
+    monkeypatch.setattr(gui.messagebox, "askyesno", lambda *a, **k: True)
+    sheet.reset_all()
+    snapped, _ = gui._snap_proposals(offsets, notes)
+    assert sheet.offsets == snapped
+    assert all(v["source"] != "operator" for v in sheet.proposals.values())
+    sheet.top.destroy()
+
+
+def test_a_walk_is_read_while_it_is_walked(window, monkeypatch):
+    """The sheet a walk opens by itself takes the reader's answers; the reader
+    started on the first prescan, not when the sheet was asked for."""
+    from tools import frame_edges
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.calibrated = True
+    app.v_frames.set("3")
+    app.v_startat.set("1")
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    added = []
+    real_add = app.edge_watch.add
+    monkeypatch.setattr(app.edge_watch, "add",
+                        lambda n, im: added.append((n, app.sheet)) or real_add(n, im))
+    app.on_roll()
+    statuses = set()
+    deadline = time.monotonic() + 60
+    while app.sheet is None and time.monotonic() < deadline:
+        root.update()
+        statuses.add(app.v_frame_status.get())
+        time.sleep(0.01)
+    assert app.sheet is not None, "the walk never opened its sheet"
+    assert [n for n, _ in added] == [1, 2, 3]
+    assert all(sheet is None for _, sheet in added), "read before any sheet"
+    assert "frame 1 of 3" in statuses
+    progress = _settle(app, root)
+    assert progress.state == frame_edges.DONE and progress.done == 3
+    assert app.sheet.generation == progress.generation
+    assert app.v_frame_status.get() == ""
+    app.sheet.top.destroy()

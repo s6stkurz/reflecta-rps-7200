@@ -2985,15 +2985,18 @@ class DirectScanner:
         improved by nudging further.
         """
         def look(image: np.ndarray) -> tuple[bool, str]:
-            if walk.base is None:
+            if getattr(walk, "reader", None) is not None:
+                mm = walk.reader.reread(index, image)
+            elif walk.base is None:
                 return True, ""
-            reading = frame_offset_mm(image, walk.base)
-            if reading.mm is None:
+            else:
+                mm = frame_offset_mm(image, walk.base).mm
+            if mm is None:
                 return True, ""          # cannot see; not evidence of trouble
-            if abs(reading.mm) > abs(target_mm) + MAX_CORRECTION_MM:
+            if abs(mm) > abs(target_mm) + MAX_CORRECTION_MM:
                 return False, (
                     f"frame {index + 1}: after moving, the gap reads "
-                    f"{say_units(reading.mm)} -- further out than the "
+                    f"{say_units(mm)} -- further out than the "
                     f"{say_units(target_mm)} this started from. The frame is "
                     "not "
                     "where any of this predicted, so it is left alone")
@@ -3223,6 +3226,7 @@ class DirectScanner:
         reverse_hold: bool = False,
         fast_infrared: bool = True,
         first_index: int = 0,
+        edge_reader: Callable[[str], Any] | None = None,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -3325,7 +3329,11 @@ class DirectScanner:
         # The only thing in a roll that remembers anything across frames. Built
         # once so the base level and the advance it learns carry forward; None
         # when nothing asked for aiming, so an ordinary roll is untouched.
-        walk = StripWalk() if (correct or correct_dry_run) else None
+        # ``edge_reader(film)`` makes a fresh reader for this roll (the
+        # window passes `tools/frame_edges.walk_reader`); None, or a film it
+        # does not read, leaves the strip-level detector in charge.
+        walk = (StripWalk(reader=edge_reader(film) if edge_reader else None)
+                if (correct or correct_dry_run) else None)
         misses = 0
         index = first_index
 

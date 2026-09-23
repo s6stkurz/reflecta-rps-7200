@@ -1633,6 +1633,14 @@ class StripWalk:
     aiming: bool = True
     off_reason: str = ""
     misses: int = 0
+    #: Something that reads a frame's edges itself -- the window hands in
+    #: `tools/frame_edges`' walk reader through `scan_roll(edge_reader=...)`.
+    #: With one, `observe` and `judge` ask it instead of calibrating a base
+    #: level from the strip; the budget, the misses and the history stay here.
+    #: Without one, this is the detector it always was. Duck-typed:
+    #: ``observe(number, image) -> dict``, ``judge(number, image) ->
+    #: (offset_mm | None, detail)``, ``reread(number, image) -> offset_mm | None``.
+    reader: Any = None
 
     def landed(self) -> None:
         self.misses = 0
@@ -1665,6 +1673,8 @@ class StripWalk:
         exposure, one shading reference, and a prescan meters nothing -- so
         anything that moves it is the detector finding picture rather than base.
         """
+        if self.reader is not None:
+            return dict(self.reader.observe(int(number), image))
         self.bands[int(number)] = edge_bands(image)
         was = self.base
         self.base, self.base_detail = film_base_from(self.bands)
@@ -1712,6 +1722,11 @@ class StripWalk:
         """What to do about this frame, from every member that can see it."""
         if not self.aiming:
             return None, {"reason": self.off_reason, "members": []}
+        if self.reader is not None:
+            decision, detail = self.reader.judge(int(number), image)
+            if decision is not None:
+                self.placed[int(number)] = float(decision)
+            return decision, dict(detail)
         if self.base is None:
             return None, {"members": [], "reason": (
                 "the strip's base level is not calibrated yet: "
@@ -1921,6 +1936,21 @@ COMMAND_COST = 1.84
 
 #: The width a 300 dpi prescan comes back as. Columns scale with it.
 PRESCAN_COLUMNS = 428.0
+
+#: Gap to gap along the strip, in units: tracked across twelve commands and
+#: four gaps entering and leaving on walk K (455, 454, 455 px; see
+#: `docs/frame-measurement-plan.md`). The frame-edge detector's gap model
+#: (`tools/frame_edges/gapmodel.py`) places a frame's far edge through it.
+PITCH_UNITS = 366.5
+
+#: A frame's width, in units: 435.6 columns of a 300 dpi prescan, measured on
+#: 39 pairs of prescans of one frame -- one showing the frame's left edge, the
+#: other its right, the registered shift between them closing the width with
+#: no pitch assumed (interquartile 435.3-435.9; `research/frame-edge`). A
+#: second camera read 432.7 (2 pairs): the difference moves a centred frame by
+#: 1.2 units, under half the smallest move. Wider than the aperture (428
+#: columns), so a centred frame shows no base at all.
+FRAME_WIDTH_UNITS = 350.6
 
 #: The largest param the byte allows. `param 255` is accepted by the device;
 #: nothing above 87 had been sent before 2026-09-21. The step stays constant to

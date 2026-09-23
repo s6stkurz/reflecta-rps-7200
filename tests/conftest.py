@@ -469,3 +469,53 @@ def load_tool(name: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+#: The unexposed base of a C-41 negative as a 300 dpi prescan reads it, in
+#: 8-bit counts: the orange mask, R/G ~2.2 and B/G ~0.53 on every roll the
+#: frame-edge study measured.
+C41_BASE = (66.0, 30.0, 16.0)
+
+
+def negative_prescan(left: float = 0.0, right: float = 0.0, *, seed: int = 0,
+                     rows: int = 286, width: int = 428, outer_left: float | None = None,
+                     noise: float = 1.0) -> np.ndarray:
+    """A synthetic 300 dpi C-41 prescan: picture, and base where asked. uint8.
+
+    ``left`` / ``right`` columns of unexposed base at each border, each ending in
+    a straight full-height edge at a fractional column. ``outer_left`` puts the
+    *neighbouring* frame's picture back beyond the left gap: columns
+    ``[0, outer_left)`` are picture again, so the gap is a band.
+
+    The picture is what a negative is and a flat grey block is not: denser than
+    base in every channel, colour varying, textured at several scales -- the
+    properties the detectors in `tools/frame_edges` read. Built from numpy's
+    seeded generator only, so a test's frame is the same every run.
+    """
+    rng = np.random.default_rng(seed)
+    base = np.array(C41_BASE, dtype=np.float64)
+
+    def smooth(scale: int) -> np.ndarray:
+        coarse = rng.random((rows // scale + 2, width // scale + 2, 3))
+        big = np.kron(coarse, np.ones((scale, scale, 1)))[:rows, :width]
+        return big
+
+    texture = 0.5 * smooth(40) + 0.3 * smooth(12) + 0.2 * smooth(4)
+    transmission = 0.15 + 0.6 * texture              # 0.15..0.75 of base, per channel
+    picture = base * transmission
+    img = picture.copy()
+    cols = np.arange(width, dtype=np.float64)[None, :, None]
+
+    def coverage(start: float, stop: float) -> np.ndarray:
+        """Fraction of each column inside [start, stop): partial columns at the ends."""
+        return np.clip(np.minimum(cols + 1, stop) - np.maximum(cols, start), 0.0, 1.0)
+
+    if left > 0:
+        lo = 0.0 if outer_left is None else float(outer_left)
+        f = coverage(lo, float(left))
+        img = img * (1 - f) + base * f
+    if right > 0:
+        f = coverage(float(width - right), float(width))
+        img = img * (1 - f) + base * f
+    img = img + rng.normal(0.0, noise, img.shape)
+    return np.clip(np.round(img), 0, 255).astype(np.uint8)

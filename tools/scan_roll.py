@@ -40,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import framing, tiff
+from rps7200 import tiff
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
@@ -49,6 +49,7 @@ from rps7200.direct import (
     supports_infrared,
 )
 from rps7200.library import FilmNotes
+from rps7200.protocol import FILM_NEGATIVE
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
 from rps7200.session import (
@@ -62,6 +63,7 @@ from rps7200.session import (
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
 from rps7200.session import rewind as _rewind
+from tools import frame_edges  # noqa: E402  (repo root is on the path above)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -203,7 +205,9 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     become the references the roll correlates each fresh prescan against.
 
     This is the window's contact-sheet path with the window taken off. It calls
-    the same `framing.propose_offsets` the sheet seeds itself from and builds
+    the same `tools/frame_edges.propose_centred` the sheet seeds itself from --
+    each frame centred between the edges the detector reads, as the walk's
+    film -- and builds
     the same `session.Approved` the sheet hands to a commissioned scan, so what
     runs here is what runs there -- which is the point, because a probe that
     agrees with itself proves nothing about the path an operator uses.
@@ -239,13 +243,13 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     frames = [(number, tiff.read(str(path)))
               for number, path, _ in walked_prescans(folder, manifest,
                                                      say=print)]
-    if len(frames) < 2:
-        raise SystemExit(f"{folder}'s walk lists {len(frames)} prescan(s) "
-                         "that are still there; a strip is needed to propose "
-                         "positions from")
+    if not frames:
+        raise SystemExit(f"{folder}'s walk lists no prescans that are still "
+                         "there, so there is nothing to propose positions from")
 
-    offsets, notes = framing.propose_offsets(
-        [(n, im.astype(float)) for n, im in frames])
+    film = (manifest.get("film") or (manifest.get("settings") or {}).get("film")
+            or FILM_NEGATIVE)
+    offsets, notes = frame_edges.propose_centred(frames, film=film)
     held = {
         n: Approved(number=n, offset_mm=float(offsets[n]), reference=im,
                     source=(notes.get(n) or {}).get("source") or "none")
@@ -468,6 +472,8 @@ def main() -> int:
                 approved={n - 1: a for n, a in held.items()},
                 correct=args.correct,
                 correct_dry_run=args.correct_dry_run,
+                # the window's detector, so --correct reads edges as it does
+                edge_reader=frame_edges.walk_reader,
             ):
                 number = frame.index + 1
                 record = {
