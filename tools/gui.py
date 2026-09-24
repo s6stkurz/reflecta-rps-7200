@@ -126,9 +126,11 @@ PRESCAN_LADDER = (300, 600, 900)
 #: The controls worth carrying between launches: what the scanner is being
 #: asked to do. Not the view -- channel, invert and zoom start where they always
 #: did, because they describe the last thing looked at rather than the setup.
+#: `last` is a new key rather than the old `frames` reused: that one held a
+#: count, and a remembered "6" read as "last frame 6" is a different roll.
 REMEMBERED = ("dpi", "predpi", "ir", "fast_ir", "film", "expmode", "exposure",
               "shading", "meter", "dryrun", "correct", "fine", "aim", "reverse",
-              "frames", "startat", "outfmt", "jpegq", "adjuststep")
+              "startat", "last", "outfmt", "jpegq", "adjuststep")
 
 #: Which controls each left-hand panel owns, keyed by the title in its header.
 #: The header uses this to say how many of them differ from their default and to
@@ -142,7 +144,7 @@ PANEL_CONTROLS = {
     "Scan": ("dpi", "predpi", "ir", "fast_ir", "film", "mono_channel",
              "expmode", "exposure", "shading"),
     "Transport": ("fine", "aim", "reverse"),
-    "Roll": ("frames", "startat", "meter", "dryrun", "correct"),
+    "Roll": ("startat", "last", "meter", "dryrun", "correct"),
     "Film": ("stock", "roll", "frame", "process", "subject", "notes", "tags"),
     "Save scans to": ("outfmt", "jpegq"),
 }
@@ -441,6 +443,12 @@ class ScannerGui:
         self.orientations: dict[tuple, tuple[int, bool]] = {}
         self.survey: list = []               # the prescans a dry run walked
         self._surveying = False              # a dry run is running right now
+        #: The frames a walk that adds to the sheet found already on it, and
+        #: which of those it walked again. Empty on a fresh walk. A frame walked
+        #: again replaces its old prescan, and a position set on the old one is
+        #: dropped when the walk ends: it was measured from that prescan.
+        self._kept_walk: set[int] = set()
+        self._rewalked: set[int] = set()
         #: The prescan resolution the survey walked at. A commissioned scan is
         #: held to it when approved positions are in play: checking a frame
         #: against a reference from another resolution works geometrically but
@@ -1475,17 +1483,23 @@ class ScannerGui:
     def _build_roll(self, parent: ttk.Frame) -> None:
         box = self._panel(parent, "Roll")
         box.pack(fill="x", pady=(8, 0))
-        for label, var, default in (("frames", "v_frames", "6"),
-                                    ("start at", "v_startat", "1")):
+        # A range, both ends included, because that is how a strip is thought
+        # about: "1 to 10", then "11 to the end". It was a count and a start,
+        # and an empty count was an error rather than the end of the strip.
+        for label, var, default in (("first frame", "v_startat", "1"),
+                                    ("last frame", "v_last", "")):
             row = ttk.Frame(box)
             row.pack(fill="x", pady=2)
-            ttk.Label(row, text=label, width=9).pack(side="left")
+            ttk.Label(row, text=label, width=11).pack(side="left")
             setattr(self, var, tk.StringVar(value=default))
             ttk.Entry(row, textvariable=getattr(self, var), width=6).pack(side="left")
+        ttk.Label(box, text="last frame empty: to the end of the strip",
+                  foreground="#777", wraplength=210,
+                  justify="left").pack(anchor="w")
 
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
-        ttk.Label(row, text="meter", width=9).pack(side="left")
+        ttk.Label(row, text="meter", width=11).pack(side="left")
         self.v_meter = tk.StringVar(value="each")
         ttk.Combobox(row, textvariable=self.v_meter, width=8, state="readonly",
                      values=list(METER_MODES)).pack(side="left")
@@ -1514,7 +1528,8 @@ class ScannerGui:
         ttk.Label(box, foreground="#777", wraplength=210, justify="left",
                   text=("A dry run walks the strip in about 20 seconds a frame "
                         "and opens a contact sheet. Tick the frames worth "
-                        "having and only those are scanned.")).pack(
+                        "having and only those are scanned. Walking again "
+                        "asks whether to add to the sheet you have.")).pack(
             anchor="w", pady=(4, 0))
 
     def _build_film(self, parent: ttk.Frame) -> None:
@@ -2080,12 +2095,14 @@ class ScannerGui:
         dpi, predpi = self._dpi(), self._prescan_dpi()
         if dpi is None or predpi is None:
             return
-        frames = self._int(self.v_frames, "Frames", 0, 100)
         # A shape check only. Whether a strip has that frame is the seek's to
         # say, and it refuses before it reads or moves anything -- one place
         # for the refusal, the backend, where the failed-job path shows it.
-        start_at = self._int(self.v_startat, "Start at", 1, 100)
-        if frames is None or start_at is None:
+        try:
+            start_at, frames = frame_range(self.v_startat.get(),
+                                           self.v_last.get())
+        except ValueError as exc:
+            messagebox.showerror("Roll", str(exc))
             return
         dry = self.v_dryrun.get()
         per = (23.0 if dry else
@@ -2097,19 +2114,41 @@ class ScannerGui:
         # was the time of frames nobody would scan.
         cost = (f"{roll_estimate(per, frames, move_s)}\n\n"
                 if plausible(start_at - 1) else "")
-        what = (f"{frames} frame{'s' if frames != 1 else ''}" if frames
-                else "every frame to the end of the strip")
-        if not messagebox.askokcancel(
-            "Scan roll",
-            f"{'Walk' if dry else 'Scan'} {what}, from frame {start_at}, "
+        question = (
+            f"{'Walk' if dry else 'Scan'} {range_words(start_at, frames)}, "
             f"at {dpi} dpi"
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
             f"{move}\n\n"
-            f"{cost}"
-            "Start?",
-        ):
+            f"{cost}")
+        # One question either way: `on_roll` is the only confirmation the
+        # `roll` key gets, and asking twice trains the habit of dismissing both.
+        keep = False
+        if dry and self._sheet_to_keep():
+            answer = self._ask_keep_sheet(question, start_at, frames, predpi)
+            if answer is None:
+                return
+            keep = answer
+        elif not messagebox.askokcancel("Scan roll", question + "Start?"):
             return
         if dry:
+            # The sheet open now belongs to the walk before this one. Closed
+            # here, keeping what was decided in it under its own roll, before
+            # anything below forgets that walk or files more frames into it.
+            # Left open, the end of this walk raised it again showing the old
+            # frames, and closing it filed them under the new roll.
+            self._close_sheet()
+            self._survey_film = self.v_film.get()
+        if dry and keep:
+            # The same strip, further along: what the sheet holds stays, and
+            # this walk's frames are added to it -- on screen here, on disk by
+            # the session (`Roll.extend_walk`), and in the frame-edge reader,
+            # which reads the old frames again against the new ones.
+            self.sheet_state = self._recall_sheet_state()
+            self._kept_walk = {int(r.number) for r in self.survey if r.number}
+            self.edge_watch.extend(
+                None if frames is None else
+                len(self._kept_walk | set(range(start_at, start_at + frames))))
+        elif dry:
             # Only cleared here, so a survey outlives the window that showed it
             # and the sheet can be opened again without walking the strip twice.
             self.survey = []
@@ -2127,10 +2166,12 @@ class ScannerGui:
             # here so a walk that fails partway cannot leave the next set of
             # decisions filed against the roll before it.
             self._sheet_roll = None
+            self._kept_walk = set()
+            self.edge_watch.begin(self._survey_film, expected=frames)
+        if dry:
+            self._rewalked = set()
             self._surveying = True
             self._survey_predpi = predpi
-            self._survey_film = self.v_film.get()
-            self.edge_watch.begin(self._survey_film, expected=frames or None)
         # Starts the whole-roll estimate at the same rough figure the dialog
         # above just showed, so the number on screen does not jump the moment
         # scanning begins. `frames` is already "how many this run will do",
@@ -2140,12 +2181,12 @@ class ScannerGui:
         self._roll_wall_start = time.monotonic()
         self._roll_seeking = True
         self._roll_dry = dry
-        self._roll_frames_total = frames or None
+        self._roll_frames_total = frames
         self._roll_frames_done = 0
         self._roll_seconds_per_frame = per
         self._update_roll_eta()
         self.session.submit(Roll(
-            frames=frames or None, start_at=start_at, resolution=dpi,
+            frames=frames, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             fast_infrared=self.v_fast_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
@@ -2153,9 +2194,85 @@ class ScannerGui:
             correct_dry_run=self.v_correct_dry.get(),
             mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
-            name=self.fields["roll"].get().strip(),
+            # A kept walk goes into the folder the sheet came from, whatever
+            # the roll box or the date says now -- a walk continued after
+            # midnight would otherwise start a new roll named by the new day.
+            name=(Path(self._sheet_roll).name if keep
+                  else self.fields["roll"].get().strip()),
+            out=str(self._sheet_roll) if keep else "",
+            extend_walk=keep,
             notes=self._notes(), tags=self._tags(),
         ))
+
+    def _sheet_to_keep(self) -> bool:
+        """Whether there is a walked sheet a new walk could be added to."""
+        return bool(self.survey) and self._sheet_roll is not None
+
+    def _ask_keep_sheet(self, question: str, start_at: int,
+                        frames: int | None, predpi: int) -> bool | None:
+        """Ask whether this walk adds to the sheet there is: True, False or None.
+
+        None is Cancel. A walk of 1 to 10 on a strip of 12 left two frames
+        nobody has seen, and walking them used to throw the first ten away --
+        ticks, positions and turns with them, on screen and in `survey.json`.
+
+        Refused, with the reason, when the prescan resolution or the film
+        differs from the walk being kept: those frames would be references at
+        another resolution, or read by the detector as another film, beside
+        frames that are not.
+        """
+        walked = [int(r.number) for r in self.survey if r.number]
+        have = (f"The contact sheet has frames {number_spans(walked)} of "
+                f"{Path(self._sheet_roll).name}.")
+        differ = []
+        try:
+            kept_dpi = int(self._survey_predpi) if self._survey_predpi else None
+        except (TypeError, ValueError):
+            kept_dpi = None
+        if kept_dpi is not None and kept_dpi != predpi:
+            differ.append(f"prescans at {kept_dpi} dpi, and this is set to "
+                          f"{predpi}")
+        film = self.v_film.get()
+        if self._survey_film and self._survey_film != film:
+            differ.append(f"{self._survey_film} film, and this is set to {film}")
+        if differ:
+            started = messagebox.askokcancel(
+                "Scan roll",
+                question + have + " It was walked with "
+                + " and with ".join(differ) + ", so this walk cannot be added "
+                "to it. Set them back to add to it.\n\n"
+                "OK starts a new sheet; the old one stays under Rolls ...")
+            return False if started else None
+        again = rewalked(walked, start_at, frames)
+        note = ""
+        if again:
+            which = (f"Frame {again[0]} is" if len(again) == 1
+                     else f"Frames {number_spans(again)} are")
+            note = (f"\n\n{which} on it already: walked again, the new "
+                    "prescans replace the old, and a position set on "
+                    f"{'it' if len(again) == 1 else 'them'} is dropped -- it "
+                    "was measured from the old one.")
+        return messagebox.askyesnocancel(
+            "Scan roll",
+            question + have + " Keep it?\n\n"
+            "Yes -- add what this walk finds to it. Its ticks, positions and "
+            "turns stay.\n"
+            "No -- start a new sheet. The old one stays under Rolls ...\n"
+            "Cancel -- nothing moves." + note)
+
+    def _close_sheet(self) -> None:
+        """Close the contact sheet if it is open, keeping what was decided.
+
+        The same way out `_ContactSheet._scan` takes: the big view first, then
+        `_dismiss`, which is what files the sheet's decisions.
+        """
+        sheet = self.sheet
+        if sheet is None or not sheet.alive():
+            return
+        adjuster = getattr(sheet, "_adjuster", None)
+        if adjuster is not None and adjuster.alive():
+            adjuster.top.destroy()
+        sheet._dismiss()
 
     def on_contact_sheet(self) -> None:
         """The surveyed strip, all of it, with a tick against each picture."""
@@ -2592,7 +2709,7 @@ class ScannerGui:
                 f"{out['roll']} was scanned without walking the strip first, "
                 f"so there is no contact sheet to show.\n\n"
                 f"{len(done)} frames are done and {len(remaining)} are left. "
-                f"Its settings are back and \"start at\" is set to frame "
+                f"Its settings are back and \"first frame\" is set to frame "
                 f"{remaining[0]} -- put the strip in the way it went in "
                 "before and press Roll, and the film is wound there first.\n\n"
                 + STRIP_NUMBERS)
@@ -3247,17 +3364,7 @@ class ScannerGui:
             self._roll_seeking = False
             self.v_roll_eta.set("")
             if self._surveying:
-                self._surveying = False
-                self.edge_watch.finish()
-                # Where the walk wrote its manifest, asked for rather than
-                # rebuilt from the roll's name. The decisions about to be made
-                # in the sheet belong to this strip, and until the roll is
-                # commissioned that folder is the only thing to file them
-                # against -- without it they would last only as long as the
-                # window, which is most of what was wrong here.
-                self._sheet_roll = getattr(self.session, "last_roll_dir", None)
-                self.b_sheet.configure(
-                    state="normal" if self.survey else "disabled")
+                self._walk_ended()
                 if self.survey:
                     self.on_contact_sheet()
             else:
@@ -3277,12 +3384,9 @@ class ScannerGui:
             self._set_busy(False)
             self._light("broken")
             if self._surveying:
-                self._surveying = False
                 # What was walked before the failure is still a walk, and the
-                # sheet still opens on it.
-                self.edge_watch.finish()
-                self.b_sheet.configure(
-                    state="normal" if self.survey else "disabled")
+                # sheet still opens on it -- and can be walked on from.
+                self._walk_ended()
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
@@ -3291,6 +3395,45 @@ class ScannerGui:
             self.v_state.set("scanner closed")
             if self.closing:
                 self._quit()
+
+    def _walk_ended(self) -> None:
+        """A walk is over, finished or failed: settle what the sheet holds."""
+        self._surveying = False
+        self.edge_watch.finish()
+        # Where the walk wrote its manifest, asked for rather than rebuilt from
+        # the roll's name. The decisions about to be made in the sheet belong
+        # to this strip, and until the roll is commissioned that folder is the
+        # only thing to file them against -- without it they would last only
+        # as long as the window, which is most of what was wrong here.
+        #
+        # Only once a prescan has arrived, which the session delivers after it
+        # has named this walk's folder: a walk refused or stopped before its
+        # first frame never set it, and the folder then is some earlier roll's.
+        # A kept walk went into the sheet's own folder, which is already set.
+        if self.survey and not self._kept_walk:
+            self._sheet_roll = getattr(self.session, "last_roll_dir", None)
+        # In strip order, whichever end the walk added to.
+        self.survey.sort(key=lambda r: int(r.number or 0))
+        again = sorted(self._rewalked)
+        if again:
+            # Measured from the prescan this walk has just replaced, so it no
+            # longer says where anything is. Turns and ticks are about the
+            # picture and stay.
+            dropped = [n for n in again
+                       if n in (self.sheet_state.get("offsets") or {})]
+            for name in ("offsets", "sources"):
+                section = self.sheet_state.get(name)
+                if isinstance(section, dict):
+                    for number in again:
+                        section.pop(number, None)
+            self._say(f"walked frames {number_spans(again)} again: their new "
+                      "prescans replace the old"
+                      + (f", and the positions set on {number_spans(dropped)} "
+                         "are dropped" if dropped else ""))
+            if dropped:
+                self._store_sheet_state(self.sheet_state)
+        self._kept_walk, self._rewalked = set(), set()
+        self.b_sheet.configure(state="normal" if self.survey else "disabled")
 
     def _report_held(self) -> None:
         """Say, once and by name, which frames did not reach their position.
@@ -3495,13 +3638,29 @@ class ScannerGui:
         # next pass over it agrees with this one rather than with the session.
         self.remember_arrangement(result)
 
+    def _into_survey(self, result) -> None:
+        """Add a walked prescan to the survey, replacing a kept one of its frame.
+
+        Only a frame the sheet already held is replaced: the walk adding to it
+        took that frame again, and one frame is one cell. Anything else is
+        appended, as every walk's prescans always were.
+        """
+        number = int(result.number)
+        if number in self._kept_walk:
+            for i, earlier in enumerate(self.survey):
+                if earlier.number == number:
+                    self.survey[i] = result
+                    self._rewalked.add(number)
+                    return
+        self.survey.append(result)
+
     def remember_arrangement(self, result) -> None:
         """Record how this photograph is arranged, however it was decided."""
         key = picture_of(result)
         if key is not None:
             self.orientations[key] = (result.rotation, result.flipped)
         if self._surveying and result.kind == "prescan" and result.number:
-            self.survey.append(result)
+            self._into_survey(result)
             self.edge_watch.add(result.number, result.image)
         # Through the same filter the session's readout reports use, so a
         # counter no strip can have never becomes a forecast either.
@@ -4671,7 +4830,9 @@ def read_survey(folder, say=None) -> dict:
     a per-frame turn is recorded in `approved.json` and never applied to a
     `prescanNN.tif`, so this arithmetic stays true however many frames were
     turned individually. The per-frame turns come back as `rotations`, which
-    the sheet lays over the results afterwards.
+    the sheet lays over the results afterwards. A walk's record can carry
+    its prescan's own pair (`prescan_rotation`), and wins where it does: two
+    walks merged into one survey need not have been made the same way up.
 
     ``say`` hears anything the renumbering of an old walk, or of the roll
     beside it, could not settle; see `session.renumbered`.
@@ -4733,11 +4894,18 @@ def read_survey(folder, say=None) -> dict:
     # left in the folder is not in them.
     for number, path, record in walked_prescans(folder, manifest):
         image = tiff.read(str(path))
+        # Each file as it was written. A walk that added to another may have
+        # been made after "rotate all", so its frames need not share the
+        # manifest's pair; a record from before that was recorded has only it.
+        own = record.get("prescan_rotation")
+        own = turn if own is None else int(own)
+        own_flip = record.get("prescan_flipped")
+        own_flip = mirrored if own_flip is None else bool(own_flip)
         result = Result(
             seq=-number,                     # negative: never a live pass's seq
             kind="prescan",
             label=f"frame {number} (reopened)",
-            image=preview.unorient(image, turn, mirrored),
+            image=preview.unorient(image, own, own_flip),
             meta={"resolution_dpi": settings.get("prescan_resolution")},
             entry=Path(entries[number]) if number in entries else None,
             registration=record.get("registration") or {},
@@ -4746,8 +4914,8 @@ def read_survey(folder, say=None) -> dict:
         )
         result.hidden = False
         result.supersedes = None
-        result.rotation = turn
-        result.flipped = mirrored
+        result.rotation = own
+        result.flipped = own_flip
         result.levels = (preview.levels(result.image)
                          if result.image is not None else None)
         results.append(result)
@@ -4787,7 +4955,6 @@ RESTORABLE = {
     "mono_channel": ("mono_channel", str),
     "correct": ("correct", bool),
     "reverse_hold": ("reverse", bool),
-    "frames": ("frames", str),
     "start_at": ("startat", str),
 }
 
@@ -4865,6 +5032,17 @@ def restorable(settings: dict) -> dict:
             out[control] = kind(value)
         except (TypeError, ValueError):
             continue
+    # The last-frame box from the count a roll recorded, since the panel asks
+    # for a range and a `Roll` carries a start and a count. Recorded as null
+    # is a roll that ran to the end of the strip, which an empty box says;
+    # not recorded at all is left alone, as above.
+    if "frames" in settings:
+        try:
+            first = int(settings.get("start_at") or 1)
+            count = settings["frames"]
+            out["last"] = "" if count is None else str(first + int(count) - 1)
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -5871,6 +6049,66 @@ def chosen_span(numbers) -> tuple[int, int]:
     """
     chosen = sorted(int(n) for n in numbers)
     return chosen[0], chosen[-1] - chosen[0] + 1
+
+
+#: The highest frame number the Roll panel accepts. A 36-exposure roll cut into
+#: strips never gets near it; it is a guard against a typo, not a strip length.
+LAST_FRAME = 100
+
+
+def frame_range(first: str, last: str) -> tuple[int, int | None]:
+    """The Roll panel's two boxes as a roll's ``start_at`` and ``frames``.
+
+    Both ends are included, so ``1`` to ``20`` is twenty frames. An empty first
+    frame is the first of the strip; an empty last frame is the end of it, and
+    comes back as ``frames=None``, which is how a `Roll` already says "until the
+    strip runs out". Raises `ValueError` with the sentence to show.
+    """
+    first, last = str(first).strip(), str(last).strip()
+    try:
+        start = int(first) if first else 1
+    except ValueError:
+        raise ValueError("First frame has to be a whole number.") from None
+    if not 1 <= start <= LAST_FRAME:
+        raise ValueError(f"First frame {start} is outside 1-{LAST_FRAME}.")
+    if not last:
+        return start, None
+    try:
+        end = int(last)
+    except ValueError:
+        raise ValueError("Last frame has to be a whole number, or empty for "
+                         "the end of the strip.") from None
+    if not start <= end <= LAST_FRAME:
+        raise ValueError(f"Last frame {end} is outside {start}-{LAST_FRAME}: "
+                         "it cannot come before the first.")
+    return start, end - start + 1
+
+
+def range_words(start_at: int, frames: int | None) -> str:
+    """A roll's range the way the Roll panel puts it, for a sentence."""
+    if frames is None:
+        return f"every frame from frame {start_at} to the end of the strip"
+    if frames == 1:
+        return f"frame {start_at}"
+    return f"frames {start_at} to {start_at + frames - 1}"
+
+
+def number_spans(numbers) -> str:
+    """Frame numbers as runs, ``1-10, 12``, so a sheet of 36 fits a sentence."""
+    runs: list[list[int]] = []
+    for n in sorted({int(n) for n in numbers}):
+        if runs and n == runs[-1][1] + 1:
+            runs[-1][1] = n
+        else:
+            runs.append([n, n])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
+def rewalked(walked, start_at: int, frames: int | None) -> list[int]:
+    """Which frames already on a sheet a walk of this range would take again."""
+    end = None if frames is None else start_at + frames - 1
+    return sorted(int(n) for n in walked
+                  if int(n) >= start_at and (end is None or int(n) <= end))
 
 
 def roll_estimate(per: float, frames: int | None, move_s: float) -> str:

@@ -341,6 +341,32 @@ def test_a_new_walk_forgets_the_last_and_a_new_prescan_replaces_its_frame():
         watch.close()
 
 
+def test_a_walk_extended_keeps_its_frames_and_reads_them_against_the_new():
+    """A second walk that adds to the sheet is the same walk, longer: nothing
+    is forgotten, the generation is the sheet's still, and the answer at the
+    end is `propose_centred`'s over all of it -- the old frames read again
+    against the new ones beside them."""
+    frames = _walk((12.0, 0.0, 7.0, 15.0, 9.0))
+    watch = frame_edges.EdgeWatch()
+    try:
+        generation = watch.load(frames[:3], "negative")
+        assert watch.wait(30)
+        assert watch.extend(expected=5) == generation
+        assert watch.progress().state == frame_edges.READING, "more coming"
+        for number, image in frames[3:]:
+            watch.add(number, image)
+        watch.finish()
+        assert watch.wait(60)
+        progress = watch.progress()
+        assert progress.generation == generation
+        assert (progress.state, progress.done, progress.total) == (
+            frame_edges.DONE, 5, 5)
+        assert (progress.offsets, progress.notes) == frame_edges.propose_centred(
+            frames, film="negative")
+    finally:
+        watch.close()
+
+
 def test_slides_are_not_read_in_the_background_either():
     watch = frame_edges.EdgeWatch()
     try:

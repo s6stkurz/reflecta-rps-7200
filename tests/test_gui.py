@@ -1412,7 +1412,7 @@ def test_a_dry_run_says_walked_not_scanned(window):
     assert "scanned" not in app.v_roll_eta.get()
 
 
-def _press_roll(app, monkeypatch, frames="3", start_at="1", answer=True):
+def _press_roll(app, monkeypatch, last="3", first="1", answer=True):
     """Press Scan roll with these fields; return (dialog texts, jobs, errors)."""
     said, jobs, errors = [], [], []
 
@@ -1425,8 +1425,8 @@ def _press_roll(app, monkeypatch, frames="3", start_at="1", answer=True):
                         lambda *a, **k: errors.append(a))
     monkeypatch.setattr(app.session, "submit", jobs.append)
     app.calibrated = True             # the question here is the roll's own
-    app.v_frames.set(frames)
-    app.v_startat.set(start_at)
+    app.v_last.set(last)
+    app.v_startat.set(first)
     app.v_dryrun.set(True)
     app.on_roll()
     return said, jobs, errors
@@ -1442,7 +1442,7 @@ def test_the_roll_pace_is_timed_from_where_the_seek_landed(window,
     from rps7200.session import Event
 
     app, root = window
-    _press_roll(app, monkeypatch, frames="15")
+    _press_roll(app, monkeypatch, last="15")
     app._roll_wall_start -= 60.0                      # the wind back
     app._handle(Event(kind="transport", done=0))      # and where it landed
     assert time.monotonic() - app._roll_wall_start < 5.0
@@ -1483,7 +1483,7 @@ def test_a_results_counter_no_strip_has_is_not_a_forecast(window):
 
 def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
                                                             monkeypatch):
-    """`start at` 45 was refused by the window, on the premise that the film
+    """First frame 45 was refused by the window, on the premise that the film
     would otherwise be wound first. It would not: the seek refuses a frame no
     strip has before it reads or moves anything, and says so on the
     failed-job path. One refusal, in the backend."""
@@ -1494,7 +1494,7 @@ def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
 
     app, root = window
     app._handle(Event(kind="transport", done=0))
-    said, jobs, errors = _press_roll(app, monkeypatch, start_at="45")
+    said, jobs, errors = _press_roll(app, monkeypatch, first="45", last="")
     assert errors == []
     assert [job.start_at for job in jobs] == [45]
     # And the dialog forecasts the refusal it will get, not "advances 44
@@ -1513,9 +1513,9 @@ def test_a_roll_to_the_end_of_the_strip_gives_a_pace_not_a_total(
     """"Every frame to the end of the strip", then a figure for six frames,
     whatever the strip held."""
     app, root = window
-    said, _jobs, _errors = _press_roll(app, monkeypatch, frames="0",
+    said, _jobs, _errors = _press_roll(app, monkeypatch, last="",
                                        answer=False)
-    assert "every frame to the end of the strip" in said[0]
+    assert "every frame from frame 1 to the end of the strip" in said[0]
     assert "a frame" in said[0] and "no count to add up" in said[0]
     assert gui.roll_estimate(23.0, 6, 0.0) == "Roughly 2m 18s."
     assert gui.roll_estimate(23.0, 0, 0.0).startswith("Roughly 23 s a frame")
@@ -4115,7 +4115,7 @@ def test_a_walk_is_read_while_it_is_walked(window, monkeypatch):
     app, root = window
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
     app.calibrated = True
-    app.v_frames.set("3")
+    app.v_last.set("3")
     app.v_startat.set("1")
     app.v_dryrun.set(True)
     app.v_film.set("negative")
@@ -4138,6 +4138,226 @@ def test_a_walk_is_read_while_it_is_walked(window, monkeypatch):
     assert progress.state == frame_edges.DONE and progress.done == 3
     assert app.sheet.generation == progress.generation
     assert app.v_frame_status.get() == ""
+    app.sheet.top.destroy()
+
+
+# -- first frame to last frame, and a walk that adds to the sheet -------------
+
+
+def test_the_roll_panel_takes_a_range_with_both_ends_included():
+    """Stefan: "1-20 means frame 1 and all frames up to 20 and frame 20", and
+    an empty last frame is the end of the strip."""
+    assert gui.frame_range("1", "20") == (1, 20)
+    assert gui.frame_range("11", "12") == (11, 2)
+    assert gui.frame_range("7", "7") == (7, 1)
+    assert gui.frame_range("11", "") == (11, None)
+    assert gui.frame_range(" ", " ") == (1, None)
+    for first, last in (("5", "3"), ("0", ""), ("x", ""), ("1", "y"),
+                        ("1", "101")):
+        with pytest.raises(ValueError):
+            gui.frame_range(first, last)
+
+
+def test_the_range_is_said_the_way_it_was_typed():
+    assert gui.range_words(1, 20) == "frames 1 to 20"
+    assert gui.range_words(7, 1) == "frame 7"
+    assert gui.range_words(11, None) == (
+        "every frame from frame 11 to the end of the strip")
+    assert gui.number_spans([3, 1, 2, 5, 7, 8]) == "1-3, 5, 7-8"
+    assert gui.rewalked([1, 2, 3, 9, 10], 9, None) == [9, 10]
+    assert gui.rewalked([1, 2, 3], 4, 2) == []
+    assert gui.rewalked([1, 2, 3], 2, 1) == [2]
+
+
+def test_a_reopened_roll_puts_its_range_back_as_a_range():
+    """A `Roll` records a start and a count; the panel asks for a first and a
+    last frame. Null is a roll that ran to the end, which an empty box says;
+    a roll that recorded nothing leaves the box alone."""
+    assert gui.restorable({"start_at": 11, "frames": 2})["last"] == "12"
+    assert gui.restorable({"start_at": 1, "frames": None})["last"] == ""
+    assert "last" not in gui.restorable({"start_at": 4})
+    assert "frames" not in gui.RESTORABLE.values()
+
+
+def test_an_old_remembered_count_is_not_read_as_a_last_frame():
+    """`frames` held a count. The box that replaced it is remembered under
+    another name, so a "6" from before is not "last frame 6"."""
+    assert "frames" not in gui.REMEMBERED and "last" in gui.REMEMBERED
+    assert gui.PANEL_CONTROLS["Roll"][:2] == ("startat", "last")
+
+
+def test_each_reopened_prescan_is_unturned_by_its_own_record(tmp_path):
+    """Two walks merged into one survey: the first made at 90 degrees, the
+    frame added later at 0. The manifest's one pair un-turned the new frame
+    by 90 it was never turned by."""
+    from rps7200 import preview, tiff
+
+    images = _write_survey(tmp_path / "roll", rotation=90)
+    tiff.write(str(tmp_path / "roll" / "prescan03.tif"),
+               preview.orient(images[3], 0, False))
+    manifest = json.loads((tmp_path / "roll" / "survey.json").read_text(
+        encoding="utf-8"))
+    manifest["frames"][2].update(prescan_rotation=0, prescan_flipped=False)
+    (tmp_path / "roll" / "survey.json").write_text(json.dumps(manifest),
+                                                    encoding="utf-8")
+    out = gui.read_survey(tmp_path / "roll")
+    for result in out["results"]:
+        assert np.array_equal(result.image, images[result.number]), result.number
+    assert [r.rotation for r in out["results"]] == [90, 90, 0]
+
+
+def _walk_through(app, root, monkeypatch, first, last, keep=True,
+                  seconds=60.0):
+    """Press Scan roll for a walk of this range and wait for its sheet.
+
+    Returns what the keep question said, or None when it was not asked."""
+    asked = []
+    # A modal nobody answers would hang the run rather than fail it.
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: pytest.fail(f"an error dialog: {a}"))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda title, message, **k: asked.append(message) or keep)
+    app.v_startat.set(first)
+    app.v_last.set(last)
+    app.on_roll()
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        root.update()
+        if (not app._surveying and not app.busy and app.sheet is not None
+                and app.sheet.alive()):
+            break
+        time.sleep(0.01)
+    assert app.sheet is not None and app.sheet.alive(), "no sheet opened"
+    return asked[0] if asked else None
+
+
+def test_a_second_walk_adds_to_the_sheet_when_asked(window, monkeypatch):
+    """Stefan: walk 1 to 3, find the strip is longer, walk 4 on -- and keep
+    the sheet. The new frames join it, what was decided on the old stays, and
+    `survey.json` holds every frame so the roll reopens whole."""
+    import pathlib
+
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    assert _walk_through(app, root, monkeypatch, "1", "3") is None, \
+        "nothing to keep yet"
+    first_sheet = app.sheet
+    first_sheet._rotate(2, 90)
+    turned = first_sheet.rotations[2]
+    first_sheet.ticks[3].set(False)
+    folder = app._sheet_roll
+
+    asked = _walk_through(app, root, monkeypatch, "4", "5")
+    assert "frames 1-3" in asked and "Keep it?" in asked
+    assert not first_sheet.alive(), "the old sheet was closed, not left behind"
+    assert app._sheet_roll == folder
+    assert [r.number for r in app.survey] == [1, 2, 3, 4, 5]
+    sheet = app.sheet
+    assert [r.number for r in sheet.frames] == [1, 2, 3, 4, 5]
+    assert sheet.rotations.get(2) == turned, "a turn made on the old sheet"
+    assert sheet.ticks[3].get() is False, "and an untick"
+    assert sheet.ticks[4].get() and sheet.ticks[5].get(), "new frames ticked"
+    progress = _settle(app, root)
+    assert progress.done == 5 and sheet.generation == progress.generation
+    manifest = json.loads((pathlib.Path(folder) / "survey.json").read_text(
+        encoding="utf-8"))
+    assert [f["number"] for f in manifest["frames"]] == [1, 2, 3, 4, 5]
+    sheet.top.destroy()
+
+
+def test_a_second_walk_starts_a_new_sheet_when_told_to(window, monkeypatch):
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    _walk_through(app, root, monkeypatch, "3", "4", keep=False)
+    assert [r.number for r in app.survey] == [3, 4]
+    assert [r.number for r in app.sheet.frames] == [3, 4]
+    app.sheet.top.destroy()
+
+
+def test_cancelling_the_keep_question_moves_nothing(window, monkeypatch):
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: None)
+    app.v_startat.set("3")
+    app.v_last.set("4")
+    app.on_roll()
+    assert jobs == [] and [r.number for r in app.survey] == [1, 2]
+    assert app.sheet.alive(), "and the sheet is left as it was"
+    app.sheet.top.destroy()
+
+
+def test_a_frame_walked_again_loses_the_position_set_on_its_old_prescan(
+        window, monkeypatch):
+    """An offset is measured from where the frame was surveyed. Walked again,
+    that prescan is replaced and the number says nothing; its turn is about
+    the picture and stays."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    app.sheet.offsets[1] = 3.0
+    app.sheet.offsets[2] = 3.0
+    app.sheet.proposals[2] = {"source": "operator"}
+    app.sheet._rotate(2, 180)
+    turned = app.sheet.rotations[2]
+    asked = _walk_through(app, root, monkeypatch, "2", "3")
+    assert "Frame 2 is on it already" in asked
+    kept = app._recall_sheet_state()
+    assert kept["offsets"].get(1) == 3.0, "a frame not walked again keeps it"
+    assert 2 not in kept["offsets"] and 2 not in kept["sources"]
+    assert kept["rotations"].get(2) == turned
+    assert [r.number for r in app.survey] == [1, 2, 3]
+    app.sheet.top.destroy()
+
+
+def test_a_sheet_walked_another_way_is_not_added_to(window, monkeypatch):
+    """Frames prescanned at another resolution would be references the hold
+    loop scores at half the confidence, beside frames that are not."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    app.v_predpi.set("300")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    app.v_predpi.set("600")
+    said, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("offered"))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or True)
+    app.v_startat.set("3")
+    app.v_last.set("4")
+    app.on_roll()
+    assert "cannot be added" in said[0] and "300 dpi" in said[0]
+    assert [job.extend_walk for job in jobs] == [False]
+    assert app.survey == [], "a new sheet, as OK said"
+
+
+def test_a_fresh_walk_closes_the_sheet_of_the_last_one(window, monkeypatch):
+    """It used to stay open, and the end of the new walk raised it again --
+    showing the old frames, and filing them under the new roll on close."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    old = app.sheet
+    _walk_through(app, root, monkeypatch, "1", "3", keep=False)
+    assert not old.alive() and app.sheet is not old
+    assert [r.number for r in app.sheet.frames] == [1, 2, 3]
     app.sheet.top.destroy()
 
 

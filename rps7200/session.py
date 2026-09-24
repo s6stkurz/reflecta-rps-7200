@@ -390,6 +390,11 @@ def _is_one_run(manifest: dict) -> bool:
     wrote and the session then resumed into reads as the session's.
 
     False where neither says, which leaves a file to be read as several.
+
+    A walk that adds to the one before it (`Roll.extend_walk`) does merge two
+    walks into one `survey.json` -- but it writes ``numbering: strip``, so
+    that file never reaches here, and every walk's file that does was written
+    afresh.
     """
     settings = manifest.get("settings")
     if "dry_run" in manifest:
@@ -662,6 +667,41 @@ def walked_prescans(folder, manifest: dict,
     return out
 
 
+def walk_span(earlier: dict, start_at: int,
+              frames: int | None) -> tuple[int, int | None]:
+    """The range two walks of one strip cover together, as ``(start, count)``.
+
+    ``earlier`` is the `survey.json` a walk adds to, already on the strip's
+    numbering; its range is what its settings say, or failing that the frames
+    it lists. A count of None is "to the end of the strip", and either walk
+    having gone there makes the pair go there too.
+    """
+    settings = earlier.get("settings") or {}
+    numbers = []
+    for record in earlier.get("frames") or ():
+        try:
+            numbers.append(int(record["number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    before = settings.get("start_at", earlier.get("start_at"))
+    try:
+        first = int(before) if before is not None else min(numbers)
+    except (TypeError, ValueError):      # no start recorded and no frames
+        return start_at, frames
+    if "frames" in settings:
+        try:
+            last = (None if settings["frames"] is None
+                    else first + int(settings["frames"]) - 1)
+        except (TypeError, ValueError):
+            last = max(numbers, default=first)
+    else:
+        last = max(numbers, default=first)
+    begin = min(first, start_at)
+    if last is None or frames is None:
+        return begin, None
+    return begin, max(last, start_at + frames - 1) - begin + 1
+
+
 #: How many sub-frame commands one move may use. The law itself holds over
 #: twenty steps and goes sub-linear past them, but the guard sits lower: a
 #: sub-frame move asked to travel further than this is a whole-frame job, and
@@ -905,6 +945,12 @@ class Roll:
     # the seek: a refusal has to stop the roll, and one job cannot cancel the
     # job behind it.
     dry_run: bool = False
+    #: A dry run that adds to the `survey.json` already in its folder instead
+    #: of replacing it: the same strip walked further, so a sheet of frames 1
+    #: to 10 becomes one of 1 to 12. A frame walked again replaces its own
+    #: record and prescan. Ignored on a real roll, whose `roll.json` is always
+    #: carried forward.
+    extend_walk: bool = False
     #: The frames worth scanning, numbered the same way as `start_at` -- by
     #: their place on the strip. Anything else is advanced past unprescanned
     #: and unscanned, and the roll ends after the last one. This is what a
@@ -1646,8 +1692,13 @@ class ScanSession:
         # across two sessions came back as a two-frame roll, and the record of
         # the first two was simply gone -- in the one file whose job is to still
         # describe this roll a year from now.
+        #
+        # A walk that adds to the one before it (`extend_walk`) reads its
+        # `survey.json` the same way and for the same reason: a second walk of
+        # frames 11 to 12 used to replace the record of 1 to 10.
         earlier: dict[str, Any] = {}
-        if not job.dry_run and manifest_path.exists():
+        carried = not job.dry_run or job.extend_walk
+        if carried and manifest_path.exists():
             try:
                 earlier = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -1666,6 +1717,22 @@ class ScanSession:
             # written back, under "strip", for good.
             earlier = renumbered(earlier, fallback=self._walk_shift(out),
                                  say=lambda m: self._emit("log", text=m))
+        if job.dry_run:
+            # A walk from before its records said how each prescan was turned
+            # was turned by the file's one pair -- which this walk is about to
+            # overwrite with its own. So its frames say it for themselves first.
+            for record in earlier.get("frames") or ():
+                if record.get("prescan"):
+                    record.setdefault("prescan_rotation",
+                                      int(earlier.get("rotation") or 0))
+                    record.setdefault("prescan_flipped",
+                                      bool(earlier.get("flipped")))
+        # What the manifest says was walked or asked for: this run's range, or
+        # on a walk that adds to an earlier one, the two together -- so a
+        # reopened roll puts back the range the sheet really covers.
+        start_at, count = job.start_at, job.frames
+        if job.dry_run and earlier:
+            start_at, count = walk_span(earlier, job.start_at, job.frames)
         manifest: dict[str, Any] = {
             "roll": name,
             # Says the numbers below are places on the strip, so a reader can
@@ -1676,7 +1743,7 @@ class ScanSession:
             "meter": job.meter,
             "film": job.film,
             "dry_run": job.dry_run,
-            "start_at": job.start_at,
+            "start_at": start_at,
             # Both recorded so the survey can be opened again rather than
             # walked again. The prescan resolution because an approved
             # position is checked against a reference at that resolution and
@@ -1726,8 +1793,8 @@ class ScanSession:
                 "correct_dry_run": job.correct_dry_run,
                 "reverse_hold": job.reverse_hold,
                 "max_failures": job.max_failures,
-                "frames": job.frames,
-                "start_at": job.start_at,
+                "frames": count,
+                "start_at": start_at,
                 "only": list(job.only) if job.only is not None else None,
                 "rotation": self.rotation,
                 "flipped": self.flip,
@@ -1912,6 +1979,14 @@ class ScanSession:
                             record[key] = scanned[key]
                 if job.dry_run and rf.prescan is not None:
                     record["prescan"] = f"prescan{number:02d}.tif"
+                    # How that file was turned, per frame. The manifest's one
+                    # `rotation` said it for a walk made in one go, but a walk
+                    # that adds to another can be made after "rotate all" has
+                    # moved the session's, and one pair then un-turned half
+                    # the prescans wrong. See `read_survey`.
+                    turn, mirrored = self._orientation_for(number, "prescan")
+                    record["prescan_rotation"] = turn
+                    record["prescan_flipped"] = mirrored
                 # This frame's record replaces any earlier attempt's, so a
                 # frame rescanned after a failure is not in the file twice
                 # saying two different things about itself.

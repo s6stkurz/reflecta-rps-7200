@@ -641,8 +641,11 @@ class DemoScanner:
             return
         # A roll from the Roll button reads a strip of its own; a roll scanning
         # frames chosen on the contact sheet scans the strip that was walked,
-        # or the positions set there would be for other pictures.
-        if only is None and self._rolls:
+        # or the positions set there would be for other pictures. So does one
+        # that starts further along than frame 1: that is more of the strip in
+        # the transport -- a walk of 11 to the end after one of 1 to 10, added
+        # to the same sheet -- and a new strip would put other pictures there.
+        if only is None and self._rolls and first_index == 0:
             self._next_strip(film)
         self._rolls += 1
         # The driver's own decision, not a copy of it: this line was a retyped

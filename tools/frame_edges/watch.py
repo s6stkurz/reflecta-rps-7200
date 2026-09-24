@@ -72,7 +72,7 @@ class EdgeWatch:
 
     ``begin`` starts a walk (and forgets the last one), ``add`` hands it a
     prescan, ``finish`` says no more are coming, and ``load`` is all three for
-    a walk already on disk. ``progress`` is safe to call from any thread and
+    a walk already on disk. ``extend`` reopens the walk for more of the strip. ``progress`` is safe to call from any thread and
     cheap enough to call on every tick of a window's pump; ``version`` changes
     whenever it would say something new.
     """
@@ -102,6 +102,21 @@ class EdgeWatch:
             self._frames = {}
             self._errors = {}
             self._film = film
+            self._expected = int(expected) if expected else None
+            self._finished = False
+            self._changed()
+            return self._generation
+
+    def extend(self, expected: int | None = None) -> int:
+        """More of the same walk: its frames stay, and more are coming.
+
+        A second walk of the strip that adds to the sheet rather than replacing
+        it. Nothing is forgotten and the generation is kept, because it is one
+        walk still; once `finish` is called again, every frame whose context
+        grew -- the old ones, now with the new beside them -- is read again.
+        ``expected`` is the whole walk's length where that is known.
+        """
+        with self._lock:
             self._expected = int(expected) if expected else None
             self._finished = False
             self._changed()
