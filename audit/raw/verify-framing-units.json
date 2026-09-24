@@ -1,0 +1,191 @@
+{
+ "type": "result",
+ "key": "v2:7a7959d16446fd3a95389bf763bef1793f90c9f66f8d8a6a80e1823f46738854",
+ "agentId": "ae28f248a325a19a4",
+ "result": {
+  "verdicts": [
+   {
+    "id": "FU-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The code does what the finding says. session.py:1804 `if job.dry_run:` is the only path that passes `raw_image=rf.raw_prescan` (1830). The real-roll frame is filed at 1880-1893 with `raw_image=rf.raw_image, prescan=rf.prescan, prescan_meta=rf.prescan_meta`, so the prescan's raw is dropped even though DirectScanner.scan_roll yields it (direct.py:3658). direct.py:2908 `out[\"prescan\"] = image` overwrites each hold pass. The approved branch (3553) keeps no arrival copy. Only the aim branch sets `prescan_before` (3583), and session files it only when dry_run, with `dict(rf.prescan_meta ...)` (the replacement pass's meta) and `file_entry=False`. The finding understates one part. The 'unless debug filing is on' escape does not exist on the operator's paths: session.py:1265-1271 builds `DirectScanner(verbose=..., debug=False)`, which overrides RPS7200_DEBUG, and tools/scan_roll.py:353 does the same. On top of that, a CLI dry run (scan_roll.py:495-508) writes prescanNN.tif and prescanNN-before.tif with plain `tiff.write` and files no library entry at all.",
+    "corrected_description": "Every framing input except the kept prescan of a GUI dry run is lost or stored only in corrected form. Real rolls from the GUI and the CLI keep the last hold or aim prescan of each frame only as the corrected prescan.tif inside the frame entry, with no raw bytes. The arrival prescan and intermediate verification prescans are never written. The GUI and scan_roll hard-code debug=False, so RPS7200_DEBUG cannot rescue them either. A GUI dry run files the kept prescan with its raw bytes, but prescanNN-before.tif has no entry and carries the replacement pass's meta. A CLI dry run files no library entry for any prescan. As a result, approved/correction histories (confidence, dx, dy, row_reversed per pass) and frame-edge proposals cannot be recomputed from raw data.",
+    "corrected_locations": [
+     "rps7200/session.py:1804-1853",
+     "rps7200/session.py:1880-1893",
+     "rps7200/session.py:1265-1271",
+     "rps7200/direct.py:2908",
+     "rps7200/direct.py:3549-3558",
+     "rps7200/direct.py:3578-3590",
+     "tools/scan_roll.py:353",
+     "tools/scan_roll.py:495-508",
+     "rps7200/library.py:161-163"
+    ]
+   },
+   {
+    "id": "FU-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "gui.py:3503-3505 appends to `self.survey` and calls `edge_watch.add` on every `remember_arrangement` while `_surveying` is true, for any prescan result. This method is called from the arrival path (3496), from `_carry` (3924, the rotate/flip keys) and from the sheet's turn (7677). The sheet can be opened mid-walk because `self.survey` is non-empty. `_ContactSheet.__init__` does not deduplicate (7153 `self.frames = [r for r in frames if r.image is not None]`), so a re-arranged frame gets a duplicate cell. EdgeWatch.add bumps the version (watch.py:116-118), which forces a re-read. `_carry` sets `self.session.rotation/flip` (3920-3921). `_file` computes the orientation at call time via `_orientation_for`, and prescans use the session pair (session.py:2029, 2106). The manifest records `rotation`/`flipped` once at roll start (1687-1688, 1732-1733), and read_survey un-orients every file with that single pair (gui.py:4721-4722, 4740). One mitigation: the library entry of each dry-run prescan does record its own `rotation`/`flipped` in meta (session.py:2110), but read_survey never consults it."
+   },
+   {
+    "id": "FU-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan_roll.py:243-245 reads `tiff.read(str(path))` and passes the result straight to `propose_centred` (252) and into `Approved(reference=im)` (254). There is no `preview.unorient`, and the file has no reference to manifest rotation or flipped. The window's reader un-orients (gui.py:4740), and session writes GUI-walk prescans oriented by the session pair (session.py:2029, 2106). The prescan resolution comes from `args.prescan_dpi` (scan_roll.py:320, 462), not from the manifest. The offsets are not passed through snap_offset. Impact requires a GUI walk made with a non-default session rotation or flip. That is plausible, because any rotate or flip of any pass carries over to the session (`_carry`). CLI walks write unoriented prescans (tiff.write at 501), so they are unaffected."
+   },
+   {
+    "id": "FU-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Adjuster `_set` (gui.py:6706-6723) pops a zero offset and records `source: operator`. `state()` saves `sources` including that operator entry (7903-7909). But `_open_sheet` calls `_merge_kept({}, {}, offsets, sources)` (2201), which only iterates `kept.items()` (5520), so an operator source without an offset produces no note. `take_readings` then applies the detector to any frame whose proposal source is not 'operator' (7832-7833). `read_approved` uses a truthiness test `if record.get(\"offset_mm\"):` (4963), while `_write_approved` does write zeros (2949). `approved_from_sheet` defaults `source` to 'operator' when the frame has no note (5835). The failure scenario (Cmd-C, close, reopen, detector value back) follows directly from this code."
+   },
+   {
+    "id": "FU-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_downscaled` returns None when `w % SCALE` (propose.py:60), and SCALE = 428. `detect` then refuses both sides (95-98), and `summary` returns None (108-110). The module docstring (14-17) claims 600 and 900 dpi are 'averaged down first', and the test test_a_600_dpi_prescan... (tests/test_frame_edges.py:190) uses an 856-wide kron image, which is not a real 600 dpi width. demo.py:907-908 records real widths of 428, 860 and 1292. uniformity.py:448 mentions a 600 dpi pass 862 wide with 860 masked pixels. README.md:447-449 gives 431/862/2586. None of these widths is a multiple of 428 except 428 itself. gui.py:124 `PRESCAN_LADDER = (300, 600, 900)` is offered at 1335 and 7375. With every frame refused, fill_from_neighbours (least=3) fills nothing. Note that README's 431 for 300 dpi conflicts with the detector's hard 428 requirement and with demo.py's 428."
+   },
+   {
+    "id": "FU-06",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`detect` returns `_scaled(vote.detect(small, ctx), k)` (propose.py:102), so x is multiplied by k. `centring` then calls `decide(result, SCALE, frame_columns(SCALE, ...))` (130). `Side.base_width` returns `width - self.x` for the right side (sides.py:62) with width=428, which gives 428 - k*(428-b). The arithmetic in the finding holds. The only test (test_frame_edges.py:190-196) checks `detect`'s x, never the offset. It is latent, though: no real prescan width (428/860/1292/2584/5172) is a multiple of 428 above k=1, so no production path reaches it today. That is why severity is lowered to low."
+   },
+   {
+    "id": "FU-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "framing.py:3-4 (the 36.5/36 mm docstring), 42 `NOMINAL_FRAME_WIDTH = 10080`, 290 `MAX_REGISTRATION_MM = 0.49`, 586 `FRAME_WIDTH_MM = 36.0`, 740 `TARGET_GAP_MM`, 1281 `MAX_CORRECTION_MM = MAX_GAP_MM - TARGET_GAP_MM`, 1368 `frame_mm: float = 36.0` and 1957 `FRAME_WIDTH_UNITS = 350.6` all coexist in one module. `StripWalk.judge` falls back to `frame_offset_mm`/`right_gap_closure`/`predict_offset` when `self.reader is None` (1725-1747). `walk_reader` returns None for non-negative films (propose.py:249-253), and the GUI's 'aim each frame while prescanning' checkbox (gui.py:1496-1498) is offered for any film. `_rejudge_for` uses MAX_CORRECTION_MM on the new path too (direct.py:3083)."
+   },
+   {
+    "id": "FU-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The numbers check out. FINE_MAX_MM = 0.1057*87 + 0.1057*1.84 = 9.39 mm (session.py:94-95), `MAX_TRAVEL_MM = MAX_FINE_MM` (gui.py:230), and `snap_offset` clamps to ±MAX_TRAVEL_MM (gui.py:5298). `SEARCH_MM = 9.0` (framing.py:857), and `reach = int(SEARCH_MM / (APERTURE_MM/width))` is 105 px at 428 columns (framing.py:1062-1063). The param 87 move is 88.84*1.2423 ≈ 110 columns, and direct.py:3118 itself records 'param 87 moved 109 px'. `register(..., max_shift=reach)` (1097-1098) cannot find a peak beyond ±105. The unverified outcome counts as a miss (direct.py:3539-3546), and three misses turn holding off. The comment at 854-856 ('Just over MAX_TRAVEL_MM') is stale."
+   },
+   {
+    "id": "FU-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "demo.py:708 `self.prescan(film=film)` uses the default resolution of 300 (demo.py:456). `prescan_resolution` and `max_failures` land in `**kw` (615). 723 and 752 hard-code 300. The approved branch passes neither `should_stop` nor `source=`, so `_hold_to_approved` defaults `source='operator'` (direct.py:2846), while direct passes `getattr(held,'source',None) or 'operator'` (3531-3534). `walk.observe` runs only in the `elif walk is not None` branch (demo.py:750), whereas direct observes every frame (3518-3519). The demo has no blank-contrast end (direct.py:3509-3515), no per-frame try/except or max_failures (direct.py:3664-3677), no `meta['roll_index'/'roll_position'/'registration']` (direct.py:3653-3655), and no `prescan_before` or raw arrays in its RollFrame (demo.py:765-773). Each point is visible in the code."
+   },
+   {
+    "id": "FU-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "scan_roll.py:102-107 `--nudge` takes mm, 412 prints `{sent:+.3f} mm`, 517/520/526 print mm. approved.json persists `offset_mm` (gui.py:2949), and Approved.offset_mm, registration(), HOLD_*_MM and SEARCH_MM are all mm. protocol.py:229 narrows CLAUDE.md's rule to 'anything an operator reads', but scan_roll.py's printed mm contradicts even that narrower rule. protocol.py:241 also still quotes the old law `0.1057 mm x param + 0.1662 mm`, while MM_PER_COMMAND is 0.1945."
+   },
+   {
+    "id": "FU-11",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The two homes are real. framing.py:1939 `COMMAND_COST = 1.84` and protocol.py:276 `COMMAND_UNITS = 1.84`. framing.py:902 uses a literal 24.3053 while APERTURE_HEIGHT_MM computes to 24.2993. gui.py:202 recomputes APERTURE_MM. demo.py:393 `2.2 * 0.1057`. direct.py:3102 `CORRECTION_DEADBAND_MM` has no users. framing.py:18 already imports from `.protocol`, so the 'duplicated because direct imports this module' rationale at 1141-1143 does not hold. The two aperture figures (345.2 via MM_PER_UNIT, 344.5 via COLUMNS_PER_UNIT) both appear in CLAUDE.md. The failure scenario is overstated for HOLD_TOLERANCE_MM: tests/test_roll.py:1263 pins it to STEP_MM+OVERHEAD_MM, so a COMMAND_UNITS change would fail the test there. framing.COMMAND_COST, SMALLEST_MOVE (the frame_edges deadband) and the demo's 0.1057 are not pinned to protocol and would drift silently.",
+    "corrected_description": "Several transport constants still have two homes: the command ramp (framing.COMMAND_COST vs protocol.COMMAND_UNITS), MM_PER_UNIT (retyped in demo.py:393), the aperture height (framing.py:902 literal) and APERTURE_MM (gui.py:202). Two column/unit laws also coexist (MM_PER_UNIT vs COLUMNS_PER_UNIT, giving 345.2 vs 344.5 units for the aperture), and there is a dead CORRECTION_DEADBAND_MM. HOLD_TOLERANCE_MM is test-pinned to the mover's law. COMMAND_COST, and therefore the frame-edge deadband SMALLEST_MOVE, is not, so re-measuring the ramp in protocol would leave the detector's deadband on the old value.",
+    "corrected_locations": [
+     "rps7200/framing.py:18",
+     "rps7200/framing.py:902",
+     "rps7200/framing.py:1141-1151",
+     "rps7200/framing.py:1939",
+     "rps7200/framing.py:1990",
+     "rps7200/protocol.py:276",
+     "tools/gui.py:202",
+     "rps7200/demo.py:393",
+     "rps7200/direct.py:3102",
+     "tests/test_roll.py:1263"
+    ]
+   },
+   {
+    "id": "FU-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "A grep finds `command_for` and `describe_command` referenced only inside framing.py, with no test and no tool calling them. MAX_VERIFIABLE_PARAM = 160 (framing.py:1969) contradicts direct.py:3117-3121 (param 160 confidence 27 < floor 55), and the driver caps at 87 (3123). `edge_band` is only used in tools/roll_registration_study.py (its own copy)."
+   },
+   {
+    "id": "FU-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "In film_bounds `span()`, `return lo, hi  # no empty aperture in view` gives the full frame (framing.py:124-125). registration() then computes offset (0+10343)/2 - (0+10343)/2 = 0 and shortfall max(0, 10080-10343) = 0 (framing.py:254-258). It never returns None. direct.py:3500-3507 logs it for every frame and stores it in marks, which are persisted. The scan_roll.py:511-514 comment describes an abstention that registration() does not implement."
+   },
+   {
+    "id": "FU-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "direct.py:3666-3667 catches only `(UsbError, ScanReadError, CalibrationRequired, ShadingUnavailable, TimeoutError, ValueError)`. `walk.observe`/`walk.judge` -> `WalkReader._read` -> `detect` -> `vote.detect` has no broad guard (unlike EdgeWatch at watch.py:219). In framing.py:1584-1588, `max()` over tuples `(float, Reading, Reading)` falls back to comparing Reading objects on a float tie. Reading is `@dataclass(frozen=True)` (1284) with no order, so that raises TypeError. A tie is rare, but it is reachable on the legacy path."
+   },
+   {
+    "id": "FU-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`resolve` accepts any str for a known id (shortcuts.py:192-195). `_bind_shortcuts` calls `self.root.bind(sequence, ...)` unguarded (gui.py:873), right after `self.session.start()` (542-543). A malformed Tk sequence raises TclError in __init__. `conflicts()` exists (shortcuts.py:243) but is not called on load, and `in_scope` maps sequence to id, so a duplicate silently wins. `adjust_left` is labelled 'Move the film one step left' (shortcuts.py:148), but `_step` only calls `_set` on the planned offset (gui.py:6735-6736)."
+   },
+   {
+    "id": "FU-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "All the quoted stale statements are present. protocol.py:290 says 'param 1 travels 2.57' (units_for_param(1) = 2.84, and the test at test_roll.py:1036 asserts 2.84). session.py:674-676 and 689-690 say '1..8' and 'clamps silently at param 8' (the cap is 87). gui.py:5293-5295 says 'eight commands can chain'. gui.py:5319 says '2.57 units off zero'. gui.py:4531 says 'centre of the frame'. gui.py:4566 says 'more than {MAX_FINE_STEPS} sub-frame moves' (it guards MAX_TRAVEL_MM = one command). scan_roll.py:397 says '1.0118 mm'. test_roll.py:1045 says '17% larger ramp'. CLAUDE.md:420 says '~2.6 units' against 2.84. protocol.py:241 still quotes '+ 0.1662 mm'."
+   },
+   {
+    "id": "FU-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`fill_from_neighbours` returns `slope*n + intercept` for every requested n with no range or magnitude check (framing.py:828-829). `fill_refused` applies it to every 'refused' frame and labels the result 'filled from the line through the frames it placed' (propose.py:153-166). EdgeWatch._progress applies it to partial walks (watch.py:261). The only bound is snap_offset's ±9.39 mm clamp in the GUI."
+   },
+   {
+    "id": "FU-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_aim_frame` returns early at 2992-2996 (abstained) and 2998-3005 (in_place) and at the budget check, without `walk.landed()`. Only `fix['outcome'] == 'held'` resets (3053-3054). `StripWalk.missed` says 'frames in a row' (framing.py:1661). An in-place frame is a success that does not reset the counter."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "FU-A1",
+    "title": "GUI and scan_roll hard-code debug=False, so RPS7200_DEBUG cannot rescue arrival or intermediate prescans, contrary to the _file docstring and CLAUDE.md",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:1265-1271",
+     "rps7200/session.py:2057-2060",
+     "tools/scan_roll.py:344-353",
+     "rps7200/direct.py:464-469"
+    ],
+    "evidence": "session.py:1266-1270 `return DirectScanner(verbose=self.verbose, debug=False,)`. direct.py:464-469 only consults the env var `if debug is None`. scan_roll.py:353 `with DirectScanner(verbose=args.verbose, debug=False) as s:`. The _file docstring (session.py:2057-2060) says: 'Under `RPS7200_DEBUG=1` that picture already has a correct entry anyway, filed at the instant it was taken'.",
+    "description": "The only mechanism that files every individual pass (the arrival prescan, each hold or aim verification prescan, prescan_before) with its own raw bytes is DirectScanner's debug spool. Both operator tools pass debug=False explicitly, which beats the environment variable. The _file docstring justifies `file_entry=False` for prescanNN-before.tif by claiming the debug path already filed it, and in the GUI that is never true. CLAUDE.md's 'RPS7200_DEBUG=1 ... Either works' is also false for the two tools that actually run rolls.",
+    "failure_scenario": "The owner sets RPS7200_DEBUG=1 before a GUI roll with 'aim each frame' on, expecting every pass in the library. Afterwards the library holds one prescan per frame (corrected, no raw). The arrival passes and prescan-before pictures, the evidence of whether each correction helped, have no raw bytes anywhere.",
+    "recommendation": "Let the session and scan_roll file every framing pass themselves: arrival, each verification and before, each with its own capture record taken at the instant of the pass. Alternatively, honour RPS7200_DEBUG by passing debug=None and deduplicating against the entries the session files. Fix the _file docstring."
+   },
+   {
+    "id": "FU-A2",
+    "title": "CLI dry-run walk (tools/scan_roll.py --dry-run) files no library entry for its prescans; the hold references for --approved exist only as corrected TIFFs",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "tools/scan_roll.py:495-508",
+     "tools/scan_roll.py:243-254",
+     "tools/scan_roll.py:466"
+    ],
+    "evidence": "Dry-run branch: `pre = out / f\"prescan{number:02d}.tif\"; tiff.write(str(pre), frame.prescan)` and `tiff.write(str(was), frame.prescan_before)`. No `writer.submit` or `library.save` exists in that branch. The only writer.submit is in the non-dry-run else branch (531-579). `keep_raw=bool(args.library)` (466) is set, but the raw prescan the generator yields (`frame.raw_prescan`) is never used.",
+    "description": "A CLI walk is the input to `--approved` (hold_from_walk reads these TIFFs as references and proposes offsets from them). Unlike the GUI dry run (session.py:1818-1833), it keeps no raw bytes, no shading reference, no mask and no capture record for any prescan. The walk's pixels cannot be re-decoded or re-corrected, and the proposals and holds derived from them cannot be re-derived from raw data. The TIFF is also written on the scanning thread with the device open, which CLAUDE.md and session.py:1813-1816 say must not happen.",
+    "failure_scenario": "After a decode or shading fix, `tools/library.py reconstruct` is run to re-derive everything. The CLI walks that fed a commissioned roll's holds are absent from the library, so neither their prescans nor the held offsets computed from them can be recomputed.",
+    "recommendation": "Submit dry-run prescans through FrameWriter with `raw_image=frame.raw_prescan`, `prescan_meta` and the capture record, as the GUI's session does, and write the roll-directory copy from the writer thread."
+   },
+   {
+    "id": "FU-A3",
+    "title": "Scan reversal check ignores the aim loop's row_reversed; only the approved hold's is passed",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "rps7200/session.py:1867-1873",
+     "rps7200/direct.py:3036-3041",
+     "rps7200/direct.py:3574-3575"
+    ],
+    "evidence": "session.py:1871-1873 `prescan_reversed=bool(((rf.registration or {}).get(\"approved\") or {}).get(\"row_reversed\"))`. `_aim_frame` copies the hold result including `row_reversed` into `out` (`out.update({k: v for k, v in fix.items() if k != \"prescan\"})`), which scan_roll stores as `marks[\"correction\"]` (3574-3575).",
+    "description": "When a frame is moved by the automatic aim path rather than an operator's approved position, the hold loop's evidence that the kept prescan was the reversed one is written under `registration.correction.row_reversed` and never reaches `_note_reversal`. For a pass whose direction is not known from its line tags, `_note_reversal` then blames the scan and records a half-turn that every delivered file applies.",
+    "failure_scenario": "On an aim-corrected frame whose verification prescan came back bottom-up with unknown direction, the scan is judged against that prescan, recorded as reversed and delivered upside down. The approved path, given the same evidence, would have spared it.",
+    "recommendation": "Read row_reversed from either `approved` or `correction`: `prescan_reversed=any((reg.get(k) or {}).get(\"row_reversed\") for k in (\"approved\", \"correction\"))`."
+   }
+  ],
+  "persisted_state_corrections": "- **prescanNN.tif**: this file is also written by tools/scan_roll.py in its dry-run branch (scan_roll.py:499-508). That path uses plain `tiff.write` on the scanning thread, writes the image unoriented and files no library entry. The claim \"The library copy of the same pass (dry run only) does carry raw bytes\" holds only for GUI (session) dry runs. There, the entry's scan meta also records that pass's own `rotation`/`flipped` (session.py:2110), so the orientation of each file can be recovered from the library even though survey.json holds only one pair and read_survey ignores the entry.\n- **Library frame entry (prescan.tif)**: \"lost unless RPS7200_DEBUG is on\" is wrong. The GUI (session.py:1270) and scan_roll (scan_roll.py:353) pass debug=False, which overrides the environment variable, so the arrival and intermediate prescans are lost in every configuration. DirectScanner.scan_roll does yield `raw_prescan` for real rolls (direct.py:3658); the session simply does not pass it to `_file` (session.py:1885-1893).\n- **approved.json**: explicit zero offsets are written (`round(a.offset_mm, 4)`, gui.py:2949). The truthiness test in read_approved (4963) drops them on read.\n- **prescanNN-before.tif**: the session writes it with `file_entry=False` and with the replacement pass's meta, and only in GUI dry runs. scan_roll writes it only in CLI dry runs, with no meta at all.\n- **survey.json / roll.json rotation**: the orientation is recorded twice, at the top level (session.py:1687-1688) and inside `settings` (1732-1733). Both copies are taken once, at roll start."
+ }
+}

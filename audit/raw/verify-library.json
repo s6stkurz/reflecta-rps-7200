@@ -1,0 +1,226 @@
+{
+ "type": "result",
+ "key": "v2:b2d62b7b59e34f599992be70279662b1af3cb6452573414f066878fa707e9fc4",
+ "agentId": "a278013b91c81d9b9",
+ "result": {
+  "verdicts": [
+   {
+    "id": "LIB-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "session.py:1456 `self._file(seq, 0, image, meta, ...)` passes no raw_image, while `_prescan` (1415) and the roll paths (1830, 1886) do. DirectScanner.scan applies shading at direct.py:2728 and returns the corrected image, keeping the uncorrected one only in last_pixels_raw (2818). FrameWriter._write (1089-1091) therefore saves job['image'], the corrected pixels, with no corrections= argument, so corrections_applied is []. meta['shading'] is still set, so calibration.report is filled. library.corrected (373-391) finds no 'shading' in applied and no skipped value, and calls apply_shading a second time. Save As (gui.py:3864) and the 1:1 view (gui.py:4110) both go through corrected(). The capture's raw bytes are this pass's own (keep_raw=True at 1449), so reconstruct decodes raw and compares it with corrected pixels, which gives 'decode CHANGED'. tools/scan.py:184-194 and tools/scan_roll.py:555-558 both have comments describing exactly this bug and fixing it for their own call sites. The GUI single-scan path was missed."
+   },
+   {
+    "id": "LIB-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "last_raw is assigned only at direct.py:1521 under `if keep_raw`, and nothing ever clears it (grep: the only other assignment is in __init__). _debug_capture (650-692) takes capture_record()['raw'] with no check that it belongs to this pass. There is no shape guard of the kind ScanSession._file has. Two real paths lead here. (1) byte14_probe.py:182-185 runs a keep_raw=False final pass after keep_raw=True ladder passes, so the entries have the same shape and the mismatch cannot be detected. (2) A scan(auto_exposure=True, keep_raw=False) under RPS7200_DEBUG=1: the auto_exposure probes run with keep_raw=True (2091), so the main pass is filed with the last 300 dpi probe's bytes. verify_protocol, transport_probe and filing_load_test never keep raw, so their entries get none, or stale bytes if a metering pass ran earlier. Severity is lowered to high because the path is reachable only in debug-filed ad-hoc scripts, not in the GUI or tools. It is still silent corruption of the ground truth, and migrate-raw --write would overwrite the genuine pixels in the same-shape case.",
+    "corrected_description": "In debug mode a pass taken with keep_raw=False is filed with whatever last_raw holds from an earlier keep_raw=True pass, or with no bytes at all. The common trigger is any metered scan with keep_raw=False: its own auto_exposure probes kept raw at 300 dpi, so the main pass's entry carries the probe's bytes and layout. The worst case has the same shape (byte14_probe's final pass), where nothing, including reconstruct's shape check, can tell the bytes are wrong.",
+    "corrected_locations": [
+     "rps7200/direct.py:650-692",
+     "rps7200/direct.py:631-646",
+     "rps7200/direct.py:1518-1532",
+     "rps7200/direct.py:2083-2092",
+     "rps7200/direct.py:2437",
+     "tools/byte14_probe.py:182-185",
+     "tools/verify_protocol.py:47-53"
+    ]
+   },
+   {
+    "id": "LIB-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:1066-1082 runs preview.orient, to_monochrome and, for each path, mkdir plus export.write before `if job['library']: ... library.save` at 1085. Any exception in those steps propagates to _run (1049-1058), which records the error and drops the job. The capture dict (raw bytes, reference, mask) is lost with it. For a roll, paths includes the roll directory's frameNN.tif and the output folder copy (_file 2082-2086). A full disk, a permission error or a missing drive on the remembered output folder therefore costs the library entry of every frame."
+   },
+   {
+    "id": "LIB-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "calibrate_shading (direct.py:1755-1973) joins the calibration bytes, calls calculate_shading(data, width), and returns data only when keep_data=True. grep finds no caller that passes keep_data. ShadingReference.save (shading.py:75-91) stores only the derived ref/mean/dark/darkmean arrays. library.save writes only reference.save. calculate_shading has tunable host-side logic (split_ratio=5.0, level-based split), so the reference cannot be re-derived when that logic changes. The calibration's own mask, descriptor and resolution are not recorded in the entry either. This contradicts library.py:21-26 'raw.bin.gz is the ground truth and everything else is derived from it': shading.npz is derived from bytes that are not kept."
+   },
+   {
+    "id": "LIB-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "On a real roll the session files the frame with `prescan=rf.prescan` (session.py:1888). rf.prescan is the corrected return of self.prescan() (direct.py:3493, which runs shading=True). rf.raw_prescan is used only in the dry-run branch (1830). tools/scan_roll.py:562 does the same. library.save:180-181 writes prescan.tif with no resolution. The record's prescan block (297-303) holds only file, read_direction and carriage_state: no raw bytes, mask, meta, sha256 or corrections label. prescan_before is written with file_entry=False (session.py:1850), so its bytes are also lost outside debug mode."
+   },
+   {
+    "id": "LIB-06",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The 'scan' block is a fixed comprehension over a key list (library.py:237-264). The following are dropped: bracket_index, bracket_ratio, bracket_passes and bracket_stops (direct.py:2402-2405); roll_index and roll_position (3653-3654); uniformity_session (tools/uniformity.py:608); demo True (demo.py:475, 591); and tools/scan.py's meta['bracket'] (262), although that one is added after filing anyway. The `inquiry` parameter is accepted and never referenced in save. scan()'s meta dict (2760-2804) has no byte14, slide_init_param or skip_shading, although scan() takes each as an argument and sends it (set_mode 2633-2641, slide 2645). In addition, debug capture snapshots meta inside scan() (2811), so later additions such as registration and roll_index never reach debug entries either."
+   },
+   {
+    "id": "LIB-07",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "signature() (library.py:676-698) identifies the picture only by the typed stock, frame and subject. gui._notes (gui.py:1724-1731) reads free-text fields, and debug entries use FilmNotes(notes=...) with frame empty (direct.py:720-723). GUI metered single scans at one dpi, channel count and window get commanded=None and collapse into one group. GUI prescans all have exposure_scale 1.0, commanded, and collapse too. Gain and byte14 are not in the signature. prunable (701-738) ignores tags. tools/library.py:128-129 calls rmtree. Distinct photographs with their raw bytes can therefore be deleted."
+   },
+   {
+    "id": "LIB-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "verify (library.py:794-802) appends a problem for every entry without a shading reference, and prints `correction was asked for: {why}` for any non-empty skipped value, including SHADING_SKIPPED_EXPLICIT ('shading=False (explicit)', direct.py:303, 2758). The corrected() docstring (library.py:357-359) says '`verify` already draws that line', which verify does not do for the sentinel. The test at tests/test_library.py:163-168 saves with no shading_skipped at all, so the sentinel case is never exercised against verify. tools/scan.py --no-shading reaches this path (ensure_shading skip leaves no reference, and scan(shading=False) sets the sentinel). Severity is medium, not high: it is a reporting defect that keeps verify red and inverts the message. No data is lost."
+   },
+   {
+    "id": "LIB-09",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "This part is confirmed: scan() realigns at direct.py:2695-2701 before `raw_pixels = image` (2708), and the record does not say so. reconstruct (library.py:493-497) then reports a shape change, and migrate-raw (tools/library.py:175-178) lists the entry as failed and exits 1. The realignment runs on the upright decode whatever direction.reversed says, so a bottom-up pass plausibly gets the wrong sign. That part is unmeasured. This part is refuted: 'through ScanSession the layout guard drops the raw bytes'. The GUI never passes shading=False (gui.py:2054-2061, Scan.shading defaults to True), and scan_roll also uses shading=True. A 7200 dpi pass through the session therefore raises ShadingUnavailable at direct.py:2566-2578 before any pass, and the session never files a 7200 dpi entry. The reachable paths are tools/scan.py --dpi 7200 --no-shading and debug-filed scripts, and both keep the H-row raw bytes next to the (H-4)-row scan.tif.",
+    "corrected_description": "At 7200 dpi scan.tif holds the stagger-realigned image (H-4 rows), and the entry has no record of that transform or its constant. reconstruct therefore reports every such entry as 'decode CHANGED' for ever, migrate-raw fails on it, and a change to NATIVE_COLUMN_STAGGER_LINES cannot be applied to stored entries. Reachable via tools/scan.py --no-shading and debug filing. The session cannot take 7200 dpi at all because it always asks for shading. The realignment ignores read direction, and whether that is correct for a bottom-up pass has not been measured.",
+    "corrected_locations": [
+     "rps7200/direct.py:2695-2708",
+     "rps7200/direct.py:1637-1664",
+     "rps7200/library.py:493-497",
+     "tools/library.py:175-178",
+     "tools/scan.py:218-227"
+    ]
+   },
+   {
+    "id": "LIB-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "library.save (165-230) mkdirs with exist_ok=True and writes scan.tif, prescan.tif, shading.npz, ccd_mask.bin and raw.bin.gz directly under their final names. scan.json comes last, written with write_text and no temp file or rename. entries() (741-750) globs */scan.json and silently skips files that fail to parse. verify therefore never sees an orphan directory or a truncated scan.json. The collision loop checks only scan.json, so a later save can reuse a crashed directory and inherit its stale files. reconstruct and read_raw open raw.bin.gz because it exists, not because the record names it. Concurrent same-id writers within one process are unlikely (FrameWriter is a single thread) but possible across processes. index.json is rewritten non-atomically from both FrameWriter and the GUI thread (gui.py:4012)."
+   },
+   {
+    "id": "LIB-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "ScanSession._run creates FrameWriter (session.py:1311) and keeps the scanner open between jobs. _prescan and _scan submit to the writer, which gzips inside library.save (192-211) while the worker waits idle on `self._jobs.get()` with the device open. The FrameWriter docstring (1016-1020) claims the write 'overlaps the next frame's scan, so the device is busy rather than idle throughout'. That holds only inside a roll. CLAUDE.md's statement that 'A single scan compresses nothing while the device is open' is true only of debug filing and tools/scan.py."
+   },
+   {
+    "id": "LIB-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "read_planes breaks on EndOfData (direct.py:1501-1503), and decode_index trims to the common height (1595). The layout's 'lines' is int(params.lines), the requested count (1528), and lines_received is recorded separately (1531). session._file (2072-2099) compares layout['lines'] with image.shape[0], so a short pass has its raw bytes dropped, which is exactly the case where the bytes are the evidence."
+   },
+   {
+    "id": "LIB-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan_roll calls self.auto_exposure explicitly (direct.py:3629-3632) and then scan(exposure_scale=scales) without auto_exposure, so meta gets exposure_metered=False (2791) and no 'metering' block (2805-2809 is gated on auto_exposure). scan_bracket does the same (2374-2376, then 2391-2401). Every roll frame and every bracket pass therefore lacks the probe evidence, and signature() treats roll frames as commanded exposures."
+   },
+   {
+    "id": "LIB-14",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "Confirmed: read_raw (library.py:394-408) returns None for a corrupt or truncated gzip, and reconstruct then reports 'no raw bytes stored', which tools/library.py:103-104 counts as benign with exit 0. verify does catch this case as a checksum mismatch (812-816), which softens it. Also confirmed: `stored = tiff.read(...)` (library.py:493) sits outside any try, and tools/library.py:96-99 has no try, so a missing scan.tif aborts `make reconstruct` with a traceback. The ScanReadError path is hard to reach: gzip's CRC rejects garbled bytes, raw and layout are always stored as a matching pair, and a pass with zero lines cannot be filed because read_planes' own decode raises first. That part is largely theoretical.",
+    "corrected_description": "reconstruct reports a corrupt raw.bin.gz as 'no raw bytes' and exits 0, although verify separately flags its checksum. A missing scan.tif crashes the whole reconstruct run, and the same goes for migrate-raw via reconstruct. Uncaught ScanReadError in reconstruct and decode_raw is a latent gap that current filing paths make hard to reach.",
+    "corrected_locations": [
+     "rps7200/library.py:394-408",
+     "rps7200/library.py:493",
+     "tools/library.py:95-113"
+    ]
+   },
+   {
+    "id": "LIB-15",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "migrate-raw (tools/library.py:156-212) plans a rewrite for every entry where decode_raw has the same shape and is not equal (or where applied is non-empty). It ignores reconstruct's verdict, and it never checks that the stored image equals apply_shading(plain, ref, mask) or that a reference exists. Case (b) is reachable: reconstruct returns the decoded image even when its verdict is 'reference is missing' (473-477). The tool's comment says 'Both are repaired ... without guessing', but the code assumes that any difference means correction. A decode regression, a legacy entry without its reference, or a stale-raw debug entry would each have scan.tif irreversibly replaced, with no backup kept."
+   },
+   {
+    "id": "LIB-16",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "entries() returns only parsed records. verify (781), tools reconstruct (97), duplicates (123) and migrate-raw (161) all rebuild the path as root/record['id']. A copied or renamed directory therefore points at the original: duplicates rmtree's root/<id>, and verify reports the copy's files as missing. An id of '' would make the path root itself, and rmtree(root) would follow if that entry were ever pruned, though that needs a hand-edited record. migrate-direction correctly uses the glob path."
+   },
+   {
+    "id": "LIB-17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The auto_exposure probes run with keep_raw=True (direct.py:2083-2092), but only _debug_capture files them. ScanSession._default_scanner (session.py:1265-1271), tools/scan.py:160 and tools/scan_roll.py:344 all construct DirectScanner with debug=False. Hold and aim verification prescans are never filed. scan_roll.py dry-run writes the corrected prescan with tiff.write (492-500) and makes no library entry. README.md:185 says 'Every scan is filed in library/ by default', which the code contradicts for these passes."
+   },
+   {
+    "id": "LIB-18",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "DemoScanner is a plain class (demo.py:176) and never sets last_pixels_raw (grep), so session._prescan (1415) gets None and files the image it returned. That image is the source's corrected prescan.tif or a shading-corrected decode, with no corrections label. _pair_image returns stored prescan.tif early (1175-1182) without resetting self._capture, so capture_record hands back the previous decode's reference and mask. The shape guard drops only the raw bytes, so the entry keeps another pass's shading.npz and ccd_mask.bin, and since its meta has no 'shading' or 'shading_skipped', corrected() re-applies them. _decode (1008-1010) corrects whenever a reference exists, regardless of scan(shading=False), and scan's meta then says shading None. There is no MAX_SHADING_COLUMNS refusal. The 'demo' key is dropped by the whitelist."
+   },
+   {
+    "id": "LIB-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "corrected() passes record['ccd_mask'] (None when the file is absent) to apply_shading, which then maps columns 1:1 (shading.py:235-236). This is wrong for any pass below 3600 dpi, and it is still labelled 'applied'. Only 'shading' in corrections_applied short-circuits the call (library.py:373-376). No caller in the repo passes corrections= at all today, so the second half is latent."
+   },
+   {
+    "id": "LIB-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "save() uses datetime.now() (library.py:166) for both the id and 'created'. The debug item's 'captured' time (direct.py:672) is never passed on. tools/scan.py files entries only after the with-block closes (237-246), and nothing in scan() meta records the capture time."
+   },
+   {
+    "id": "LIB-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The record carries sha256 only for image and raw (228, 234). verify checks only that the shading and mask files exist (788-792), never checks prescan.tif, and `continue`s after a missing scan.tif (784-786), which skips the raw checks for an entry that is fully recoverable from its bytes."
+   },
+   {
+    "id": "LIB-22",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "select() (uniformity.py:161-171) includes every tagged entry, rejected ones among them. one_pass's redo (636-646) adds the 'rejected' tag and a REJECTED file, which nothing reads. decompose_and_report uses by_orientation[...][0], the oldest pass, so a rejected pass that was redone is preferred as the base or orientation pass (454-476). uniformity_session is dropped by the whitelist. cmd_analyse prints provenance().get('commit'), but the key is 'driver_commit' (library.py:98), so it always prints 'unknown'. Severity is raised to medium because this produces wrong analytical verdicts from a documented operator action (redo)."
+   },
+   {
+    "id": "LIB-23",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The spool is tempfile.mkdtemp (direct.py:666-668). Meta, reference and mask are kept only in self._debug_pending (in memory), and filing happens only in close() via _debug_flush (777-788). A kill or crash outside a with/finally loses every spooled pass of the session, including the harness kill at 10 minutes that CLAUDE.md warns about. The orphaned .npy/.bin files have no metadata and no recovery tool reads them. Raised to medium because this is the only filing path for every ad-hoc script."
+   },
+   {
+    "id": "LIB-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "--keep is a plain type=int (tools/library.py:53-55). In prunable, kept = ranked[:0] = [], and kept[0] raises IndexError. With keep=-1, ranked[:-1] is kept and the last entry of every group is deleted."
+   },
+   {
+    "id": "LIB-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "DEFAULT_ROOT = Path('library') (library.py:51). ScanSession root defaults to 'library' (session.py:1133), and debug uses it too (direct.py:711). All of these are relative to the cwd. entries() globs only */scan.json, while demo.libraries_beside (demo.py:77-95) walks sibling 'library *' directories and nested subfolders."
+   },
+   {
+    "id": "LIB-26",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "library.py:188-190 says gzip takes a pass to 72%, and README.md:508 says the median is about 94%. The two are contradictory measured claims."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "LIB-A1",
+    "title": "No caller ever passes corrections=; every fallback that files corrected pixels labels them raw",
+    "severity": "high",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/library.py:147",
+     "rps7200/library.py:228",
+     "rps7200/session.py:1088-1092",
+     "rps7200/session.py:2111-2120",
+     "rps7200/session.py:1415",
+     "rps7200/demo.py:455-477"
+    ],
+    "evidence": "grep -rn 'corrections=' over rps7200/, tools/ and research/ finds no call site. FrameWriter: `raw_image = job.get(\"raw_image\")` / `library.save(job[\"image\"] if raw_image is None else raw_image, ...)` with no corrections. session._file: `if raw_image is not None and raw_image.shape != image.shape: ... \"filing the corrected pixels instead\"); raw_image = None` with the comment `better to file the corrected pixels and have reconstruct say so`.",
+    "description": "CLAUDE.md says '`corrections=` is how a caller admits it is handing over something else', and library.save's docstring says the same. In the code, every path that falls back to the delivered (corrected) image files it with corrections_applied=[]:\n- FrameWriter whenever raw_image is None: GUI single scans (LIB-01), and demo prescans, because DemoScanner has no last_pixels_raw.\n- session._file's shape-mismatch fallback, which files corrected pixels deliberately.\n\nThe label mechanism exists and is simply never used. corrected() then shades these entries twice, and reconstruct reports them as decode changes.",
+    "failure_scenario": "A roll frame whose raw_image shape disagrees with image hits the fallback. The log says 'filing the corrected pixels instead', but the entry says raw. Save As applies shading again and writes visibly over-corrected columns.",
+    "recommendation": "In FrameWriter, when raw_image is None and meta['shading'] is truthy, pass corrections=['shading'] (or refuse to file). In session._file's fallback, set a flag that FrameWriter turns into corrections=['shading']. Add a test asserting that no filing path produces meta.shading != None together with corrections_applied == [] unless the stored pixels equal the plain decode."
+   },
+   {
+    "id": "LIB-A2",
+    "title": "Entry does not record where its shading reference came from (reused file vs. calibrated this session) or when",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:549-561",
+     "rps7200/direct.py:572-602",
+     "rps7200/library.py:281-296",
+     "rps7200/direct.py:631-646"
+    ],
+    "evidence": "load_shading: `self._shading = ShadingReference.load(Path(path))`; ensure_shading(reuse=True) loads calibration/shading.npz when it exists. capture_record returns only `\"reference\": self._shading`. The calibration block in the record: `shading`, `ccd_mask`, `pixels_per_line`, `light_mean` (rounded to 0.1), `report`, `skipped`, with no source, timestamp, hash or calibration resolution.",
+    "description": "With --reuse (tools/scan.py) or a session that loaded calibration/shading.npz, an entry carries a reference measured in another power-on session, possibly days earlier and at a different lamp state. Nothing in scan.json says so. A reference measured seconds before the pass looks identical, and there is no content hash to group entries that share one calibration. Pass-to-pass and drift studies cannot separate calibration age from other effects.",
+    "failure_scenario": "Stefan scans with --reuse after a week. Stripes appear, and the entries do not show that the reference was a week-old file rather than a fresh calibration.",
+    "recommendation": "Carry reference provenance on the ShadingReference or in the capture: action (calibrated or loaded), source path, calibration timestamp, calibration resolution and gain/offset. Record it together with a sha256 of shading.npz in calibration{}."
+   }
+  ],
+  "persisted_state_corrections": "- **Entry pixels and raw bytes rows.** These say raw bytes are 'dropped for 7200 dpi via the session'. That cannot happen. The GUI's Scan job always asks for shading=True (gui.py:2054-2061), and so does scan_roll, so a 7200 dpi pass through ScanSession raises ShadingUnavailable before any pass (direct.py:2566-2578). Stagger-realigned 7200 dpi entries come only from tools/scan.py --no-shading and from debug filing, and those keep raw bytes that no longer match scan.tif's height.\n- **Frame's prescan row.** Two corrections:\n  - prescan_before (session.py:1840-1852) is written only to the roll folder, with file_entry=False, so it never gets a library entry or bytes outside debug mode.\n  - In the dry-run GUI roll, prescans ARE filed as their own entries with raw_image=rf.raw_prescan and raw bytes, which the row does not mention.\n- **Shading reference row.** The written_by column should say that the reference may be a file loaded from calibration/shading.npz from an earlier session (ensure_shading reuse / load_shading), with nothing in the record saying which (LIB-A2).\n- **REJECTED row.** Besides tools/uniformity.py, the redo also rewrites scan.json (adding the 'rejected' tag), without default=str and without reindexing index.json.\n- **Debug spool row.** The meta is a copy snapshotted inside scan(). Keys callers add afterwards (registration, roll_index, bracket_*) never reach debug entries.\n- **Demo row.** Demo prescan entries' meta has no 'shading' key, so calibration.report is None and corrected() re-applies the stale reference and mask to already-corrected 8-bit pixels.\n- **corrections_applied.** No filing path in the repository ever sets it. It is always [] except on legacy entries."
+ }
+}
