@@ -1,0 +1,93 @@
+{
+ "type": "result",
+ "key": "v2:922eff243d03f950d786c376ed6fa9c5befb4329865e823448f4e606cc657640",
+ "agentId": "a13fe32737e05a754",
+ "result": {
+  "gaps": [
+   {
+    "key": "frame-edges-detectors",
+    "focus": "No area read the detector members that decide live film moves. Zero citations for tools/frame_edges/changepoint.py (941 lines), chroma.py (897), gapmodel.py (1267), stepline.py (617), sides.py, roll.py and units.py; vote.py and centre.py are barely touched. They reach the device through session.edge_reader, EdgeWatch (watch.py) and propose.py, whose outputs direct.scan_roll/_hold_to_approved turn into SLIDE commands. Questions: (1) What input do they assume, and what do they actually get? Assumed: dtype and scale, with absolute 8-bit thresholds, and upright un-rotated rows. Actually delivered: corrected 8-bit prescans, uint16 from library.corrected on reopen, prescanNN.tif written in the window's rotation, bottom-up passes. roll.summarise records dtype, but does chroma compare levels across dtypes? (2) Which exceptions can escape? Consider NaN or zero-width inputs, empty frames and ties. Anything other than ValueError aborts a roll (direct.py:3664-3677). (3) Parity with the study. Comments stripped, the diff against research/frame-edge/algos/*_v2.py is about 420 changed lines for stepline and about 390 for chroma, with small diffs for gapmodel and changepoint. Is that divergence intended? Would tests/test_frame_edges_parity.py (FRAME_EDGE_PARITY, local frames only) ever catch it? (4) Can one member alone produce a move, against TODO's 'no single detector may move film'? (5) Are the pitch and width constants really all taken from rps7200.framing, with none retyped inside the members?"
+   },
+   {
+    "key": "code-identity-and-protocol-revision",
+    "focus": "How exactly does a library entry name the code that produced it, and is PROTOCOL_REVISION bumped when the bytes sent change? (1) library.provenance() (rps7200/library.py:67-101) runs `git rev-parse` and `git status --porcelain` at save time. That is flush time after close() for debug entries, and FrameWriter time for the GUI. It is not the time the process imported its code. So a GUI left running across a branch switch in this shared tree (CLAUDE.md: 'often has parallel work in the tree') records the wrong commit. Confirm this. (2) driver_dirty is true for any untracked file, and no diff or branch is stored. So a dirty entry cannot be tied to its code. (3) Without git on PATH (common on Windows) both fields are None. (4) Two subprocesses with 10 s timeouts run inside every save, on the writer thread, with the device open. Also check the image sha256: it hashes the TIFF container, so it differs between the tifffile and built-in writers. Does verify or migrate break when the writer changes? (5) Walk `git log -p` on rps7200/direct.py, protocol.py and usb_transport.py from 0f7c21d onward. Do the command bytes sent change without a bump? Candidates: d723896 (the 1.84 ramp changes param_for_mm and therefore the SLIDE params), 622aa5a (byte14_for refactor), 30bad8e and a0de517. The digest has only an info-level note on this. (6) Is the recorded protocol_revision ever consulted by reconstruct, corrected() or migrate?"
+   },
+   {
+    "key": "cross-process-and-thread-concurrency",
+    "focus": "Concurrency between processes, and between threads beyond Tk calls, has not been traced. (1) Two processes filing into one library/: the GUI's FrameWriter plus tools/scan.py or a probe's debug flush. Within one second they can compute the same entry_id. The scan.json existence check plus mkdir(exist_ok=True) (library.py:166-176) then lets both write into ONE directory, mixing scan.tif, raw.bin.gz and shading.npz from different passes. (2) reindex() (library.py:753-772) reparses every scan.json on every save, O(N) on the writer thread with the device open, and rewrites index.json non-atomically. Is index.json read anywhere it could be half-written? (3) The GUI's full-res and histogram threads (gui.py:3978, 4120) and Save As call library.corrected on an entry that FrameWriter may still be writing. tools/library.py duplicates --delete, migrate-raw --write or migrate-direction can run while the GUI is open and showing or exporting those entries. (4) A second process opening the scanner while the GUI holds it (usb_transport.py:453-470, auto-detach and claim). Does that error path leave either side's device state inconsistent? (5) The Tk thread mutates session.out_dir, out_format and jpeg_quality (gui.py:1580-1582, 1895), and the worker reads them at _deliver time (session.py:2068, 2129, 2162). What happens to frames already queued when these change mid-roll? (6) EdgeWatch generation and version handling against the GUI replacing edge_reader or the survey mid-walk."
+   },
+   {
+    "key": "resource-exhaustion-crash-recovery-time",
+    "focus": "Trace disk-full, I/O error and hard-kill end to end across every writer. A grep finds no free-space check anywhere (no disk_usage or statvfs). For each writer, what does ENOSPC or EIO leave behind, and what does the operator see? The writers: tiff.write (tiff.py:167), dng.write (dng.py:145), the gzip in library.save (library.py:192), the debug spool in tempfile (direct.py:666-692), roll.json and survey.json (session.py:1649, 1924), approved.json (gui.py:2943), settings.py (whether its temporary-then-rename write is really atomic and fsynced), the demo's pictures.npz and export.py. Next, after kill -9 or power loss in the middle of a GUI roll and a CLI roll, list exactly which files exist: orphan entry directories without scan.json, a half roll.json, spool directories in temp. Then say what resume, verify and reconstruct do with each, and whether any tool can recover an orphaned spool or entry. Check memory at 7200 dpi RGBI: GUI full-res loads, FrameWriter queue depth, library.corrected float copies. Finally, clocks. Entry ids are UTC (library.py:166) while rolls/<date> is local (session.py:1634, scan_roll.py:291), output names use local %H%M%S with no date for named rolls (session.py:2166-2167), and the roll list uses localtime (gui.py:5215). Check the joins and collisions around midnight and DST, and Windows-illegal characters in roll names reaching those paths."
+   },
+   {
+    "key": "measure-scan-quality-skill",
+    "focus": "No area read .claude/skills/measure-scan-quality/SKILL.md or scripts/metrics.py (148 lines), although CLAUDE.md requires invoking the skill before any measurement and tools/dpi_analysis.py imports it. Questions: (1) metrics.py says it works on 'shading-corrected linear samples, (H, W, C) uint16'. What do callers actually feed it? Candidates are library.corrected on GUI single scans that are already corrected (double-corrected), un-realigned raw 7200 dpi passes, 8-bit prescans and 3-vs-4-channel passes. (2) agreement_z imports bracket.solve_relation. Does it inherit bracket's green-only ratio and its judging of saturation on corrected values? (3) Do colour_deviation, fixed_pattern, dark_mask and noise_split implement the signed, channel-relative metrics CLAUDE.md prescribes, and do their numbers match the claims in SKILL.md? (4) Are the skill's thresholds consistent with the constants in rps7200? Also confirm that rps7200/console.py (use_utf8_stdout) is called before the first print in every tool, and in the GUI under pythonw where stdout is None."
+   },
+   {
+    "key": "uncited-tests-vs-findings",
+    "focus": "Several test modules on paths behind high findings were never cited. Read each and say whether it pins the defective behaviour (so a fix would break it), contradicts a finding, or is vacuous. tests/test_scan_roll_calibration.py: does it cover the '--no-shading triggers the lazy in-prescan calibration' finding? tests/test_sense.py: the single-attempt CHECK CONDITION in read_planes. tests/test_optional_libraries.py: that the tifffile-present and tifffile-absent paths are lossless, and whether the stored sha256 depends on the path. tests/test_settings.py: a corrupt gui-settings.json dropped silently. tests/test_export.py and test_dng.py: the 'nothing already there is overwritten' promise, the DNG sidecar, the JPEG fallback. tests/test_framing.py, test_frame_position.py and test_registration_walk.py: SEARCH_MM 9.0 mm against a param-87 move of 9.39 mm, and the 36 mm vs 350.6-unit frame models. tests/test_uniformity.py: rejected passes included in analyse, and the dropped session id. Also tests/test_mono.py, test_preview.py (clipping judged on corrected pixels), test_defects.py (the destripe path make_comparison uses), test_shortcuts.py and test_ensemble.py."
+   }
+  ],
+  "duplicates": [
+   "GUI single Scan files shading-corrected pixels as raw scan.tif / double correction (transport-protocol, decode-and-debug-filing, demo-parity, library, session-roll, gui-part1, gui-part2, outputs, docs-readme-claude, tests)",
+   "Debug flush deletes the spool/only copy when library.save fails (transport-protocol, decode-and-debug-filing, outputs, docs-plans-todo, tests)",
+   "Debug filing attaches stale last_raw / no raw bytes when keep_raw=False (transport-protocol, decode-and-debug-filing, library, probe-and-analysis-tools, docs-readme-claude, tests)",
+   "Calibration raw bytes discarded; only derived ShadingReference stored (transport-protocol, decode-and-debug-filing, library, cli-operator-tools, probe-and-analysis-tools, docs-readme-claude, docs-plans-todo)",
+   "7200 dpi stagger realignment baked into scan.tif, unrecorded, reconstruct flags it / shape guard drops raw (transport-protocol, decode-and-debug-filing, library, session-roll, cli-operator-tools, probe-and-analysis-tools, docs-readme-claude, docs-plans-todo, tests)",
+   "Session shape guard drops raw bytes of short reads (decode-and-debug-filing, library, session-roll, tests)",
+   "FrameWriter writes delivered copies before library entry; delivery failure loses raw bytes (library, session-roll, gui-part1, outputs, tests)",
+   "GUI gzips/compresses library entries with the device open and idle (transport-protocol, library, session-roll, gui-part1, gui-part2, outputs, docs-readme-claude)",
+   "DemoScanner has no last_pixels_raw; demo entries corrected-as-raw (transport-protocol, decode-and-debug-filing, demo-parity, library, session-roll, gui-part1, gui-part2, outputs, docs-readme-claude, tests)",
+   "Demo accepts 7200 dpi / >3600 dpi that DirectScanner refuses (transport-protocol, decode-and-debug-filing, demo-parity, library, gui-part1)",
+   "DemoScanner.scan_roll diverges from DirectScanner.scan_roll (demo-parity, session-roll, framing-units, tests)",
+   "Demo prescans stale capture_record / ignore requested resolution (demo-parity, library, session-roll)",
+   "--look-only without --demo drives the real scanner while promising refusals (demo-parity, gui-part1, gui-part2)",
+   "approved.json written to rolls/_safe(name) or rolls/roll while roll goes to rolls/<name or date> (demo-parity, session-roll, gui-part1, gui-part2)",
+   "Empty roll name: same-day walks/rolls share rolls/<date>, overwrite survey/frames/prescans (session-roll, gui-part1, gui-part2, tests)",
+   "Rotating/flipping during a walk changes prescanNN.tif orientation while survey.json keeps the start value / re-appends to survey (session-roll, framing-units, gui-part1, gui-part2)",
+   "Film 'frame' note stamped on every roll frame, breaking library signature and roll-entry join (session-roll, gui-part1, gui-part2)",
+   "Explicit 'Centre'/zero position lost on reopen (framing-units, gui-part2)",
+   "Delete on reopened frame removes a real library entry even under --demo (gui-part1, gui-part2, tests)",
+   "Reopened frames seq=-number collide across rolls (gui-part1, gui-part2)",
+   "Rolls browser Open unguarded while busy (gui-part1, gui-part2)",
+   "Roll shortcut / aim-click bypass busy guard; submit() clears a pending Stop (session-roll, gui-part1, gui-part2, tests)",
+   "Roll prescans stored only as corrected 8-bit prescan.tif without raw bytes; arrival/hold prescans never filed (decode-and-debug-filing, library, session-roll, framing-units, cli-operator-tools, outputs, tests, docs-plans-todo)",
+   "RPS7200_DEBUG forced off in GUI, scan.py, scan_roll.py (framing-units, cli-operator-tools, docs-readme-claude, session-roll)",
+   "Metering probes / hold passes / CLI dry-run prescans never filed (decode-and-debug-filing, library, cli-operator-tools, docs-readme-claude, docs-plans-todo, framing-units, tests)",
+   "library.save whitelist drops inquiry, bracket, roll_index, demo flag, uniformity session (transport-protocol, decode-and-debug-filing, demo-parity, library, session-roll, cli-operator-tools, docs-plans-todo, tests, outputs)",
+   "Commands/parameters per pass not recorded: byte14, slide_init_param, gain-offset extras (transport-protocol, decode-and-debug-filing, probe-and-analysis-tools)",
+   "Roll/bracket frames recorded exposure_metered=False without metering evidence (decode-and-debug-filing, library, cli-operator-tools)",
+   "Bracket membership/merge parameters not recorded (outputs, docs-plans-todo, decode-and-debug-filing)",
+   "Reused shading reference origin/age not recorded (--reuse) (decode-and-debug-filing, library, cli-operator-tools, docs-plans-todo, gui-part1)",
+   "Entry id/created is flush time, not capture time (decode-and-debug-filing, library, probe-and-analysis-tools)",
+   "Debug spool unrecoverable if close() never runs; lives in system temp (decode-and-debug-filing, library, probe-and-analysis-tools)",
+   "library.save non-atomic; verify/entries blind to partial entries (library, session-roll, cli-operator-tools, tests)",
+   "duplicates --delete treats different pictures/ladders as duplicates (library, cli-operator-tools, probe-and-analysis-tools, docs-plans-todo, session-roll)",
+   "verify labels deliberate raw scan 'correction was asked for' (library, docs-readme-claude, docs-plans-todo)",
+   "reconstruct misreports corrupt raw / aborts on ScanReadError or missing scan.tif (library, cli-operator-tools, tests)",
+   "make_comparison.py uses destripe, not the shipped shading correction (decode-and-debug-filing, outputs, cli-operator-tools, docs-readme-claude, docs-plans-todo)",
+   "scan_roll.py --no-shading triggers lazy in-prescan calibration (cli-operator-tools, docs-readme-claude, transport-protocol)",
+   "scan_roll.py --start-at overwrites roll.json (cli-operator-tools, docs-readme-claude, docs-plans-todo)",
+   "Ctrl-C in scan_roll.py loses queued frames and abandons read (transport-protocol, cli-operator-tools)",
+   "scan.py holds all passes in RAM and files only after the with-block (transport-protocol, cli-operator-tools, outputs)",
+   "--bracket with --ir merges RGBI blue with a green-fitted ratio (outputs, docs-plans-todo)",
+   "--bracket silently ignores a single --exposure-scale (outputs, cli-operator-tools, docs-plans-todo)",
+   "After a transport failure the roll/session keeps commanding the device (transport-protocol, cli-operator-tools)",
+   "INFRARED_FLOOR_S guards no timeout (transport-protocol, docs-readme-claude)",
+   "usbpcap.packets() returns interrupt/keystroke payloads (transport-protocol, docs-readme-claude)",
+   "filing_load_test verdict cannot say unsafe (cli-operator-tools, docs-readme-claude)",
+   "session_start sends a film-moving SLIDE only in probes (transport-protocol, probe-and-analysis-tools)",
+   "Millimetres still the persisted/CLI unit (framing-units, docs-readme-claude, gui-part2, cli-operator-tools, probe-and-analysis-tools)",
+   "Stale SLIDE law / param-8 cap in session docstrings and protocol.md (demo-parity, session-roll, framing-units, docs-plans-todo, transport-protocol)",
+   "SET GAIN OFFSET persistence statements contradict (decode-and-debug-filing, docs-readme-claude)",
+   "apply_shading leaves trailing columns uncorrected (decode-and-debug-filing, docs-plans-todo)",
+   "Roll prescans filed with film 'negative' regardless of film (decode-and-debug-filing, tests)",
+   "roll.json non-atomic / corrupt manifest silently discarded (session-roll, tests)",
+   "Quit during Save all/Export kills daemon writer mid-file (gui-part1, gui-part2)",
+   "Roll export uses window's mono/orientation, not the entry's recorded arrangement (gui-part1, gui-part2)",
+   "Save As / Save all write no dpi (gui-part2, outputs, gui-part1)",
+   "Contact sheet from previous strip survives a new walk (gui-part1, gui-part2)"
+  ]
+ }
+}
