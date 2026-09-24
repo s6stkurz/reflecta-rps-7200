@@ -802,6 +802,25 @@ def test_a_new_strip_repeats_pictures_only_in_other_places(tmp_path):
     assert first != second, "laid out differently"
 
 
+def test_a_walk_further_along_the_strip_reads_the_same_strip(tmp_path):
+    """A walk of 1 to 4, then of 5 and 6 added to the same sheet: the second
+    starts past frame 1, which is more of the strip in the transport, not a
+    new one -- or the sheet would put another strip's pictures on 5 and 6."""
+    for n in range(8):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+    with DemoScanner(root=tmp_path, speed=100000.0, seed=6) as s:
+        s.LAST_POSITION = 5                    # a six-frame strip of eight
+        first = _shown(s.scan_roll(frames=4, dry_run=True))
+        s.advance()
+        further = _shown(s.scan_roll(frames=2, first_index=4, dry_run=True))
+        for _ in range(5):
+            s.retreat()
+        # Chosen frames always read the strip that was walked.
+        whole = _shown(s.scan_roll(frames=6, only=tuple(range(6)),
+                                   dry_run=True))
+    assert whole == first + further
+
+
 def test_scanning_chosen_frames_scans_the_strip_that_was_walked(tmp_path):
     """The contact sheet's positions belong to the pictures it showed. A roll
     commissioned from it must not find other ones in the transport."""

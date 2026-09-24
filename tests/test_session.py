@@ -1285,6 +1285,101 @@ def test_a_roll_behind_its_first_frame_only_advances(tmp_path, at):
     assert scanner.rolls[0]["skip"] == 0
 
 
+def test_a_walk_can_add_to_the_walk_before_it(tmp_path):
+    """Frames 1 to 3 walked, then 4 to the end of the strip, kept: one survey
+    of every frame. `survey.json` was written afresh by every walk, so the
+    second replaced the first and the sheet could never show 1 to 3 again --
+    their prescans still on disk, their records gone."""
+    from conftest import StripScanner
+
+    walk(Roll(frames=3, start_at=1, dry_run=True, name="strip"), tmp_path,
+         StripScanner(at=0, last=5))
+    _, frames = walk(Roll(frames=None, start_at=4, dry_run=True, name="strip",
+                          extend_walk=True), tmp_path, StripScanner(at=3, last=5))
+    assert frames == [(n, n - 1) for n in range(1, 7)]
+    folder = tmp_path / "rolls" / "strip"
+    manifest = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    # The range the pair covers, so a reopened roll puts it back in the boxes.
+    assert manifest["start_at"] == manifest["settings"]["start_at"] == 1
+    assert manifest["settings"]["frames"] is None, "the second went to the end"
+    assert sorted(p.name for p in folder.glob("prescan*.tif")) == [
+        f"prescan{n:02d}.tif" for n in range(1, 7)]
+
+
+def test_a_frame_walked_again_is_recorded_once_and_a_fresh_walk_replaces(
+        tmp_path):
+    from conftest import StripScanner
+
+    walk(Roll(frames=3, start_at=1, dry_run=True, name="strip"), tmp_path,
+         StripScanner(at=0))
+    _, kept = walk(Roll(frames=2, start_at=3, dry_run=True, name="strip",
+                        extend_walk=True), tmp_path, StripScanner(at=2))
+    assert [n for n, _ in kept] == [1, 2, 3, 4]
+    # Without the flag a walk is what it always was: the file written afresh.
+    _, fresh = walk(Roll(frames=2, start_at=1, dry_run=True, name="strip"),
+                    tmp_path, StripScanner(at=0))
+    assert [n for n, _ in fresh] == [1, 2]
+
+
+def test_a_walk_records_how_each_prescan_was_turned(tmp_path):
+    """Two walks merged into one survey need not have been made the same way
+    up -- "rotate all" in the sheet moves the session's turn between them -- so
+    the manifest's one pair cannot un-turn all of them. Each record says."""
+    def turned(s, _scanner):
+        s.rotation, s.flip = 90, True
+
+    run(Roll(frames=2, dry_run=True, name="turned"), tmp_path, extra=turned)
+    manifest = json.loads((tmp_path / "rolls" / "turned" / "survey.json")
+                          .read_text(encoding="utf-8"))
+    assert [(f["prescan_rotation"], f["prescan_flipped"])
+            for f in manifest["frames"]] == [(90, True), (90, True)]
+
+
+def test_an_older_walk_added_to_keeps_the_turn_its_prescans_were_written_at(
+        tmp_path):
+    """A walk written before records carried their own turn relied on the
+    manifest's one pair, and the walk that adds to it writes its own pair
+    there. The old frames are given theirs first, or they reopen turned by a
+    turn they were never written at."""
+    from conftest import StripScanner
+
+    def turned(s, _scanner):
+        s.rotation = 90
+
+    run(Roll(frames=2, dry_run=True, name="old"), tmp_path,
+        scanner=StripScanner(at=0), extra=turned)
+    path = tmp_path / "rolls" / "old" / "survey.json"
+    older = json.loads(path.read_text(encoding="utf-8"))
+    for record in older["frames"]:
+        del record["prescan_rotation"], record["prescan_flipped"]
+    path.write_text(json.dumps(older), encoding="utf-8")
+
+    run(Roll(frames=1, start_at=3, dry_run=True, name="old", extend_walk=True),
+        tmp_path, scanner=StripScanner(at=2))
+    merged = json.loads(path.read_text(encoding="utf-8"))
+    assert merged["rotation"] == 0, "the new walk's pair"
+    assert [(f["number"], f["prescan_rotation"]) for f in merged["frames"]] == [
+        (1, 90), (2, 90), (3, 0)]
+
+
+@pytest.mark.parametrize("earlier, start_at, frames, span", [
+    # 1 to 10, then 11 to 12: 1 to 12
+    ({"settings": {"start_at": 1, "frames": 10}}, 11, 2, (1, 12)),
+    # then 11 to the end: 1 to the end
+    ({"settings": {"start_at": 1, "frames": 10}}, 11, None, (1, None)),
+    # an earlier walk to the end stays one
+    ({"settings": {"start_at": 1, "frames": None}}, 3, 2, (1, None)),
+    # 5 to 7, then 1 to 2: 1 to 7
+    ({"settings": {"start_at": 5, "frames": 3}}, 1, 2, (1, 7)),
+    # a file that recorded no range: its frames say it
+    ({"frames": [{"number": 3}, {"number": 5}]}, 1, 2, (1, 5)),
+    # nothing at all: this walk's own
+    ({}, 4, 2, (4, 2)),
+])
+def test_two_walks_cover_the_range_of_both(earlier, start_at, frames, span):
+    assert session.walk_span(earlier, start_at, frames) == span
+
+
 def test_a_rewind_that_stops_short_files_nothing(tmp_path):
     """Nothing scanned, nothing filed, no folder: every frame after a short
     rewind would be numbered as a frame it is not."""
