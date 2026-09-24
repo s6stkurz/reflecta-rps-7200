@@ -1,0 +1,269 @@
+{
+ "type": "result",
+ "key": "v2:12eb909b7d2389058254e40dfe637f924b2ec1469ea022f8451d23894a823af9",
+ "agentId": "ac3d533c727bdb0d3",
+ "result": {
+  "verdicts": [
+   {
+    "id": "DOC-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "tools/make_comparison.py:24-29 imports only destripe/find_column_defects/flat_defect_sigma/resample_reference (they come from rps7200.defects, re-exported by direct.py:30-37), and line 117 writes `corrected = destripe(raw, defects, margin=12, dilate=5)` to 2_corrected.tif. Nothing in it calls apply_shading, library.corrected or loads shading.npz/ccd_mask.bin. Its inputs are two TIFF paths, with defaults under scans/ (lines 95-96). vignette-plan.md:209 says 'shading applied' and shading-calibration-plan.md:295 calls it 'the primary acceptance test'. If the input TIFF is a raw library scan.tif, output 2 carries no flat-field. If the input is an already-corrected CLI output, file 1 is not 'nothing done' either. In both cases the files do not test the shipped correction."
+   },
+   {
+    "id": "DOC-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "signature() (library.py:639-698) is the tuple as quoted. scan() meta (direct.py:2760-2804) has no byte14, slide_init_param, skip_shading or quality key, and library.save copies only the listed scan keys. byte14_probe.py:140-151 scans with a fixed `scales` and auto_exposure=False, so exposure_metered=False, and commanded is the same tuple on every rung. The gain probe varies only the gain written through a patched get_gain_offset, which lands in device_settings and not in the signature. Debug filing (direct.py:716-727) gives every entry FilmNotes(notes=...) with empty stock, frame and subject. prunable keeps one per group and `duplicates --delete` calls shutil.rmtree (tools/library.py:130-131). Worse than described: because debug-filed entries carry no stock, frame or subject, every metered debug entry (commanded=None) at the same dpi, channels, frame window, depth, film type and revision shares one signature. Unrelated pictures scanned on different days would be reduced to one entry."
+   },
+   {
+    "id": "DOC-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "calibrate_shading (direct.py:1946-1973) reduces `data` through calculate_shading (shading.py:109-182: level-gap split with split_ratio=5.0, then per-column means) and returns data only when keep_data=True. No caller passes it: ensure_shading at direct.py:613, scan()'s lazy path at 2592 and uniformity.py:735 all call it bare. ShadingReference.save (shading.py:75-91) stores only derived float arrays and means. library.py:21 says raw.bin.gz is the ground truth that 'everything else is derived from', and shading.npz is not derivable from it. reconstruct only re-decodes scan bytes, so it cannot detect this."
+   },
+   {
+    "id": "DOC-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "auto_exposure's probe passes set keep_raw=True (direct.py:2080-2092) but are filed only by _debug_capture, which returns early when debug is off (664-665). The window's session (session.py:1265-1271), tools/scan.py:160 and tools/scan_roll.py:353 all force debug=False, so they override even RPS7200_DEBUG=1. The scan_roll dry run writes only tiff.write of the corrected prescan (scan_roll.py:492-510). On the real-roll branch the window files the frame with `prescan=rf.prescan` (session.py:1883-1893), which is the corrected image, and raw_prescan is not passed. library.save writes prescan.tif with no corrections label (library.py:180-181, 286-290). The hold path (direct.py:3548-3553) replaces the prescan without keeping prescan_before, and intermediate hold and aim prescans are never filed."
+   },
+   {
+    "id": "DOC-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Only the last bracket pass is RGBI (`infrared=infrared and last`, direct.py:2385-2396). merge_bracket fits slope and intercept on green only (bracket.py:291-301), then divides every channel by that ratio (315-326). With infrared, auto_exposure meters blue down by blue_rgbi_headroom(film), about 5.2 for negative and 11 otherwise. The RGB passes' blue is therefore held low, while the RGBI pass's blue is about 5-10x brighter than the green-derived ratio predicts. tools/scan.py:248-260 merges `f[..., :3]` of every frame with no per-channel handling and does not refuse --bracket together with --ir. The merged file is written to --out and not filed."
+   },
+   {
+    "id": "DOC-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "verify (library.py:794-802) appends 'correction was asked for: {why}' for any truthy `skipped`, including SHADING_SKIPPED_EXPLICIT. Only corrected() (378-384) compares against the constant. The case is reachable: `tools/scan.py --no-shading` calls ensure_shading(skip=True) (scan.py:167, direct.py:591-597), which leaves no reference, and scan() sets shading_skipped=SHADING_SKIPPED_EXPLICIT (direct.py:2757-2758). The entry therefore has no shading.npz and verify reports it as a shortfall. The claims at direct.py:299-302 and TODO.md:86-88 that verify 'draws the same line' are false."
+   },
+   {
+    "id": "DOC-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan() realigns 7200 dpi images before `raw_pixels = image` (direct.py:2695-2708). The filed scan.tif is therefore lines-4 tall with odd columns shifted, and neither corrections_applied nor any other key records it. reconstruct (library.py:439-515) and decode_raw (411-436) decode with decode_index/_deinterleave and never realign, so the shape check at 492-495 returns 'decode CHANGED'. library.py:581 itself names 'a realigned 7200 dpi pass' as not a plain decode. corrected() never realigns, so entries filed before the fix are delivered unrealigned. docs/7200dpi-plan.md:235-239 predates any post-fix entry and does not mention this."
+   },
+   {
+    "id": "DOC-08",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "TODO.md:117-178 is contradicted by code. decode_index (direct.py:1551-1600) reads the direction from the line tags and reverses rows (`step = -1 if direction.reversed`), and reconstruct checks read_direction. That is exactly the 'decode-time guess' TODO says was rejected, and the tools/scan.py example ('every second frame upside down, filed that way') no longer holds. commit 622aa5a (2026-09-23) is newer than TODO's last edit (6eac892, 2026-09-22). TODO.md:1134-1139 ('Orientation is unresolved') is about the systematic transport orientation for viewing (the rotation/flip preference), not per-pass bottom-up reversal, and scan() still applies no viewing flip, so that part is not contradicted.",
+    "corrected_description": "TODO.md:117-178 still describes per-pass row reversal as a won't-fix that tools/scan.py files upside down. Since 622aa5a, decode_index turns every bottom-up pass upright from its line tags, and the direction is recorded as scan.read_direction and checked by reconstruct. The 'Orientation is unresolved' item at TODO.md:1134-1139 concerns the transport's viewing orientation and remains accurate.",
+    "corrected_locations": [
+     "TODO.md:117-178",
+     "rps7200/direct.py:1551-1600",
+     "rps7200/direction.py:85-114",
+     "rps7200/library.py:496-510"
+    ]
+   },
+   {
+    "id": "DOC-09",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "PROTOCOL_REVISION = 6 at protocol.py:40. TODO.md:57-58 still says to check for revision 4. direct.py imports and re-exports the name (direct.py:91,188), so 'in rps7200/direct.py' is misleading rather than false: editing it there would not change the value. d723896 changed MM_PER_COMMAND from 0.1662 to 0.1945 mm and so changed param_for_mm output (direct.py:3134 through OVERHEAD_MM=MM_PER_COMMAND), with no revision bump. Revision 5 was bumped for a comparable sub-frame change, and step-calibration-plan.md:207-208 says such a correction moves the revision. The inconsistency is real.",
+    "corrected_description": "TODO's first known-problem check expects protocol_revision 4, but the code writes 6. Docs name direct.py as the constant's home, but it is defined in protocol.py and only re-exported by direct.py. The 1.572->1.84 ramp change (d723896) altered the sub-frame SLIDE params sent without a bump, although revision 5 was bumped for the analogous MAX_CORRECTION_PARAM change. protocol_revision therefore cannot tell offline analysis which ramp a hold move used.",
+    "corrected_locations": [
+     "rps7200/protocol.py:16-40",
+     "TODO.md:43-62",
+     "TODO.md:156",
+     "docs/byte14-plan.md:295",
+     "docs/step-calibration-plan.md:207-208",
+     "CLAUDE.md:450"
+    ]
+   },
+   {
+    "id": "DOC-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan_roll.py builds a fresh manifest with `\"frames\": []` (296-329), and checkpoint() overwrites manifest_path once the roll is placed (451-453). No code reads an existing roll.json. The failure hint 'resume a failed picture with --start-at N' (633-634) and the docstring (22-24, '--start-at resumes from the manifest') promise otherwise. ScanSession._roll does read and merge the earlier manifest (session.py:1643-1668). Also, the default roll name is today's date, so a resume on another day without --roll writes to a different folder."
+   },
+   {
+    "id": "DOC-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "ensure_shading(reuse=True) loads any file at the path (direct.py:600-610). ShadingReference.save writes arrays only, with no time or device identity (shading.py:75-91). library.save's calibration block has no source, action or age (library.py:269-286). The window shows an mtime-based age note (gui.py:1999-2004). tools/scan.py and tools/scan_roll.py only print the 'reusing ...' summary."
+   },
+   {
+    "id": "DOC-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "build_width_to_loc returns `locs[:width]`, which can be shorter than w (shading.py:185-193). apply_shading then writes only `out[:, :loc.size, c]` and leaves trailing columns raw (235-281). The report records columns < width, but nothing acts on it. scan()'s guard compares params.width only to reference.pixels_per_line (direct.py:2719-2733), not to the mask's used count that shading-calibration-plan.md:212-214 specified. vignette-plan.md:299-300 (860 vs 862) and TODO.md:418 (860 vs 860) contradict each other on whether 600 dpi triggers it, so real-world reachability is unproven."
+   },
+   {
+    "id": "DOC-13",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "This part is real: StripWalk, the only holder of ROLL_TRAVEL_LIMIT_MM, is built only when correct or correct_dry_run is set (direct.py:3422-3423). The approved branch (3529-3547) calls _hold_to_approved with no roll-level accumulator, and hold_plan's budget is |target|+HOLD_HEADROOM_MM (framing.py:1210). This part is overstated: the hold loop measures each frame against that frame's own walk prescan and aims at the operator's offset from it. Creep from earlier frames is therefore re-measured and corrected rather than compounding into 'later frames land on the wrong picture area'. The gap is total mechanical travel and wear, not silent mis-registration. TODO.md:705-713 describes it accurately apart from a stale line reference (3162 -> 3422).",
+    "corrected_description": "On the contact-sheet (approved) path, nothing sums sub-frame travel across a roll: ROLL_TRAVEL_LIMIT_MM is enforced only through StripWalk, which exists only with correct/correct_dry_run. The per-frame budget scales with |target|. Because each frame is held against its own walk prescan, accumulated creep is re-measured per frame. The exposure is unbounded total travel, not silent mis-registration. TODO's line reference is stale.",
+    "corrected_locations": [
+     "rps7200/direct.py:3422-3423",
+     "rps7200/direct.py:3529-3547",
+     "rps7200/framing.py:1210-1213",
+     "rps7200/framing.py:1160-1169",
+     "TODO.md:705-713"
+    ]
+   },
+   {
+    "id": "DOC-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "framing.py:586 `FRAME_WIDTH_MM = 36.0` ('Assumed rather than measured') feeds TARGET_GAP_MM (740), strip_offsets (789), picture_span's right-edge reading (1354-1359, 1436) and MAX_CORRECTION_MM (1281). FRAME_WIDTH_UNITS = 350.6 (1957, about 37.06 mm) is used by tools/frame_edges. walk_reader returns None for films it does not read (propose.py:250-254), and StripWalk then falls back to the 36 mm path, so two paths centre on different widths. The doc values differ as described."
+   },
+   {
+    "id": "DOC-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "With a reader, StripWalk.judge returns reader.judge's decision directly (framing.py:1725-1730). WalkReader._read uses detect -> vote_v2, which accepts lone_gap (vote.py:90-109), and centring returns a non-None offset tagged source 'unconfirmed' (propose.py:139-143). _aim_frame moves the film on any non-None decision within tolerance and budget, without checking source (direct.py:2985-3041). The window always sets session.edge_reader = frame_edges.walk_reader (gui.py:8186), and scan_roll.py passes it too. TODO.md:216-217 says no single detector may move film."
+   },
+   {
+    "id": "DOC-16",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_calibrate sets self.calibrated = True right after submit (gui.py:1929-1933). The real value arrives later via the 'calibrated' event (3235-3237). _calibration_missing returns False while the flag is True (1946-1958), so a Roll or Scan pressed in that window is accepted. If the Calibrate job was mode 'off' (v_shading can be set to it) or failed, session._calibrate emits done=0, but the queued Roll's prescan (shading=True) reaches scan()'s lazy calibrate_shading (direct.py:2579-2592). ScanSession._roll never checks self.calibrated or calls ensure_shading."
+   },
+   {
+    "id": "DOC-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The manifest dict in session.py has no 'device' key (grep finds none), although the comment at 1697-1701 describes one. RESTORABLE (gui.py:4780-4792) has no exposure, gain or offset. The Roll dataclass has no exposure_scale field (only Scan has one, at session.py:865-866). TODO.md:453-456's claim that resume restores exposure/gain/offset is false."
+   },
+   {
+    "id": "DOC-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "fast_infrared defaults to True in scan (direct.py:2439), scan_bracket (2336), scan_roll (3314), Scan and Roll (session.py:862,891). The plan's lines 61, 114-120 and 479-486 still say it is not the default and that the revision is not bumped, contradicting its own header at line 3."
+   },
+   {
+    "id": "DOC-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "protocol.md:290-294 and 812 give the 0.1662 mm intercept, but code uses MM_PER_COMMAND = 0.1057*1.84 (protocol.py:278-279; direct.py:3097). :355 says OVERHEAD_MM is 1.57 units, but it is 1.84. :790-791 says corrections use param 1 to about 8, but MAX_CORRECTION_PARAM = 87 (direct.py:3123). :841-845 says `01 01 00 04` is not sent, but nudge sends `slide(0x01, param>=1, value=0x04)` (direct.py:3166). §12 still lists byte 14 as unknown. §1 puts command bytes on wValue 0x0088, but _send_command writes the E0 prefix through ieee_command and the six CDB bytes to PORT_SCSI_CMD=0x0085 (usb_transport.py:44-46, 693-701). §8 (465-466) contradicts §5 (272-276) on SLIDE_PREV/eject appearing in captures."
+   },
+   {
+    "id": "DOC-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "auto_exposure probes RGB only (infrared=False, direct.py:2083-2085) and uses per-film blue_rgbi_headroom (5.2 or 11.0). scan() applies get_gain_offset().scaled(exposure_scale) with no restore (direct.py:2613-2614). whole-roll-plan.md:245, 305-306 and 518 state otherwise, and :288-292 of the same doc says the restore was reverted. SET GAIN OFFSET persistence is asserted both ways: whole-roll-plan.md:520 and the direct.py:2065 comment say it persists, while shading-calibration-plan.md:54-56 and CLAUDE.md say it does not."
+   },
+   {
+    "id": "DOC-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "7200dpi-plan.md:102-108 says scan() calibrates at the pass's own resolution. scan() calls self.calibrate_shading() with defaults, commented 'At the default 3600 dpi, not this pass's resolution' (direct.py:2585-2592). The ShadingUnavailable message just after it still says `calibrating at {resolution} dpi did not produce...` (direct.py:2594-2595), so the operator-facing error repeats the doc's error.",
+    "corrected_description": "7200dpi-plan.md:102-108 describes calibrating at the pass's own resolution, but scan() always calibrates at the 3600 dpi default. scan()'s own ShadingUnavailable message ('calibrating at {resolution} dpi') misstates what it did in the same way.",
+    "corrected_locations": [
+     "docs/7200dpi-plan.md:102-108",
+     "rps7200/direct.py:2585-2600"
+    ]
+   },
+   {
+    "id": "DOC-22",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "direct.py:273-275 and TODO.md:626-628 still cite 1.5-1.9% compression above 75%. exposure-negative-plan.md:305-334 reports -0.6 to -0.8% and asks for both to be corrected. Neither was."
+   },
+   {
+    "id": "DOC-23",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The comparison-TIFF names appear only in tools/make_comparison.py, so TODO.md:383-384 and the tests/test_gui.py:101-102 docstring are stale. library.save copies filter_offsets (library.py:260), which contradicts TODO.md:242. _prescan files the scanner's last_scan_meta, which includes filter_offsets (session.py:1412-1414), contradicting TODO.md:326. strip_offsets now takes starts from picture_span, whose right-edge reading can yield starts below `want`, so TODO.md:853-858's 'can never propose a positive offset' premise is gone. The cited line numbers are stale."
+   },
+   {
+    "id": "DOC-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "command_for (framing.py:2000) is called only by describe_command (2034-2036), and nothing in rps7200/ or tools/ calls either. Moves go through plan_nudges (session.py:672; gui.py 5 sites; scan_roll.py:403) and param_for_mm/nudge. measure_shift_mm still uses `mm_per_px = aperture_mm / width` (framing.py:1061-1062). CORRECTION_DEADBAND_MM is defined once (direct.py:3102) and never read."
+   },
+   {
+    "id": "DOC-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "README.md:8-9 and REPORT.md:238-249 ('not done yet', move into rps7200/framing.py, replace picture_start in propose_offsets) contradict tools/frame_edges/__init__.py:1-13 (a copy living in tools/, never imported by rps7200, handed in as walk_reader and propose_centred). The width figures (425 vs about 440 columns) differ from FRAME_WIDTH_UNITS = 350.6, which is 435.6 columns."
+   },
+   {
+    "id": "DOC-26",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/scan.py:64 makes --auto-exposure store_true (default off), and scan() defaults auto_exposure=False (direct.py:2432). Only the window's Scan job defaults to True (session.py:864). scanner-options-survey.md:32 says 'auto_exposure=True by default' without qualification."
+   },
+   {
+    "id": "DOC-27",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan.py:145-146 turns a single value into a float. Line 211 then disables auto-exposure (`args.auto_exposure and not args.exposure_scale`), and lines 212-215 pass None because the value is not a list. scan_bracket (direct.py:2373-2378) falls through to [1.0,1.0,1.0]. The requested scale is silently dropped. The entries record exposure_scale truthfully, but the measurement is not the one asked for."
+   },
+   {
+    "id": "DOC-28",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "grep shows `inquiry` only at library.py:142, the parameter. The record dict (213-307) has no device or firmware field. Callers pass inquiry through FrameWriter (session.py:1098), debug flush (direct.py:728) and scan.py (via `inquiry=info` in held)."
+   },
+   {
+    "id": "DOC-29",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The sheet OPTIONS include 'correct' (gui.py:7124). approved_from_sheet creates an Approved for every ticked frame (5791-5835), and the roll loop's `if held is not None and holding` branch comes before `elif correct or correct_dry_run` (direct.py:3529-3576), so correct never acts on commissioned frames. scan_roll's hold_from_walk re-proposes via frame_edges.propose_centred and does not read approved.json. test_tiff.py's TestStoredScans reads gitignored scans/ paths, which are absent in this checkout (no scans/ directory)."
+   },
+   {
+    "id": "DOC-30",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "decode_index aligns planes purely by index (`planes[c][:height]`, direct.py:1596-1599). filter_offsets are only recorded (direct.py:2773-2777; library.py:260), never applied. Because raw bytes are kept, this can be corrected later offline. It is an observation, not a regression."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "DOC-A1",
+    "title": "Debug filing deletes a scan's only spooled copy (raw bytes and pixels) even when library.save failed",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:713-752"
+    ],
+    "evidence": "for n, item in enumerate(pending, 1): ... try: ... entry = library.save(...) ... except Exception as exc: self._log(f\"debug: could not file scan {n} ({exc})\") finally: ... image = None ... for key in (\"image_path\", \"raw_path\"): path = item.get(key) ... Path(path).unlink(missing_ok=True) ... then shutil.rmtree(self._debug_spool, ignore_errors=True)",
+    "description": "_debug_flush unlinks each item's spooled NNN-image.npy and NNN-raw.bin in a `finally` block, so it runs whether or not library.save succeeded, and then rmtree's the whole spool directory. If filing fails, for example with a full disk (a 7200 dpi entry is over 1 GB), a permissions error, an unwritable RPS7200_DEBUG_ROOT or a TIFF write error, the only surviving copy of that pass's raw bytes is deleted after a one-line log. The docstring's justification ('losing the record is better than losing the session') does not cover deleting the data itself. This is the path CLAUDE.md mandates for every ad-hoc and probe scan.",
+    "failure_scenario": "A byte-14 or gain ladder is run with RPS7200_DEBUG=1, and the library disk fills during the flush after close(). Every remaining pass logs 'could not file scan N' and its spool files are unlinked immediately afterwards. The scanner time is spent and the raw evidence is gone, with no entry and no spool left to recover from.",
+    "recommendation": "Unlink the spool files only when library.save returned successfully. On failure, keep the spool directory, log its path, and (optionally) provide a re-flush helper that files leftover spool items.",
+    "doc_reference": "CLAUDE.md 'Claude: always scan with debug filing on' / direct.py:694-699 docstring"
+   },
+   {
+    "id": "DOC-A2",
+    "title": "Bracket membership, ratio and metering evidence are dropped from filed bracket passes; the merged result is never filed",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:2373-2378",
+     "rps7200/direct.py:2388-2405",
+     "rps7200/direct.py:2805-2808",
+     "rps7200/library.py:236-262",
+     "tools/scan.py:239-266"
+    ],
+    "evidence": "scan_bracket: `meta[\"bracket_index\"] = i; meta[\"bracket_ratio\"] = float(k); meta[\"bracket_passes\"] = passes; meta[\"bracket_stops\"] = float(stops)`; library.save copies only the fixed key list (resolution_dpi ... filter_offsets), which contains no bracket_* key. scan_bracket meters with `self.auto_exposure(film=film, infrared=infrared)` and then calls scan() without auto_exposure, and scan() attaches metering only `if auto_exposure and self.last_metering is not None`. grep: bracket_index appears nowhere else in the repo.",
+    "description": "Each bracket pass is filed as an ordinary entry. The record does not say that it belongs to a bracket, which member it is, the ladder ratio, the pass count or the stops, and it does not carry the metering rounds that set the base exposure. Group membership can only be inferred from timestamps and exposure_scale. tools/scan.py writes the merged image and its bracket stats only to --out and its .json sidecar, not to the library, so the merge cannot be re-evaluated against the filed passes without reconstructing the grouping by hand.",
+    "failure_scenario": "Months later someone re-runs merge_bracket with improved code over library entries. Nothing identifies which entries formed one bracket or in which order. Two brackets of the same frame taken the same day, one with --ir, are indistinguishable except by timestamps, and the metering that chose the base exposure is not stored anywhere.",
+    "recommendation": "Add bracket_index, bracket_ratio, bracket_passes, bracket_stops and a shared bracket id to library.save's scan block, attach the bracket's metering record to each member, and file (or at least reference) the merged output with corrections=['bracket_merge'].",
+    "doc_reference": "docs/multi-exposure-plan.md (bracket filing); library.py:131-160 save docstring 'everything needed to use it again'"
+   },
+   {
+    "id": "DOC-A3",
+    "title": "plan_nudges docstring still describes the param 1..8 lattice and a param-8 clamp",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:672-693",
+     "rps7200/session.py:93-95",
+     "rps7200/direct.py:3123"
+    ],
+    "evidence": "session.py:676-677: \"One `SLIDE` command delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in 1..8\"; :690-691: \"`DirectScanner.param_for_mm` already clamps silently at param 8\". Code: FINE_MAX_MM = STEP_MM * DirectScanner.MAX_CORRECTION_PARAM + OVERHEAD_MM, with MAX_CORRECTION_PARAM = 87.",
+    "description": "The planner's docstring, shared by the mover, the sheet adjuster and the correction budget, states the pre-revision-5 cap. The code derives its step size from MAX_CORRECTION_PARAM = 87, so one command reaches about 88.8 units, not about 10.",
+    "failure_scenario": "A reader sizing a manual move or analysing a log assumes each chained command is at most param 8 and misreads how many SLIDE commands a large move produced.",
+    "recommendation": "Update the docstring to reference MAX_CORRECTION_PARAM rather than a literal, and express it in units per the CLAUDE.md rule.",
+    "doc_reference": "rps7200/session.py:676-691"
+   }
+  ],
+  "persisted_state_corrections": "1. Debug spool: the claim \"exact: yes. Lost if the process dies before close()\" is incomplete. _debug_flush (direct.py:713-765) also deletes the spooled npy and raw.bin in a `finally` block when library.save fails, then rmtree's the spool (DOC-A1). A failed filing destroys the only copy.\n\n2. Entry record (scan.json): add bracket_index, bracket_ratio, bracket_passes and bracket_stops to the fields in meta that library.save drops (DOC-A2).\n\n3. Entry record, write order: scan.json is written last, after scan.tif, prescan.tif, shading.npz, ccd_mask.bin and raw.bin.gz. None of these writes is atomic.\n   - An interrupted save leaves a directory with no scan.json. entries(), verify() and reindex() glob only */scan.json, so that directory is invisible to them and is never reported.\n   - A later save with the same id sees no scan.json and writes into the same partial directory.\n\n4. Library entry pixels: the \"session._file fallback\" that files corrected pixels without a label also exists in FrameWriter._write (session.py:1087-1099). When raw_image is None, it files job[\"image\"] (corrected) with no `corrections=`. It is reached from session._file's shape-mismatch branch and from any submitter that omits raw_image.\n\n5. Cached session reference (calibration/shading.npz): when a calibration returns no usable reference, ensure_shading's save_shading returns None without touching the file (direct.py:563-570, 613-615). An older cached reference therefore survives a failed recalibration, and a later --reuse loads it silently.\n\n6. Roll manifests: also recorded is that the window's ScanSession._roll merges an earlier roll.json only for non-dry runs. survey.json is always rewritten from scratch, on both the window and CLI paths.\n\n7. Walk pictures: on the window's dry run, prescanNN-before.tif is written with file_entry=False, so it is a file with no library entry (session.py:1828-1854). On a real roll with holding, prescan_before is never produced (direct.py:3548-3553), so the pre-hold picture exists nowhere."
+ }
+}
