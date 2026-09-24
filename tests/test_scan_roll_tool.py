@@ -226,6 +226,44 @@ def test_a_shading_failure_files_the_frames_already_scanned(tmp_path,
     assert code != 0, "losing the roll part way is not a success"
 
 
+def test_ctrl_c_reaches_the_roll_as_a_stop_between_frames(tmp_path, monkeypatch):
+    """The roll checks it before every frame, so a Ctrl-C finishes the frame
+    in flight instead of abandoning its read -- which wedges the scanner."""
+    scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0
+    assert callable(scanner.asked.get("should_stop")), scanner.asked
+    assert scanner.asked["should_stop"]() is False
+
+
+def test_a_second_ctrl_c_still_files_the_frames_already_scanned(tmp_path,
+                                                               monkeypatch):
+    """KeyboardInterrupt is not an Exception, and used to skip
+    `writer.finish()`: the frames queued for filing died with the process."""
+
+    class Interrupted(FakeRollScanner):
+        def scan_roll(self, **kw):
+            self.asked = dict(kw)
+            for frame in super().scan_roll(**kw):
+                if frame.index == 2:
+                    raise KeyboardInterrupt
+                yield frame
+
+    class Patched(Interrupted):
+        def __init__(self, **kw):
+            super().__init__(frames=4)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "interrupted", "--frames", "4"],
+    )
+    code = scan_roll.main()
+    assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 2
+    assert code != 0
+
+
 def test_the_manifest_says_what_stopped_it(tmp_path, monkeypatch):
     from rps7200.protocol import ShadingUnavailable
 

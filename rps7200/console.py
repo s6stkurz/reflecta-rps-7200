@@ -45,3 +45,58 @@ def use_utf8_stdout() -> None:
             # A stream that will not take it is one this cannot help; the
             # alternative is refusing to start over the log's encoding.
             pass
+
+
+class DeferredInterrupt:
+    """Ctrl-C asks the pass in flight to finish rather than abandoning it.
+
+    A KeyboardInterrupt raised inside a read unwinds out of the `with` block
+    that owns the scanner, which closes the transport under the read: the
+    abandoned read that needs a power cycle. So while this is in force the
+    first Ctrl-C only sets `requested` and says so; a tool checks it between
+    passes -- `scan_roll(should_stop=...)` does -- and stops there. A second
+    Ctrl-C is taken at its word and raises, for the operator who has decided a
+    power cycle is cheaper than waiting.
+
+    Only the main thread can install a signal handler; anywhere else, and
+    where there is no SIGINT, this does nothing and Ctrl-C behaves as usual.
+    """
+
+    def __init__(self, say=None):
+        self._requested = False
+        self._previous = None
+        self._installed = False
+        self._say = say or (lambda message: print(message, file=sys.stderr,
+                                                  flush=True))
+
+    def requested(self) -> bool:
+        return self._requested
+
+    def _handler(self, signum, frame):
+        if self._requested:
+            self._restore()
+            raise KeyboardInterrupt
+        self._requested = True
+        self._say("\nstopping after the pass in flight -- interrupting a read "
+                  "wedges the scanner. Press Ctrl-C again to abort anyway.")
+
+    def _restore(self) -> None:
+        if self._installed:
+            import signal
+            signal.signal(signal.SIGINT, self._previous)
+            self._installed = False
+
+    def __enter__(self) -> "DeferredInterrupt":
+        import signal
+        import threading
+        if (threading.current_thread() is threading.main_thread()
+                and hasattr(signal, "SIGINT")):
+            try:
+                self._previous = signal.signal(signal.SIGINT, self._handler)
+                self._installed = True
+            except (ValueError, OSError):
+                self._installed = False
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._restore()

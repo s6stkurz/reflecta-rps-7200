@@ -122,6 +122,7 @@ from .protocol import (
     SUB_HIGHLIGHT_SHADOW,
     SUB_SCAN_FRAME,
     CalibrationRequired,
+    DeviceSuspect,
     EndOfData,
     Inquiry,
     NoMediaLoaded,
@@ -438,6 +439,11 @@ class DirectScanner:
     #: should read "nothing yet", not raise AttributeError.
     last_pixels_raw: np.ndarray | None = None
     last_scan_meta: dict[str, Any] | None = None
+    #: Why this device may still be mid-scan, once a pass or a calibration
+    #: stopped part way through its read; None while it is not. Set, it makes
+    #: every command that would drive the device raise `DeviceSuspect`. Never
+    #: cleared on this object: the recovery is a power cycle and a new session.
+    suspect: str | None = None
 
     #: Environment variable that turns automatic filing on without touching
     #: code, so a probe script inherits it rather than having to remember.
@@ -507,6 +513,24 @@ class DirectScanner:
         # What the last auto_exposure() probe actually measured, filed with the
         # scan by :meth:`scan`. See :meth:`auto_exposure`.
         self.last_metering: dict[str, Any] | None = None
+
+    def _mark_suspect(self, why: str) -> None:
+        if self.suspect is None:
+            self.suspect = why
+            self._log(f"the scanner may still be mid-scan ({why}); nothing more "
+                      "will be sent to it that could drive it. Power-cycle it "
+                      "and open a new session.")
+
+    def _refuse_if_suspect(self, what: str) -> None:
+        """Refuse to drive a device a pass was abandoned in.
+
+        Status queries -- READ STATE, REQUEST SENSE, TEST UNIT READY, INQUIRY --
+        are not refused: they are how anybody finds out what state it is in.
+        """
+        if self.suspect is not None:
+            raise DeviceSuspect(
+                f"not starting {what}: {self.suspect}. The scanner may still "
+                "be mid-scan; power-cycle it and open a new session.")
 
     def _log(self, message: str) -> None:
         if self.verbose:
@@ -1264,6 +1288,7 @@ class DirectScanner:
             SLIDE_INIT: "init",
             SLIDE_RELOAD: "reload",
         }
+        self._refuse_if_suspect(f"a film move ({names.get(action, hex(action))})")
         self._log(f"slide transport: {names.get(action, hex(action))}")
         data = bytes([action, param, 0x00, value])
         self.t.command(_cmd(SCSI_SLIDE, 4), data=data)
@@ -1363,6 +1388,7 @@ class DirectScanner:
           one-shot conditions that clear when read. These do consume a retry,
           but typically need two or three attempts before the scan starts.
         """
+        self._refuse_if_suspect("a scan")
         deadline = time.monotonic() + ready_timeout
         attempts = 0
         last = Sense.unreadable("the scanner never refused with a sense")
@@ -1616,6 +1642,9 @@ class DirectScanner:
                     pass
 
         blob = b"".join(chunks)
+        # Every line is in: whatever goes wrong from here on is the host's, and
+        # leaves nothing outstanding on the device.
+        self._read_complete = True
         if keep_raw:
             # Everything a decoder needs, so the bytes stay meaningful without
             # this object. Line stride includes the 2-byte channel tag.
@@ -1910,6 +1939,7 @@ class DirectScanner:
         * the vendor alternates 4-line and 72-line reads, re-reading and
           re-writing gain/offset between them
         """
+        self._refuse_if_suspect("a calibration")
         for _ in range(4):
             try:
                 if not self.read_state().warming_up:
@@ -2002,6 +2032,9 @@ class DirectScanner:
         self.start_scan()
         drained = 0
         collected: list[bytes] = []
+        # Whether the scanner said it had finished. Anything that ends the
+        # read before then leaves the device mid-scan.
+        ended = False
         try:
             self._log(f"calibration reads: {bpl} bytes/line (width {width})")
 
@@ -2034,6 +2067,7 @@ class DirectScanner:
                     continue
                 except (EndOfData, ScanReadError):
                     self._log(f"  scanner finished after {blocks} blocks")
+                    ended = True
                     break
                 drained += len(chunk)
                 # Always kept: the reference is built from these bytes, so
@@ -2044,10 +2078,25 @@ class DirectScanner:
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
+            if not ended:
+                # The deadline ran out with the scanner still sending. Building
+                # a reference from what arrived would be a partial calibration
+                # passed off as a whole one, and the read it leaves is an
+                # abandoned one.
+                self._mark_suspect(f"the calibration was still sending after "
+                                   f"{timeout:.0f} s ({blocks} blocks)")
+                raise ScanReadError(
+                    f"calibration did not finish within {timeout:.0f} s "
+                    f"({blocks} blocks read); no reference was built from it")
             # This calibration's own width, not the module constant: the two
             # only coincide because every calibration before this one ran at
             # 3600 dpi. A wider pass needs a wider mask read to match.
             mask = self.get_ccd_mask(width)
+        except BaseException as exc:
+            if not ended:
+                self._mark_suspect(f"{type(exc).__name__} during the calibration "
+                                   f"read: {exc}")
+            raise
         finally:
             self.finish_scan()
 
@@ -2760,44 +2809,7 @@ class DirectScanner:
         carriage = self.carriage_record()
         self.last_read_direction = None
         started = time.monotonic()
-        self.start_scan()
-        try:
-            self.wait_ready()
-            # Read per pass, not once: the mask marks which CCD pixels *this*
-            # pass samples, which is what keeps the shading columns aligned at
-            # reduced resolutions. Sized from the active calibration's own
-            # width -- they only coincide with CCD_MASK_SIZE because every
-            # calibration before this one ran at 3600 dpi.
-            mask_size = (
-                self._shading.pixels_per_line
-                if self._shading is not None else CCD_MASK_SIZE
-            )
-            ccd_mask = self.get_ccd_mask(mask_size)
-            # Kept for the caller: this pass's mask, not the calibration
-            # pass's. They differ -- the mask says which CCD pixels *this*
-            # resolution sampled -- so correcting a saved scan later needs
-            # this one.
-            self._ccd_mask = ccd_mask
-            params = self.get_parameters()
-            self._log(
-                f"params width={params.width} lines={params.lines} "
-                f"bpl={params.bytes_per_line}"
-            )
-            # Debug filing keeps every pass's own bytes, whatever the caller
-            # asked for: a pass it files has to carry the bytes it came from,
-            # and the spool is on disk, so the cost is one pass in memory.
-            image = self.read_planes(
-                params, channels,
-                keep_raw=keep_raw or bool(getattr(self, "debug", False)))
-        except BaseException:
-            # Deliberately no STOP SCAN. The vendor software never sends it,
-            # and issuing it here reliably leaves the scanner unresponsive to
-            # the next session, needing a power cycle. Settling the bridge is
-            # enough to leave things usable.
-            self._scanning = False
-            raise
-        else:
-            self.finish_scan()
+        image, params, ccd_mask = self._read_pass(channels, keep_raw, resolution)
 
         # After the scan has settled, never inside it: the vendor polls
         # READ_STATE for several seconds once the last line is read and only
@@ -2935,6 +2947,64 @@ class DirectScanner:
         # prescan came to be filed describing itself wrongly.
         self.last_scan_meta = dict(meta)
         return image, meta
+
+    def _read_pass(
+        self, channels: int, keep_raw: bool, resolution: int
+    ) -> tuple[np.ndarray, ScanParameters, bytes]:
+        """START SCAN, read every line of the pass, and settle it.
+
+        Returns the decoded pixels, the pass's parameters and its CCD mask. A
+        pass that fails before its last line is in leaves the device mid-scan,
+        and marks it so (`suspect`): nothing may drive it again until it has
+        been power-cycled.
+        """
+        self.start_scan()
+        # Set by `read_planes` once every byte of the pass is in; an exception
+        # before that leaves the device mid-scan, one after it does not.
+        self._read_complete = False
+        try:
+            self.wait_ready()
+            # Read per pass, not once: the mask marks which CCD pixels *this*
+            # pass samples, which is what keeps the shading columns aligned at
+            # reduced resolutions. Sized from the active calibration's own
+            # width -- they only coincide with CCD_MASK_SIZE because every
+            # calibration before this one ran at 3600 dpi.
+            mask_size = (
+                self._shading.pixels_per_line
+                if self._shading is not None else CCD_MASK_SIZE
+            )
+            ccd_mask = self.get_ccd_mask(mask_size)
+            # Kept for the caller: this pass's mask, not the calibration
+            # pass's. They differ -- the mask says which CCD pixels *this*
+            # resolution sampled -- so correcting a saved scan later needs
+            # this one.
+            self._ccd_mask = ccd_mask
+            params = self.get_parameters()
+            self._log(
+                f"params width={params.width} lines={params.lines} "
+                f"bpl={params.bytes_per_line}"
+            )
+            # Debug filing keeps every pass's own bytes, whatever the caller
+            # asked for: a pass it files has to carry the bytes it came from,
+            # and the spool is on disk, so the cost is one pass in memory.
+            image = self.read_planes(
+                params, channels,
+                keep_raw=keep_raw or bool(getattr(self, "debug", False)))
+        except BaseException as exc:
+            # Deliberately no STOP SCAN. The vendor software never sends it,
+            # and issuing it here reliably leaves the scanner unresponsive to
+            # the next session, needing a power cycle. Settling the bridge is
+            # enough to leave things usable.
+            self._scanning = False
+            if not self._read_complete:
+                # A timeout, a refused read, a Ctrl-C: the pass was abandoned
+                # with lines still to come. Nothing may drive the device now.
+                self._mark_suspect(f"{type(exc).__name__} during a {resolution} "
+                                   f"dpi pass: {exc}")
+            raise
+        else:
+            self.finish_scan()
+        return image, params, ccd_mask
 
     #: Consecutive frames that fail to reach their approved position before
     #: the loop stops trying for the rest of the roll. The same shape as
@@ -3786,6 +3856,12 @@ class DirectScanner:
                     error=str(exc), raw_prescan=raw_prescan,
                     prescan_meta=prescan_meta,
                 )
+                if self.suspect is not None:
+                    # Not a frame that failed but a device that may still be
+                    # mid-scan. Advancing and scanning the next frame into it
+                    # is how one lost frame became a lost roll.
+                    self._log("ending the roll: the scanner may still be mid-scan")
+                    raise DeviceSuspect(self.suspect)
                 if failures >= max_failures:
                     self._log(f"giving up after {failures} consecutive failures")
                     return

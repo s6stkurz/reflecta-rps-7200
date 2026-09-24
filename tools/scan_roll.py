@@ -41,7 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import tiff
-from rps7200.console import use_utf8_stdout
+from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
     METER_MODES,
@@ -350,9 +350,13 @@ def main() -> int:
     # An exception the roll loop does not catch used to unwind straight
     # past it, and the frames already queued died unfiled -- scanner time
     # turned into nothing, with no message.
-    trouble: Exception | None = None
+    trouble: BaseException | None = None
+    # Ctrl-C finishes the frame in flight and stops there; a second one
+    # aborts. Abandoning a read wedges the scanner, and the frames queued for
+    # filing used to die with it.
+    interrupt = DeferredInterrupt()
     try:
-        with DirectScanner(verbose=args.verbose, debug=None) as s:
+        with interrupt, DirectScanner(verbose=args.verbose, debug=None) as s:
             info = s.inquiry()
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
@@ -476,6 +480,7 @@ def main() -> int:
                 correct_dry_run=args.correct_dry_run,
                 # the window's detector, so --correct reads edges as it does
                 edge_reader=frame_edges.walk_reader,
+                should_stop=interrupt.requested,
             ):
                 number = frame.index + 1
                 record = {
@@ -588,10 +593,12 @@ def main() -> int:
                 manifest["frames"].append(record)
                 checkpoint()
 
-    except Exception as exc:                              # noqa: BLE001
+    except BaseException as exc:                          # noqa: BLE001
         # Recorded rather than raised: the frames already scanned are
         # worth filing and the manifest is worth finishing. The exit
-        # status says it went wrong.
+        # status says it went wrong. BaseException, because a second Ctrl-C
+        # (KeyboardInterrupt) and a SIGTERM-turned-SystemExit are exactly the
+        # exits that used to skip `writer.finish()` and lose queued frames.
         trouble = exc
         print(f"the roll stopped: {type(exc).__name__}: {exc}",
               file=sys.stderr)
@@ -629,6 +636,8 @@ def main() -> int:
     manifest["duration_s"] = round(time.monotonic() - started, 1)
     if trouble is not None:
         manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
+    elif interrupt.requested():
+        manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
     checkpoint()
 
     print(f"\n{scanned} scanned, {failed} failed, "

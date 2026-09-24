@@ -352,6 +352,18 @@ class ShadingUnavailable(RuntimeError):
     """
 
 
+class DeviceSuspect(RuntimeError):
+    """A pass stopped part way through, so the scanner may still be mid-scan.
+
+    Raised by every command that would drive the device -- a scan, a
+    calibration, a film move -- once a pass has been abandoned mid-read. The
+    documented recovery from an abandoned read is a power cycle, and nothing
+    sent after one has ever been seen to bring the device back; what it has
+    done is turn one lost frame into a roll that kept advancing film and
+    starting scans into a device that was no longer listening.
+    """
+
+
 class EndOfData(ScanReadError):
     """The scanner has no more scan lines to give.
 

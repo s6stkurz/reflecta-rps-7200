@@ -26,10 +26,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import export, library
-from rps7200.console import use_utf8_stdout
+from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import DirectScanner, supports_infrared
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
 from rps7200.library import FilmNotes
+
+
+class _StoppedBetweenPasses(Exception):
+    """A bracket stopped at Ctrl-C, after a pass had landed and before the next."""
 
 
 def main() -> int:
@@ -159,84 +163,101 @@ def main() -> int:
     # leaves them out rather than writing every frame twice -- 43 GB of
     # duplicate on a 38-frame roll at 7200 dpi, which is why this used to say
     # debug=False and so filed none of the metering probes either.
-    with DirectScanner(verbose=args.verbose, debug=None) as s:
-        info = s.inquiry()
-        print(f"{info.vendor} {info.model}, firmware {info.firmware}")
+    # Ctrl-C finishes the pass in flight instead of abandoning its read --
+    # which wedges the scanner -- and a bracket stops after it. Whatever went
+    # wrong, the passes already scanned are filed below: they used to be held
+    # only in `pending` and die with the exception.
+    interrupt = DeferredInterrupt()
+    trouble: BaseException | None = None
+    pending: list[dict] = []
+    try:
+        with interrupt:
+            with DirectScanner(verbose=args.verbose, debug=None) as s:
+                info = s.inquiry()
+                print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
-        if not args.no_shading and not (args.reuse and ref_path.exists()):
-            print("calibrating (about 3-4 minutes; the vendor does this once "
-                  "per power-on) ...", flush=True)
-        print(s.ensure_shading(ref_path, reuse=args.reuse,
-                               skip=args.no_shading)["summary"])
+                if not args.no_shading and not (args.reuse and ref_path.exists()):
+                    print("calibrating (about 3-4 minutes; the vendor does this once "
+                          "per power-on) ...", flush=True)
+                print(s.ensure_shading(ref_path, reuse=args.reuse,
+                                       skip=args.no_shading)["summary"])
 
-        # Everything the library needs is gathered while the session is open and
-        # written after it closes: filing an entry gzips well over a hundred
-        # megabytes, and holding the device open and idle through that has
-        # preceded it going unresponsive.
-        pending: list[dict] = []
+                # Everything the library needs is gathered while the session is open and
+                # written after it closes: filing an entry gzips well over a hundred
+                # megabytes, and holding the device open and idle through that has
+                # preceded it going unresponsive.
+                def hold(image, meta, capture) -> None:
+                    if args.library is None:
+                        return
+                    # The RAW pixels, not the ones the scan returned. `scan()` hands
+                    # back the *corrected* image -- that is what a caller wants to
+                    # look at -- and keeps the uncorrected one in `last_pixels_raw`.
+                    # Filing the returned array put shading into `scan.tif` while
+                    # `corrections_applied` still said nothing was baked in, so
+                    # `library.corrected()` shaded it a second time and `reconstruct`
+                    # called every such entry a changed decode.
+                    #
+                    # Read here rather than after the loop because the attribute
+                    # describes the pass that *just* ran: `on_pass` is called as each
+                    # pass lands, and the pass after it overwrites this.
+                    raw = getattr(s, "last_pixels_raw", None)
+                    if raw is not None:
+                        s.debug_claim(raw)
+                    pending.append(
+                        dict(capture, inquiry=info, meta=meta,
+                             image=image if raw is None else raw)
+                    )
+                    if args.bracket and interrupt.requested():
+                        # Between passes: this one is complete and held, and
+                        # the next has not started, so stopping here abandons
+                        # nothing. A single pass has nothing after it to stop.
+                        raise _StoppedBetweenPasses(
+                            f"after pass {len(pending)}, at Ctrl-C")
 
-        def hold(image, meta, capture) -> None:
-            if args.library is None:
-                return
-            # The RAW pixels, not the ones the scan returned. `scan()` hands
-            # back the *corrected* image -- that is what a caller wants to
-            # look at -- and keeps the uncorrected one in `last_pixels_raw`.
-            # Filing the returned array put shading into `scan.tif` while
-            # `corrections_applied` still said nothing was baked in, so
-            # `library.corrected()` shaded it a second time and `reconstruct`
-            # called every such entry a changed decode.
-            #
-            # Read here rather than after the loop because the attribute
-            # describes the pass that *just* ran: `on_pass` is called as each
-            # pass lands, and the pass after it overwrites this.
-            raw = getattr(s, "last_pixels_raw", None)
-            if raw is not None:
-                s.debug_claim(raw)
-            pending.append(
-                dict(capture, inquiry=info, meta=meta,
-                     image=image if raw is None else raw)
-            )
-
-        bracket = None
-        if args.bracket:
-            print(f"scanning {args.bracket} exposures over {args.stops:g} stops "
-                  f"at {args.dpi} dpi{' (one with IR)' if args.ir else ''} ...",
-                  flush=True)
-            # Each pass is filed as it lands. Only one pass's raw bytes survive
-            # on the scanner -- last_raw is overwritten by the pass after it --
-            # so waiting for the return value would file the last and lose the
-            # rest, which is the whole point of taking a bracket.
-            bracket = s.scan_bracket(
-                passes=args.bracket,
-                stops=args.stops,
-                resolution=args.dpi,
-                infrared=args.ir,
-                film=args.film,
-                auto_exposure=args.auto_exposure and not args.exposure_scale,
-                exposure_scale=(
-                    list(exposure_scale)
-                    if isinstance(exposure_scale, list) else None
-                ),
-                keep_raw=args.library is not None,
-                shading=not args.no_shading,
-                fast_infrared=args.fast_ir,
-                on_pass=lambda i, image, meta, capture: hold(image, meta, capture),
-            )
-            image, meta = bracket[0][-1], bracket[2][-1]
-        else:
-            print(f"scanning at {args.dpi} dpi{' with IR' if args.ir else ''} ...",
-                  flush=True)
-            image, meta = s.scan(
-                resolution=args.dpi,
-                infrared=args.ir,
-                exposure_scale=exposure_scale,
-                auto_exposure=args.auto_exposure and not args.exposure_scale,
-                film=args.film,
-                shading=not args.no_shading,
-                keep_raw=args.library is not None,
-                fast_infrared=args.fast_ir,
-            )
-            hold(image, meta, s.capture_record())
+                bracket = None
+                if args.bracket:
+                    print(f"scanning {args.bracket} exposures over {args.stops:g} stops "
+                          f"at {args.dpi} dpi{' (one with IR)' if args.ir else ''} ...",
+                          flush=True)
+                    # Each pass is filed as it lands. Only one pass's raw bytes survive
+                    # on the scanner -- last_raw is overwritten by the pass after it --
+                    # so waiting for the return value would file the last and lose the
+                    # rest, which is the whole point of taking a bracket.
+                    bracket = s.scan_bracket(
+                        passes=args.bracket,
+                        stops=args.stops,
+                        resolution=args.dpi,
+                        infrared=args.ir,
+                        film=args.film,
+                        auto_exposure=args.auto_exposure and not args.exposure_scale,
+                        exposure_scale=(
+                            list(exposure_scale)
+                            if isinstance(exposure_scale, list) else None
+                        ),
+                        keep_raw=args.library is not None,
+                        shading=not args.no_shading,
+                        fast_infrared=args.fast_ir,
+                        on_pass=lambda i, image, meta, capture: hold(image, meta, capture),
+                    )
+                    image, meta = bracket[0][-1], bracket[2][-1]
+                else:
+                    print(f"scanning at {args.dpi} dpi{' with IR' if args.ir else ''} ...",
+                          flush=True)
+                    image, meta = s.scan(
+                        resolution=args.dpi,
+                        infrared=args.ir,
+                        exposure_scale=exposure_scale,
+                        auto_exposure=args.auto_exposure and not args.exposure_scale,
+                        film=args.film,
+                        shading=not args.no_shading,
+                        keep_raw=args.library is not None,
+                        fast_infrared=args.fast_ir,
+                    )
+                    hold(image, meta, s.capture_record())
+    except BaseException as exc:                          # noqa: BLE001
+        trouble = exc
+        print(f"stopped: {type(exc).__name__}: {exc}" if str(exc)
+              else f"stopped: {type(exc).__name__}", file=sys.stderr)
 
     entries = []
     for held in pending:
@@ -248,6 +269,12 @@ def main() -> int:
             tags=args.tags,
             **held,
         ))
+
+    if trouble is not None:
+        for e in entries:
+            print(f"filed before stopping: {e}")
+        return 130 if isinstance(trouble, (KeyboardInterrupt,
+                                           _StoppedBetweenPasses)) else 1
 
     if bracket is not None:
         from rps7200.bracket import merge_bracket
