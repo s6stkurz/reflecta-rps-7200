@@ -15,6 +15,8 @@ import queue
 import threading
 import time
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -304,6 +306,32 @@ def test_the_default_scanner_leaves_debug_to_the_environment(monkeypatch):
     assert s._default_scanner().debug is True
     monkeypatch.setenv("RPS7200_DEBUG", "0")
     assert s._default_scanner().debug is False
+
+
+def test_a_single_scan_is_compressed_only_after_the_scanner_closes(
+        tmp_path, monkeypatch):
+    """Compressing with the scanner open and idle preceded a wedge. A single
+    scan is filed plain while the session is open, and compacted after."""
+    scanner = FakeScanner()
+    compacted = []
+    real = library.compact
+
+    def compact(entry):
+        compacted.append((entry, scanner.closed,
+                          (Path(entry) / library.RAW_PLAIN).exists()))
+        return real(entry)
+
+    monkeypatch.setattr(library, "compact", compact)
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert len(compacted) == 1
+    _entry, closed, plain = compacted[0]
+    assert closed, "compressed with the scanner still open"
+    assert plain, "the entry was not filed plain"
+    entry = tmp_path / library.entries(tmp_path)[0]["id"]
+    assert (entry / library.RAW_FILE).exists()
+    assert not (entry / library.RAW_PLAIN).exists()
+    # The fake has no shading reference; that is all verify may say.
+    assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
 
 
 def test_a_prescan_is_filed_too(tmp_path):

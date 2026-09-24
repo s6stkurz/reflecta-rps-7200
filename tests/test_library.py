@@ -810,3 +810,33 @@ def test_reconstruct_reports_a_missing_scan_tif_and_carries_on(tmp_path):
     (path / "scan.tif").unlink()
     _image, verdict = library.reconstruct(path)
     assert verdict.startswith("could not read scan.tif")
+
+
+# --- filed plain with the scanner open, compacted after -----------------------
+
+
+def test_an_entry_filed_plain_reads_like_any_other_and_compacts_losslessly(tmp_path):
+    """Compressing with the scanner open and idle preceded a wedge, so the
+    window files single scans plain and compresses them once it has closed."""
+    stream, image = index_stream(16, 8, 3, seed=5)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"format": "index", "bytes_per_line": 32,
+              "line_stride": 32 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, compress=False)
+    assert (path / library.RAW_PLAIN).exists()
+    assert not (path / library.RAW_FILE).exists()
+    assert library.read_raw(path) == stream
+    # (It has no shading reference; that is the only thing verify may say.)
+    assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
+    assert library.reconstruct(path)[1] == "identical to the stored image"
+
+    assert library.compact(path) is True
+    assert not (path / library.RAW_PLAIN).exists()
+    assert library.read_raw(path) == stream
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
+    assert library.reconstruct(path)[1] == "identical to the stored image"
+    assert library.compact(path) is False, "compacted twice"

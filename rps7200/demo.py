@@ -904,7 +904,9 @@ class DemoScanner:
             except (OSError, ValueError):
                 continue
             scan = record.get("scan") or {}
-            if scan.get("film") != film or not (path / "raw.bin.gz").exists():
+            if scan.get("film") != film or not (
+                    (path / library.RAW_FILE).exists()
+                    or (path / library.RAW_PLAIN).exists()):
                 continue
             found = int(scan.get("resolution_dpi") or 0)
             # Nearest 1800: high enough to downscale from for most passes,

@@ -1141,6 +1141,9 @@ class FrameWriter:
         # Called with (number, entry_path, error) as each job lands, so a UI can
         # show where a frame went without polling `done`.
         self.on_done = on_done
+        #: Entries filed with ``compress=False``, for `library.compact` once
+        #: the scanner is closed.
+        self.uncompressed: list[Path] = []
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -1206,8 +1209,11 @@ class FrameWriter:
                 prescan_meta=job.get("prescan_meta"),
                 inquiry=job["inquiry"],
                 corrections=corrections,
+                compress=job.get("compress", True),
                 **job["capture"],
             )
+            if not job.get("compress", True):
+                self.uncompressed.append(entry)
         problems = []
         for path in job.get("paths") or ():
             # Each copy on its own: one that cannot be written -- a missing
@@ -1510,6 +1516,13 @@ class ScanSession:
                 self._writer.finish()
                 for problem in self._writer.errors:
                     self._emit("log", text=problem)
+                # Now, with the device closed: see `_file`'s `compress`.
+                for entry in self._writer.uncompressed:
+                    try:
+                        library.compact(entry)
+                    except (OSError, ValueError) as exc:
+                        self._emit("log", text=f"could not compress {entry}: "
+                                   f"{exc}; it stays uncompressed and complete")
             self._emit("closed")
 
     def _filed(self, seq: int, number: int, entry: Path | None, err: str | None) -> None:
@@ -2336,6 +2349,14 @@ class ScanSession:
             seq=seq,
             number=number,
             paths=paths,
+            # A single scan or prescan is filed with the scanner open and idle
+            # between jobs, and compressing then -- gzip, and TIFF deflate --
+            # is what preceded a wedge (CLAUDE.md). So those are written plain
+            # and compressed when the session closes. A roll's frames keep
+            # compressing on the writer thread while the next frame scans: the
+            # device is busy there, which is the exception CLAUDE.md argues
+            # and `tools/filing_load_test.py` exists to measure.
+            compress=bool(roll),
             rotate=turn,
             flip=flip,
             image=image,

@@ -229,8 +229,14 @@ def save(
     raw_path: Path | str | None = None,
     raw_layout: dict[str, Any] | None = None,
     corrections: list[str] | None = None,
+    compress: bool = True,
 ) -> Path:
     """Write one scan and everything needed to use it again. Returns its path.
+
+    ``compress=False`` writes the raw bytes as `raw.bin` and the TIFFs
+    uncompressed: plain writes, for a caller filing with the scanner open and
+    idle, where compressing is what preceded a wedge. :func:`compact` makes
+    it the ordinary gzipped entry later, losslessly; every reader takes either.
 
     ``image`` must be the **raw** pixels -- what the scanner sent, before
     flat-fielding. Corrections belong downstream: they change, and a corrected
@@ -258,20 +264,25 @@ def save(
         "this entry was being written and did not finish\n", encoding="utf-8")
 
     resolution = int(meta.get("resolution_dpi") or 0) or None
-    tiff.write(str(path / "scan.tif"), image, resolution=resolution)
+    tiff.write(str(path / "scan.tif"), image, resolution=resolution,
+               compress=compress)
     if prescan is not None:
-        tiff.write(str(path / "prescan.tif"), prescan)
+        tiff.write(str(path / "prescan.tif"), prescan, compress=compress)
     if reference is not None:
         reference.save(path / "shading.npz")
     if ccd_mask is not None:
         (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
     raw_bytes = raw_sha = None
+    raw_name = None
     if raw is not None or raw_path is not None:
         # Compressed, but byte-exact: measured on a real pass, gzip takes it to
         # 72% of its size, and the decompressed bytes are identical to what
         # arrived.
         digest = hashlib.sha256()
-        with gzip.open(path / "raw.bin.gz", "wb", compresslevel=6) as fh:
+        raw_name = RAW_FILE if compress else RAW_PLAIN
+        opener = ((lambda f: gzip.open(f, "wb", compresslevel=6)) if compress
+                  else (lambda f: open(f, "wb")))
+        with opener(path / raw_name) as fh:
             if raw is not None:
                 digest.update(raw)
                 fh.write(raw)
@@ -311,7 +322,7 @@ def save(
             "sha256": _sha256(path / "scan.tif"),
         },
         "raw": {
-            "file": "raw.bin.gz" if raw_bytes is not None else None,
+            "file": raw_name if raw_bytes is not None else None,
             "bytes": raw_bytes,
             "sha256": raw_sha,
             "layout": raw_layout,
@@ -393,6 +404,54 @@ def save(
 #: the byte-14 ladder, say, which is evidence and must never be pruned. `verify`
 #: does not report such an entry for lacking one. `tools/library.py tag` sets it.
 ON_PURPOSE = "uncalibrated-on-purpose"
+
+#: The raw bytes, gzipped (the ordinary form) and plain (filed with the
+#: scanner open, before :func:`compact`).
+RAW_FILE = "raw.bin.gz"
+RAW_PLAIN = "raw.bin"
+
+
+def compact(path: Path | str) -> bool:
+    """Compress an entry filed with ``compress=False``. Lossless; True if done.
+
+    For after the scanner is closed. The raw bytes are gzipped and checked
+    against their recorded checksum before the plain file goes; the TIFFs are
+    rewritten compressed with identical pixels. Each file is swapped in whole
+    and the record last, so an interruption leaves a readable entry.
+    """
+    path = Path(path)
+    plain = path / RAW_PLAIN
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    if not plain.exists():
+        return False
+    raw = record.setdefault("raw", {})
+    temp = path / f".{RAW_FILE}.part"
+    digest = hashlib.sha256()
+    with open(plain, "rb") as src, gzip.open(temp, "wb", compresslevel=6) as fh:
+        while chunk := src.read(8 << 20):
+            digest.update(chunk)
+            fh.write(chunk)
+    if raw.get("sha256") and digest.hexdigest() != raw["sha256"]:
+        temp.unlink(missing_ok=True)
+        raise OSError(f"{path.name}: {RAW_PLAIN} does not match its checksum; "
+                      "left as it is")
+    os.replace(temp, path / RAW_FILE)
+    raw["file"] = RAW_FILE
+    for name in ("scan.tif", "prescan.tif"):
+        if (path / name).exists():
+            pixels = tiff.read(str(path / name))
+            resolution = ((record.get("scan") or {}).get("resolution_dpi")
+                          if name == "scan.tif" else None) or None
+            _replace_tiff(path / name, pixels, resolution=resolution)
+            digest_now = _sha256(path / name)
+            if name == "scan.tif":
+                record.setdefault("image", {})["sha256"] = digest_now
+            else:
+                record.setdefault("files", {})[name] = digest_now
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    plain.unlink()
+    return True
+
 
 #: Marks an entry still being written. See :func:`save`.
 INCOMPLETE = "INCOMPLETE"
@@ -545,7 +604,13 @@ def read_raw(path: Path | str) -> bytes | None:
     a truncated or corrupt file is a library problem for :func:`verify` to
     report, not an exception for every caller to handle.
     """
-    path = Path(path) / "raw.bin.gz"
+    folder = Path(path)
+    if (folder / RAW_PLAIN).exists() and not (folder / RAW_FILE).exists():
+        try:
+            return (folder / RAW_PLAIN).read_bytes()
+        except OSError:
+            return None
+    path = folder / RAW_FILE
     if not path.exists():
         return None
     try:
