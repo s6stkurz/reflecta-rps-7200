@@ -1,0 +1,1495 @@
+{
+ "type": "result",
+ "key": "v2:6b3b7bd577727834f4e0e080a4f19a14ad403319089fb03fff1f3ddde93218c2",
+ "agentId": "a3a3f5567457bf763",
+ "result": {
+  "flows": [
+   {
+    "name": "1. Single scan from the GUI (Calibrate -> Scan -> library -> view / Save As)",
+    "steps": [
+     {
+      "where": "tools/gui.py:1929-1936 on_calibrate",
+      "does": "Submits Calibrate(mode=mode or v_shading ('measure'|'reuse'|'off'), reference=session.reference) with no confirmation about film, and sets self.calibrated=True optimistically; the 'calibrated' event (gui.py:3235-3237) later sets the real value",
+      "data": "Calibrate dataclass",
+      "persists": "-",
+      "thread": "Tk UI thread"
+     },
+     {
+      "where": "rps7200/session.py:1381-1399 _calibrate -> rps7200/direct.py:572-629 ensure_shading",
+      "does": "skip -> no reference; reuse and file exists -> load_shading (direct.py:549-561); otherwise calibrate_shading (direct.py:1755-1975): READ_STATE/wait_warm, SET EXPOSURE/HIGHLIGHT, 128-byte calibration-info read (first 12 bytes logged), set_scan_frame(CALIBRATION_FRAME), cmd_17, SET GAIN OFFSET echo, MODE SELECT 3600 dpi RGB 8-bit INDEX calibrate, SLIDE INIT param 0x01, START SCAN, 10 s silence, 4-line reads of 16-bit lines (bpl=2*width+2) with a gain/offset echo before each, get_ccd_mask(width), finish_scan; session.calibrated = action in (loaded, calibrated) and reference not None",
+      "data": "calibration bytes -> calculate_shading (shading.py:109-182) -> ShadingReference{ref/dark: dict[int, float64[5172]], mean, dark_mean, pixels_per_line} or None; calibration ccd mask bytes[width]",
+      "persists": "calibration/shading.npz via save_shading (direct.py:563-570, np.savez_compressed, non-atomic) only when a reference resulted. Raw calibration bytes, shading descriptor, calibration-info block, calibration mask and gain readbacks are not persisted (keep_data=False by default and ensure_shading never asks). Nothing records whether the reference was measured or loaded from cache",
+      "thread": "'scanner' worker thread (session.py:1208-1212)"
+     },
+     {
+      "where": "tools/gui.py:2047-2060 on_scan",
+      "does": "If calibrated, builds Scan(resolution, infrared, fast_infrared, film, auto_exposure=(expmode=='auto'), exposure_scale, mono, mono_channel, notes=_notes(), tags); shading left at default True",
+      "data": "Scan dataclass",
+      "persists": "-",
+      "thread": "Tk UI thread"
+     },
+     {
+      "where": "rps7200/session.py:1440-1451 _scan -> rps7200/direct.py:2423 scan(keep_raw=True)",
+      "does": "One pass",
+      "data": "arguments",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:2519-2530 -> auto_exposure (1977-2266)",
+      "does": "Up to rounds+1 (=3) RGB probes, each a recursive scan(300 dpi, 16-bit, FULL_FRAME, shading=True, film default 'negative', keep_raw=True) preceded by set_gain_offset(base); metering_slice on the first probe; 99.5th percentile per channel; proportional step, timer ceiling 65535/base; last_metering dict",
+      "data": "probe images (H,W,3) uint16 discarded; scales list[float]; last_metering",
+      "persists": "Nothing: session scanner is debug=False (session.py:1266-1271). last_metering reaches this scan's meta['metering'] only on this auto_exposure path",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:2533-2600",
+      "does": "READ_STATE polling, wait_warm, TEST UNIT READY, media note, SET EXPOSURE/HIGHLIGHT; needed=round((x1-x0+1)*dpi/7200); >5172 -> ShadingUnavailable before any pass (so every 7200 dpi GUI scan is refused here); no/too-narrow reference -> lazy calibrate_shading() at 3600 dpi",
+      "data": "needed columns int",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:2602-2653",
+      "does": "set_scan_frame, cmd_17, get_gain_offset().scaled(exposure_scale) (protocol.py:589-616, clamped 100..65535), set_gain_offset (29-byte payload), set_mode (byte14 via byte14_for unless overridden; fast_infrared gated on infrared), TEST UNIT READY, SLIDE INIT(param 0x16), wait_ready, carriage_record()",
+      "data": "Settings{exposure[4], gain, offset, light}; carriage record",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:2655-2678 -> read_planes (1440-1541) -> usb_transport.py:772-857 / _read_payload 717-770",
+      "does": "START SCAN; get_ccd_mask(reference.pixels_per_line) stored in self._ccd_mask; GET PARAMETERS; READs of `batch` lines (NoDataYet -> retry, EndOfData -> stop early); keep_raw -> last_raw/last_raw_layout; last_raw is never cleared, so a keep_raw=False pass leaves the previous pass's bytes there",
+      "data": "blob bytes = channels*lines lines of (2-byte tag + bytes_per_line LE); layout{format:index, bytes_per_line, line_stride, index_header, width, lines=params.lines, channels, byte_order, lines_received}",
+      "persists": "memory only",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:1552-1600 decode_index + rps7200/direction.py:84-114 read_direction",
+      "does": "Split lines by tag into planes (uint16 LE or uint8 by bpl//width), truncate to common height, reverse rows when the first R comes after the first B (and a complete read's last lines agree)",
+      "data": "image (H,W,3|4) uint16/uint8; ReadDirection -> meta.read_direction",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:2692-2702",
+      "does": "At exactly 7200 dpi _realign_native_column_stagger trims 4 rows and shifts odd columns (log line only). Reachable only with shading=False (scan.py --no-shading, API); never from the GUI, which refuses 7200 dpi above",
+      "data": "image (H-4,W,C)",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:2708-2758 -> rps7200/shading.py:196-283 apply_shading",
+      "does": "raw_pixels=image; two-point per-column flat field with this pass's mask (build_width_to_loc), reference scaled to pass depth, floor(x+0.5), clip; IR plane uncorrected (reference is RGB)",
+      "data": "corrected (H,W,C); shading_report{columns,width,clipped,uncorrected,clipped_per_channel,two_point}",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:2760-2823",
+      "does": "Builds meta (resolution_dpi, channels, film, protocol_revision, shading, shading_skipped, channel_order, depth, frame, width, height, bytes_per_line, filter_offsets, exposure/gain/offset, exposure_scale, exposure_metered=bool(auto_exposure), fast_infrared, duration_s, read_direction, carriage_state, metering if auto_exposure); _debug_capture (no-op when debug=False); last_pixels_raw=raw_pixels; last_scan_meta; returns the CORRECTED image. byte14, slide_init_param, skip_shading, base settings are not recorded",
+      "data": "(corrected ndarray, meta dict)",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/session.py:1452-1455, 1481-1534 _note_reversal, 1945-1972 _deliver",
+      "does": "_prescan_here issues a position() READ_STATE and compares with the last prescan's; a pass whose line tags decided its direction is only logged; unknown direction may get meta['reversal']; Result with preview.downscale(image, 1400) copy",
+      "data": "Result{seq, kind='scan', working copy <=1400 px, meta copy}",
+      "persists": "-",
+      "thread": "scanner thread -> event queue -> UI"
+     },
+     {
+      "where": "rps7200/session.py:1456-1458 -> _file (2031-2141)",
+      "does": "capture_record() (reference, ccd_mask, last_raw, last_raw_layout); guard drops raw bytes when layout lines/width/channels disagree with the image (keeps reference and mask); composes reversal+rotation; submits to FrameWriter WITHOUT raw_image (_scan never passes last_pixels_raw, unlike _prescan at 1415)",
+      "data": "job dict {image: corrected, raw_image: None, meta+rotation/flipped, capture, paths=[out_dir copy]}",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/session.py:1060-1103 FrameWriter._write -> rps7200/library.py:131-311 save",
+      "does": "Writes delivered copy (orient, optional mono, export.write) to out_dir; library.save(job['image']) because raw_image is None; scan.json written last; reindex",
+      "data": "corrected uint16 pixels recorded with corrections_applied=[]",
+      "persists": "library/<ts>_<stock>_<dpi>dpi[_ir]/scan.tif (CORRECTED, labelled raw), raw.bin.gz (exact bytes, gzip 6), shading.npz, ccd_mask.bin, scan.json, library/index.json; <out>/...tif|.jpg (+.dng). Gzip runs with the device open and idle (worker waits in _jobs.get())",
+      "thread": "FrameWriter thread (daemon)"
+     },
+     {
+      "where": "rps7200/session.py:1348-1360 _filed -> tools/gui.py:3238-3241",
+      "does": "'filed' event sets result.entry",
+      "data": "entry Path",
+      "persists": "-",
+      "thread": "writer thread -> UI"
+     },
+     {
+      "where": "tools/gui.py:4092-4118 _load_full and 3843-3877 _deliver_one (Save As / Save all / roll Export)",
+      "does": "library.corrected(entry) (library.py:338-391): corrections_applied is empty and a reference exists, so apply_shading runs AGAIN on already-corrected pixels; then preview.orient, optional to_monochrome, export.write",
+      "data": "doubly flat-fielded (H,W,C) uint16",
+      "persists": "user-chosen file (TIFF/JPEG)",
+      "thread": "background thread (_load_full, Save all, Export) or UI thread (Save As)"
+     }
+    ]
+   },
+   {
+    "name": "2. Single scan from tools/scan.py (incl. --bracket, --reuse, --no-shading)",
+    "steps": [
+     {
+      "where": "tools/scan.py:119-155",
+      "does": "Parses args; --exposure-scale -> float (one value) or list; clears fast_ir without --ir; validates bracket 2-9; --no-library sets library None",
+      "data": "exposure_scale float|list",
+      "persists": "-",
+      "thread": "main"
+     },
+     {
+      "where": "tools/scan.py:160-168 -> direct.py:572-629",
+      "does": "DirectScanner(debug=False) (RPS7200_DEBUG overridden); inquiry printed; ensure_shading(reference, reuse=--reuse, skip=--no-shading)",
+      "data": "ShadingReference from calibration or cache",
+      "persists": "calibration/shading.npz rewritten on measure; nothing in the entry says the reference was reused",
+      "thread": "main"
+     },
+     {
+      "where": "rps7200/direct.py:2519-2600 (with --no-shading --auto-exposure)",
+      "does": "The metering probes call scan() with shading=True; with no reference in the session this triggers a lazy calibrate_shading() inside the first probe although calibration was skipped",
+      "data": "-",
+      "persists": "-",
+      "thread": "main"
+     },
+     {
+      "where": "tools/scan.py:222-235 (single)",
+      "does": "s.scan(..., shading=not --no-shading, keep_raw=library is not None); hold(): last_pixels_raw (raw) + capture_record() + meta + inquiry into `pending` in memory",
+      "data": "raw (H,W,C), raw bytes, reference, mask, meta",
+      "persists": "nothing yet (device open)",
+      "thread": "main"
+     },
+     {
+      "where": "tools/scan.py:196-221 -> direct.py:2323-2421 scan_bracket, 2268-2321 bracket_ladder",
+      "does": "scales = explicit list | auto_exposure | [1,1,1] (a single-float --exposure-scale becomes None and auto_exposure False -> [1,1,1]); geomspace ladder to timer ceiling; one scan per multiplier (IR only on the last); bracket_* meta keys; on_pass -> hold(capture_record()); retain keeps every corrected pass",
+      "data": "frames list[(H,W,C)], ratios, metas",
+      "persists": "nothing yet",
+      "thread": "main"
+     },
+     {
+      "where": "tools/scan.py:237-246 -> library.save",
+      "does": "After the with-block closes the device, files each pending pass (raw pixels, meta, FilmNotes from CLI, tags, reference, ccd_mask, raw, raw_layout; inquiry passed and ignored)",
+      "data": "per-pass entry",
+      "persists": "library/<id>/{scan.tif raw (realigned at 7200 dpi), raw.bin.gz, shading.npz (absent with --no-shading), ccd_mask.bin, scan.json}; bracket_* and inquiry dropped",
+      "thread": "main"
+     },
+     {
+      "where": "tools/scan.py:248-285",
+      "does": "merge_bracket on corrected visible channels (+IR plane of last pass); optional mono; export.write --out (default ./scan.tif, overwritten); <out>.json of meta",
+      "data": "merged image",
+      "persists": "--out file and <out>.json (not in the library)",
+      "thread": "main"
+     }
+    ]
+   },
+   {
+    "name": "3. Roll: walk -> frame edges -> contact sheet -> approved.json -> commissioned roll -> FrameWriter -> export",
+    "steps": [
+     {
+      "where": "tools/gui.py:2077-2158 on_roll (button or 'roll' key; the key path has no busy check)",
+      "does": "Confirms; for a dry run clears survey/orientations/sheet_state/_sheet_roll and edge_watch.begin(film); submits Roll(dry_run, frames, start_at, prescan_resolution, name=raw 'roll' field, notes, tags); submit() clears any pending stop",
+      "data": "Roll dataclass",
+      "persists": "-",
+      "thread": "UI"
+     },
+     {
+      "where": "rps7200/session.py:1608-1760 _roll",
+      "does": "seek() to start_at; name = job.name or date (unsanitised); out = rolls/<name>; last_roll_dir=out; dry run -> survey.json never merged; real -> earlier roll.json read (unreadable -> {} silently) and renumbered; manifest dict; scanner.scan_roll(keep_raw=True, edge_reader)",
+      "data": "manifest dict",
+      "persists": "rolls/<name>/ created (after the film has already been moved by seek)",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/direct.py:3292-3690 scan_roll",
+      "does": "baseline=get_gain_offset(); per frame: position()/place_on_strip; prescan(resolution=prescan_resolution, keep_raw) with film defaulting to 'negative' (roll film not passed); raw_prescan=last_pixels_raw, prescan_meta; frame_contrast (blank -> end); registration marks; walk.observe only when correct/correct_dry_run; approved -> _hold_to_approved (2836-2961; verification prescans, the last replaces prescan and raw_prescan, no prescan_before); else correct -> _aim_frame (2963-3059, prescan_before kept); dry run -> yield RollFrame(prescan, raw_prescan, prescan_meta, prescan_before)",
+      "data": "RollFrame; prescans (H,W,3) uint8 corrected + raw",
+      "persists": "-",
+      "thread": "scanner thread (generator)"
+     },
+     {
+      "where": "rps7200/session.py:1776-1845",
+      "does": "_deliver prescan Result; dry run: _file(rf.prescan, prescan_meta, raw_image=rf.raw_prescan, frame label '<name>-NN', path=rolls/<name>/prescanNN.tif, kind='prescan'); prescan_before -> _file(file_entry=False, path=prescanNN-before.tif)",
+      "data": "job dicts",
+      "persists": "via FrameWriter: rolls/<name>/prescanNN.tif (corrected, oriented by session rotation/flip, overwritten on a second walk), prescanNN-before.tif (no library entry), one library entry per walk prescan (raw 8-bit scan.tif + raw.bin.gz + shading.npz + ccd_mask.bin), out_dir/prescans copy",
+      "thread": "scanner -> writer thread"
+     },
+     {
+      "where": "rps7200/session.py:1894-1926",
+      "does": "Frame record (number, index, transport_position, registration, error, done, prescan name) replaces any earlier one; manifest rewritten with write_text after every frame",
+      "data": "JSON",
+      "persists": "rolls/<name>/survey.json (replaced wholesale by every walk into the folder; non-atomic)",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "tools/gui.py:3497-3505 remember_arrangement -> tools/frame_edges/watch.py EdgeWatch",
+      "does": "Each surveyed prescan working copy (unoriented, <=1400 px) appended to self.survey and handed to EdgeWatch.add",
+      "data": "(number, working copy)",
+      "persists": "-",
+      "thread": "UI -> frame-edges thread"
+     },
+     {
+      "where": "tools/gui.py:3243-3260, sheet code, tools/frame_edges/propose.py propose_centred",
+      "does": "On 'finished' of a walk: _sheet_roll = session.last_roll_dir; sheet opens; proposals (mm) merged with operator positions",
+      "data": "offsets dict[int,float mm], sources",
+      "persists": "gui-settings.json 'sheet' section",
+      "thread": "UI"
+     },
+     {
+      "where": "tools/gui.py:2723-2864 on_scan_chosen, 2929-2967 _write_approved",
+      "does": "Busy check; Approved(number, offset_mm, rotation, flipped, reference=working copy, reference_entry, source); approved.json written to rolls/_safe(roll field or '') -- not _sheet_roll/last_roll_dir; submits Roll(only, approved, start_at, predpi pinned to survey, name=raw roll field)",
+      "data": "Approved tuple",
+      "persists": "rolls/<_safe(name)|'roll'>/approved.json (offset_mm 4 dp); non-atomic",
+      "thread": "UI"
+     },
+     {
+      "where": "rps7200/direct.py:3612-3660",
+      "does": "meter: set_gain_offset(baseline) + auto_exposure (probes not filed); set_gain_offset(baseline); scan(exposure_scale=scales, keep_raw) -> meta exposure_metered=False and no 'metering'; roll_index/roll_position/registration added; yield RollFrame(image corrected, raw_image=last_pixels_raw, prescan corrected, raw_prescan)",
+      "data": "(H,W,3|4) uint16 corrected + raw",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/session.py:1846-1893 -> _file -> FrameWriter._write",
+      "does": "_note_reversal; _deliver; _file(raw_image=rf.raw_image, prescan=rf.prescan (corrected), prescan_meta, frame label '<name>-NN', path=rolls/<name>/frameNN.tif, mono)",
+      "data": "job dict",
+      "persists": "rolls/<name>/frameNN.tif (corrected, oriented, optional mono, overwritten on rescan), out_dir copy (_unclaimed), library entry (scan.tif raw, raw.bin.gz, shading.npz, ccd_mask.bin, prescan.tif CORRECTED 8-bit unlabelled, scan.json with registration; roll_index/roll_position dropped); raw_prescan not filed",
+      "thread": "scanner -> writer thread (gzip overlaps next frame)"
+     },
+     {
+      "where": "rps7200/session.py:1894-1926",
+      "does": "Per-frame record incl. exposure/gain/offset; manifest rewritten per frame; no library entry id",
+      "data": "JSON",
+      "persists": "rolls/<name>/roll.json (merged with earlier; non-atomic)",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "tools/gui.py:4979-5008 roll_entry_index, 5104-5128 rolls_on_disk, 4871-4906 roll_exports, 2383-2451 on_export_rolls",
+      "does": "Globs library/*/scan.json and keys entries by film.frame.rpartition('-') -> (roll name, number); the last entry in glob order wins, and walk-prescan entries share the key with frame entries; export re-corrects the chosen entry with library.corrected",
+      "data": "dict[roll][number] -> entry path",
+      "persists": "exported TIFF/JPEG files",
+      "thread": "UI (index) / export-rolls thread"
+     },
+     {
+      "where": "tools/scan_roll.py:274-605 (CLI equivalent)",
+      "does": "Fresh manifest every run (roll.json/survey.json overwritten after seek+calibrate); --no-shading only skips the up-front calibration (scan_roll has no shading parameter) so the first prescan calibrates lazily; dry run writes prescanNN.tif / -before.tif with tiff.write and files NOTHING in the library; real frames -> FrameWriter.submit(raw_image, prescan corrected, capture=s.capture_record(), frame='<roll>/<NN>') with no shape guard; --approved -> hold_from_walk reads prescans without un-orienting; writer.finish reached only after normal exit or an Exception (not KeyboardInterrupt)",
+      "data": "as above",
+      "persists": "rolls/<roll>/{roll.json|survey.json, frameNN.tif, prescanNN.tif}; library entries for real frames only; manifest records entry paths after finish",
+      "thread": "main + FrameWriter thread"
+     }
+    ]
+   },
+   {
+    "name": "4. Demo (--demo): DemoScanner at the session seam",
+    "steps": [
+     {
+      "where": "tools/gui.py:8156-8199 main",
+      "does": "home=demo/: session root demo/library (or --library), reference demo/calibration/shading.npz, rolls demo/rolls (or --rolls); session._open_scanner = DemoScanner(source, entry, no_film=--look-only, libraries_beside, cache=demo/pictures.npz). --look-only without --demo only reaches the window",
+      "data": "-",
+      "persists": "demo/gui-settings.json",
+      "thread": "UI"
+     },
+     {
+      "where": "rps7200/demo.py:281-305 open, _sign_pictures",
+      "does": "Lists source entries, picks best_pair, signs pictures on a thread",
+      "data": "24x48 grey grids",
+      "persists": "demo/pictures.npz",
+      "thread": "demo-pictures thread"
+     },
+     {
+      "where": "rps7200/demo.py:444-452 ensure_shading",
+      "does": "Sleeps; returns 'loaded'/'calibrated' with no 'reference' key (session treats it as calibrated) and reads/writes no file",
+      "data": "summary dict",
+      "persists": "nothing",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/demo.py:454-477 prescan -> 1164-1190 _pair_image",
+      "does": "Reads the source entry's prescan.tif (corrected, no bytes) WITHOUT resetting self._capture, or decodes the scan's raw and resamples (drops raw, keeps reference/mask); _as_positioned rolls columns by the simulated offset; _read_as_carriage encodes and decodes via DirectScanner.decode_index; meta has no shading report/exposure/protocol_revision",
+      "data": "(H,W,3) already corrected; no last_pixels_raw attribute",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/demo.py:530-597 scan -> 955-1022 _decode",
+      "does": "library.read_raw -> DirectScanner._deinterleave (or scan.tif when no raw) -> apply_shading whenever a reference exists and calibration.skipped is unset, regardless of shading=False or corrections_applied; capture = source entry's raw/layout/reference/mask; no _as_positioned; no ShadingUnavailable width check",
+      "data": "(H,W,3|4) corrected; meta{demo:True, shading report or None}",
+      "persists": "-",
+      "thread": "scanner thread"
+     },
+     {
+      "where": "rps7200/session.py:1407-1458 / 2031-2141",
+      "does": "Unchanged session path: raw_image None (scan) or getattr(last_pixels_raw)=None (prescan), so corrected pixels go to library.save as raw; guard drops raw when layout disagrees but keeps the possibly stale reference and mask",
+      "data": "job dict",
+      "persists": "demo/library/<id>/ with corrected scan.tif labelled raw, the SOURCE entry's raw.bin.gz when shapes match, shading.npz, ccd_mask.bin (possibly from a previous decode)",
+      "thread": "scanner -> writer thread"
+     },
+     {
+      "where": "rps7200/demo.py:599-797 scan_roll",
+      "does": "Own loop borrowing roll_ends/place_on_strip/_hold_to_approved/_aim_frame/param_for_mm: prescan at default 300 dpi (prescan_resolution swallowed by **kw), hold called with 300 and no should_stop, no blank-contrast end, no per-frame except/max_failures, no metering, walk.observe only on unheld frames; RollFrame without raw_image/raw_prescan/prescan_before and meta without registration",
+      "data": "RollFrame",
+      "persists": "through session as above",
+      "thread": "scanner thread"
+     }
+    ]
+   },
+   {
+    "name": "5. Offline: library entry -> corrected / reconstruct / verify / migrate / duplicates",
+    "steps": [
+     {
+      "where": "rps7200/library.py:314-335 load",
+      "does": "scan.json + tiff.read(scan.tif) + ShadingReference.load(shading.npz) + ccd_mask.bin bytes",
+      "data": "(image, record{reference, ccd_mask})",
+      "persists": "-",
+      "thread": "caller"
+     },
+     {
+      "where": "rps7200/library.py:338-391 corrected",
+      "does": "'shading' in corrections_applied -> 'already'; calibration.skipped -> raw; no reference -> raw; else apply_shading(image, reference, mask or 1:1)",
+      "data": "corrected image + record['corrected']",
+      "persists": "-",
+      "thread": "caller (GUI load/save/export threads, analysis tools)"
+     },
+     {
+      "where": "rps7200/library.py:394-436 read_raw / decode_raw",
+      "does": "gunzip raw.bin.gz (errors -> None); ScanParameters from raw.layout with filter offsets 0; DirectScanner._deinterleave (= decode_index, upright; no 7200 realignment)",
+      "data": "bytes / (H,W,C)",
+      "persists": "-",
+      "thread": "caller"
+     },
+     {
+      "where": "rps7200/library.py:439-515 reconstruct; tools/library.py:90-113",
+      "does": "decode_index of raw; legacy 'shading' entries re-shaded; compares shape, recorded direction, equality or rows-reversed equality",
+      "data": "verdict str",
+      "persists": "-",
+      "thread": "main"
+     },
+     {
+      "where": "rps7200/library.py:776-816 verify; tools/library.py:83-88",
+      "does": "scan.tif sha256, existence of shading/ccd_mask/raw, raw sha256; reports explicit shading=False entries as 'correction was asked for'; no checksum for shading.npz/ccd_mask.bin/prescan.tif",
+      "data": "problem strings",
+      "persists": "-",
+      "thread": "main"
+     },
+     {
+      "where": "tools/library.py:137-216 migrate-raw",
+      "does": "Rewrites scan.tif with decode_raw whenever it differs and shapes match, without checking the stored pixels derive from these bytes and without backup",
+      "data": "(H,W,C)",
+      "persists": "scan.tif and scan.json rewritten in place (non-atomic)",
+      "thread": "main"
+     },
+     {
+      "where": "rps7200/library.py:518-636 migrate_direction; tools/library.py:218-242",
+      "does": "Records read_direction; turns bottom-up scan.tif/prescan.tif upright when decisive",
+      "data": "-",
+      "persists": "scan.tif/prescan.tif/scan.json rewritten with --write",
+      "thread": "main"
+     },
+     {
+      "where": "rps7200/library.py:639-738 signature/duplicates/prunable; tools/library.py:115-135",
+      "does": "Groups by (stock, frame, subject, dpi, channels, frame window, depth, film, protocol_revision, commanded exposure, fast_infrared); --delete shutil.rmtree's all but the most useful, no confirmation",
+      "data": "groups",
+      "persists": "entries deleted; index.json rebuilt",
+      "thread": "main"
+     },
+     {
+      "where": "tools/make_comparison.py:92-139",
+      "does": "Reads an arbitrary TIFF (default scans/negatives/state_1800dpi.tif) and a flat, destripes; does not touch the library, raw bytes or apply_shading",
+      "data": "TIFFs",
+      "persists": "1_nothing_done.tif, 2_corrected.tif, 3_corrected_inverted.tif, previews/cmp_*.png",
+      "thread": "main"
+     }
+    ]
+   },
+   {
+    "name": "6. Settings and calibration cache",
+    "steps": [
+     {
+      "where": "rps7200/direct.py:563-570 save_shading (from ensure_shading 612-615: session._calibrate, tools/scan.py:167, tools/scan_roll.py:166-173)",
+      "does": "np.savez_compressed of the current ShadingReference when one exists",
+      "data": "float64 ref/dark per channel, means, pixels_per_line",
+      "persists": "calibration/shading.npz (cwd-relative; overwritten each measured calibration; no mask, no provenance; non-atomic)",
+      "thread": "scanner thread / main"
+     },
+     {
+      "where": "rps7200/direct.py:549-561 load_shading",
+      "does": "Loads the cached reference; the mask comes from the next pass",
+      "data": "ShadingReference",
+      "persists": "-",
+      "thread": "scanner thread / main"
+     },
+     {
+      "where": "tools/gui.py:1995-2004 ask_to_calibrate",
+      "does": "Reads cache mtime to show its age and offers 'Use the cached one'",
+      "data": "age hours",
+      "persists": "-",
+      "thread": "UI"
+     },
+     {
+      "where": "rps7200/settings.py:58-97; tools/gui.py _remember",
+      "does": "Load/save window state; save is .part + replace (atomic)",
+      "data": "controls, film, output, window, presets, shortcuts, rolls, sheet",
+      "persists": "gui-settings.json | $RPS7200_SETTINGS | demo/gui-settings.json",
+      "thread": "UI"
+     }
+    ]
+   }
+  ],
+  "module_dependencies": [
+   {
+    "module": "rps7200.protocol",
+    "imports": [
+     "stdlib only"
+    ],
+    "notes": "Constants, dataclasses (ScanParameters, Settings, State), MM_PER_UNIT=0.1057, COMMAND_UNITS=1.84, Settings.scaled clamps 100..65535"
+   },
+   {
+    "module": "rps7200.usb_transport",
+    "imports": [
+     "stdlib (ctypes, libusb lazily)"
+    ],
+    "notes": "Transport.command/_read_payload"
+   },
+   {
+    "module": "rps7200.direction",
+    "imports": [
+     "numpy",
+     "rps7200.protocol"
+    ],
+    "notes": "read_direction, encode_index, reverse_lines"
+   },
+   {
+    "module": "rps7200.shading",
+    "imports": [
+     "numpy"
+    ],
+    "notes": "calculate_shading/apply_shading/ShadingReference"
+   },
+   {
+    "module": "rps7200.defects",
+    "imports": [
+     "numpy"
+    ],
+    "notes": "used by make_comparison via direct re-exports"
+   },
+   {
+    "module": "rps7200.framing",
+    "imports": [
+     "rps7200.protocol",
+     "rps7200.uniformity (lazy)"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "rps7200.direct",
+    "imports": [
+     "rps7200.defects",
+     "rps7200.framing",
+     "rps7200.protocol",
+     "rps7200.direction",
+     "rps7200.shading",
+     "rps7200.usb_transport",
+     "rps7200.library (lazy in _debug_flush, direct.py:705-706)"
+    ],
+    "notes": "Import cycle: library imports direct at module level (library.py:48) for SHADING_SKIPPED_EXPLICIT, DirectScanner (static decode) and ScanParameters"
+   },
+   {
+    "module": "rps7200.tiff",
+    "imports": [
+     "numpy",
+     "tifffile (optional)"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "rps7200.export",
+    "imports": [
+     "rps7200.dng",
+     "rps7200.tiff",
+     "PIL (lazy)"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "rps7200.library",
+    "imports": [
+     "rps7200.tiff",
+     "rps7200.direct",
+     "rps7200.shading",
+     "rps7200.direction (lazy)",
+     "rps7200.framing (lazy, private _comparable, library.py:538)"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "rps7200.session",
+    "imports": [
+     "rps7200.export",
+     "rps7200.library",
+     "rps7200.preview",
+     "rps7200.direct",
+     "rps7200.direction",
+     "rps7200.framing",
+     "rps7200.mono",
+     "rps7200.protocol"
+    ],
+    "notes": "Hosts FrameWriter, used by the GUI and tools/scan_roll.py"
+   },
+   {
+    "module": "rps7200.demo",
+    "imports": [
+     "rps7200.library",
+     "rps7200.tiff",
+     "rps7200.direct",
+     "rps7200.direction",
+     "rps7200.protocol",
+     "rps7200.framing",
+     "rps7200.session (estimate_seconds)",
+     "rps7200.shading",
+     "rps7200.usb_transport"
+    ],
+    "notes": "Not a DirectScanner subclass; borrows _hold_to_approved/_aim_frame/_rejudge_for/param_for_mm/roll_ends/place_on_strip and constants by assignment (demo.py:799-822); reimplements scan/prescan/scan_roll"
+   },
+   {
+    "module": "tools.frame_edges",
+    "imports": [
+     "rps7200.framing",
+     "rps7200.protocol"
+    ],
+    "notes": "Injected via ScanSession.edge_reader; rps7200 does not import tools"
+   },
+   {
+    "module": "tools/gui.py",
+    "imports": [
+     "rps7200.export",
+     "rps7200.library",
+     "rps7200.preview",
+     "rps7200.settings",
+     "rps7200.shortcuts",
+     "rps7200.tiff",
+     "rps7200.console",
+     "rps7200.direct",
+     "rps7200.framing",
+     "rps7200.mono",
+     "rps7200.protocol",
+     "rps7200.session (incl. private _safe, _unclaimed)",
+     "tools.frame_edges",
+     "rps7200.demo (lazy)"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "tools/scan.py",
+    "imports": [
+     "rps7200.export",
+     "rps7200.library",
+     "rps7200.console",
+     "rps7200.direct",
+     "rps7200.mono",
+     "rps7200.bracket (lazy)"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "tools/scan_roll.py",
+    "imports": [
+     "rps7200.tiff",
+     "rps7200.console",
+     "rps7200.direct",
+     "rps7200.library",
+     "rps7200.protocol",
+     "rps7200.session",
+     "tools.frame_edges"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "tools/library.py",
+    "imports": [
+     "rps7200.library",
+     "rps7200.console",
+     "rps7200.tiff (lazy)",
+     "numpy (lazy)"
+    ],
+    "notes": ""
+   },
+   {
+    "module": "tools/make_comparison.py",
+    "imports": [
+     "rps7200.preview",
+     "rps7200.tiff",
+     "rps7200.console",
+     "rps7200.direct (defects re-exports)",
+     "PIL"
+    ],
+    "notes": "No library/shading use"
+   },
+   {
+    "module": "tools/*_probe.py, verify_protocol.py, check_scanner.py",
+    "imports": [
+     "rps7200.direct",
+     "rps7200.usb_transport",
+     "rps7200.framing",
+     "rps7200.session",
+     "rps7200.console"
+    ],
+    "notes": "Rely on RPS7200_DEBUG (DirectScanner debug=None) for filing"
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Scanner bytes of one pass",
+    "path_pattern": "library/<YYYYMMDDTHHMMSSZ>_<stock|unknown-film>[_f<frame>]_<dpi>dpi[_ir][-n]/raw.bin.gz",
+    "format": "gzip level 6 of concatenated READ payloads (channels*lines lines of 2-byte tag + bytes_per_line LE); layout in scan.json raw.layout",
+    "raw_or_corrected": "raw",
+    "written_by": "library.save (library.py:186-211) from `raw` (scan.py, FrameWriter) or from the debug spool (direct.py:719-730)",
+    "read_by": "library.read_raw/decode_raw/reconstruct/migrate_direction/verify; demo._decode",
+    "exact": "Byte-exact with sha256 when present. Missing for: CLI dry-run prescans, metering probes, hold/verification prescans, frames' prescans, short reads and 7200 dpi realigned passes through ScanSession's guard. Can be another pass's bytes in debug filing (stale last_raw) and in demo entries"
+   },
+   {
+    "what": "Decoded pixels",
+    "path_pattern": "library/<id>/scan.tif",
+    "format": "TIFF uint16 (uint8 prescans) HxWx3|4",
+    "raw_or_corrected": "Meant to be the raw decode (upright); actually CORRECTED for every GUI single scan and every demo-filed entry while corrections_applied=[]; realigned (4 rows trimmed) at 7200 dpi (shading=False only)",
+    "written_by": "library.save; migrate-raw; migrate_direction",
+    "read_by": "library.load/corrected/reconstruct; demo fallback and signatures",
+    "exact": "Lossless; sha256 in scan.json; rewritten in place non-atomically by migrations"
+   },
+   {
+    "what": "Entry record",
+    "path_pattern": "library/<id>/scan.json",
+    "format": "JSON: id, created (filing time), image{...,corrections_applied,sha256}, raw{file,bytes,sha256,layout}, scan{whitelist}, device_settings, metering, registration, calibration{shading,ccd_mask,pixels_per_line,light_mean rounded,report,skipped}, prescan{file,read_direction,carriage_state}, film, tags, provenance",
+    "raw_or_corrected": "metadata",
+    "written_by": "library.save (write_text, non-atomic, last = commit point); migrate-raw; migrate_direction",
+    "read_by": "library.*, gui roll_entry_index, demo",
+    "exact": "Drops inquiry, bracket_*, roll_index, roll_position, demo, byte14/slide param, base settings, capture time, calibration provenance (measured vs reused, when)"
+   },
+   {
+    "what": "Shading reference used for the pass",
+    "path_pattern": "library/<id>/shading.npz",
+    "format": "np.savez_compressed float64 ref/dark/means per channel, pixels_per_line",
+    "raw_or_corrected": "derived (calibration bytes not stored)",
+    "written_by": "library.save",
+    "read_by": "library.load/corrected/reconstruct; demo._decode",
+    "exact": "Exact copy of the in-memory reference; no checksum; not recomputable"
+   },
+   {
+    "what": "CCD mask of the pass",
+    "path_pattern": "library/<id>/ccd_mask.bin",
+    "format": "bytes (5172), 0x00 = used",
+    "raw_or_corrected": "raw",
+    "written_by": "library.save",
+    "read_by": "library.load/corrected; demo",
+    "exact": "Exact; no checksum; kept even when the session guard drops raw bytes that belong to another pass; stale in demo prescans"
+   },
+   {
+    "what": "Frame's framing pass",
+    "path_pattern": "library/<id>/prescan.tif",
+    "format": "TIFF uint8 HxWx3",
+    "raw_or_corrected": "CORRECTED, unlabelled; no raw bytes or own mask",
+    "written_by": "library.save(prescan=) via FrameWriter (session.py:1887, scan_roll.py:562); migrate_direction",
+    "read_by": "demo, migrate_direction",
+    "exact": "Not re-derivable"
+   },
+   {
+    "what": "Library summary",
+    "path_pattern": "library/index.json",
+    "format": "JSON list",
+    "raw_or_corrected": "derived",
+    "written_by": "library.reindex (writer thread after every save; UI thread in on_delete)",
+    "read_by": "humans",
+    "exact": "Rebuildable; non-atomic; two threads can write it"
+   },
+   {
+    "what": "Debug spool",
+    "path_pattern": "$TMP/rps7200-debug-*/NNN-image.npy, NNN-raw.bin",
+    "format": "npy raw pixels; raw bytes",
+    "raw_or_corrected": "raw (raw.bin may be a previous pass's)",
+    "written_by": "DirectScanner._debug_capture (direct.py:650-692) when debug",
+    "read_by": "_debug_flush after close (direct.py:694-770)",
+    "exact": "Meta/layout/reference/mask only in memory; orphaned after a kill"
+   },
+   {
+    "what": "Session calibration cache",
+    "path_pattern": "calibration/shading.npz (demo/calibration/shading.npz; --reference)",
+    "format": "np.savez_compressed ShadingReference",
+    "raw_or_corrected": "derived",
+    "written_by": "DirectScanner.save_shading via ensure_shading (not written by the demo)",
+    "read_by": "load_shading (reuse), GUI age prompt, tools/uniformity.py",
+    "exact": "Overwritten per measured calibration; cwd-relative; no provenance; non-atomic"
+   },
+   {
+    "what": "Roll manifest",
+    "path_pattern": "rolls/<name|date>/roll.json",
+    "format": "JSON: roll, numbering, dpi, infrared, meter, film, settings, wanted, frames[{number,index,transport_position,registration,error,done,exposure,gain,offset}] (+entry,file,shape,duration_s from CLI)",
+    "raw_or_corrected": "metadata",
+    "written_by": "session._roll (merged, per frame); tools/scan_roll.py checkpoint (fresh each run)",
+    "read_by": "gui read_survey/roll_summary; session._roll resume",
+    "exact": "Non-atomic; unreadable earlier file silently discarded (GUI); overwritten on CLI resume"
+   },
+   {
+    "what": "Walk manifest",
+    "path_pattern": "rolls/<name|date>/survey.json",
+    "format": "JSON as roll.json plus prescan names",
+    "raw_or_corrected": "metadata",
+    "written_by": "session._roll dry run; scan_roll.py --dry-run",
+    "read_by": "gui read_survey, walked_prescans, scan_roll.py --approved",
+    "exact": "Replaced wholesale by every walk into the folder"
+   },
+   {
+    "what": "Walk prescans",
+    "path_pattern": "rolls/<name>/prescanNN.tif, prescanNN-before.tif",
+    "format": "TIFF uint8",
+    "raw_or_corrected": "corrected; oriented by session rotation/flip in GUI walks, unoriented in CLI walks",
+    "written_by": "FrameWriter export.write (GUI); tiff.write on the main thread (CLI)",
+    "read_by": "gui read_survey (un-orients), scan_roll.py hold_from_walk (does not)",
+    "exact": "GUI prescanNN has a raw library entry; -before files and all CLI walk prescans have none"
+   },
+   {
+    "what": "Delivered frames",
+    "path_pattern": "rolls/<name>/frameNN.tif; <out_dir>/<roll>_frameNN_<dpi>dpi[_ir].tif|.jpg (+.dng); <out_dir>/prescans/...",
+    "format": "TIFF 16-bit / JPEG 8-bit (+DNG IR)",
+    "raw_or_corrected": "corrected, oriented, optionally mono",
+    "written_by": "FrameWriter._write",
+    "read_by": "user",
+    "exact": "frameNN.tif overwritten on rescan; out_dir copies de-duplicated"
+   },
+   {
+    "what": "Operator decisions",
+    "path_pattern": "rolls/<_safe(roll field) or 'roll'>/approved.json",
+    "format": "JSON: roll, numbering, frames[{number, offset_mm (4 dp), rotation, flipped, reference_entry, source}]",
+    "raw_or_corrected": "metadata",
+    "written_by": "gui._write_approved (non-atomic)",
+    "read_by": "gui read_approved via read_survey / roll_exports / delete dialog",
+    "exact": "Can land in a different folder than the roll (default rolls/roll/)"
+   },
+   {
+    "what": "Window settings",
+    "path_pattern": "gui-settings.json | $RPS7200_SETTINGS | demo/gui-settings.json",
+    "format": "JSON sections",
+    "raw_or_corrected": "metadata",
+    "written_by": "settings.save (.part + replace)",
+    "read_by": "settings.load",
+    "exact": "Atomic"
+   },
+   {
+    "what": "Demo picture signatures",
+    "path_pattern": "demo/pictures.npz",
+    "format": "np.savez",
+    "raw_or_corrected": "derived",
+    "written_by": "DemoScanner._sign_pictures",
+    "read_by": "DemoScanner",
+    "exact": "cache"
+   },
+   {
+    "what": "CLI single-scan output",
+    "path_pattern": "--out (default ./scan.tif) and <out>.json",
+    "format": "TIFF/JPEG + JSON",
+    "raw_or_corrected": "corrected or bracket-merged, optionally mono",
+    "written_by": "tools/scan.py:267-281",
+    "read_by": "user",
+    "exact": "Overwritten silently; merged bracket never filed"
+   },
+   {
+    "what": "Comparison files",
+    "path_pattern": "./1_nothing_done.tif, 2_corrected.tif, 3_corrected_inverted.tif, previews/cmp_*.png",
+    "format": "TIFF/PNG",
+    "raw_or_corrected": "input TIFF / destriped / inverted",
+    "written_by": "tools/make_comparison.py",
+    "read_by": "Stefan",
+    "exact": "Not built from library raw bytes or the shading path"
+   }
+  ],
+  "findings": [
+   {
+    "id": "DF-01",
+    "title": "GUI single scans are filed with CORRECTED pixels labelled raw; the full-resolution view, Save As, Save all and Export flat-field them a second time",
+    "severity": "critical",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1440-1458",
+     "rps7200/session.py:1413-1415",
+     "rps7200/session.py:1085-1101",
+     "rps7200/library.py:221-230",
+     "rps7200/library.py:373-391",
+     "tools/gui.py:3864",
+     "tools/gui.py:4110"
+    ],
+    "evidence": "session.py:1441 `image, meta = self._scanner.scan(... keep_raw=True,)`; 1456 `self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + (\"gui\",), mono=..., mono_channel=...)` (no raw_image). _prescan at 1415 does `raw_image = getattr(self._scanner, \"last_pixels_raw\", None)`. FrameWriter: `entry = library.save(job[\"image\"] if raw_image is None else raw_image, ...)`. library.save: `\"corrections_applied\": list(corrections or [])`. library.corrected: `image, report = apply_shading(image, record[\"reference\"], record[\"ccd_mask\"])`. tests/test_session.py:229-236 checks only raw.bin.gz, not scan.tif.",
+    "description": "DirectScanner.scan returns the flat-fielded image and keeps the raw one in last_pixels_raw. ScanSession._scan never hands the raw pixels to _file, so every GUI single scan's scan.tif is the corrected picture while its record says nothing is baked in and shading.npz sits beside it.",
+    "failure_scenario": "Operator scans at 1800 dpi in the window. scan.tif is corrected; _load_full and Save As/Save all/roll Export call library.corrected, which divides by the reference again, over-gaining edge columns and clipping; `make reconstruct` reports every GUI scan as 'decode CHANGED', hiding real regressions.",
+    "recommendation": "In _scan pass raw_image=getattr(self._scanner, 'last_pixels_raw', None). Make library.save/FrameWriter refuse (or label corrections=['shading']) when meta['shading'] is set but no raw pixels were supplied. Add a session test that scan.tif equals the scanner's raw pixels; repair existing entries with `tools/library.py migrate-raw --write` (their raw.bin.gz is correct)."
+   },
+   {
+    "id": "DF-38",
+    "title": "Roll export joins library entries by film.frame and cannot tell a walk's prescan from the frame scan; the winner is arbitrary glob order",
+    "severity": "high",
+    "category": "bug",
+    "locations": [
+     "tools/gui.py:4979-5008",
+     "tools/gui.py:5119-5128",
+     "tools/gui.py:4871-4906",
+     "rps7200/session.py:1827",
+     "rps7200/session.py:1881",
+     "tools/gui.py:2383-2451"
+    ],
+    "evidence": "Walk prescans are filed with `replace(job.notes, frame=job.notes.frame or f\"{name}-{number:02d}\")` (session.py:1827) and frames with the same `frame=job.notes.frame or f\"{name}-{number:02d}\"` (1881). roll_entry_index: `for record_path in root.glob(\"*/scan.json\"): ... roll, _, number = frame.rpartition(\"-\") ... out.setdefault(roll, {})[int(number)] = record_path.parent` -- no tag/kind/dpi filter, last one wins. roll_exports builds one export item per entry in summary[\"entries\"].",
+    "description": "A GUI walk followed by a scan of the same roll leaves two entries (a 300 dpi 8-bit prescan and the full-resolution frame) per frame number under the same key, plus one more per rescan. Path.glob returns directory order, so which entry export re-corrects is arbitrary; walked-but-never-scanned frames are listed as exportable too. Rolls sharing a name (a second walk with the same date name) also share keys.",
+    "failure_scenario": "Walk a strip, scan frames 3 and 5, then Export the roll: frame 3 may be written from its 431-px prescan entry, frames 1,2,4,6... are exported as prescans although they were never scanned, and nothing in the dialog says so.",
+    "recommendation": "Record the library entry id per frame in roll.json/survey.json and join on it; at minimum filter out entries tagged 'prescan' and pick by roll folder, dpi and newest created, and use one frame-label format for GUI and CLI."
+   },
+   {
+    "id": "DF-39",
+    "title": "scan_roll.py --no-shading (and scan.py --no-shading --auto-exposure) forces a lazy calibration inside the first pass -- the path the tool itself records as stalling the device",
+    "severity": "high",
+    "category": "hardware-safety",
+    "locations": [
+     "tools/scan_roll.py:145-146",
+     "tools/scan_roll.py:166-173",
+     "tools/scan_roll.py:430-446",
+     "rps7200/direct.py:1682-1714",
+     "rps7200/direct.py:2582-2600",
+     "rps7200/direct.py:3494-3496",
+     "rps7200/direct.py:3641-3649",
+     "rps7200/direct.py:2087-2095"
+    ],
+    "evidence": "scan_roll.py calibrate(): `scanner.ensure_shading(ref_path, reuse=args.reuse, skip=args.no_shading)`; args.no_shading is read nowhere else. scan_roll() has no shading parameter; prescan() always passes `shading=True` and the frame `self.scan(...)` call omits shading (default True). scan(): `if self._shading is None or needed > ...: self._log(\"calibrating before scanning ...\"); self.calibrate_shading()`. scan_roll.py:436-440 comment: 'that lazy calibration stalls: `bulk read of 16384 bytes failed after 0 bytes: LIBUSB_ERROR_PIPE`, right after the shading descriptor, and the device stops answering'. auto_exposure's probes also call scan() with shading defaulted to True.",
+    "description": "--no-shading does not produce raw frames on a roll at all; it only removes the explicit calibration, so the first prescan calibrates lazily mid-roll. The same happens for tools/scan.py --no-shading --auto-exposure (the metering probe calibrates) and for probe scripts that meter before calibrating (tools/byte14_probe.py).",
+    "failure_scenario": "`scan_roll.py --no-shading --dry-run` seeks, skips calibration, then the first prescan starts calibrate_shading inside scan(); by the tool's own measurement this stalled with LIBUSB_ERROR_PIPE and the scanner needed a power cycle.",
+    "recommendation": "Thread shading through scan_roll/prescan (and auto_exposure probes) so --no-shading means raw passes, or refuse --no-shading for rolls; make lazy calibration inside scan() an error unless explicitly allowed, so every calibration goes through ensure_shading."
+   },
+   {
+    "id": "DF-02",
+    "title": "Calibration bytes are thrown away; stored shading.npz cannot be recomputed with newer code",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:1755-1760",
+     "rps7200/direct.py:1946-1975",
+     "rps7200/direct.py:612-615",
+     "rps7200/shading.py:109-182",
+     "rps7200/library.py:182-183"
+    ],
+    "evidence": "`def calibrate_shading(self, resolution: int = 3600, timeout: float = 300.0, keep_data: bool = False)`; `data = b\"\".join(collected)` / `self._shading = calculate_shading(data, width)` / `\"data\": data if keep_data else None`. ensure_shading: `result = self.calibrate_shading()`. The calibration-info block is only logged: `self._log(f\"calibration info: {info[:12].hex(' ')}\")`.",
+    "description": "The reference is the output of calculate_shading's level split (split_ratio 5.0, widest gap) and averaging. The calibration lines, shading descriptor, 128-byte calibration info, the calibration pass's own mask and gain readbacks are never stored, so every entry holds today's derived reference instead of the bytes it came from.",
+    "failure_scenario": "An improved dark/light split or outlier rejection cannot be applied to any existing entry, and a suspected split artefact in a column cannot be audited.",
+    "recommendation": "Keep the calibration bytes once per calibration (e.g. library/calibrations/<sha256>.bin.gz with descriptor, info block, mask, readbacks, time) and reference that id from every entry; let library.corrected optionally rebuild the reference.",
+    "doc_reference": "rps7200/library.py:21-26 '`raw.bin.gz` is the ground truth and everything else is derived from it'"
+   },
+   {
+    "id": "DF-40",
+    "title": "Entries do not record which calibration produced their reference, or that it was reused from the cache",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:595-606",
+     "rps7200/library.py:281-295",
+     "tools/gui.py:1995-2023",
+     "tools/scan.py:164-168"
+    ],
+    "evidence": "ensure_shading reuse branch returns `{\"action\": \"loaded\", ...}` which only reaches a log/print. library.save calibration block: `\"shading\", \"ccd_mask\", \"pixels_per_line\", \"light_mean\": [round(reference.mean[c], 1) ...], \"report\", \"skipped\"` -- no calibration time, id, source path or 'reused' flag.",
+    "description": "The GUI's 'Use the cached one' and scan.py/scan_roll.py --reuse load a reference from any earlier power-on; the resulting entries are indistinguishable from freshly calibrated ones, and entries sharing one calibration cannot be grouped.",
+    "failure_scenario": "A week-old cached reference is reused; months later a column artefact shows up in those scans and nothing in the library says they were corrected with another day's sensor state.",
+    "recommendation": "Give each reference a calibration id (hash + measured_at + measured/loaded) stored in the npz and in scan.json calibration."
+   },
+   {
+    "id": "DF-03",
+    "title": "Roll frames and bracket passes lose their metering evidence and are recorded as commanded (exposure_metered=False)",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:3627-3652",
+     "rps7200/direct.py:2791",
+     "rps7200/direct.py:2805-2808",
+     "rps7200/direct.py:2372-2399"
+    ],
+    "evidence": "scan_roll: `scales = self.auto_exposure(target=exposure_target, infrared=infrared, film=film)` then `image, meta = self.scan(..., exposure_scale=scales, ...)` (auto_exposure not passed). scan(): `\"exposure_metered\": bool(auto_exposure),` and `if auto_exposure and self.last_metering is not None: meta[\"metering\"] = self.last_metering`. scan_bracket: `scales = self.auto_exposure(film=film, infrared=infrared)` then scan(exposure_scale=pass_scale).",
+    "description": "Metering outside scan() on the roll (the default meter='each') and bracket paths never reaches meta, so the per-probe levels/targets/limits exist nowhere durable and every frame claims its exposure was asked for.",
+    "failure_scenario": "A 38-frame colour-negative roll: no entry has scan.metering; BLUE_RGBI_HEADROOM cannot be checked from ordinary work; signature treats metered scales as commands.",
+    "recommendation": "Attach meta['metering']=self.last_metering and a metered flag for frames whose scales came from auto_exposure (reference the first frame's metering for meter='once').",
+    "doc_reference": "rps7200/direct.py:2026-2028 'What each round measured is left on last_metering, and scan files it with the entry'"
+   },
+   {
+    "id": "DF-04",
+    "title": "Debug filing attaches a previous pass's raw bytes to any pass that did not ask keep_raw",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:1518-1531",
+     "rps7200/direct.py:631-647",
+     "rps7200/direct.py:650-692",
+     "rps7200/library.py:186-211",
+     "tools/byte14_probe.py:140-151",
+     "tools/byte14_probe.py:182-185",
+     "tools/library.py:160-203"
+    ],
+    "evidence": "read_planes: `if keep_raw: self.last_raw = blob; self.last_raw_layout = {...}` and nothing clears last_raw at the start of scan(). _debug_capture: `record = self.capture_record()` / `raw = record.get(\"raw\")` -> spooled as this pass's raw. byte14_probe ladder uses `keep_raw=True`, its final pass `keep_raw=False, byte14=None` at the same resolution and frame, and the probe refuses to run without RPS7200_DEBUG. library.save does no layout-vs-image check.",
+    "description": "A keep_raw=False pass under debug filing is filed with the last keep_raw=True pass's bytes and layout (every auto_exposure probe is one), or with none. When shapes match nothing detects it.",
+    "failure_scenario": "RPS7200_DEBUG=1 tools/byte14_probe.py: the final default pass is filed with the last ladder pass's raw.bin.gz; reconstruct reports 'decode CHANGED'; `migrate-raw --write` then overwrites the correct scan.tif with the other pass's decode.",
+    "recommendation": "Clear last_raw/last_raw_layout at the top of scan(); force keep_raw when self.debug; validate layout against the image in library.save; make migrate-raw check the stored image is a correction of the decode before rewriting."
+   },
+   {
+    "id": "DF-05",
+    "title": "`tools/library.py duplicates --delete` deletes scans of different photographs when film notes are empty",
+    "severity": "high",
+    "category": "user-error",
+    "locations": [
+     "rps7200/library.py:639-698",
+     "rps7200/library.py:714-738",
+     "tools/library.py:115-135",
+     "tools/gui.py:1724-1731",
+     "rps7200/direct.py:722-723"
+    ],
+    "evidence": "signature returns `(stock, frame, subject, resolution_dpi, channels, frame window, depth, film, protocol_revision, commanded, fast_infrared)` -- no time, transport position or content. tools/library.py: `if args.delete: shutil.rmtree(path)`. GUI single scans/prescans use _notes() (empty unless typed); debug entries use `FilmNotes(notes=\"captured with RPS7200_DEBUG on\")`.",
+    "description": "Every GUI prescan/single scan and every debug entry with the same settings and empty stock/frame/subject shares one signature; walk prescans of two strips walked under the same roll name also collide; a typed 'frame' field collapses a whole roll.",
+    "failure_scenario": "Ten GUI prescans of ten different frames are reported redundant and `--delete` removes nine without confirmation.",
+    "recommendation": "Treat entries as duplicates only with non-empty stock+frame and matching transport/roll position, add a content check, confirm and move to a trash folder instead of rmtree."
+   },
+   {
+    "id": "DF-06",
+    "title": "approved.json is written to a different folder than the roll it belongs to",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "tools/gui.py:2929-2967",
+     "rps7200/session.py:1634-1637",
+     "rps7200/session.py:1147-1152",
+     "rps7200/session.py:2181-2189",
+     "tools/gui.py:3256"
+    ],
+    "evidence": "_write_approved: `name = _safe(self.fields[\"roll\"].get().strip())` / `folder = Path(self.session.rolls) / name`. _roll: `name = job.name or time.strftime(\"%Y-%m-%d\")` / `out = ... self.rolls / name`. `_safe(\"\")` returns \"roll\". The GUI keeps `self._sheet_roll = getattr(self.session, \"last_roll_dir\", None)` but _write_approved does not use it; open_roll does not set fields[\"roll\"].",
+    "description": "The one roll file the code calls non-derivable is filed under a recomputed, sanitised name while the roll writes under the raw name or today's date.",
+    "failure_scenario": "Empty roll name: walk and roll go to rolls/2026-09-24/, approved.json to rolls/roll/approved.json (overwritten by the next unnamed commission); reopening 2026-09-24 shows no decisions. 'Gold 200' splits into rolls/Gold 200/ and rolls/Gold-200/.",
+    "recommendation": "Write approved.json into _sheet_roll/last_roll_dir (or let _roll write it into `out`), set the roll-name field in open_roll, sanitise once in session._roll.",
+    "doc_reference": "rps7200/session.py:1147-1152 '...can ask rather than recompute the same name and drift out of step with it'"
+   },
+   {
+    "id": "DF-07",
+    "title": "tools/scan_roll.py overwrites roll.json when a roll is resumed",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "tools/scan_roll.py:293-329",
+     "tools/scan_roll.py:446-449",
+     "rps7200/session.py:1650-1733"
+    ],
+    "evidence": "`manifest = {\"roll\": roll_name, ..., \"held\": held_note, \"frames\": []}`; checkpoint(): `manifest_path.write_text(json.dumps(manifest, ...))`; no existing manifest read. GUI: `\"frames\": list(earlier.get(\"frames\") or [])`.",
+    "description": "The CLI resume path replaces earlier frame records (registration, exposure, entry paths, done flags) with only the new run's frames.",
+    "failure_scenario": "A 24-frame roll dies at 11; `--start-at 12` rewrites roll.json with frames 12-24; the GUI then offers 1-11 as unscanned.",
+    "recommendation": "Reuse session._roll's merge or route the CLI through ScanSession.",
+    "doc_reference": "tools/scan_roll.py:23-24 '`--start-at` resumes from the manifest'"
+   },
+   {
+    "id": "DF-08",
+    "title": "CLI dry-run walks file nothing in the library",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "tools/scan_roll.py:490-510",
+     "rps7200/session.py:1804-1831",
+     "tools/gui.py:2484-2490"
+    ],
+    "evidence": "`pre = out / f\"prescan{number:02d}.tif\"` / `tiff.write(str(pre), frame.prescan)`; frame.raw_prescan and s.capture_record() unused. GUI dry run: `self._file(seq, number, rf.prescan, ..., raw_image=rf.raw_prescan, path=surveyed, ...)`.",
+    "description": "CLI walk prescans exist only as corrected TIFFs; no raw bytes, raw pixels, reference or mask. GUI and CLI diverge.",
+    "failure_scenario": "Deleting a CLI walk's roll folder (the GUI says everything but approved.json is in the library) loses every prescan irrecoverably.",
+    "recommendation": "Submit each dry-run prescan to FrameWriter with raw_image, prescan_meta and capture_record(), as session._roll does.",
+    "doc_reference": "tools/gui.py:2487-2490 'Everything in a roll folder is re-derivable from the library **except `approved.json`**'"
+   },
+   {
+    "id": "DF-09",
+    "title": "A frame's prescan is stored corrected and unlabelled; arrival and verification prescans of held frames are never kept",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1885-1889",
+     "tools/scan_roll.py:562",
+     "rps7200/library.py:180-181",
+     "rps7200/library.py:297-303",
+     "rps7200/direct.py:3549-3558",
+     "rps7200/session.py:1804"
+    ],
+    "evidence": "`prescan=rf.prescan,` while rf.raw_prescan is not passed; library.save `tiff.write(str(path / \"prescan.tif\"), prescan)`; held branch `prescan_image = fix[\"prescan\"]` with no prescan_before; prescan_before is only filed on dry runs and with file_entry=False.",
+    "description": "prescan.tif in a frame entry is corrected with no raw bytes or mask and nothing says so; the arrival prescan and intermediate hold passes are discarded.",
+    "failure_scenario": "A held frame lands badly and there is no stored picture of where it arrived or of the hold's intermediate moves.",
+    "recommendation": "File every prescan/verification pass as its own raw entry linked by id, or store raw_prescan + mask + bytes and label prescan corrections; set prescan_before in the held branch."
+   },
+   {
+    "id": "DF-10",
+    "title": "Roll and hold-loop prescans record film 'negative' whatever the roll's film",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:1682-1687",
+     "rps7200/direct.py:3494-3496",
+     "rps7200/direct.py:2907",
+     "rps7200/session.py:1824-1831"
+    ],
+    "evidence": "`def prescan(..., film: str = FILM_NEGATIVE)`; scan_roll: `self.prescan(resolution=prescan_resolution, keep_raw=keep_raw)`.",
+    "description": "prescan_meta says film='negative' on B&W/slide rolls, and GUI walk entries are filed with scan.film='negative'; signature and demo selection key on it.",
+    "failure_scenario": "A B&W walk's prescan entries claim colour negative.",
+    "recommendation": "Pass film through scan_roll -> prescan, _hold_to_approved and _aim_frame."
+   },
+   {
+    "id": "DF-11",
+    "title": "7200 dpi scan.tif is realigned but the record does not say so; reconstruct and migrate-raw can never validate it",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:2692-2702",
+     "rps7200/direct.py:2566-2581",
+     "rps7200/library.py:455-497",
+     "tools/library.py:175-182",
+     "rps7200/session.py:2072-2099"
+    ],
+    "evidence": "`if resolution == self.NATIVE_COLUMN_STAGGER_DPI: ... image = self._realign_native_column_stagger(image)` (log only) then `raw_pixels = image`; reconstruct uses `DirectScanner.decode_index(raw, params, ...)` without realignment -> `decode CHANGED: now {image.shape}, stored {stored.shape}`.",
+    "description": "Reachable only with shading=False (scan.py --no-shading, API) since shading=True refuses 7200 dpi before the pass. Such scan.tif is decode + realignment, no field records it, reconstruct flags it forever, migrate-raw fails it, and ScanSession's lines guard would drop its raw bytes.",
+    "failure_scenario": "Every `scan.py --dpi 7200 --no-shading` entry shows '!' in `make reconstruct`; a real 7200 dpi decode regression is indistinguishable.",
+    "recommendation": "Record the realignment in meta and apply it in one shared decode used by scan(), reconstruct and decode_raw, or store the plain decode and realign downstream."
+   },
+   {
+    "id": "DF-12",
+    "title": "ScanSession guard drops the raw bytes of a short read, the case where they matter most",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:2072-2099",
+     "rps7200/direct.py:1508-1510",
+     "rps7200/direct.py:1522-1531",
+     "rps7200/direct.py:1596-1600"
+    ],
+    "evidence": "`actual = {\"lines\": shape[0], ...}` vs `layout[\"lines\"]` (= params.lines); on disagreement `capture = dict(capture, raw=None, raw_path=None, raw_layout=None)` -- reference and ccd_mask kept. read_planes: `except EndOfData: ... break`; layout also carries `lines_received`.",
+    "description": "A pass that ended early decodes to fewer rows than params.lines, so its genuine bytes are discarded; when bytes truly belong to another pass the guard still keeps that pass's mask. tools/scan_roll.py has no guard at all.",
+    "failure_scenario": "A frame truncated mid-roll is filed without raw.bin.gz; why it was short can never be diagnosed.",
+    "recommendation": "Compare with lines_received (or decode the bytes); drop mask/reference too when the pass cannot be matched; share one guard with the CLI."
+   },
+   {
+    "id": "DF-13",
+    "title": "library.save discards inquiry, caller meta and capture time; scan() does not record protocol overrides",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:131-147",
+     "rps7200/library.py:166",
+     "rps7200/library.py:237-261",
+     "rps7200/direct.py:2395-2399",
+     "rps7200/direct.py:3653-3655",
+     "rps7200/direct.py:2436-2442",
+     "rps7200/direct.py:667"
+    ],
+    "evidence": "save(..., inquiry: Any = None, ...) never uses `inquiry`; `when = datetime.now(timezone.utc)` at filing; scan block is a fixed whitelist, dropping bracket_index/ratio/passes/stops, roll_index, roll_position, demo. scan() never records byte14, slide_init_param, skip_shading or the base Settings; _debug_capture's `\"captured\": time.time()` is never passed on.",
+    "description": "Parameters needed to re-evaluate a scan are silently lost and 'created' is the filing time.",
+    "failure_scenario": "byte14 ladder entries do not say which byte14 each used; bracket members cannot be regrouped; roll frames do not record their transport position; the scanner firmware is unrecorded.",
+    "recommendation": "Store unknown meta keys under scan.extra, record inquiry, the MODE SELECT/GAIN payload bytes sent, and a captured_at taken in scan()."
+   },
+   {
+    "id": "DF-14",
+    "title": "GUI single scans and prescans gzip their raw bytes while the device is open and idle",
+    "severity": "medium",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/session.py:1013-1030",
+     "rps7200/session.py:1085-1101",
+     "rps7200/session.py:1311-1318",
+     "rps7200/session.py:1456-1458"
+    ],
+    "evidence": "FrameWriter docstring: 'On this thread the write instead overlaps the next frame's scan, so the device is busy rather than idle throughout.' After _scan the worker waits in `job = self._jobs.get()` with the scanner open while FrameWriter runs library.save -> gzip.open(..., compresslevel=6).",
+    "description": "For a single GUI scan there is no next pass, so the device sits open and idle for the whole gzip.",
+    "failure_scenario": "A 3600 dpi RGBI single scan (~250 MB raw) is gzipped for tens of seconds with the device open and idle.",
+    "recommendation": "Spool uncompressed and gzip after close, use a store-only level while open, or measure with tools/filing_load_test.py.",
+    "doc_reference": "CLAUDE.md '**A single scan compresses nothing while the device is open.** ... gzipping one with the scanner open and idle preceded a wedge once.'"
+   },
+   {
+    "id": "DF-15",
+    "title": "Manifests and entry records are written non-atomically; a corrupt roll.json is silently discarded on resume",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1650-1654",
+     "rps7200/session.py:1924-1926",
+     "tools/scan_roll.py:326-329",
+     "rps7200/library.py:308-309",
+     "tools/library.py:198-206",
+     "tools/gui.py:2943"
+    ],
+    "evidence": "`except (OSError, ValueError): earlier = {}` then `manifest_path.write_text(...)`; library.save and migrations use write_text/tiff.write in place; settings.save uses a .part file and replace().",
+    "description": "A crash during a write truncates roll.json/survey.json/scan.json/scan.tif; the next GUI resume treats the manifest as empty and overwrites it.",
+    "failure_scenario": "Crash while roll.json is rewritten after frame 20; resume writes a manifest with only the new frames.",
+    "recommendation": "Temp file + os.replace everywhere; refuse or back up when an existing manifest cannot be parsed."
+   },
+   {
+    "id": "DF-16",
+    "title": "scan_roll.py: Ctrl-C abandons the read and skips writer.finish(), losing queued frames",
+    "severity": "medium",
+    "category": "error-handling",
+    "locations": [
+     "tools/scan_roll.py:587-605",
+     "tools/scan_roll.py:350-353",
+     "rps7200/direct.py:2680-2687"
+    ],
+    "evidence": "`except Exception as exc:  # noqa: BLE001` then `writer.finish()`; comment: 'Reached through a `finally` around the whole scanning block'. scan(): `except BaseException: self._scanning = False; raise`.",
+    "description": "KeyboardInterrupt is not an Exception, so it unwinds past writer.finish(); the daemon writer is killed at exit with queued frames unfiled, the manifest gets no finished/stopped, and the in-flight read is abandoned.",
+    "failure_scenario": "Ctrl-C mid-roll: scanner needs a power cycle and the last 1-3 frames never reach the library.",
+    "recommendation": "try/finally for writer.finish and the final checkpoint; a SIGINT handler that sets should_stop.",
+    "doc_reference": "tools/scan_roll.py:598 'Reached through a `finally` around the whole scanning block'"
+   },
+   {
+    "id": "DF-17",
+    "title": "A second walk into the same roll folder overwrites survey.json and the prescans",
+    "severity": "medium",
+    "category": "user-error",
+    "locations": [
+     "rps7200/session.py:1634-1650",
+     "rps7200/session.py:1817",
+     "tools/scan_roll.py:291-296",
+     "tools/scan_roll.py:499-500"
+    ],
+    "evidence": "Default name `time.strftime(\"%Y-%m-%d\")`; `manifest_path = out / (\"survey.json\" if job.dry_run else \"roll.json\")`, `earlier` only read `if not job.dry_run`; prescans to `out / f\"prescan{number:02d}.tif\"` without _unclaimed.",
+    "description": "Two unnamed walks in a day, or a reused name, replace the first walk; an earlier approved.json then refers to other pictures.",
+    "failure_scenario": "Morning strip A, afternoon strip B, both unnamed: A's survey and prescans are gone and B opens with A's approvals.",
+    "recommendation": "Refuse or version an existing survey, or warn in the Roll dialog."
+   },
+   {
+    "id": "DF-18",
+    "title": "The roll keyboard shortcut bypasses the busy guard, and any submit clears a pending stop",
+    "severity": "medium",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:740",
+     "tools/gui.py:2077-2158",
+     "rps7200/session.py:1214-1218"
+    ],
+    "evidence": "`\"roll\": self.on_roll,` while prescan/scan keys go through _confirm_then (`if self.busy: ... return`). on_roll comment: 'The button this handler is behind is disabled while busy, so this cannot race a job that is still running.' submit(): `self._stop.clear(); self._jobs.put(job)`.",
+    "description": "Mid-walk, the roll key opens the dialog; confirming a dry run clears survey/sheet state, restarts edge_watch and clears the Stop already requested, so the current job continues and another is queued.",
+    "failure_scenario": "Operator presses Stop, then the roll key by mistake: the walk does not stop, its frames vanish from the sheet, and a second walk follows.",
+    "recommendation": "Check self.busy in on_roll; clear _stop only when the worker takes a job (it already does in _run)."
+   },
+   {
+    "id": "DF-19",
+    "title": "DemoScanner runs its own roll loop that diverges from DirectScanner.scan_roll",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:599-797",
+     "rps7200/demo.py:690",
+     "rps7200/demo.py:712-715",
+     "rps7200/demo.py:740-746",
+     "rps7200/direct.py:3494-3690"
+    ],
+    "evidence": "demo: `prescan, _ = self.prescan(film=film)` (prescan_resolution swallowed by **kw); `self._hold_to_approved(index, prescan, 300, held, keep_raw=False, reverse=reverse_hold,)` (no should_stop); `marks[\"base\"] = walk.observe(index, prescan)` only in the `elif walk is not None` branch; no blank-contrast end, no metering, no except/max_failures; RollFrame without raw_image/raw_prescan/prescan_before; no meta['registration'].",
+    "description": "The failed-frame path, end-of-film detection, prescan dpi, metering, StripWalk with held frames and raw filing of roll frames are not exercised with no device.",
+    "failure_scenario": "A demo frame error ends the whole roll; demo rolls always prescan at 300 dpi whatever the sheet pinned; demo roll entries have no registration.",
+    "recommendation": "One roll driver parameterised by prescan/scan/advance/nudge primitives, with DemoScanner supplying only the primitives."
+   },
+   {
+    "id": "DF-20",
+    "title": "Demo passes return corrected pixels without last_pixels_raw, ignore shading=False and the 7200 dpi refusal, and leave stale calibration in the capture",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:454-477",
+     "rps7200/demo.py:1174-1190",
+     "rps7200/demo.py:1005-1010",
+     "rps7200/demo.py:530-597",
+     "rps7200/demo.py:444-452",
+     "rps7200/session.py:1415"
+    ],
+    "evidence": "_decode: `if reference is not None and not (record.get(\"calibration\") or {}).get(\"skipped\"): image, self._shading_report = apply_shading(image, reference, mask)` (ignores the pass's shading flag and corrections_applied, and re-shades a scan.tif fallback); _pair_image's prescan.tif branch `return image` without touching self._capture; no last_pixels_raw attribute; scan() has no MAX_SHADING_COLUMNS check; meta has no exposure/protocol_revision/shading_skipped.",
+    "description": "Through the unchanged session path demo entries get corrected pixels as raw, the source entry's raw bytes when shapes match, and a reference/mask possibly from a previous decode at another resolution; a 7200 dpi scan the scanner refuses succeeds in the demo.",
+    "failure_scenario": "Demo prescan after a 1800 dpi scan: the demo prescan entry carries the 1800 dpi pass's ccd_mask.bin/shading.npz, and library.corrected applies it to an already-corrected 300 dpi image.",
+    "recommendation": "Give DemoScanner last_pixels_raw (uncorrected decode), reset _capture every pass, apply DirectScanner's width refusal via a shared static, honour shading=False, and respect corrections_applied in _decode.",
+    "doc_reference": "rps7200/demo.py:15-20 '...`capture_record` can hand the session genuine bytes to file. An entry the demo files reconstructs like any other.'"
+   },
+   {
+    "id": "DF-21",
+    "title": "Demo scan ignores the simulated film position; backlash constant retyped",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:565-592",
+     "rps7200/demo.py:469",
+     "rps7200/demo.py:393"
+    ],
+    "evidence": "prescan: `self._read_as_carriage(self._as_positioned(image), ONE_PASS_COLOR)`; scan: `image = self._pair_image(\"scan.tif\", film, resolution)` then `_read_as_carriage(image, ...)` with no _as_positioned. Backlash: `swallowed = min(abs(asked), 2.2 * 0.1057)`.",
+    "description": "After a hold moves the simulated film the scan still shows the unmoved picture; 0.1057 retypes protocol.MM_PER_UNIT.",
+    "failure_scenario": "Demo roll with an approved offset: the delivered frame is not re-centred although the log says it was held.",
+    "recommendation": "Apply _as_positioned (scaled to the scan dpi) in scan(); use protocol.MM_PER_UNIT."
+   },
+   {
+    "id": "DF-41",
+    "title": "Roll folder name is used unsanitised, and only after the film has already been moved",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "rps7200/session.py:1618-1636",
+     "tools/gui.py:2156",
+     "tools/scan_roll.py:291-292"
+    ],
+    "evidence": "`seek(self._scanner, first, ...)` runs first, then `name = job.name or time.strftime(\"%Y-%m-%d\")` / `out = Path(job.out) if job.out else self.rolls / name` / `out.mkdir(parents=True, exist_ok=True)`; name comes from `self.fields[\"roll\"].get().strip()`.",
+    "description": "A roll name with '/', '..' or Windows-illegal characters writes outside rolls/ or fails mkdir after the seek has moved the film, while approved.json goes to the _safe() name.",
+    "failure_scenario": "Name 'a:b' on Windows: film is rewound/advanced, then the job fails on mkdir.",
+    "recommendation": "Sanitise the name with _safe before seek, in one place for both GUI and CLI."
+   },
+   {
+    "id": "DF-22",
+    "title": "verify reports deliberately raw scans as 'correction was asked for'",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/library.py:794-802",
+     "rps7200/library.py:359-364"
+    ],
+    "evidence": "`why = cal.get(\"skipped\")` / `(f\" -- correction was asked for: {why}\" if why else \"\")` fires for SHADING_SKIPPED_EXPLICIT too.",
+    "description": "verify does not distinguish explicit shading=False from a shortfall.",
+    "failure_scenario": "`make verify` after `scan.py --no-shading` prints '... correction was asked for: shading=False (explicit)'.",
+    "recommendation": "Compare against SHADING_SKIPPED_EXPLICIT as corrected() does.",
+    "doc_reference": "rps7200/library.py:360-362 '`verify` already draws that line and calls the other one \"a thing that went wrong\"'"
+   },
+   {
+    "id": "DF-23",
+    "title": "The comparison files do not exercise the driver's correction path",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "tools/make_comparison.py:92-139"
+    ],
+    "evidence": "`raw = tiff.read(scan_path)` (default scans/negatives/state_1800dpi.tif), `corrected = destripe(raw, defects, margin=12, dilate=5)`; no library entry, raw bytes, shading.npz or apply_shading.",
+    "description": "2_corrected.tif is a flat-based destripe of an arbitrary TIFF, so a regression in decode/apply_shading would not show.",
+    "failure_scenario": "A change breaks apply_shading; the regenerated files look unchanged and are sent as evidence.",
+    "recommendation": "Build 1/2/3 from a library entry: decode_raw, library.corrected, invert.",
+    "doc_reference": "CLAUDE.md 'Regenerate the three comparison files after any significant change to the scan or correction path'"
+   },
+   {
+    "id": "DF-24",
+    "title": "scan_roll.py --approved does not un-orient GUI walk prescans",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/scan_roll.py:243-252",
+     "tools/gui.py:4724-4740",
+     "rps7200/session.py:1666-1673"
+    ],
+    "evidence": "CLI: `frames = [(number, tiff.read(str(path))) for number, path, _ in walked_prescans(...)]` used as Approved.reference. GUI read_survey: `turn = int(manifest.get(\"rotation\") or 0)` ... `image=preview.unorient(image, turn, mirrored)`.",
+    "description": "GUI walks store prescanNN.tif oriented by the session rotation/flip; the CLI proposes positions and correlates unrotated fresh prescans against rotated references.",
+    "failure_scenario": "A strip walked in the window with 'rotate 180' then commissioned with `--approved`: proposals are mirrored and holds go the wrong way or abstain.",
+    "recommendation": "Apply preview.unorient with the manifest's rotation/flipped in hold_from_walk."
+   },
+   {
+    "id": "DF-25",
+    "title": "GUI roll export cannot find CLI-scanned roll entries (film.frame format differs)",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/scan_roll.py:577",
+     "tools/gui.py:4979-5008",
+     "rps7200/session.py:1881"
+    ],
+    "evidence": "CLI: `frame=f\"{roll_name}/{number:02d}\"`; GUI: `frame=job.notes.frame or f\"{name}-{number:02d}\"`; roll_entry_index: `roll, _, number = frame.rpartition(\"-\")` / `if not roll or not number.isdigit(): continue`.",
+    "description": "The two writers use different join strings, and a typed frame field breaks the GUI one too.",
+    "failure_scenario": "Export of a CLI-scanned roll says no frame has a library entry.",
+    "recommendation": "Join on entry ids recorded in roll.json (the CLI already records them) and use one label format."
+   },
+   {
+    "id": "DF-26",
+    "title": "--look-only without --demo drives the real scanner while the window says there is no film",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:8146-8148",
+     "tools/gui.py:8194-8199",
+     "tools/gui.py:7266"
+    ],
+    "evidence": "`no_film=args.look_only` reaches only the DemoScanner constructor; without --demo, ScanSession's default DirectScanner refuses nothing.",
+    "description": "With a real scanner nothing refuses, so the controls move film and scan.",
+    "failure_scenario": "`gui.py --look-only --open-roll X` with the scanner attached: 'Scan chosen' seeks, meters and scans for real.",
+    "recommendation": "Reject --look-only without --demo or make ScanSession refuse transport jobs when set."
+   },
+   {
+    "id": "DF-27",
+    "title": "README describes reversal-by-prescan turning that the code no longer does",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:1481-1534"
+    ],
+    "evidence": "_note_reversal: `if _read_known(meta): ... return meta` -- a pass whose line tags gave a direction is never turned.",
+    "description": "README presents picture comparison against the prescan as the mechanism; the code decides from line tags and only logs a disagreement.",
+    "failure_scenario": "Operator expects a mismatched frame to be turned automatically; it is only logged.",
+    "recommendation": "Update the README.",
+    "doc_reference": "README.md:352-358 'A pass that comes back the wrong way up is turned to match its prescan ...'"
+   },
+   {
+    "id": "DF-28",
+    "title": "Transport-distance documentation disagrees with the code and with itself",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/protocol.py:260-292",
+     "tools/scan_roll.py:108-114",
+     "tools/gui.py:2952"
+    ],
+    "evidence": "MM_PER_UNIT = 0.1057, COMMAND_UNITS = 1.84 (param 1 -> 2.84 units); units_for_param docstring: 'a command pays the ramp first, so `param 1` travels 2.57'. CLI --nudge and approved.json offset_mm are in millimetres.",
+    "description": "README states the old 0.1662 mm ramp; CLAUDE.md gives ~2.6 and 2.84 for param 1 and 344.5 vs 345.2 for the aperture; protocol.py's own docstring says 2.57; CLAUDE.md prohibits millimetres while storage is in mm.",
+    "failure_scenario": "A move is checked against README's 0.1662 mm or the 2.57 docstring and appears wrong.",
+    "recommendation": "Align README/CLAUDE.md/docstrings with protocol.py; decide whether stored offsets move to units.",
+    "doc_reference": "README.md:555-556 '`0.1057 × param + 0.1662` mm'; rps7200/protocol.py units_for_param docstring '`param 1` travels 2.57'; CLAUDE.md '`param 1` (~2.6 units)' vs '2.84'"
+   },
+   {
+    "id": "DF-42",
+    "title": "auto_exposure comment says SET GAIN OFFSET readback persists and compounds, contradicting the measured protocol notes",
+    "severity": "info",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/direct.py:2063-2067",
+     "rps7200/direct.py:3632-3640",
+     "docs/protocol.md:374-381",
+     "tests/test_metering.py:51"
+    ],
+    "evidence": "direct.py:2064-2066 ':meth:`scan` multiplies whatever the device currently holds, and SET GAIN OFFSET persists, so re-reading it each round would compound the scales.' docs/protocol.md: '**`READ GAIN/OFFSET` is a fixed reference, not a readback.** ... exposure cannot compound'. direct.py:3632 comment in the same file says the read 'is a fixed reference'.",
+    "description": "Two comments in direct.py give opposite models of the device; the metering tests fake the echoing model. No wrong pixels follow today because scan_roll writes the baseline back, but the code's own reasoning is inconsistent.",
+    "failure_scenario": "A maintainer 'fixes' compounding that does not exist (as docs/whole-roll-plan.md records happened once).",
+    "recommendation": "Make the auto_exposure comment match the measured behaviour and keep one statement of it."
+   },
+   {
+    "id": "DF-29",
+    "title": "'File every scan' is not true of the tools or the window: metering probes and hold passes are never filed, even with RPS7200_DEBUG=1",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:1265-1271",
+     "tools/scan.py:160",
+     "tools/scan_roll.py:386",
+     "rps7200/direct.py:464-469",
+     "rps7200/direct.py:2087-2092"
+    ],
+    "evidence": "`DirectScanner(verbose=self.verbose, debug=False)`; `DirectScanner(verbose=args.verbose, debug=False)`; `self.debug = (os.environ.get(...) ... if debug is None else bool(debug))`. auto_exposure: 'CLAUDE.md's rule is \"file every scan, with its raw bytes\" ... keep_raw=True' yet nothing files the probe.",
+    "description": "Metering probes, hold-loop verification prescans and held frames' arrival prescans are discarded by the GUI and both CLI tools; the env var cannot change it.",
+    "failure_scenario": "A 38-frame metered roll leaves ~100 probe passes and every hold verification nowhere.",
+    "recommendation": "File probe and verification passes through FrameWriter (tagged probe/hold) when debug is on, or let the env var override.",
+    "doc_reference": "CLAUDE.md '**File every scan in the library, with its raw bytes.**'"
+   },
+   {
+    "id": "DF-30",
+    "title": "Debug spool is unrecoverable after a hard kill",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:650-692",
+     "rps7200/direct.py:694-770",
+     "rps7200/direct.py:777-788"
+    ],
+    "evidence": "_debug_capture writes only `np.save(image_path, image)` and `raw_path.write_bytes(raw)`; meta, raw_layout, reference and ccd_mask go to `self._debug_pending` in memory; filing only in close() -> _debug_flush.",
+    "description": "A killed/crashed process never reaches close(); orphaned .npy/.bin files carry no meta, layout or reference and there is no recovery command.",
+    "failure_scenario": "A probe killed at the 10-minute harness limit loses every pass as library entries.",
+    "recommendation": "Write a JSON sidecar, shading npz and mask per spooled item and add a recover-spool command."
+   },
+   {
+    "id": "DF-31",
+    "title": "scan.py --bracket silently ignores a single-value --exposure-scale",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "tools/scan.py:143-147",
+     "tools/scan.py:211-215",
+     "rps7200/direct.py:2372-2378"
+    ],
+    "evidence": "`exposure_scale = parts[0] if len(parts) == 1 else parts`; bracket passes `exposure_scale=(list(exposure_scale) if isinstance(exposure_scale, list) else None)` and `auto_exposure=args.auto_exposure and not args.exposure_scale` -> scan_bracket `scales = [1.0, 1.0, 1.0]`.",
+    "description": "The fixed exposure is dropped without a message.",
+    "failure_scenario": "`scan.py --bracket 5 --exposure-scale 2` brackets around x1.",
+    "recommendation": "Pass [x]*3 for a scalar."
+   },
+   {
+    "id": "DF-32",
+    "title": "7200 dpi is offered but always refused, and a roll only refuses per frame after prescan, metering and holds",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:1748-1749",
+     "tools/gui.py:2780-2781",
+     "rps7200/direct.py:2566-2581",
+     "rps7200/direct.py:3371-3389",
+     "rps7200/direct.py:3663-3666"
+    ],
+    "evidence": "`self._int(self.v_dpi, \"Scan dpi\", 25, 7200)`; scan(): `if needed > self.MAX_SHADING_COLUMNS: raise ShadingUnavailable(...)`; scan_roll checks film/infrared up front but not width and catches ShadingUnavailable per frame.",
+    "description": "A 7200 dpi roll moves film and spends prescan/metering/hold time on each frame before failing up to max_failures.",
+    "failure_scenario": "Three frames of film movement and metering are spent before the roll gives up.",
+    "recommendation": "Refuse up front in scan_roll and in the dialogs, or drop 7200 from the list.",
+    "doc_reference": "README.md:360-362 'The resolution box offers 300, 600, 900, 1200, 1800, 3600 and 7200'"
+   },
+   {
+    "id": "DF-33",
+    "title": "No checksums for shading.npz, ccd_mask.bin or prescan.tif",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:182-185",
+     "rps7200/library.py:281-303",
+     "rps7200/library.py:776-816"
+    ],
+    "evidence": "Only image.sha256 and raw.sha256 are recorded; verify only checks existence of the calibration files.",
+    "description": "Corruption of the reference or mask, which decide every corrected pixel, is undetectable.",
+    "failure_scenario": "A bit flip in shading.npz changes every future export; verify says intact.",
+    "recommendation": "Record and verify sha256 for every file."
+   },
+   {
+    "id": "DF-34",
+    "title": "Calibrate button starts a calibration without asking whether film is loaded",
+    "severity": "low",
+    "category": "hardware-safety",
+    "locations": [
+     "tools/gui.py:1929-1936"
+    ],
+    "evidence": "`self.session.submit(Calibrate(mode=mode or self.v_shading.get(), reference=self.session.reference))` with no confirmation.",
+    "description": "Calibrating an empty transport preceded a wedge per the project notes; the button does not ask.",
+    "failure_scenario": "Calibration right after power-on with the strip out.",
+    "recommendation": "Ask before a measured calibration."
+   },
+   {
+    "id": "DF-35",
+    "title": "Library, calibration cache and roll paths are relative to the current directory",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "rps7200/library.py:51",
+     "rps7200/session.py:1131-1136",
+     "tools/gui.py:8158",
+     "tools/scan.py:58"
+    ],
+    "evidence": "`DEFAULT_ROOT = Path(\"library\")`; `ScanSession(root=\"library\", reference=\"calibration/shading.npz\", rolls=\"rolls\")`; `home = DEMO_ROOT if args.demo else Path(\".\")`.",
+    "description": "Launching from another directory silently starts a new library/cache/rolls there; `--demo --library library` files demo entries into the real library (meta['demo'] is not whitelisted).",
+    "failure_scenario": "`cd tools && uv run python gui.py` files into tools/library/, invisible to `make reconstruct`.",
+    "recommendation": "Resolve defaults against a configured data root; record demo provenance and refuse demo filing into a non-demo library."
+   },
+   {
+    "id": "DF-36",
+    "title": "Quitting mid-roll waits for the whole roll and every queued job",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:3039-3050",
+     "rps7200/session.py:1246-1248"
+    ],
+    "evidence": "on_close: 'Quitting waits for it to finish' then `self.session.shutdown()` which only queues None; no request_stop.",
+    "description": "The window stays until the whole roll (hours) finishes.",
+    "failure_scenario": "Close 3 frames into a 38-frame roll expecting it to stop after the pass.",
+    "recommendation": "Offer 'stop after this frame and quit'."
+   },
+   {
+    "id": "DF-37",
+    "title": "Layering: library depends on direct, with a lazy import cycle back",
+    "severity": "info",
+    "category": "design",
+    "locations": [
+     "rps7200/library.py:48",
+     "rps7200/direct.py:705-706",
+     "rps7200/demo.py:56",
+     "tools/gui.py:91-92"
+    ],
+    "evidence": "library: `from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters`; direct._debug_flush: `from . import library`; demo: `from .session import estimate_seconds`.",
+    "description": "The offline data layer reaches the decode through the device module, which is also why the 7200 realignment inside scan() is invisible to reconstruct.",
+    "failure_scenario": "-",
+    "recommendation": "Move decode_index/realignment/SHADING_SKIPPED_EXPLICIT into a decode module shared by direct, library and demo."
+   }
+  ],
+  "user_actions": "{\"can_do\":[\"Calibrate (measure, reuse calibration/shading.npz from any earlier power-on, or off) from the window, tools/scan.py or tools/scan_roll.py.\",\"Prescan, single-scan (auto or manual exposure, RGB/RGBI, tied/untied IR), walk a strip, open the contact sheet, position/rotate frames and Scan chosen.\",\"Move whole frames or nudge; Stop (cooperative) or Abort (type ABORT; closes the transport).\",\"Save As / Save all / Export rolls (re-corrected from the library), delete a pass and optionally its entry, delete/rename/duplicate roll folders.\",\"CLI: scan.py --bracket/--stops/--reuse/--no-shading/--exposure-scale/--no-library/--out; scan_roll.py --dry-run/--approved/--correct/--start-at/--rewind/--nudge/--meter/--library ''.\",\"tools/library.py list/verify/reconstruct/duplicates [--delete]/migrate-raw [--write]/migrate-direction [--write]/reindex.\",\"gui.py --demo/--look-only/--open-roll/--library/--reference/--rolls/--out/--settings.\"],\"should_not_do\":[\"Ctrl-C during a CLI scan or roll (abandoned read; scan_roll.py also loses queued frames).\",\"Use scan_roll.py --no-shading or scan.py --no-shading --auto-exposure (forces a lazy calibration mid-pass, the path recorded as stalling the device).\",\"Calibrate with an empty transport.\",\"Run duplicates --delete on a library with un-annotated GUI, prescan or debug entries.\",\"Run migrate-raw --write on debug-filed entries without checking their raw bytes belong to them.\",\"Rely on Save As/Export of GUI single scans (double-corrected until DF-01 is fixed).\",\"Trust roll Export after a GUI walk (it may export prescan entries as frames).\",\"Type into the 'frame' field before a roll; leave the roll name empty or reuse it for a second walk the same day.\",\"Resume a CLI roll with --start-at expecting roll.json to be kept.\",\"Delete roll folders assuming everything but approved.json is in the library.\",\"Run the GUI with --demo --library library, --look-only without --demo, or any tool outside the repo root.\"],\"unguarded_mistakes\":[\"The roll key works while busy: it can wipe the running walk's survey, cancel a pending Stop and queue a second roll.\",\"--look-only without --demo still drives the real scanner.\",\"A 7200 dpi roll is accepted and fails frame by frame after prescan/metering/holds.\",\"scan.py --bracket with a single --exposure-scale ignores it.\",\"scan_roll.py --approved on a rotated GUI walk correlates rotated references.\",\"Reopening a roll and pressing Scan chosen with the name field empty scans into today's folder and writes approved.json to rolls/roll/.\",\"A roll name with path separators or illegal characters is used unsanitised after the film has been moved.\",\"Quitting mid-roll waits for the whole roll and queued jobs.\",\"Manual exposure beyond the 16-bit timer is clamped to 65535 with no warning.\",\"The Calibrate button starts a measured calibration without asking about film.\"]}",
+  "dataflow_notes": "[\"Threads: Tk UI thread submits jobs; one 'scanner' worker (session.py:1208-1212, 1293-1346) owns the device; FrameWriter (session.py:1013-1116) orients/exports/gzips/files; EdgeWatch reads edges on 'frame-edges'; GUI load/save/export use daemon threads; demo signs pictures on 'demo-pictures'. CLI tools are single-threaded except scan_roll.py's FrameWriter.\",\"Bytes enter only through Transport.command/_read_payload (usb_transport.py:717-857). read_planes (direct.py:1440-1541) joins READ payloads into `blob`; only keep_raw passes store it in last_raw/last_raw_layout, which are never cleared between passes.\",\"Decode: decode_index (direct.py:1552-1600) -> upright (H,W,C) via direction.read_direction; 7200 dpi realignment (direct.py:2692-2702, shading=False only) happens before raw_pixels is taken; apply_shading (shading.py:196-283) with the session reference and this pass's mask produces the returned image; IR plane is never corrected (reference is RGB).\",\"Leaving the driver: scan() returns (corrected, meta) and exposes raw via last_pixels_raw/last_scan_meta/capture_record(). tools/scan.py, tools/scan_roll.py (frames), session._prescan and session._roll pass the raw pixels to the library; session._scan, CLI walk prescans (not filed at all) and every demo pass do not.\",\"Metering: auto_exposure probes are full scan() calls (shading=True, film 'negative') that can calibrate lazily; their results reach meta only when scan(auto_exposure=True) itself metered, never on rolls or brackets.\",\"Filing: library.save (library.py:131-311) writes scan.tif, prescan.tif, shading.npz, ccd_mask.bin, raw.bin.gz, then scan.json (commit point) and index.json; entry id and 'created' use filing time; a whitelist drops caller meta.\",\"Correction on the way out is library.corrected (library.py:338-391): GUI full view (gui.py:4110), Save As/Save all/roll Export (gui.py:3864), analysis tools. It trusts image.corrections_applied, so a mislabelled entry is corrected twice.\",\"Roll export joins roll folders to entries by film.frame '<roll>-<NN>' (gui.py:4979-5008), a key shared by walk prescans, frame scans and rescans; the CLI writes '<roll>/<NN>'.\",\"Delivered files (frameNN.tif, out_dir copies, prescanNN.tif) are written once from the in-memory corrected image with the session reference, oriented by rotation/flip/reversal, optionally mono; never recomputed.\",\"Calibration: the calibration pass's bytes exist only inside calibrate_shading; what survives is the derived ShadingReference (session memory, calibration/shading.npz, a copy per entry) with no record of when it was measured or whether it was reused.\"]"
+ }
+}
