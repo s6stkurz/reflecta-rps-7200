@@ -262,6 +262,15 @@ is about an hour and a half, and a strip with four keepers should not cost the s
 one with seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame,
 so a strip can be looked at again tomorrow instead of walked again.
 
+The Roll panel takes a range, *first frame* to *last frame*, both included: 1 to 20 is
+twenty frames. Leave *last frame* empty to go to the end of the strip. Walking again
+while there is a sheet asks whether to keep it. *Yes* adds the new frames to that
+sheet and to its `survey.json`, and the ticks, positions and turns already set on it
+stay. A frame walked a second time replaces its old prescan, and a position set on
+that frame is dropped, because it was measured from the old prescan. *No* starts a
+new sheet. So a walk of 1 to 10 on a strip of twelve is finished by walking 11 to the
+end, not by walking the whole strip again.
+
 Each frame's position is proposed by the frame-edge detector (`tools/frame_edges`),
 which centres the picture between the edges it reads and draws them as red dotted lines.
 It reads the prescans in the background as the walk delivers them, or as a stored walk
