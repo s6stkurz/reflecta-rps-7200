@@ -341,16 +341,18 @@ def main() -> int:
     placed = False
 
     writer = FrameWriter()
-    # debug=False deliberately: this tool files its own library entries,
-    # and letting the driver file as well writes every frame twice --
-    # 43 GB of duplicate on a 38-frame roll at 7200 dpi.
+    # RPS7200_DEBUG decides, as everywhere else. This tool files its own
+    # frames and claims each of those passes (`debug_claim` below), so debug
+    # filing leaves them out rather than writing every frame twice -- 43 GB of
+    # duplicate on a 38-frame roll at 7200 dpi, which is why this used to say
+    # debug=False and so filed none of the prescans, probes and holds either.
     # Wrapped so `writer.finish()` below runs whatever comes out of this.
     # An exception the roll loop does not catch used to unwind straight
     # past it, and the frames already queued died unfiled -- scanner time
     # turned into nothing, with no message.
     trouble: Exception | None = None
     try:
-        with DirectScanner(verbose=args.verbose, debug=False) as s:
+        with DirectScanner(verbose=args.verbose, debug=None) as s:
             info = s.inquiry()
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
@@ -539,6 +541,8 @@ def main() -> int:
                     # capture_record() is read here, on this thread, before the next
                     # scan overwrites last_raw. Everything after it belongs to the
                     # writer and happens while the scanner is busy again.
+                    if args.library and frame.raw_image is not None:
+                        s.debug_claim(frame.raw_image)
                     writer.submit(
                         number=number,
                         # `paths`, plural. It was `path` until 2026-09-09, when

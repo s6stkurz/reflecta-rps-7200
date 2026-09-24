@@ -13,9 +13,12 @@ bytes become pixels: it decodes every stored pass with today's code and says
 which entries no longer match what was saved.
 
 `duplicates` finds entries that are the same scan of the same picture at the
-same protocol revision -- the scanner was driven identically, so one of them
-holds nothing the other does not. It only reports; `--delete` is what removes
-them, and `--keep N` leaves more than one of each behind.
+same protocol revision *and* hold the same bytes -- the scanner was driven
+identically and answered identically, so one of them holds nothing the other
+does not. Entries asked for identically whose data differs are different
+photographs (or different passes of one) and are never offered for deletion.
+It only reports; `--delete` is what removes them, and `--keep N` leaves more
+than one of each behind.
 
 `migrate-direction` brings entries filed before passes were read upright from
 their own line tags up to date: every entry records which way the carriage
@@ -113,6 +116,9 @@ def main() -> int:
         return 1 if changed else 0
 
     elif args.action == "duplicates":
+        if args.keep < 1:
+            print("--keep must be at least 1", file=sys.stderr)
+            return 2
         doomed = library.prunable(root, keep=args.keep)
         if not doomed:
             print(f"no duplicates (keeping {args.keep} of each group)")

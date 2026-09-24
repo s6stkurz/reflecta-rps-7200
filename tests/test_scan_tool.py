@@ -356,6 +356,22 @@ def test_every_pass_of_a_bracket_is_filed_raw_too(tmp_path, monkeypatch):
         assert int(image.max()) == RAW_LEVEL
 
 
+def test_every_pass_it_files_is_claimed_from_debug_filing(tmp_path, monkeypatch):
+    """RPS7200_DEBUG=1 files what this tool does not keep -- metering probes --
+    and not what it does, which would write every pass twice. Claiming each
+    filed pass is what keeps the two apart; this tool used to switch debug
+    off instead, and so filed none of the probes either."""
+    claimed = []
+    monkeypatch.setattr(FakeCorrectingScanner, "debug_claim",
+                        lambda self, pixels: claimed.append(pixels),
+                        raising=False)
+    created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 0
+    assert len(claimed) == 3
+    assert all(int(p.max()) == RAW_LEVEL for p in claimed), \
+        "claimed the corrected pixels, which debug filing never spooled"
+
+
 def test_both_capture_tools_file_the_raw_pixels(tmp_path):
     """`tools/uniformity.py capture` files the same way and had the same bug.
     It cannot be driven from here -- it wants a scanner and a target -- so it

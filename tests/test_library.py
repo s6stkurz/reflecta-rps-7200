@@ -211,8 +211,8 @@ def test_the_index_summarises_every_entry(tmp_path):
 
 def entry_with(tmp_path, *, stock="Kodak Gold 200", frame="3", dpi=1800,
                revision=1, raw=True, reference=True, channels=3,
-               exposure_scale=None, metered=True):
-    stream, image = index_stream(16, 8, channels)
+               exposure_scale=None, metered=True, picture=0):
+    stream, image = index_stream(16, 8, channels, seed=picture)
     meta = {
         "resolution_dpi": dpi, "channels": channels,
         "channel_order": list(CHANNEL_ORDER[:channels]),
@@ -303,6 +303,41 @@ def test_the_entry_that_can_still_be_used_is_the_one_kept(tmp_path):
     assert len(doomed) == 1
     assert doomed[0][0]["id"] != keeper.name
     assert "no raw bytes either" in doomed[0][1]
+
+
+def test_different_photographs_asked_for_alike_are_never_duplicates(tmp_path):
+    """The failure this guards against deleted photographs.
+
+    Two frames scanned from the window with the film notes left empty -- or two
+    strips filed under one day's default roll name -- are the same request of
+    the scanner: same notes, dpi, depth, channels, frame window. The signature
+    cannot tell them apart. Their bytes can, and `--delete` used to keep one
+    and destroy the rest, raw bytes included.
+    """
+    entry_with(tmp_path, stock="", frame="", picture=1)
+    entry_with(tmp_path, stock="", frame="", picture=2)
+    entry_with(tmp_path, stock="", frame="", picture=3)
+    assert len(library.duplicates(tmp_path)) == 1, "one request, three answers"
+    assert library.prunable(tmp_path) == []
+
+
+def test_only_the_identical_ones_of_a_group_are_redundant(tmp_path):
+    twins = {entry_with(tmp_path, picture=1).name,
+             entry_with(tmp_path, picture=1).name}   # the same bytes twice
+    other = entry_with(tmp_path, picture=2)          # same request, another picture
+    doomed = library.prunable(tmp_path)
+    assert len(doomed) == 1
+    assert doomed[0][0]["id"] in twins
+    assert doomed[0][0]["id"] != other.name
+
+
+def test_an_entry_with_no_checksum_is_never_proved_the_same():
+    assert not library.same_data({"image": {}}, {"image": {}})
+    assert library.same_data({"image": {"sha256": "a"}}, {"image": {"sha256": "a"}})
+    # Raw bytes decide where both kept them, whatever the pixels say.
+    a = {"raw": {"file": "raw.bin.gz", "sha256": "x"}, "image": {"sha256": "p"}}
+    b = {"raw": {"file": "raw.bin.gz", "sha256": "y"}, "image": {"sha256": "p"}}
+    assert not library.same_data(a, b)
 
 
 def test_keep_two_retains_a_pair_for_comparison(tmp_path):

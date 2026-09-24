@@ -803,6 +803,92 @@ def test_a_filing_failure_never_breaks_the_session(tmp_path, monkeypatch):
     assert s._debug_pending == []
 
 
+_META = {"resolution_dpi": 300, "channels": 3, "channel_order": ["r", "g", "b"],
+         "width": 16, "height": 8, "depth": 8, "frame": [0, 0, 10343, 6887],
+         "bytes_per_line": 48, "film": "negative", "protocol_revision": 1}
+
+
+def test_a_failed_filing_keeps_the_only_copy(tmp_path, monkeypatch):
+    """The spool is the only copy of a pass until it is filed.
+
+    It used to be unlinked in a `finally`, filed or not, so a full disk or a
+    mistyped RPS7200_DEBUG_ROOT deleted every scan it could not file and left
+    one log line per scan to say so.
+    """
+    blocker = tmp_path / "a-file-not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(blocker / "library"))
+    said = []
+    s = _debug_scanner(debug=True, log_hook=said.append)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    item = s._debug_pending[0]
+    spool = item["image_path"].parent
+    s.close()                                  # must not raise
+    assert item["image_path"].exists(), "the pixels were deleted unfiled"
+    assert item["meta_path"].exists(), "the record of the pass was deleted"
+    assert any(str(spool) in m for m in said), "nobody was told where it is"
+    # and the next pass cannot overwrite what was kept
+    s._debug_capture(np.ones((8, 16, 3), np.uint8), dict(_META))
+    assert s._debug_pending[0]["image_path"].parent != spool
+
+
+def test_a_spooled_pass_describes_itself(tmp_path, monkeypatch):
+    """A spool left behind -- a failed filing, a process that died before
+    close() -- has to say what each pass was, or it cannot be filed later."""
+    import json
+    from rps7200.shading import ShadingReference
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s._shading = ShadingReference(ref={0: np.full(16, 3.0)}, mean={0: 3.0},
+                                  pixels_per_line=16)
+    s._ccd_mask = b"\x01" * 16
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    item = s._debug_pending[0]
+    side = json.loads(item["meta_path"].read_text(encoding="utf-8"))
+    assert side["meta"]["resolution_dpi"] == 300
+    assert "captured" in side
+    assert item["reference_path"].exists()
+    assert item["mask_path"].read_bytes() == b"\x01" * 16
+    # one reference file per calibration, not one per pass
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    assert s._debug_pending[1]["reference_path"] == item["reference_path"]
+    s.close()
+    assert not item["meta_path"].exists(), "a filed pass left its record behind"
+    assert not item["reference_path"].exists(), "the spool outlived its filing"
+
+
+def test_bytes_laid_out_for_another_pass_are_not_spooled(tmp_path, monkeypatch):
+    """Another width or channel count is another photograph."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s.last_raw = b"\x00" * 64
+    s.last_raw_layout = {"width": 860, "lines": 573, "channels": 4}
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    assert "raw_path" not in s._debug_pending[0]
+
+
+def test_a_pass_its_caller_files_is_not_filed_twice(tmp_path, monkeypatch):
+    """Debug on, a tool filing its own entries, no duplicates.
+
+    The window and the tools used to switch debug off to avoid writing every
+    frame twice, and so filed none of the passes they do not keep themselves.
+    Claiming a pass is how both can be true.
+    """
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    probe = np.ones((8, 16, 3), np.uint8)
+    s._debug_capture(probe, dict(_META))
+    s._debug_capture(kept, dict(_META))
+    s.debug_claim(kept)
+    s.close()
+    filed = [p for p in (tmp_path / "lib").iterdir() if p.is_dir()]
+    assert len(filed) == 1, sorted(p.name for p in filed)
+    from rps7200 import tiff
+    assert np.array_equal(tiff.read(filed[0] / "scan.tif"), probe)
+
+
 def test_filing_off_queues_nothing():
     s = _debug_scanner(debug=False)
     s._debug_capture(np.zeros((4, 4, 3), np.uint8), {"resolution_dpi": 300})

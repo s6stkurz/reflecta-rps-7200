@@ -154,10 +154,12 @@ def main() -> int:
         args.fast_ir = False
 
     ref_path = Path(args.reference)
-    # debug=False deliberately: this tool files its own library entries,
-    # and letting the driver file as well writes every frame twice --
-    # 43 GB of duplicate on a 38-frame roll at 7200 dpi.
-    with DirectScanner(verbose=args.verbose, debug=False) as s:
+    # RPS7200_DEBUG decides, as everywhere else. This tool files its own
+    # entries and claims each of those passes (`hold` below), so debug filing
+    # leaves them out rather than writing every frame twice -- 43 GB of
+    # duplicate on a 38-frame roll at 7200 dpi, which is why this used to say
+    # debug=False and so filed none of the metering probes either.
+    with DirectScanner(verbose=args.verbose, debug=None) as s:
         info = s.inquiry()
         print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
@@ -188,6 +190,8 @@ def main() -> int:
             # describes the pass that *just* ran: `on_pass` is called as each
             # pass lands, and the pass after it overwrites this.
             raw = getattr(s, "last_pixels_raw", None)
+            if raw is not None:
+                s.debug_claim(raw)
             pending.append(
                 dict(capture, inquiry=info, meta=meta,
                      image=image if raw is None else raw)

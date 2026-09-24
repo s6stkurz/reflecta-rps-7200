@@ -1117,22 +1117,30 @@ class FrameWriter:
         # rps7200/mono.py -- so the file it reads has to say so by its shape.
         delivered = (to_monochrome(turned, job.get("mono_channel") or MONO_CHANNEL)
                      if job.get("mono") else turned)
-        for path in job.get("paths") or ():
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            # The format comes from the name, so one call covers both: a roll's
-            # own `rolls/...tif` and an output folder set to JPEG are written
-            # correctly side by side without this having to know the setting.
-            note = export.write(str(path), delivered, resolution=job["dpi"],
-                                quality=job.get("quality")
-                                or export.DEFAULT_QUALITY)
-            if note:
-                self.notes.append(f"{Path(path).name}: {note}")
+        # The library entry first, the operator's copies after. A copy can be
+        # written again from the entry at any time; the entry cannot be written
+        # again from anything, because it holds the only raw bytes. Written the
+        # other way round, an unplugged drive or a full output folder raised
+        # before `library.save` ran, and the scan's raw bytes were lost with it.
         entry = None
         if job["library"]:
             # The raw pixels where the job carries them, the delivered
             # ones otherwise -- CLAUDE.md's rule that the library holds raw.
             # Bound once: `.get()` is Optional however many times it is called.
             raw_image = job.get("raw_image")
+            corrections = None
+            if raw_image is None and (job["meta"] or {}).get("shading"):
+                # The pass was flat-fielded and no raw pixels came with it, so
+                # what is about to be filed is corrected. Said so in the entry,
+                # rather than filed as raw: an entry that claims raw pixels it
+                # does not hold is corrected a second time by
+                # `library.corrected`, and `reconstruct` calls it a changed
+                # decode -- which is how every Scan from the window was filed
+                # until the Scan job passed its raw pixels.
+                corrections = ["shading"]
+                self.notes.append(
+                    f"picture {job['number']}: no raw pixels came with this "
+                    "pass; filed its corrected pixels, labelled as corrected")
             entry = library.save(
                 job["image"] if raw_image is None else raw_image,
                 job["meta"],
@@ -1142,8 +1150,36 @@ class FrameWriter:
                 prescan=job["prescan"],
                 prescan_meta=job.get("prescan_meta"),
                 inquiry=job["inquiry"],
+                corrections=corrections,
                 **job["capture"],
             )
+        problems = []
+        for path in job.get("paths") or ():
+            # Each copy on its own: one that cannot be written -- a missing
+            # drive, a full disk -- says so and does not stop the others.
+            try:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                # The format comes from the name, so one call covers both: a
+                # roll's own `rolls/...tif` and an output folder set to JPEG are
+                # written correctly side by side without this having to know
+                # the setting.
+                note = export.write(str(path), delivered, resolution=job["dpi"],
+                                    quality=job.get("quality")
+                                    or export.DEFAULT_QUALITY)
+            except Exception as exc:                     # noqa: BLE001
+                problems.append(f"could not write {path} ({exc})")
+                continue
+            if note:
+                self.notes.append(f"{Path(path).name}: {note}")
+        if problems and entry is None:
+            # Nothing of this picture was kept anywhere: a failure, reported
+            # as one by `_run`.
+            raise OSError("; ".join(problems))
+        for problem in problems:
+            said = (f"picture {job['number']}: {problem}; the library entry is "
+                    "safe and can be exported again")
+            self.errors.append(said)
+            self.notes.append(said)
         self.done.append((job["number"], entry))
         if self.on_done is not None:
             self.on_done(job.get("seq", 0), job["number"], entry, None)
@@ -1311,9 +1347,13 @@ class ScanSession:
     def _default_scanner(self) -> DirectScanner:
         return DirectScanner(
             verbose=self.verbose,
-            # We file our own entries below. Letting the driver file as well
-            # writes every frame twice -- 43 GB of duplicate on a 7200 dpi roll.
-            debug=False,
+            # RPS7200_DEBUG decides, as it does everywhere else. The passes this
+            # session files itself are claimed in `_file` (`debug_claim`), so
+            # debug filing does not write them twice -- which at 7200 dpi was
+            # 43 GB of duplicate on a roll, and why this used to say
+            # debug=False. That also switched off the one record of the passes
+            # nothing here files: metering probes, hold and aim prescans.
+            debug=None,
         )
 
     def _listen(self, scanner: Any) -> None:
@@ -1495,11 +1535,18 @@ class ScanSession:
             frame=job.frame,
             keep_raw=True,
         )
+        # `scan()` hands back the corrected pixels and keeps the ones the
+        # scanner sent in `last_pixels_raw`. Read now, before anything else
+        # runs a pass: it describes the pass that just ran. Without it this job
+        # filed the corrected pixels as the entry's raw `scan.tif`, and every
+        # view and export of it was then corrected a second time.
+        raw_image = getattr(self._scanner, "last_pixels_raw", None)
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
         here = self._prescan_here()
         meta = self._note_reversal(meta, image, *(here or (None, None)))
         seq = self._deliver("scan", label, image, meta)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
+                   raw_image=raw_image,
                    mono=wants_mono(job.mono, job.film),
                    mono_channel=job.mono_channel)
         # A pass that wanted correction and could not get one no longer comes
@@ -2193,6 +2240,13 @@ class ScanSession:
                 f"({raw_image.shape} vs {image.shape}); filing the corrected "
                 "pixels instead"))
             raw_image = None
+        # This pass is filed here, so debug filing (RPS7200_DEBUG=1) leaves it
+        # out rather than filing it twice; it still files the passes nothing
+        # here keeps -- metering probes, hold and aim prescans.
+        claim = getattr(self._scanner, "debug_claim", None)
+        if (raw_image is not None and file_entry and self.root is not None
+                and callable(claim)):
+            claim(raw_image)
         self._writer.submit(
             seq=seq,
             number=number,

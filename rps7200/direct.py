@@ -16,10 +16,12 @@ traffic, and so never performs that read. This module does the same.
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import shutil
 import time
+import weakref
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -671,25 +673,104 @@ class DirectScanner:
             n = len(self._debug_pending)
             item: dict[str, Any] = {"meta": dict(meta), "captured": time.time()}
             record = self.capture_record()
+            # So a caller that files this very pass itself can say so, and the
+            # flush does not file it twice (`debug_claim`). Weak, because the
+            # pixels of a 7200 dpi roll must not be held alive by the spool.
+            try:
+                item["pixels"] = weakref.ref(image)
+            except TypeError:
+                item["pixels"] = None
 
             image_path = self._debug_spool / f"{n:03d}-image.npy"
             np.save(image_path, image)
             item["image_path"] = image_path
 
             raw = record.get("raw")
+            layout = record.get("raw_layout") or {}
+            # The bytes must be this pass's. `read_planes` no longer leaves an
+            # earlier pass's behind, and this is the second guard: bytes laid
+            # out for another width or channel count are another photograph.
+            # Height is not judged -- at 7200 dpi the stagger realignment trims
+            # rows the bytes still hold, and a short read decodes fewer.
+            if raw is not None and any(
+                layout.get(k) is not None and layout[k] != v
+                for k, v in (("width", image.shape[1]),
+                             ("channels", image.shape[2] if image.ndim > 2 else 1))
+            ):
+                self._log("debug: the raw bytes held do not describe this "
+                          "pass; spooling it without them")
+                raw, layout = None, {}
             if raw is not None:
                 raw_path = self._debug_spool / f"{n:03d}-raw.bin"
                 raw_path.write_bytes(raw)
                 item["raw_path"] = raw_path
-            item["raw_layout"] = record.get("raw_layout")
+            item["raw_layout"] = layout or None
             # Small enough to keep: a shading reference is a few hundred kB and
             # the CCD mask is 5172 bytes.
             item["reference"] = record.get("reference")
             item["ccd_mask"] = record.get("ccd_mask")
 
+            # And on disk beside the pixels, so a spool left behind -- by a
+            # failed filing, or a process that died before close() -- still
+            # says what each pass was and can be filed later by hand.
+            side = self._debug_spool / f"{n:03d}-meta.json"
+            side.write_text(json.dumps(
+                {"meta": item["meta"], "raw_layout": item["raw_layout"],
+                 "captured": item["captured"]}, indent=2, default=str),
+                encoding="utf-8")
+            item["meta_path"] = side
+            if item["reference"] is not None:
+                # Once per reference, not once per pass: every pass of a
+                # session shares it, and saving it compresses -- small, but
+                # the device is open. Removed with the spool, never per pass,
+                # because the passes after this one still point at it.
+                saved = getattr(self, "_debug_reference_saved", None)
+                if saved is None or saved[0] is not item["reference"] \
+                        or not saved[1].exists():
+                    ref_path = self._debug_spool / f"{n:03d}-shading.npz"
+                    item["reference"].save(ref_path)
+                    saved = (item["reference"], ref_path)
+                    self._debug_reference_saved = saved
+                item["reference_path"] = saved[1]
+            if item["ccd_mask"] is not None:
+                mask_path = self._debug_spool / f"{n:03d}-ccd_mask.bin"
+                mask_path.write_bytes(bytes(item["ccd_mask"]))
+                item["mask_path"] = mask_path
+
             self._debug_pending.append(item)
         except Exception as exc:                      # never break a scan
             self._log(f"debug: could not spool this scan ({exc})")
+
+    def debug_claim(self, pixels: np.ndarray | None) -> None:
+        """Say that the caller files the pass these raw pixels came from.
+
+        Debug filing then leaves it out, so a tool that files its own entries
+        can keep debug on and still not file each of its passes twice -- which
+        at 7200 dpi was 43 GB of duplicate on a roll, and the reason the window
+        and the tools used to switch debug off outright. With it off they filed
+        nothing of the passes they do not keep themselves: metering probes,
+        hold and aim prescans. Pass the very array `last_pixels_raw` held.
+        """
+        if pixels is None:
+            return
+        # `getattr`: stand-ins subclass this without running `__init__`.
+        for item in getattr(self, "_debug_pending", ()):
+            ref = item.get("pixels")
+            if ref is not None and ref() is pixels:
+                item["claimed"] = True
+
+    @staticmethod
+    def _debug_unlink(item: dict[str, Any]) -> int:
+        """Remove one spooled pass's files. Returns how many would not go."""
+        stuck = 0
+        for key in ("image_path", "raw_path", "meta_path", "mask_path"):
+            path = item.get(key)
+            if path is not None:
+                try:
+                    Path(path).unlink(missing_ok=True)
+                except Exception:                    # noqa: BLE001
+                    stuck += 1
+        return stuck
 
     def _debug_flush(self) -> None:
         """Write the queued scans. Called after the transport is closed.
@@ -705,13 +786,21 @@ class DirectScanner:
             from . import library
             from .library import FilmNotes
         except Exception as exc:
-            self._log(f"debug: library unavailable ({exc}); {len(pending)} lost")
+            self._log(f"debug: library unavailable ({exc}); {len(pending)} "
+                      f"scan(s) left unfiled in {self._debug_spool}")
             return
 
         root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT
         stuck = 0
+        failed = 0
         for n, item in enumerate(pending, 1):
             image = None
+            filed = False
+            if item.get("claimed"):
+                # Its caller filed it, with these same bytes and pixels.
+                self._log(f"debug: scan {n}/{len(pending)} was filed by its caller")
+                stuck += self._debug_unlink(item)
+                continue
             try:
                 # mmap the image rather than loading it: tiff.write walks it
                 # once, so a 570 MB frame need not be resident.
@@ -728,8 +817,11 @@ class DirectScanner:
                     inquiry=self._inquiry,
                 )
                 self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
+                filed = True
             except Exception as exc:
-                self._log(f"debug: could not file scan {n} ({exc})")
+                failed += 1
+                self._log(f"debug: could not file scan {n} ({exc}); its spooled "
+                          f"pixels, bytes and record are kept in {self._debug_spool}")
             finally:
                 # Drop the mapping before unlinking what it maps. POSIX lets a
                 # file be unlinked while it is mapped and keeps the inode until
@@ -744,18 +836,26 @@ class DirectScanner:
                 # a roll through the flush would want 43 GB of disk on top of
                 # the library being written -- the peak is what runs a machine
                 # out of space, not the total.
-                for key in ("image_path", "raw_path"):
-                    path = item.get(key)
-                    if path is not None:
-                        try:
-                            Path(path).unlink(missing_ok=True)
-                        except Exception:
-                            stuck += 1
+                #
+                # Only once it is filed. A spool unlinked after a failed save
+                # was the only copy of that pass -- a full disk or a mistyped
+                # RPS7200_DEBUG_ROOT deleted every scan it could not file.
+                if filed:
+                    stuck += self._debug_unlink(item)
         if stuck:
             # Said out loud rather than swallowed. The silence is what let the
             # leak above run for a whole platform without anyone noticing.
             self._log(f"debug: {stuck} spooled file(s) could not be removed; "
                       f"{self._debug_spool} is still on disk")
+        if failed:
+            # Kept, all of it: the directory is the only copy of what failed.
+            self._log(f"debug: {failed} scan(s) could not be filed and remain "
+                      f"in {self._debug_spool}")
+            # Forgotten rather than reused, so a later pass spools into a fresh
+            # directory and cannot overwrite what is left here.
+            self._debug_spool = None
+            self._debug_reference_saved = None
+            return
         try:
             if self._debug_spool is not None:
                 shutil.rmtree(self._debug_spool, ignore_errors=True)
@@ -764,6 +864,7 @@ class DirectScanner:
                 # loses the chance to say where the leftovers are.
                 if not self._debug_spool.exists():
                     self._debug_spool = None
+                    self._debug_reference_saved = None
         except Exception:
             pass
 
@@ -1530,6 +1631,13 @@ class DirectScanner:
                 "byte_order": "little",
                 "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
             }
+        else:
+            # Cleared, never left over. A pass that did not keep its bytes used
+            # to leave the previous pass's here, and `capture_record` handed
+            # them on: debug filing put them beside this pass's pixels, which
+            # is an entry whose bytes decode to a different photograph.
+            self.last_raw = None
+            self.last_raw_layout = None
         image, direction = self.decode_index(blob, params, channels)
         self.last_read_direction = direction
         if direction.reversed:
@@ -2675,7 +2783,12 @@ class DirectScanner:
                 f"params width={params.width} lines={params.lines} "
                 f"bpl={params.bytes_per_line}"
             )
-            image = self.read_planes(params, channels, keep_raw=keep_raw)
+            # Debug filing keeps every pass's own bytes, whatever the caller
+            # asked for: a pass it files has to carry the bytes it came from,
+            # and the spool is on disk, so the cost is one pass in memory.
+            image = self.read_planes(
+                params, channels,
+                keep_raw=keep_raw or bool(getattr(self, "debug", False)))
         except BaseException:
             # Deliberately no STOP SCAN. The vendor software never sends it,
             # and issuing it here reliably leaves the scanner unresponsive to

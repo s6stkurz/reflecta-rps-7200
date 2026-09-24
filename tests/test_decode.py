@@ -363,6 +363,37 @@ def test_a_pass_read_off_the_wire_bottom_up_arrives_upright_and_says_so(monkeypa
     assert s.last_read_direction.state == REVERSED
 
 
+def _wire(monkeypatch, s, image):
+    blob = encode_index(image, reversed=False)
+    stride = WIDTH * 2 + INDEX_HEADER
+    lines = iter(blob[k * stride:(k + 1) * stride] for k in range(len(blob) // stride))
+    monkeypatch.setattr(s, "read_lines",
+                        lambda n, bpl, retries=1: b"".join(next(lines) for _ in range(n)),
+                        raising=False)
+    return blob
+
+
+def test_a_pass_that_keeps_no_bytes_leaves_none_behind(monkeypatch):
+    """`last_raw` used to survive into the next pass that did not keep its own.
+
+    `capture_record` handed it on, and debug filing put another pass's bytes
+    beside this pass's pixels: an entry that decodes to a different photograph.
+    """
+    s = DirectScanner.__new__(DirectScanner)
+    s.verbose = False
+    s.progress_hook = None
+    s._log = lambda *a, **k: None
+    first = picture(rows=6)
+    blob = _wire(monkeypatch, s, first)
+    s.read_planes(params(lines=6), 3, keep_raw=True)
+    assert s.last_raw == blob and s.last_raw_layout is not None
+
+    _wire(monkeypatch, s, picture(rows=6)[::-1].copy())
+    s.read_planes(params(lines=6), 3, keep_raw=False)
+    assert s.last_raw is None, "the previous pass's bytes were left behind"
+    assert s.last_raw_layout is None
+
+
 def test_the_state_before_a_pass_is_kept_and_marked_stale_by_a_calibration():
     from conftest import FakeTransport
 

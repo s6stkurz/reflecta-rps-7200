@@ -716,6 +716,10 @@ def prunable(
 ) -> list[tuple[dict[str, Any], str]]:
     """Which entries are redundant, and why. Nothing is deleted here.
 
+    Redundant means two things at once: the same request of the scanner
+    (`signature`) *and* the same data (`same_data`). An entry that shares a
+    signature but holds different bytes is kept, whatever `keep` says.
+
     Within a group the ones kept are chosen on what they can still be used for,
     not on age: an entry carrying its raw bytes and its calibration can be
     re-decoded and re-corrected, and one without cannot. Ties go to the newest.
@@ -730,12 +734,37 @@ def prunable(
         ranked = sorted(group, key=usefulness, reverse=True)
         kept = ranked[:keep]
         for record in ranked[keep:]:
-            best = kept[0].get("id")
-            reason = f"same scan of the same picture as {best}"
+            # Redundant only if it holds the same data as one that stays. A
+            # shared signature says the scanner was asked the same thing; it
+            # cannot say the answer was the same picture. Film notes left
+            # empty, or two strips filed under one day's default roll name,
+            # gave different photographs one signature, and `--delete` then
+            # destroyed all but one of them, raw bytes included.
+            twin = next((k for k in kept if same_data(record, k)), None)
+            if twin is None:
+                kept.append(record)
+                continue
+            reason = f"same scan of the same picture as {twin.get('id')}"
             if not (record.get("raw") or {}).get("file"):
                 reason += "; no raw bytes either"
             out.append((record, reason))
     return out
+
+
+def same_data(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two entries hold the same scan, byte for byte.
+
+    By the raw bytes where both kept them -- they are what the scanner sent --
+    and by the decoded pixels otherwise. An entry that recorded neither
+    checksum is never the same as anything: nothing here can prove it.
+    """
+    raw_a = (a.get("raw") or {}).get("sha256") if (a.get("raw") or {}).get("file") else None
+    raw_b = (b.get("raw") or {}).get("sha256") if (b.get("raw") or {}).get("file") else None
+    if raw_a and raw_b:
+        return raw_a == raw_b
+    image_a = (a.get("image") or {}).get("sha256")
+    image_b = (b.get("image") or {}).get("sha256")
+    return bool(image_a) and image_a == image_b
 
 
 def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:

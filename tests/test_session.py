@@ -18,7 +18,7 @@ import time
 import numpy as np
 import pytest
 
-from rps7200 import library, session
+from rps7200 import library, session, tiff
 from rps7200.direct import RollFrame
 from rps7200.library import FilmNotes
 from rps7200.session import (
@@ -233,6 +233,73 @@ def test_a_filed_scan_keeps_the_raw_bytes(tmp_path):
     entry = tmp_path / library.entries(tmp_path)[0]["id"]
     assert (entry / "raw.bin.gz").exists()
     assert library.read_raw(entry) == b"\x00\x01" * 32
+
+
+class CorrectingScanner(FakeScanner):
+    """Returns corrected pixels and keeps the raw ones aside, as the driver does.
+
+    `DirectScanner.scan` hands back the flat-fielded image -- what a caller
+    wants to look at -- and keeps what the scanner sent in `last_pixels_raw`.
+    The plain fake returns one array and no `last_pixels_raw`, which is why no
+    test here could see the Scan job filing the corrected one.
+    """
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.claimed = []
+
+    def scan(self, resolution=1800, infrared=True, **kw):
+        image, meta = super().scan(resolution=resolution, infrared=infrared, **kw)
+        self.last_pixels_raw = image
+        corrected = (image // 2).astype(image.dtype)
+        return corrected, dict(meta, shading={"columns": 36, "clipped": 0})
+
+    def debug_claim(self, pixels):
+        self.claimed.append(pixels)
+
+
+def test_a_scan_files_the_raw_pixels_not_the_corrected_ones(tmp_path):
+    """Filing the corrected image as `scan.tif` made every view and export of
+    it correct a second time, and `reconstruct` call it a changed decode."""
+    scanner = CorrectingScanner()
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    record = library.entries(tmp_path)[0]
+    stored = tiff.read(tmp_path / record["id"] / "scan.tif")
+    assert np.array_equal(stored, scanner.last_pixels_raw)
+    assert record["image"]["corrections_applied"] == []
+
+
+def test_corrected_pixels_with_no_raw_beside_them_are_labelled(tmp_path):
+    """A stand-in that keeps no raw pixels still must not file a lie."""
+    scanner = CorrectingScanner()
+    real = scanner.scan
+
+    def scan(**kw):
+        image, meta = real(**kw)
+        scanner.last_pixels_raw = None
+        return image, meta
+
+    scanner.scan = scan
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    record = library.entries(tmp_path)[0]
+    assert record["image"]["corrections_applied"] == ["shading"]
+
+
+def test_what_the_session_files_it_claims_from_debug_filing(tmp_path):
+    """So RPS7200_DEBUG=1 files the passes the session does not keep --
+    probes, holds -- without writing the ones it does keep a second time."""
+    scanner = CorrectingScanner()
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert len(scanner.claimed) == 1
+    assert scanner.claimed[0] is scanner.last_pixels_raw
+
+
+def test_the_default_scanner_leaves_debug_to_the_environment(monkeypatch):
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    s = ScanSession(root=None, open_scanner=None, verbose=False)
+    assert s._default_scanner().debug is True
+    monkeypatch.setenv("RPS7200_DEBUG", "0")
+    assert s._default_scanner().debug is False
 
 
 def test_a_prescan_is_filed_too(tmp_path):
@@ -741,6 +808,26 @@ def test_the_writer_collects_failures_rather_than_raising(tmp_path):
     writer.finish()
     assert len(writer.errors) == 1
     assert "picture 2" in writer.errors[0]
+
+
+def test_a_copy_that_cannot_be_written_does_not_cost_the_entry(tmp_path):
+    """The library entry holds the only raw bytes; a delivered copy can be
+    exported again from it. Written copies-first, an unplugged output drive
+    raised before the entry was filed, and the scan was gone."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    done: queue.Queue = queue.Queue()
+    writer = session.FrameWriter(on_done=lambda *a: done.put(a))
+    writer.submit(number=1, paths=[blocker / "no.tif", tmp_path / "out" / "yes.tif"],
+                  image=picture(), meta={"resolution_dpi": 600}, dpi=600,
+                  library=str(tmp_path / "lib"), film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None, capture={}, seq=1)
+    writer.finish()
+    _seq, _number, entry, err = done.get_nowait()
+    assert entry is not None and (entry / "scan.tif").exists()
+    assert err is None
+    assert (tmp_path / "out" / "yes.tif").exists(), "one bad copy stopped the rest"
+    assert len(writer.errors) == 1 and "exported again" in writer.errors[0]
 
 
 def test_the_writer_runs_off_the_calling_thread():
