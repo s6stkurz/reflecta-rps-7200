@@ -60,7 +60,7 @@ from .protocol import say_units
 #:
 #: A *tied* pass does not spend it at all; see :data:`INFRARED_UNTIED_S` and
 #: :func:`estimate_seconds`.
-INFRARED_FLOOR_S = 212.0
+INFRARED_FLOOR_S = DirectScanner.INFRARED_FLOOR_S
 
 #: What an untied infrared pass actually costs, for the readout rather than the
 #: timeout. Measured 2026-09-16 across five resolutions on one slide: 219.2,

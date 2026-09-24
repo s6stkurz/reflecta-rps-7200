@@ -40,7 +40,8 @@ class Pass(DirectScanner):
         return ScanParameters(width=4, lines=2, bytes_per_line=8,
                               filter_offset1=0, filter_offset2=0, available_lines=2)
 
-    def read_planes(self, params, channels, keep_raw=False):
+    def read_planes(self, params, channels, keep_raw=False, idle_timeout=None):
+        self.idle_timeout = idle_timeout
         return self._read(self)
 
     def finish_scan(self, polls=3):
@@ -191,3 +192,38 @@ def test_a_failure_part_way_through_a_bracket_files_what_came_before(
     _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
     assert code == 1
     assert len(_filed(tmp_path)) == 1
+
+
+# -- the read's patience -----------------------------------------------------
+
+
+def test_an_untied_infrared_read_waits_past_the_infrared_floor():
+    """An untied IR pass holds the device ~220 s however few lines were asked
+    for. The read gave up after 120 s without data -- short of that floor, the
+    combination that wedged the device once as a 60 s timeout -- while
+    INFRARED_FLOOR_S, documented as guarding it, guarded nothing."""
+    untied = DirectScanner.read_idle_s(infrared=True, fast_infrared=False)
+    assert untied > DirectScanner.INFRARED_FLOOR_S
+    assert untied >= 227.0, "the top of the measured 212-227 s range"
+    assert DirectScanner.read_idle_s(infrared=True, fast_infrared=True) \
+        == DirectScanner.READ_IDLE_S
+    assert DirectScanner.read_idle_s(infrared=False, fast_infrared=False) \
+        == DirectScanner.READ_IDLE_S
+
+
+def test_the_session_estimate_and_the_read_share_one_floor():
+    from rps7200 import session
+
+    assert session.INFRARED_FLOOR_S == DirectScanner.INFRARED_FLOOR_S
+
+
+def test_the_pass_is_read_with_the_patience_its_mode_needs():
+    s = Pass(lambda s: np.zeros((2, 4, 3), np.uint16))
+    s._read_pass(3, keep_raw=False, resolution=300,
+                 idle_timeout=DirectScanner.read_idle_s(True, False))
+    assert s.idle_timeout == DirectScanner.UNTIED_INFRARED_IDLE_S
+
+
+def test_a_resolution_that_cannot_be_corrected_is_known_before_opening():
+    assert DirectScanner.correctable_at(3600)
+    assert not DirectScanner.correctable_at(7200)

@@ -767,3 +767,31 @@ def test_backlash_tolerance_is_bounded():
     t = _Transport(14, swallows=99)
     assert scan_roll.rewind(t, 14) is None
     assert t.calls == scan_roll.BACKLASH_COMMANDS + 1
+
+
+@pytest.mark.parametrize("argv", [
+    ["--dpi", "7200"],
+    ["--start-at", "0"],
+    ["--frames", "-1"],
+])
+def test_what_cannot_work_is_refused_before_the_scanner_opens(tmp_path,
+                                                              monkeypatch, argv):
+    """The roll calibrates and meters before its first frame; a refusal after
+    that spent minutes on what the arguments already said."""
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--roll", "refused", *argv],
+    )
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    assert created == []

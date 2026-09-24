@@ -28,8 +28,39 @@ import numpy as np
 from rps7200 import export, library
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import DirectScanner, supports_infrared
+# The class itself, for checks made before any scanner is opened. Not the
+# `DirectScanner` name below, which tests replace with a stand-in factory.
+from rps7200.direct import DirectScanner as _Driver
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
 from rps7200.library import FilmNotes
+
+
+#: What a calibration costs, for the estimate: 3-4 minutes, per the prompt
+#: this tool prints before one.
+CALIBRATION_S = 210.0
+#: What auto-exposure costs: up to three 300 dpi RGB probes.
+METERING_S = 3 * 22.0
+#: Past this a run should be backgrounded -- a harness that kills a
+#: foreground command at 10 minutes abandons its read, which wedges the
+#: scanner. CLAUDE.md's figure.
+FOREGROUND_S = 8 * 60.0
+
+
+def say_estimate(*, passes: int, resolution: int, infrared: bool,
+                 fast_infrared: bool, calibrating: bool, metering: bool) -> float:
+    """Print how long this run should take, before it starts. Returns seconds."""
+    from rps7200.session import estimate_seconds
+
+    seconds = passes * estimate_seconds(resolution, infrared, fast_infrared)
+    seconds += CALIBRATION_S if calibrating else 0.0
+    seconds += METERING_S if metering else 0.0
+    print(f"estimated {seconds / 60:.1f} min (an estimate from the library's "
+          f"medians; dense frames run longer)", flush=True)
+    if seconds > FOREGROUND_S:
+        print("  longer than 8 minutes: run it in the background. A "
+              "foreground command killed mid-read wedges the scanner.",
+              file=sys.stderr, flush=True)
+    return seconds
 
 
 class _StoppedBetweenPasses(Exception):
@@ -144,6 +175,22 @@ def main() -> int:
             f"{DirectScanner.MAX_BRACKET_PASSES} passes, got {args.bracket}"
         )
 
+    # Everything knowable before the device is opened is checked here: a
+    # refusal after a calibration and metering has spent minutes on it.
+    if args.dpi <= 0:
+        ap.error(f"--dpi must be positive, got {args.dpi}")
+    if not args.no_shading and not _Driver.correctable_at(args.dpi):
+        ap.error(
+            f"--dpi {args.dpi} cannot be shading-corrected on this scanner: its "
+            f"calibration never gives a reference wider than "
+            f"{_Driver.MAX_SHADING_COLUMNS} columns. Scan at 3600 dpi or "
+            f"below, or add --no-shading for raw, striped pixels on purpose.")
+    if export.FORMATS.get(Path(args.out).suffix.lower()) is None:
+        ap.error(f"--out {args.out}: the extension picks the format, and must "
+                 f"be one of {', '.join(sorted(export.FORMATS))}")
+    if args.bracket and args.stops <= 0:
+        ap.error(f"--stops must be positive, got {args.stops:g}")
+
     exposure_scale: float | list[float] = 1.0
     if args.exposure_scale:
         parts = [float(v) for v in args.exposure_scale.replace(",", " ").split()]
@@ -158,6 +205,11 @@ def main() -> int:
         args.fast_ir = False
 
     ref_path = Path(args.reference)
+    say_estimate(
+        passes=args.bracket or 1, resolution=args.dpi, infrared=args.ir,
+        fast_infrared=args.fast_ir,
+        calibrating=not args.no_shading and not (args.reuse and ref_path.exists()),
+        metering=args.auto_exposure and not args.exposure_scale)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
     # entries and claims each of those passes (`hold` below), so debug filing
     # leaves them out rather than writing every frame twice -- 43 GB of

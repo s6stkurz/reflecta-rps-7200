@@ -48,6 +48,9 @@ from rps7200.direct import (
     DirectScanner,
     supports_infrared,
 )
+# The class itself, for checks made before any scanner is opened. Not the
+# `DirectScanner` name below, which tests replace with a stand-in factory.
+from rps7200.direct import DirectScanner as _Driver
 from rps7200.library import FilmNotes
 from rps7200.protocol import FILM_NEGATIVE
 # Lives in the package so the GUI and this tool share one writer rather than
@@ -274,6 +277,23 @@ def main() -> int:
             "(Chromogenic C-41 black and white does clean properly: scan that "
             "as --film negative.)"
         )
+    # Everything knowable before the device is opened is checked here: the
+    # roll calibrates and meters before its first frame, and a refusal after
+    # that has spent minutes on what these lines say at once.
+    for flag, value in (("--dpi", args.dpi), ("--prescan-dpi", args.prescan_dpi)):
+        if value <= 0:
+            ap.error(f"{flag} must be positive, got {value}")
+    if args.frames is not None and args.frames < 0:
+        ap.error(f"--frames must not be negative, got {args.frames}")
+    if args.start_at < 1:
+        ap.error(f"--start-at counts frames from 1, got {args.start_at}")
+    if (not args.no_shading and not args.dry_run
+            and not _Driver.correctable_at(args.dpi)):
+        ap.error(
+            f"--dpi {args.dpi} cannot be shading-corrected on this scanner: its "
+            f"calibration never gives a reference wider than "
+            f"{_Driver.MAX_SHADING_COLUMNS} columns, so every frame would "
+            f"be refused. Scan at 3600 dpi or below.")
 
     held: dict[int, Approved] = {}
     held_note: dict = {}

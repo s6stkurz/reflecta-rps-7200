@@ -383,3 +383,36 @@ def test_both_capture_tools_file_the_raw_pixels(tmp_path):
     source = inspect.getsource(uniformity.one_pass)
     assert "last_pixels_raw" in source
     assert "image if raw_pixels is None else raw_pixels" in source
+
+
+# --- refused before the scanner is opened ------------------------------------
+
+
+@pytest.mark.parametrize("argv", [
+    ["--dpi", "7200"],            # cannot be shading-corrected at all
+    ["--dpi", "0"],
+    ["--out", "scan.png"],        # no such format; used to fail after the scan
+])
+def test_what_cannot_work_is_refused_before_the_scanner_opens(tmp_path,
+                                                              monkeypatch, argv):
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out.tif"),
+         "--library", str(tmp_path / "lib"), *argv],
+    )
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    assert created == [], "the scanner was opened for a request that cannot work"
+
+
+def test_7200_dpi_raw_on_purpose_is_still_allowed(tmp_path, monkeypatch):
+    _, code = run(tmp_path, monkeypatch, "--dpi", "7200")   # run() adds --no-shading
+    assert code == 0
+
+
+def test_the_run_says_how_long_it_will_take(tmp_path, monkeypatch, capsys):
+    _, code = run(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 0
+    assert "estimated" in capsys.readouterr().out

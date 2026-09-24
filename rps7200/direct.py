@@ -439,6 +439,20 @@ class DirectScanner:
     #: should read "nothing yet", not raise AttributeError.
     last_pixels_raw: np.ndarray | None = None
     last_scan_meta: dict[str, Any] | None = None
+    #: The infrared floor: an **untied** pass with infrared on holds the device
+    #: this long however few lines were asked for. Measured at 212-227 s across
+    #: resolutions. Here, beside the read it guards, rather than only in the
+    #: estimates -- it used to guard nothing, while the read gave up after
+    #: 120 s without data, short of the floor: the combination that wedged the
+    #: device once, as a 60 s timeout.
+    INFRARED_FLOOR_S = 212.0
+    #: How long a read waits for data that has not come yet before it gives up.
+    READ_IDLE_S = 120.0
+    #: What an untied infrared pass may sit silent for: the floor plus the
+    #: 227 s top of its measured range, and a minute on top. Waiting longer
+    #: only delays noticing a stall; giving up early *is* the stall.
+    UNTIED_INFRARED_IDLE_S = 227.0 + 60.0
+
     #: Why this device may still be mid-scan, once a pass or a calibration
     #: stopped part way through its read; None while it is not. Set, it makes
     #: every command that would drive the device raise `DeviceSuspect`. Never
@@ -520,6 +534,25 @@ class DirectScanner:
             self._log(f"the scanner may still be mid-scan ({why}); nothing more "
                       "will be sent to it that could drive it. Power-cycle it "
                       "and open a new session.")
+
+    @classmethod
+    def correctable_at(cls, resolution: int,
+                       frame: tuple[int, int, int, int] | None = None) -> bool:
+        """Whether a pass at this resolution can be shading-corrected at all.
+
+        The same test `scan` makes before a pass, for a caller that wants to
+        refuse before opening the device -- a 7200 dpi request refused after
+        a calibration and metering has spent minutes to learn this.
+        """
+        needed = cls._shading_columns_needed(frame or FULL_FRAME, resolution)
+        return needed <= cls.MAX_SHADING_COLUMNS
+
+    @classmethod
+    def read_idle_s(cls, infrared: bool, fast_infrared: bool) -> float:
+        """How long this pass's read may go without data before giving up."""
+        if infrared and not fast_infrared:
+            return max(cls.READ_IDLE_S, cls.UNTIED_INFRARED_IDLE_S)
+        return cls.READ_IDLE_S
 
     @staticmethod
     def uncalibrated(reason: str = "no shading reference in this session"
@@ -1587,7 +1620,7 @@ class DirectScanner:
         batch: int | None = None,
         timeout: float = 3600.0,
         poll: float = 0.02,
-        idle_timeout: float = 120.0,
+        idle_timeout: float | None = None,
         keep_raw: bool = False,
     ) -> np.ndarray:
         """Read a frame and deinterleave it into ``(H, W, channels)``.
@@ -1608,6 +1641,8 @@ class DirectScanner:
         total_lines = channels * params.lines
         if batch is None:
             batch = batch_for(bpl)
+        if idle_timeout is None:
+            idle_timeout = self.READ_IDLE_S
         deadline = time.monotonic() + timeout
 
         self._log(
@@ -2828,7 +2863,9 @@ class DirectScanner:
         carriage = self.carriage_record()
         self.last_read_direction = None
         started = time.monotonic()
-        image, params, ccd_mask = self._read_pass(channels, keep_raw, resolution)
+        image, params, ccd_mask = self._read_pass(
+            channels, keep_raw, resolution,
+            idle_timeout=self.read_idle_s(infrared, fast_infrared))
 
         # After the scan has settled, never inside it: the vendor polls
         # READ_STATE for several seconds once the last line is read and only
@@ -2967,7 +3004,8 @@ class DirectScanner:
         return image, meta
 
     def _read_pass(
-        self, channels: int, keep_raw: bool, resolution: int
+        self, channels: int, keep_raw: bool, resolution: int,
+        idle_timeout: float | None = None,
     ) -> tuple[np.ndarray, ScanParameters, bytes]:
         """START SCAN, read every line of the pass, and settle it.
 
@@ -3006,7 +3044,7 @@ class DirectScanner:
             # asked for: a pass it files has to carry the bytes it came from,
             # and the spool is on disk, so the cost is one pass in memory.
             image = self.read_planes(
-                params, channels,
+                params, channels, idle_timeout=idle_timeout,
                 keep_raw=keep_raw or bool(getattr(self, "debug", False)))
         except BaseException as exc:
             # Deliberately no STOP SCAN. The vendor software never sends it,
