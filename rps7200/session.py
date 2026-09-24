@@ -667,6 +667,61 @@ def walked_prescans(folder, manifest: dict,
     return out
 
 
+def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
+                       meta: dict[str, Any] | None = None) -> dict[str, tuple]:
+    """Where raw bytes laid out like this cannot be the pass with this shape.
+
+    Empty when they can. Every writer that files bytes beside pixels asks this
+    first: bytes of another pass decode to a different photograph, which is
+    the one failure the library exists to make impossible.
+    """
+    layout = dict(layout or {})
+    actual = {
+        "lines": shape[0],
+        "width": shape[1],
+        "channels": shape[2] if len(shape) > 2 else 1,
+    }
+    # The rows the bytes can decode to: what arrived, not what GET PARAMETERS
+    # declared, less what the 7200 dpi realignment trimmed. Judged against the
+    # declared count, every pass that ended early -- the one whose bytes
+    # matter most -- and every 7200 dpi pass looked like another pass's bytes,
+    # and was filed without them.
+    received = layout.get("lines_received")
+    channels = layout.get("channels")
+    if received is not None and channels:
+        layout["lines"] = int(received) // int(channels)
+    if layout.get("lines") is not None:
+        layout["lines"] = (int(layout["lines"])
+                           - int((meta or {}).get("stagger_realigned") or 0))
+    # Only fields the layout actually declares are judged; an absent one says
+    # nothing, and dropping good bytes over it would be its own bug.
+    return {
+        k: (layout[k], actual[k])
+        for k in actual
+        if layout.get(k) is not None and layout[k] != actual[k]
+    }
+
+
+def roll_frame_label(roll: str, number: int) -> str:
+    """The `film.frame` every roll entry carries: ``<roll>-<NN>``.
+
+    One format for the window and `tools/scan_roll.py`, which wrote
+    ``<roll>/<NN>`` and so could never be found from the window.
+    """
+    return f"{roll}-{int(number):02d}"
+
+
+def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str, Any]:
+    """What a roll entry records about its place: roll, frame, and which pass.
+
+    ``kind`` is ``"frame"`` or ``"prescan"``. A walk's prescan and the frame
+    later scanned there share a roll and a number, and joining on those alone
+    let Export deliver a 300 dpi prescan as the frame at full resolution.
+    """
+    return {"roll": str(roll), "number": int(number), "kind": kind,
+            "folder": str(folder)}
+
+
 def walk_span(earlier: dict, start_at: int,
               frames: int | None) -> tuple[int, int | None]:
     """The range two walks of one strip cover together, as ``(start, count)``.
@@ -1936,9 +1991,10 @@ class ScanSession:
                             # uncorrected raw when they were neither.
                             dict(rf.prescan_meta or {
                                 "resolution_dpi": job.prescan_resolution,
-                                "channel_order": ["R", "G", "B"]}),
-                            replace(job.notes,
-                                    frame=job.notes.frame or f"{name}-{number:02d}"),
+                                "channel_order": ["R", "G", "B"]},
+                                 roll_membership=roll_membership(
+                                     name, number, "prescan", out)),
+                            replace(job.notes, frame=roll_frame_label(name, number)),
                             tuple(job.tags) + ("gui", "roll", "prescan", name),
                             kind="prescan",
                             raw_image=rf.raw_prescan,
@@ -1957,8 +2013,8 @@ class ScanSession:
                                 dict(rf.prescan_meta or {
                                     "resolution_dpi": job.prescan_resolution,
                                     "channel_order": ["R", "G", "B"]}),
-                                replace(job.notes, frame=job.notes.frame
-                                        or f"{name}-{number:02d}"),
+                                replace(job.notes,
+                                        frame=roll_frame_label(name, number)),
                                 tuple(job.tags) + ("gui", "roll", "prescan",
                                                    name),
                                 kind="prescan",
@@ -1991,11 +2047,16 @@ class ScanSession:
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
-                    notes = replace(
-                        job.notes, frame=job.notes.frame or f"{name}-{number:02d}"
-                    )
+                    # Always the roll's label: a value left in the Film
+                    # panel's "frame" note used to replace it on every frame,
+                    # which gave a whole roll one library signature and made
+                    # its entries unfindable from the roll.
+                    notes = replace(job.notes, frame=roll_frame_label(name, number))
                     self._file(
-                        seq, number, rf.image, frame_meta, notes,
+                        seq, number, rf.image,
+                        dict(frame_meta, roll_membership=roll_membership(
+                            name, number, "frame", out)),
+                        notes,
                         tuple(job.tags) + ("gui", "roll", name),
                         raw_image=rf.raw_image,
                         prescan=rf.prescan,
@@ -2193,32 +2254,8 @@ class ScanSession:
             paths.append(_unclaimed(where / self._out_name(number, meta, roll)))
         capture = self._scanner.capture_record()
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
-            shape = image.shape
-            layout = dict(capture.get("raw_layout") or {})
-            actual = {
-                "lines": shape[0],
-                "width": shape[1],
-                "channels": shape[2] if len(shape) > 2 else 1,
-            }
-            # The rows the bytes can decode to: what arrived, not what GET
-            # PARAMETERS declared, less what the 7200 dpi realignment trimmed.
-            # Judged against the declared count, every pass that ended early
-            # -- the one whose bytes matter most -- and every 7200 dpi pass
-            # looked like another pass's bytes, and was filed without them.
-            received = layout.get("lines_received")
-            channels = layout.get("channels")
-            if received is not None and channels:
-                layout["lines"] = int(received) // int(channels)
-            if layout.get("lines") is not None:
-                layout["lines"] = (int(layout["lines"])
-                                   - int(meta.get("stagger_realigned") or 0))
-            # Only fields the layout actually declares are judged; an absent one
-            # says nothing, and dropping good bytes over it would be its own bug.
-            disagree = {
-                k: (layout[k], actual[k])
-                for k in actual
-                if layout.get(k) is not None and layout[k] != actual[k]
-            }
+            disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
+                                          meta)
             if disagree:
                 # `last_raw` holds whatever the previous pass left behind when a
                 # pass did not keep its own. Filing that here produces an entry

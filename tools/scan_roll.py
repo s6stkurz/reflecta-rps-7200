@@ -65,6 +65,7 @@ from rps7200.session import (
     walked_prescans,
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
+from rps7200.session import raw_bytes_disagree, roll_frame_label, roll_membership
 from rps7200.session import rewind as _rewind
 from tools import frame_edges  # noqa: E402  (repo root is on the path above)
 
@@ -531,6 +532,30 @@ def main() -> int:
                         pre = out / f"prescan{number:02d}.tif"
                         tiff.write(str(pre), frame.prescan)
                         record["prescan"] = pre.name
+                    # And filed, with its raw bytes, as the window files a
+                    # walk's prescans. A walk from here used to leave only the
+                    # corrected TIFF above: nothing that could be re-decoded,
+                    # and the references `--approved` holds frames to later.
+                    if (args.library and frame.prescan is not None
+                            and frame.raw_prescan is not None):
+                        capture = dict(s.capture_record())
+                        meta = dict(frame.prescan_meta or {},
+                                    roll_membership=roll_membership(
+                                        roll_name, number, "prescan", out))
+                        if raw_bytes_disagree(frame.raw_prescan.shape,
+                                              capture.get("raw_layout"), meta):
+                            capture.update(raw=None, raw_layout=None)
+                        s.debug_claim(frame.raw_prescan)
+                        writer.submit(
+                            number=number, paths=[], dpi=args.prescan_dpi,
+                            image=frame.prescan, raw_image=frame.raw_prescan,
+                            meta=meta, prescan=None, library=args.library,
+                            inquiry=info, capture=capture,
+                            tags=sorted({*args.tags, "roll", "prescan", roll_name}),
+                            film=FilmNotes(stock=args.stock, process=args.process,
+                                           frame=roll_frame_label(roll_name, number),
+                                           notes=args.notes),
+                        )
                     if frame.prescan_before is not None:
                         # The frame as it arrived, before aiming moved it. A
                         # corrected prescan replaces the original outright, so
@@ -592,7 +617,8 @@ def main() -> int:
                         # a second time. `session.py:1110` has always passed this;
                         # this tool never did.
                         raw_image=frame.raw_image,
-                        meta=frame.meta,
+                        meta=dict(frame.meta, roll_membership=roll_membership(
+                            roll_name, number, "frame", out)),
                         prescan=frame.prescan,
                         # Which way the prescan was read; it has no raw bytes
                         # of its own to say so in the entry.
@@ -607,8 +633,9 @@ def main() -> int:
                             # Distinct per frame, and it has to be:
                             # library.signature() includes film.frame, so without it
                             # every picture of a roll would register as a duplicate
-                            # of every other.
-                            frame=f"{roll_name}/{number:02d}",
+                            # of every other. The window's format, so the window
+                            # can find these entries from the roll.
+                            frame=roll_frame_label(roll_name, number),
                             notes=args.notes,
                         ),
                     )

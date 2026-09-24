@@ -295,6 +295,10 @@ def test_what_the_session_files_it_claims_from_debug_filing(tmp_path):
 
 
 def test_the_default_scanner_leaves_debug_to_the_environment(monkeypatch):
+    # No libusb needed to build one: this is about the flag, not the bus.
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "Transport", lambda **kw: FakeTransport())
     monkeypatch.setenv("RPS7200_DEBUG", "1")
     s = ScanSession(root=None, open_scanner=None, verbose=False)
     assert s._default_scanner().debug is True

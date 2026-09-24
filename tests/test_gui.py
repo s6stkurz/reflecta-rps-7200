@@ -36,6 +36,16 @@ gui = load_tool("gui")
 # -- the stop button --------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _demo_is_calibrated(monkeypatch):
+    """The window asks for a calibration before any picture is taken, and
+    these tests stand in for an operator who has given one. The demo, like
+    the scanner, now refuses a corrected pass no calibration covers."""
+    from rps7200.demo import DemoScanner
+
+    monkeypatch.setattr(DemoScanner, "_calibrated", True, raising=False)
+
+
 def test_a_roll_promises_to_stop_after_the_frame():
     """Not "now". The frame in flight always finishes -- an abandoned read is
     what leaves the scanner needing a power cycle."""
@@ -2968,6 +2978,47 @@ def test_entries_are_joined_to_rolls_by_the_frame_they_name(tmp_path):
     assert sorted(index["strip"]) == [1, 2]
     assert sorted(index["other"]) == [1]
     assert "" not in index
+
+
+def _member(tmp_path, roll, number, kind, name):
+    entry = tmp_path / "library" / name
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text(json.dumps({
+        "film": {"frame": f"{roll}-{number:02d}"},
+        "tags": ["roll", kind] if kind == "prescan" else ["roll"],
+        "extra": {"roll_membership": {"roll": roll, "number": number,
+                                      "kind": kind}},
+    }), encoding="utf-8")
+    return entry
+
+
+def test_a_walks_prescan_is_never_joined_as_the_frame(tmp_path):
+    """A walk's prescan and the frame scanned there share a roll and a number.
+    Joined on those alone, Export delivered the 300 dpi prescan as the frame
+    at full resolution whenever it came last in glob order."""
+    frame = _member(tmp_path, "strip", 3, "frame", "a-frame")
+    _member(tmp_path, "strip", 3, "prescan", "z-prescan")
+    index = gui.roll_entry_index(tmp_path / "library")
+    assert index["strip"][3] == frame
+
+
+def test_entries_filed_by_the_roll_tool_are_found_too(tmp_path):
+    """`tools/scan_roll.py` labelled frames `<roll>/<NN>`, which the window
+    could not parse, so Export found nothing of a roll scanned from there."""
+    entry = tmp_path / "library" / "cli"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text(json.dumps(
+        {"film": {"frame": "cli-roll/04"}}), encoding="utf-8")
+    assert gui.roll_entry_index(tmp_path / "library")["cli-roll"][4] == entry
+
+
+def test_an_old_walk_prescan_without_a_membership_is_left_out(tmp_path):
+    old = tmp_path / "library" / "old-prescan"
+    old.mkdir(parents=True)
+    (old / "scan.json").write_text(json.dumps(
+        {"film": {"frame": "strip-02"}, "tags": ["gui", "roll", "prescan"]}),
+        encoding="utf-8")
+    assert gui.roll_entry_index(tmp_path / "library") == {}
 
 
 def test_a_rolls_own_date_beats_the_filesystems(tmp_path):

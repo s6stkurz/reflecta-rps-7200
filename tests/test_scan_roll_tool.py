@@ -795,3 +795,34 @@ def test_what_cannot_work_is_refused_before_the_scanner_opens(tmp_path,
         scan_roll.main()
     assert refused.value.code == 2
     assert created == []
+
+
+def test_a_walk_files_its_prescans_with_their_raw_pixels(tmp_path, monkeypatch):
+    """A walk from here left only corrected prescanNN.tif -- nothing that could
+    be re-decoded, and the references `--approved` holds frames to later."""
+    import json
+
+    from rps7200 import library
+
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "2")
+    assert code == 0
+    filed = sorted((tmp_path / "lib").glob("*/scan.json"))
+    assert len(filed) == 2
+    for path in filed:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        image, _ = library.load(path.parent)
+        assert int(image.max()) == 30, "the corrected prescan was filed"
+        member = record["extra"]["roll_membership"]
+        assert member["kind"] == "prescan" and member["roll"] == "teststrip"
+        assert record["film"]["frame"].startswith("teststrip-")
+
+
+def test_a_frame_is_labelled_the_way_the_window_labels_it(tmp_path, monkeypatch):
+    import json
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0
+    record = json.loads(next((tmp_path / "lib").glob("*/scan.json"))
+                        .read_text(encoding="utf-8"))
+    assert record["film"]["frame"] == "teststrip-01"
+    assert record["extra"]["roll_membership"]["kind"] == "frame"

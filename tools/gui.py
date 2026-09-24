@@ -5174,13 +5174,30 @@ def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
     root = Path(library_root)
     if not root.is_dir():
         return out
-    for record_path in root.glob("*/scan.json"):
+    for record_path in sorted(root.glob("*/scan.json")):
         try:
             record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        member = (record.get("extra") or {}).get("roll_membership")
+        if isinstance(member, dict):
+            # Said by the entry itself. Only a scanned frame is the frame:
+            # a walk's prescan shares its roll and number, and Export used to
+            # deliver the 300 dpi prescan as the frame at full resolution.
+            if member.get("kind") != "frame":
+                continue
+            roll, number = str(member.get("roll") or ""), member.get("number")
+            if not roll or not isinstance(number, int):
+                continue
+            out.setdefault(roll, {})[number] = record_path.parent
+            continue
+        # Filed before entries said so: parse the label, and leave out what
+        # is tagged a prescan for the same reason as above. `tools/scan_roll.py`
+        # wrote `<roll>/<NN>`, which is read too.
+        if "prescan" in (record.get("tags") or ()):
+            continue
         frame = str(((record.get("film") or {}).get("frame") or "")).strip()
-        roll, _, number = frame.rpartition("-")
+        roll, _, number = frame.rpartition("/" if "/" in frame else "-")
         if not roll or not number.isdigit():
             continue
         out.setdefault(roll, {})[int(number)] = record_path.parent
