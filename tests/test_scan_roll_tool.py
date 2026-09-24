@@ -226,6 +226,15 @@ def test_a_shading_failure_files_the_frames_already_scanned(tmp_path,
     assert code != 0, "losing the roll part way is not a success"
 
 
+def test_no_shading_reaches_every_pass_of_the_roll(tmp_path, monkeypatch):
+    """`--no-shading` used to skip only the up-front calibration. The roll's
+    prescans still asked for a correction, so the first one calibrated inside
+    itself -- the path measured twice as stalling the device."""
+    scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0
+    assert scanner.asked["shading"] is False, scanner.asked
+
+
 def test_ctrl_c_reaches_the_roll_as_a_stop_between_frames(tmp_path, monkeypatch):
     """The roll checks it before every frame, so a Ctrl-C finishes the frame
     in flight instead of abandoning its read -- which wedges the scanner."""

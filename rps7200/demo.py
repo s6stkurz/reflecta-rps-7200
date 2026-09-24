@@ -447,15 +447,26 @@ class DemoScanner:
         if skip:
             return {"action": "skipped", "summary": "shading off (demo)"}
         self._work(210.0 if not reuse else 1.0)
+        self._calibrated = True
         return {
             "action": "loaded" if reuse else "calibrated",
             "summary": f"shading {'loaded' if reuse else 'calibrated'} (demo)",
         }
 
+    def _refuse_uncalibrated(self, shading: bool) -> None:
+        """Refuse a corrected pass before any calibration, as the real one does.
+
+        The real scanner used to calibrate inside such a pass; it now refuses
+        it, and so does this -- with its words, not a copy of them.
+        """
+        if shading and not getattr(self, "_calibrated", False):
+            raise DirectScanner.uncalibrated()
+
     def prescan(
         self, resolution: int = 300, frame: Any = None, keep_raw: bool = False,
-        film: str = "negative",
+        film: str = "negative", shading: bool = True,
     ) -> tuple[np.ndarray, Any]:
+        self._refuse_uncalibrated(shading)
         self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
         image = self._pair_image("prescan.tif", film, resolution)
         if image is None:
@@ -540,6 +551,7 @@ class DemoScanner:
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         self._need_film("scan")
+        self._refuse_uncalibrated(shading)
         if infrared and not supports_infrared(film):
             # The demo refuses exactly what the device refuses. A stand-in that
             # accepts a combination the hardware will not is worse than no

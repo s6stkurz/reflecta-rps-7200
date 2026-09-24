@@ -111,7 +111,10 @@ def test_a_calibration_that_yields_nothing_says_so(tmp_path):
     s.calibrate_shading = lambda **kw: {"reference": None, "bytes_drained": 0}
     result = s.ensure_shading(tmp_path / "shading.npz", reuse=False)
     assert result["reference"] is None
-    assert "raw" in result["summary"]
+    # It used to promise raw scans, and the next scan calibrated inside itself
+    # instead. Now a corrected scan is refused until a calibration succeeds.
+    assert "no usable shading reference" in result["summary"]
+    assert "refused" in result["summary"]
 
 
 # --- capture_record ---------------------------------------------------------

@@ -684,22 +684,16 @@ driver for Nikon Coolscans:
   (The variance-based `detect_frame` this item used to name has been deleted;
   it was documented as unreliable and nothing called it.)
 
-- **A roll from the window can reach the lazy shading calibration that stalls
-  this machine.** `ScanSession._roll` never calls `ensure_shading` -- the only
-  caller is the `Calibrate` job (`rps7200/session.py:759`) -- and
-  `ask_to_calibrate` is deliberately non-modal, so it can be dismissed. If the
-  roll's first prescan is what finds `self._shading is None`, `scan()`
-  calibrates from inside the scan flow, which is the documented stall: *"bulk
-  read of 16384 bytes failed after 0 bytes: LIBUSB_ERROR_PIPE, right after the
-  shading descriptor, and the device stops answering"*, measured twice.
-
-  `tools/scan_roll.py` was fixed for exactly this (see
-  `tests/test_scan_roll_calibration.py`); the window was not. The fix is **not**
-  to call `ensure_shading` unconditionally: with `reuse=False` it recalibrates
-  rather than no-opping, so that would add 3-4 minutes to every roll. It has to
-  fire only where `self._shading is None`, and it needs a reference path, which
-  `Roll` does not carry. Left until someone decides what that path should be
-  rather than guessed at.
+- **~~A roll from the window can reach the lazy shading calibration that
+  stalls this machine.~~ Closed 2026-09-24: there is no lazy calibration any
+  more.** `scan()` refuses a corrected pass that no reference covers
+  (`DirectScanner.uncalibrated`) before it sends anything, metering included,
+  instead of calibrating inside it -- the path measured twice as *"bulk read of
+  16384 bytes failed after 0 bytes: LIBUSB_ERROR_PIPE"*. A roll from the window
+  whose Calibrate was dismissed or failed now fails its first frame with that
+  message rather than stalling the device. `--no-shading` reaches every pass of
+  a roll (prescans and metering probes too), so it no longer means "calibrate
+  lazily later". See `audit/problems/P15-lazy-calibration-inside-scan.md`.
 
 - **Nothing bounds a roll's total sub-frame travel on the approved path.**
   `framing.ROLL_TRAVEL_LIMIT_MM` is enforced through `StripWalk`, which only
@@ -711,9 +705,11 @@ driver for Nikon Coolscans:
   peak cumulative displacement is 0.86 mm against a 12 mm limit -- but the
   path is genuinely unguarded.
 
-- **A dry run through `tools/scan_roll.py` files nothing in the library.**
-  `debug=False` is passed deliberately at `tools/scan_roll.py:176` because the
-  tool files its own entries -- but it does that only in the real-scan branch.
+- **A dry run through `tools/scan_roll.py` files nothing in the library**
+  unless `RPS7200_DEBUG=1`. The tool no longer forces `debug=False` (it claims
+  the frames it files itself, `DirectScanner.debug_claim`), so with debug on
+  the walk's prescans, probes and holds are filed -- but by default the tool
+  files its own entries only in the real-scan branch.
   The dry-run branch writes `prescanNN.tif` and no raw bytes, so a walk's
   passes cannot be re-decoded later. `ScanSession` does file them ("on a dry
   run the prescans are the entire product"), so the window is right and the

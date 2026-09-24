@@ -51,6 +51,36 @@ def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
     ), image
 
 
+@pytest.fixture(autouse=True)
+def calibrated(monkeypatch):
+    """Every stand-in here has been calibrated, as the window insists on first.
+
+    These tests are about decoding, framing and rolls. The refusal an
+    uncalibrated pass gets is its own test below, which undoes this.
+    """
+    monkeypatch.setattr(DemoScanner, "_calibrated", True, raising=False)
+
+
+def test_an_uncalibrated_pass_is_refused_as_the_real_one_refuses_it(
+        tmp_path, monkeypatch):
+    """The real scanner used to calibrate inside such a pass, and now refuses
+    it with `DirectScanner.uncalibrated` -- which the stand-in raises too,
+    rather than a retyped copy of its words."""
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import ShadingUnavailable
+
+    monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
+    entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    with pytest.raises(ShadingUnavailable) as refused:
+        s.scan(resolution=900, infrared=False)
+    assert str(refused.value) == str(DirectScanner.uncalibrated())
+    with pytest.raises(ShadingUnavailable):
+        s.prescan()
+    s.ensure_shading(None)
+    s.scan(resolution=900, infrared=False)       # calibrated: it scans
+
+
 def test_it_decodes_the_raw_bytes_not_the_tiff(tmp_path):
     """Proved by corrupting the TIFF: the pixels must still come back right."""
     path, truth = entry(tmp_path)

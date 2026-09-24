@@ -481,6 +481,11 @@ def main() -> int:
                 # the window's detector, so --correct reads edges as it does
                 edge_reader=frame_edges.walk_reader,
                 should_stop=interrupt.requested,
+                # Every pass of the roll, prescans and metering probes
+                # included. `--no-shading` used to skip only the calibration
+                # above, so the first prescan -- still asking for a correction
+                # -- calibrated inside itself, on the path that stalls.
+                shading=not args.no_shading,
             ):
                 number = frame.index + 1
                 record = {

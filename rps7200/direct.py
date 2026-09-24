@@ -521,6 +521,20 @@ class DirectScanner:
                       "will be sent to it that could drive it. Power-cycle it "
                       "and open a new session.")
 
+    @staticmethod
+    def uncalibrated(reason: str = "no shading reference in this session"
+                     ) -> ShadingUnavailable:
+        """The refusal a corrected pass gets when no calibration covers it.
+
+        A static method so a stand-in refuses with the same words rather than
+        a retyped copy of them.
+        """
+        return ShadingUnavailable(
+            f"{reason}. Calibrate first (the window's Calibrate, "
+            f"`ensure_shading`, or the tool without --no-shading), or pass "
+            f"shading=False to accept raw pixels deliberately."
+        )
+
     def _refuse_if_suspect(self, what: str) -> None:
         """Refuse to drive a device a pass was abandoned in.
 
@@ -610,9 +624,10 @@ class DirectScanner:
         ``duration_s`` what the calibration cost, when one ran
         ``summary``    one line saying which of those happened, to print
 
-        ``skip`` leaves the session with no reference at all, which returns raw
-        pixels: the scanner never corrects its own output, so scans then come
-        back striped.
+        ``skip`` leaves the session with no reference at all. A pass that then
+        asks for correction is refused rather than calibrated for (see `scan`);
+        one taken with ``shading=False`` comes back raw, and striped: the
+        scanner never corrects its own output.
         """
         path = Path(path)
         if skip:
@@ -643,7 +658,8 @@ class DirectScanner:
         summary = f"  {drained:.2f} MB in {duration:.0f}s"
         summary += (
             f", saved {saved}" if result["reference"] is not None
-            else " -- no usable shading reference; scans will be raw"
+            else " -- no usable shading reference; a corrected scan will be "
+                 "refused until a calibration succeeds"
         )
         return {
             "action": "calibrated",
@@ -1822,6 +1838,7 @@ class DirectScanner:
         frame: tuple[int, int, int, int] | None = None,
         keep_raw: bool = False,
         film: str = FILM_NEGATIVE,
+        shading: bool = True,
     ) -> tuple[np.ndarray, ScanParameters]:
         """Low-resolution RGB pass over the full transport.
 
@@ -1843,7 +1860,8 @@ class DirectScanner:
             infrared=False,
             depth=DEPTH_8,
             frame=frame or FULL_FRAME,
-            shading=True,
+            # True unless the caller chose raw on purpose (`--no-shading`).
+            shading=shading,
             keep_raw=keep_raw,
             # Does not change the pass -- a framing pass runs at the device's
             # own settings and meters nothing. It is carried so the entry says
@@ -2143,6 +2161,7 @@ class DirectScanner:
         film: str = FILM_NEGATIVE,
         infrared_blue_headroom: float | None = None,
         max_rounds: int | None = None,
+        shading: bool = True,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
 
@@ -2241,6 +2260,10 @@ class DirectScanner:
                 resolution=resolution,
                 infrared=False,
                 exposure_scale=scales,
+                # As the pass being metered: a scan taken raw on purpose is
+                # metered raw, rather than its probe asking for a correction
+                # the session has no reference for.
+                shading=shading,
                 # CLAUDE.md's rule is "file every scan, with its raw bytes",
                 # without an exception for throwaway passes -- and a metering
                 # probe is only throwaway until someone asks what it saw. At
@@ -2530,7 +2553,8 @@ class DirectScanner:
         if exposure_scale is not None:
             scales = list(exposure_scale)
         elif auto_exposure:
-            scales = self.auto_exposure(film=film, infrared=infrared)
+            scales = self.auto_exposure(film=film, infrared=infrared,
+                                        shading=shading)
         else:
             scales = [1.0, 1.0, 1.0]
 
@@ -2610,14 +2634,15 @@ class DirectScanner:
 
         ``shading`` applies this session's shading reference, which is what
         removes the vertical striping. The scanner measures its per-column
-        response but returns raw pixels, so this method calibrates -- once
-        per session, as the vendor does at power-on, and again whenever the
-        existing reference is missing or too narrow for this pass -- and never
-        returns a pass it was asked to correct uncorrected. Where it cannot be
-        corrected it raises :class:`~rps7200.protocol.ShadingUnavailable`
-        rather than hand back raw pixels silently, and it raises *before*
-        running the pass, so a refusal costs no scanner time. Pass
-        ``shading=False`` to accept raw pixels on purpose.
+        response but returns raw pixels, so the session calibrates once, up
+        front, as the vendor does at power-on (`ensure_shading`). This method
+        never returns a pass it was asked to correct uncorrected, and never
+        calibrates inside one either -- that path stalled the device. Where the
+        reference is missing or too narrow for this pass it raises
+        :class:`~rps7200.protocol.ShadingUnavailable` (`uncalibrated`), and it
+        raises *before* sending anything -- metering included -- so a refusal
+        costs no scanner time. Pass ``shading=False`` to accept raw pixels on
+        purpose.
 
         **A 7200 dpi pass cannot be corrected at all on this hardware** and is
         refused outright: the device's calibration will not produce a
@@ -2666,6 +2691,46 @@ class DirectScanner:
                 "that as a negative.)"
             )
 
+        if frame is None:
+            frame = FULL_FRAME
+
+        if shading:
+            # Never fall through to raw pixels for lack of a reference wide
+            # enough, and never find out after the pass: both checks are made
+            # before anything is sent -- before metering too, whose probes
+            # would otherwise be spent on a pass that is then refused. Finding
+            # out afterwards spends 5.5 minutes at 7200 dpi to learn what is
+            # knowable here.
+            needed = self._shading_columns_needed(frame, resolution)
+            if needed > self.MAX_SHADING_COLUMNS:
+                # No resolution argument can widen the reference past this --
+                # measured on the device, see MAX_SHADING_COLUMNS. Calibrating
+                # would cost two minutes and return the same 5172 columns.
+                raise ShadingUnavailable(
+                    f"a {resolution} dpi pass over this frame is {needed} "
+                    f"columns, and this scanner's calibration will not produce "
+                    f"a reference wider than {self.MAX_SHADING_COLUMNS} at any "
+                    f"resolution -- so it cannot be corrected at all, and no "
+                    f"calibration will change that. Scan at 3600 dpi or below, "
+                    f"or pass shading=False to accept raw pixels deliberately."
+                )
+            if self._shading is None or needed > self._shading.pixels_per_line:
+                reason = (
+                    "no shading reference in this session" if self._shading is None
+                    else f"the reference covers {self._shading.pixels_per_line} "
+                         f"columns and this pass needs {needed}"
+                )
+                # Refused, not calibrated here. A calibration started inside a
+                # pass used to be the fallback, and it is the one path recorded
+                # as stalling the device: measured twice, `bulk read of 16384
+                # bytes failed after 0 bytes: LIBUSB_ERROR_PIPE` right after the
+                # shading descriptor, and the scanner stopped answering. The
+                # same calibration asked for up front -- `ensure_shading`, the
+                # window's Calibrate, the tools -- works. It was also reached
+                # without anyone choosing it: `--no-shading` on a roll, a scan
+                # queued behind a calibration that failed, a metering probe.
+                raise self.uncalibrated(reason)
+
         if auto_exposure:
             # Probe in RGB whatever the scan will be, in at most two rounds --
             # the vendor's own sequence. Scans otherwise run at the scanner's
@@ -2680,7 +2745,8 @@ class DirectScanner:
             self._log(f"auto-exposure: probing in RGB (scan is "
                       f"{'RGBI' if infrared else 'RGB'})")
             exposure_scale = self.auto_exposure(
-                target=exposure_target, infrared=infrared, film=film
+                target=exposure_target, infrared=infrared, film=film,
+                shading=shading,
             )
             self._log(
                 f"auto-exposure: {[round(v, 3) for v in exposure_scale]}"
@@ -2710,53 +2776,6 @@ class DirectScanner:
 
         self.set_exposure_time()
         self.set_highlight_shadow()
-
-        if frame is None:
-            frame = FULL_FRAME
-
-        if shading:
-            # Never fall through to raw pixels for lack of a reference wide
-            # enough -- calibrate for *this* pass now rather than later
-            # discovering the mask cannot cover it. Both checks happen before
-            # the pass, so a refusal costs nothing: finding out afterwards
-            # spends 5.5 minutes at 7200 dpi to learn what is knowable here.
-            needed = self._shading_columns_needed(frame, resolution)
-            if needed > self.MAX_SHADING_COLUMNS:
-                # No resolution argument can widen the reference past this --
-                # measured on the device, see MAX_SHADING_COLUMNS. Calibrating
-                # would cost two minutes and return the same 5172 columns.
-                raise ShadingUnavailable(
-                    f"a {resolution} dpi pass over this frame is {needed} "
-                    f"columns, and this scanner's calibration will not produce "
-                    f"a reference wider than {self.MAX_SHADING_COLUMNS} at any "
-                    f"resolution -- so it cannot be corrected at all, and no "
-                    f"calibration will change that. Scan at 3600 dpi or below, "
-                    f"or pass shading=False to accept raw pixels deliberately."
-                )
-            if self._shading is None or needed > self._shading.pixels_per_line:
-                reason = (
-                    "no shading reference in this session" if self._shading is None
-                    else f"reference covers {self._shading.pixels_per_line} "
-                         f"columns, this pass needs {needed}"
-                )
-                self._log(f"calibrating before scanning ({reason})")
-                # At the default 3600 dpi, not this pass's resolution. The
-                # device caps its reference at MAX_SHADING_COLUMNS whatever it
-                # is asked for, and 3600 is what reaches that cap -- so a
-                # narrower calibration buys nothing and costs a second one as
-                # soon as a wider pass follows. It is also the only resolution
-                # any calibration, vendor or ours, has ever run at.
-                self.calibrate_shading()
-                if (self._shading is None
-                        or needed > self._shading.pixels_per_line):
-                    raise ShadingUnavailable(
-                        f"calibrating at {resolution} dpi did not produce a "
-                        f"reference this pass's {needed} columns can use "
-                        + (f"(got {self._shading.pixels_per_line})"
-                           if self._shading is not None else "(got none)")
-                        + ". Pass shading=False to accept raw pixels "
-                        "deliberately."
-                    )
 
         self.set_scan_frame(*frame)
 
@@ -2872,11 +2891,10 @@ class DirectScanner:
                    if shading_report["clipped"] else "")
             )
         elif shading:
-            # Calibrating just above did not leave a reference at all -- the
-            # pass itself came back empty (calculate_shading returned None).
+            # The check before the pass makes this unreachable; kept so a
+            # correction that was asked for can never quietly not happen.
             raise ShadingUnavailable(
-                "no shading reference could be established for this session "
-                "even after calibrating just now. Pass shading=False to "
+                "no shading reference for this pass. Pass shading=False to "
                 "accept raw pixels deliberately."
             )
         else:
@@ -3027,6 +3045,7 @@ class DirectScanner:
         should_stop: Callable[[], bool] | None = None,
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
         source: str = "operator",
+        shading: bool = True,
     ) -> dict[str, Any]:
         """Move the film until this frame sits where it was decided to go.
 
@@ -3087,7 +3106,7 @@ class DirectScanner:
 
             time.sleep(self.HOLD_SETTLE_S)
             image, _ = self.prescan(resolution=prescan_resolution,
-                                    keep_raw=keep_raw)
+                                    keep_raw=keep_raw, shading=shading)
             out["prescan"] = image
             measured, detail = measure_shift_mm(approved.reference, image)
             out["history"].append(detail)
@@ -3147,6 +3166,7 @@ class DirectScanner:
         self, index: int, image: np.ndarray, prescan_resolution: int,
         walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
         should_stop: Callable[[], bool] | None = None,
+        shading: bool = True,
     ) -> dict[str, Any]:
         """Judge where this frame sits, put it there, and check the work.
 
@@ -3222,6 +3242,7 @@ class DirectScanner:
             _Aim(offset_mm=decision, reference=image),
             keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
             rejudge=self._rejudge_for(index, walk, decision),
+            shading=shading,
         )
         out.update({k: v for k, v in fix.items() if k != "prescan"})
         out["prescan"] = fix.get("prescan")
@@ -3497,6 +3518,7 @@ class DirectScanner:
         fast_infrared: bool = True,
         first_index: int = 0,
         edge_reader: Callable[[str], Any] | None = None,
+        shading: bool = True,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -3675,7 +3697,8 @@ class DirectScanner:
 
             try:
                 prescan_image, _ = self.prescan(
-                    resolution=prescan_resolution, keep_raw=keep_raw
+                    resolution=prescan_resolution, keep_raw=keep_raw,
+                    shading=shading,
                 )
                 raw_prescan = self.last_pixels_raw
                 prescan_meta = dict(self.last_scan_meta or {})
@@ -3716,6 +3739,7 @@ class DirectScanner:
                         # `operator` -- the one thing `source`'s own docstring
                         # says the field exists to prevent.
                         source=getattr(held, "source", None) or "operator",
+                        shading=shading,
                     )
                     if fix.get("roll_abort"):
                         holding = False
@@ -3754,7 +3778,7 @@ class DirectScanner:
                     fix = self._aim_frame(
                         index, prescan_image, prescan_resolution, walk,
                         dry_run=correct_dry_run, keep_raw=keep_raw,
-                        should_stop=should_stop,
+                        should_stop=should_stop, shading=shading,
                     )
                     marks["correction"] = {k: v for k, v in fix.items()
                                            if k != "prescan"}
@@ -3810,7 +3834,8 @@ class DirectScanner:
                         # before the RGBI gain is applied.
                         self.set_gain_offset(baseline, infrared=infrared)
                         scales = self.auto_exposure(
-                            target=exposure_target, infrared=infrared, film=film
+                            target=exposure_target, infrared=infrared, film=film,
+                            shading=shading,
                         )
                         metered = True
 
@@ -3832,6 +3857,7 @@ class DirectScanner:
                         film=film,
                         keep_raw=keep_raw,
                         fast_infrared=fast_infrared,
+                        shading=shading,
                     )
                     meta["roll_index"] = index
                     meta["roll_position"] = position

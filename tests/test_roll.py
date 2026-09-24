@@ -199,7 +199,7 @@ class FakeRoll(DirectScanner):
         return self.at
 
     # -- the passes
-    def prescan(self, resolution=300, frame=None, keep_raw=False):
+    def prescan(self, resolution=300, frame=None, keep_raw=False, shading=True):
         self.prescan_keep_raw.append(keep_raw)
         # `prescans` lets a test script what successive looks return, which is
         # how a correction's before/after pair gets simulated.
@@ -1527,16 +1527,28 @@ def test_every_prescan_through_a_hold_keeps_its_raw_bytes():
     assert scanner.prescan_keep_raw == [True, True]
 
 
-def test_an_automatic_calibration_runs_at_the_resolution_that_reaches_the_cap():
-    """Not the resolution of the pass that triggered it. The device will not
-    produce a reference wider than MAX_SHADING_COLUMNS whatever it is asked
-    for, and 3600 dpi is what reaches that cap -- so calibrating at a 300 dpi
-    prescan's own resolution would buy a 431-column reference, and a second
-    calibration the moment a real scan followed. 3600 is also the only
-    resolution any calibration, vendor or ours, has ever run at."""
+def test_a_pass_never_calibrates_inside_itself():
+    """A pass with no reference is refused, not calibrated for.
+
+    A calibration started inside a pass is the one path recorded as stalling
+    the device -- measured twice, LIBUSB_ERROR_PIPE right after the shading
+    descriptor -- and it was reached without anyone choosing it: `--no-shading`
+    on a roll, a scan queued behind a failed Calibrate, a metering probe.
+    """
     source = inspect.getsource(DirectScanner.scan)
-    assert "self.calibrate_shading()" in source
-    assert "self.calibrate_shading(resolution=resolution)" not in source
+    assert "self.calibrate_shading(" not in source
+
+
+def test_a_corrected_pass_with_no_reference_is_refused_before_anything_is_sent():
+    """Before metering too, whose probes would be spent on a refused pass."""
+    from conftest import FakeTransport
+    from rps7200.protocol import ShadingUnavailable
+
+    t = FakeTransport()
+    s = DirectScanner(transport=t, debug=False)
+    with pytest.raises(ShadingUnavailable, match="Calibrate first"):
+        s.scan(resolution=1800, auto_exposure=True)
+    assert t.sent == [], "commands went out for a pass that was refused"
 
 
 def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
