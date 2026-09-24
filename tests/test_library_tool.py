@@ -88,3 +88,81 @@ def test_a_complete_entry_still_prints_its_numbers(tmp_path):
     assert done.returncode == 0, done.stderr
     assert "1800" in done.stdout
     assert "4" in done.stdout
+
+
+# -- migrate-raw repairs a mislabelled entry and nothing else -----------------
+
+
+def _filed(root: Path, stored_from):
+    """An entry whose scan.tif is `stored_from(decode, reference, mask)`."""
+    import numpy as np
+
+    from rps7200 import library, tiff
+    from rps7200.shading import ShadingReference
+
+    width, lines = 16, 8
+    rng = np.random.default_rng(3)
+    planes = [rng.integers(2000, 60000, (lines, width), dtype=np.uint16)
+              for _ in range(3)]
+    raw = bytearray()
+    for y in range(lines):
+        for c, tag in enumerate("RGB"):
+            raw += tag.encode() * 2 + planes[c][y].tobytes()
+    decode = np.stack(planes, axis=-1)
+    reference = ShadingReference(
+        ref={c: np.linspace(20000.0, 40000.0, width) for c in range(3)},
+        mean={c: 30000.0 for c in range(3)}, pixels_per_line=width)
+    mask = None
+    path = library.save(
+        decode, {"resolution_dpi": 300, "channels": 3, "width": width,
+                 "height": lines, "depth": 16, "channel_order": list("RGB")},
+        root=root, reference=reference, ccd_mask=mask, raw=bytes(raw),
+        raw_layout={"format": "index", "bytes_per_line": width * 2,
+                    "width": width, "lines": lines, "channels": 3})
+    stored = stored_from(decode, reference, mask)
+    tiff.write(str(path / "scan.tif"), stored, resolution=300)
+    return path, decode, stored
+
+
+def _migrate(root: Path):
+    return subprocess.run(
+        [sys.executable, str(TOOL), "migrate-raw", "--write", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+
+
+def test_corrected_pixels_filed_as_raw_are_rewritten_and_the_old_file_kept(tmp_path):
+    import numpy as np
+
+    from rps7200 import tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, decode, stored = _filed(
+        root, lambda d, r, m: apply_shading(d, r, m)[0])
+    done = _migrate(root)
+    assert done.returncode == 0, done.stderr
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), decode)
+    kept = path / "scan.before-migrate-raw.tif"
+    assert kept.exists(), "the only corrected rendition was destroyed"
+    assert np.array_equal(tiff.read(str(kept)), stored)
+
+
+def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
+    """A stored image one shading does not explain is a decode regression --
+    the thing `reconstruct` exists to report -- and rewriting it from today's
+    decode would bury it for good."""
+    import numpy as np
+
+    from rps7200 import tiff
+
+    def drifted(d, r, m):
+        out = d.copy()
+        out[0, 0, 0] ^= 1
+        return out
+
+    root = tmp_path / "library"
+    path, _decode, stored = _filed(root, drifted)
+    done = _migrate(root)
+    assert "left alone" in done.stdout + done.stderr
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
+    assert not (path / "scan.before-migrate-raw.tif").exists()

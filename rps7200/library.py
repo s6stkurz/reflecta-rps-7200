@@ -34,6 +34,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -46,6 +47,7 @@ import numpy as np
 
 from . import tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
+from .protocol import ScanReadError
 from .shading import ShadingReference, apply_shading
 
 DEFAULT_ROOT = Path("library")
@@ -165,15 +167,12 @@ def save(
     film = film or FilmNotes()
     when = datetime.now(timezone.utc)
     root = Path(root)
-    path = root / entry_id(meta, film, when)
-    # Two scans in the same second with the same film and settings would
-    # otherwise land on one id and the second would overwrite the first.
-    if (path / "scan.json").exists():
-        base, n = path, 2
-        while (path / "scan.json").exists():
-            path = base.with_name(f"{base.name}-{n}")
-            n += 1
-    path.mkdir(parents=True, exist_ok=True)
+    path = _reserve(root, entry_id(meta, film, when))
+    # Present until the record is in place, so an entry a crash or a full
+    # disk cut short says so rather than passing for a directory of files.
+    # `verify` reports it; `entries()` never sees it (no `scan.json`).
+    (path / INCOMPLETE).write_text(
+        "this entry was being written and did not finish\n", encoding="utf-8")
 
     resolution = int(meta.get("resolution_dpi") or 0) or None
     tiff.write(str(path / "scan.tif"), image, resolution=resolution)
@@ -308,10 +307,89 @@ def save(
         "tags": sorted(set(tags or [])),
         "provenance": provenance(),
     }
-    (path / "scan.json").write_text(json.dumps(record, indent=2, default=str),
-                                    encoding="utf-8")
+    # Every file but the record itself, checksummed: `verify` could see damage
+    # to `scan.tif` and the raw bytes, and to nothing else -- a corrupt
+    # reference or mask would correct every export of the entry wrongly.
+    record["files"] = {
+        name: _sha256(path / name)
+        for name in ("shading.npz", "ccd_mask.bin", "prescan.tif")
+        if (path / name).exists()
+    }
+    # The record last, whole or not at all: written beside and renamed over,
+    # so a reader never meets half of one.
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    (path / INCOMPLETE).unlink(missing_ok=True)
     reindex(root)
     return path
+
+
+#: A tag saying an entry was taken without a shading reference on purpose --
+#: the byte-14 ladder, say, which is evidence and must never be pruned. `verify`
+#: does not report such an entry for lacking one. `tools/library.py tag` sets it.
+ON_PURPOSE = "uncalibrated-on-purpose"
+
+#: Marks an entry still being written. See :func:`save`.
+INCOMPLETE = "INCOMPLETE"
+
+
+def _reserve(root: Path, name: str) -> Path:
+    """Create this entry's directory, or the next free ``-N`` beside it.
+
+    `mkdir` either creates the directory or fails because it exists, in one
+    step, so two writers in the same second -- the window's writer and a debug
+    flush, or the window and a tool -- can never be handed one directory. The
+    check this replaces looked for `scan.json`, which the first writer only
+    creates at the very end.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    path, n = root / name, 2
+    while True:
+        try:
+            path.mkdir()
+            return path
+        except FileExistsError:
+            path = root / f"{name}-{n}"
+            n += 1
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write beside, then rename over: the old file or the new, never half."""
+    temp = path.with_name(f".{path.name}.part")
+    with open(temp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temp, path)
+
+
+def add_tags(path: Path | str, tags: list[str]) -> list[str]:
+    """Add tags to one entry's record, in place and atomically. Returns them all."""
+    path = Path(path)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["tags"] = sorted(set(record.get("tags") or ()) | set(tags))
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    return record["tags"]
+
+
+def _replace_tiff(path: Path, image: np.ndarray, **kw: Any) -> None:
+    """Rewrite a stored TIFF beside, then swap it in: never a half-written one.
+
+    An interrupted in-place rewrite of a complete entry left a truncated file
+    under its ordinary name, which only a checksum could tell from a good one.
+    """
+    temp = path.with_name(f".{path.name}.part")
+    tiff.write(str(temp), image, **kw)
+    os.replace(temp, path)
+
+
+def entry_path(root: Path | str, record: dict[str, Any]) -> Path:
+    """Where this record's entry is: its directory, not the id it records.
+
+    The same until an entry is copied or renamed, after which the id inside
+    names a directory that is not there. `entries()` says which directory it
+    read each record from.
+    """
+    return Path(root) / str(record.get("_dir") or record.get("id"))
 
 
 def load(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
@@ -485,7 +563,10 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
     if raw is None:
         return None, "no raw bytes stored for this entry"
 
-    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    try:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"could not read scan.json: {exc}"
     layout = (record.get("raw") or {}).get("layout") or {}
     try:
         params = ScanParameters(
@@ -498,7 +579,9 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         )
         image, direction = DirectScanner.decode_index(
             raw, params, int(layout["channels"]))
-    except (KeyError, ValueError, TypeError) as exc:
+    # ScanReadError too: bytes that are not a pass at all are a verdict about
+    # this entry, not a reason to stop checking every entry after it.
+    except (KeyError, ValueError, TypeError, ScanReadError) as exc:
         return None, f"could not decode: {exc}"
 
     # An entry stores raw pixels, so a raw decode is what should match and this
@@ -525,7 +608,10 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
                 if mask_file and (path / mask_file).exists() else None)
         image, _ = apply_shading(image, reference, mask)
 
-    stored = tiff.read(str(path / "scan.tif"))
+    try:
+        stored = tiff.read(str(path / "scan.tif"))
+    except (OSError, ValueError) as exc:
+        return image, f"could not read scan.tif: {exc}"
     # The 7200 dpi realignment is part of the path from bytes to `scan.tif`,
     # so it is replayed here, not reported as a changed decode.
     image = _replay(image, record, stored.shape[0])
@@ -608,8 +694,8 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
                 done.append("scan: read bottom-up and stored that way -- "
                             "turned upright")
                 if write:
-                    tiff.write(str(path / "scan.tif"), decoded,
-                               resolution=scan_part.get("resolution_dpi") or None)
+                    _replace_tiff(path / "scan.tif", decoded,
+                                  resolution=scan_part.get("resolution_dpi") or None)
                     record.setdefault("image", {})["sha256"] = _sha256(
                         path / "scan.tif")
                 upright = decoded
@@ -657,8 +743,10 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
                 judged.update(direction=REVERSED, turned=True,
                               why=f"reads rows-reversed by {margin:+.2f}")
                 if write:
-                    tiff.write(str(path / "prescan.tif"),
-                               np.ascontiguousarray(prescan[::-1]))
+                    _replace_tiff(path / "prescan.tif",
+                                  np.ascontiguousarray(prescan[::-1]))
+                    record.setdefault("files", {})["prescan.tif"] = _sha256(
+                        path / "prescan.tif")
             elif best == "upright" and -margin >= REVERSAL_MARGIN:
                 judged.update(direction=FORWARD, why=f"reads upright by {-margin:+.2f}")
             else:
@@ -669,8 +757,7 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
                     + f" ({judged.get('why', '')})")
 
     if done and write:
-        (path / "scan.json").write_text(json.dumps(record, indent=2, default=str),
-                                        encoding="utf-8")
+        _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
     return done
 
 
@@ -811,9 +898,12 @@ def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:
     out = []
     for candidate in sorted(root.glob("*/scan.json")):
         try:
-            out.append(json.loads(candidate.read_text(encoding="utf-8")))
+            record = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        # Which directory it came from, for `entry_path`. Never written back.
+        record["_dir"] = candidate.parent.name
+        out.append(record)
     return out
 
 
@@ -844,8 +934,26 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     """Problems found in the library: missing files, checksum mismatches."""
     root = Path(root)
     problems = []
+    # What `entries()` cannot see: a directory with no record, or one a
+    # crash or a full disk left half-written. Each is either a scan's bytes
+    # with nothing to say what they are, or a gap nobody would otherwise
+    # notice -- and `verify` saying "intact" over one is the failure.
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else ():
+        if folder.name.startswith("."):
+            continue
+        if (folder / INCOMPLETE).exists():
+            problems.append(f"{folder.name}: was being written and did not finish")
+        elif not (folder / "scan.json").exists():
+            problems.append(f"{folder.name}: has no scan.json, so no check sees it")
+        else:
+            try:
+                json.loads((folder / "scan.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                problems.append(f"{folder.name}: scan.json cannot be read ({exc})")
     for record in entries(root):
-        path = root / str(record.get("id"))
+        path = entry_path(root, record)
+        if str(record.get("id")) != path.name:
+            problems.append(f"{path.name}: records itself as {record.get('id')}")
         image = record.get("image") or {}
         scan = path / str(image.get("file", "scan.tif"))
         if not scan.exists():
@@ -858,15 +966,24 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             name = cal.get(key)
             if name and not (path / name).exists():
                 problems.append(f"{path.name}: {name} is missing")
+        for name, digest in (record.get("files") or {}).items():
+            if (path / name).exists() and _sha256(path / name) != digest:
+                problems.append(f"{path.name}: {name} does not match its checksum")
         if not cal.get("shading"):
             # Say which kind this is. A scan deliberately taken raw and one that
             # wanted correction and silently went without look the same here
-            # otherwise, and only the second is a thing that went wrong.
+            # otherwise, and only the second is a thing that went wrong. The
+            # first is not a problem at all: reported as one -- with the words
+            # "correction was asked for", about the sentinel that says it was
+            # not -- it kept `make verify` red for a week, and a check that is
+            # always red is a check nobody reads.
             why = cal.get("skipped")
-            problems.append(
-                f"{path.name}: no shading reference, so this scan can never be "
-                f"corrected" + (f" -- correction was asked for: {why}" if why else "")
-            )
+            if why != SHADING_SKIPPED_EXPLICIT and ON_PURPOSE not in (record.get("tags") or ()):
+                problems.append(
+                    f"{path.name}: no shading reference, so this scan can never "
+                    f"be corrected"
+                    + (f" -- correction was asked for: {why}" if why else "")
+                )
         raw = record.get("raw") or {}
         if not raw.get("file"):
             problems.append(

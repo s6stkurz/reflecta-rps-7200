@@ -7,6 +7,7 @@
     uv run python tools/library.py duplicates         # what is redundant, and why
     uv run python tools/library.py duplicates --delete
     uv run python tools/library.py migrate-direction  # which way each pass was read
+    uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -40,13 +42,44 @@ from rps7200 import library
 from rps7200.console import use_utf8_stdout
 
 
+#: What `migrate-raw --write` keeps of the file it replaces.
+KEPT = "scan.before-migrate-raw.tif"
+
+
+def _one_shading_explains(path: Path, plain, stored) -> bool:
+    """Whether the stored pixels are this decode with the entry's shading once.
+
+    That is what a mislabelled entry is -- corrected pixels filed as raw --
+    and the only difference `migrate-raw` may repair. Anything else is a
+    decode that changed.
+    """
+    import numpy as np
+
+    from rps7200.shading import apply_shading
+
+    try:
+        _image, record = library.load(path)
+    except (OSError, ValueError, KeyError):
+        return False
+    if record.get("reference") is None:
+        return False
+    shaded, _ = apply_shading(plain, record["reference"], record.get("ccd_mask"))
+    return bool(np.array_equal(shaded, stored))
+
+
 def main() -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
-                             "duplicates", "migrate-raw", "migrate-direction"])
+                             "duplicates", "migrate-raw", "migrate-direction",
+                             "tag"])
+    ap.add_argument("entries", nargs="*", metavar="ENTRY",
+                    help="tag: the entry ids (directory names) to tag")
+    ap.add_argument("--add", action="append", default=[], metavar="TAG",
+                    help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
+                         "entry taken without a reference on purpose")
     ap.add_argument("--root", default="library")
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
@@ -83,6 +116,20 @@ def main() -> int:
                   f"{scan.get('channels') or '':>3}  {desc}  [{raw}]")
         print(f"\n{len(rows)} entries")
 
+    elif args.action == "tag":
+        if not args.entries or not args.add:
+            print("tag needs entry ids and at least one --add TAG",
+                  file=sys.stderr)
+            return 2
+        for name in args.entries:
+            path = root / name
+            if not (path / "scan.json").exists():
+                print(f"! {name}: no such entry", file=sys.stderr)
+                return 1
+            print(f"{name}: {', '.join(library.add_tags(path, args.add))}")
+        library.reindex(root)
+        return 0
+
     elif args.action == "verify":
         problems = library.verify(root)
         for p in problems:
@@ -95,14 +142,20 @@ def main() -> int:
         # counting it as one turns this check into a metric that cries wolf --
         # the summary read "6 entries no longer decode to what was stored"
         # when all six simply had nothing stored to decode.
-        changed = unreadable = 0
+        changed = unreadable = behind = 0
         for r in library.entries(root):
-            path = root / str(r.get("id"))
+            path = library.entry_path(root, r)
             _, verdict = library.reconstruct(path)
             if verdict.startswith("identical"):
                 mark = " "
-            elif "no raw bytes" in verdict or verdict.startswith("could not"):
+            elif ("no raw bytes" in verdict or verdict.startswith("could not")
+                  or "cannot be reproduced" in verdict):
                 mark, unreadable = "-", unreadable + 1
+            elif verdict.startswith("stored as it was read"):
+                # Filed before passes were turned upright: known, not a
+                # regression, and `migrate-direction` brings it up to date.
+                # Counted as changed, it was a false alarm on every such entry.
+                mark, behind = "~", behind + 1
             else:
                 mark, changed = "!", changed + 1
             print(f"{mark} {path.name}: {verdict}")
@@ -113,6 +166,9 @@ def main() -> int:
         if unreadable:
             print(f"{unreadable} had nothing to decode from -- not a "
                   f"regression, but they cannot be re-corrected either")
+        if behind:
+            print(f"{behind} stored bottom-up from before passes were turned "
+                  f"upright -- not a regression; see migrate-direction")
         return 1 if changed else 0
 
     elif args.action == "duplicates":
@@ -126,7 +182,7 @@ def main() -> int:
 
         freed = 0
         for record, reason in doomed:
-            path = root / str(record.get("id"))
+            path = library.entry_path(root, record)
             size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
             freed += size
             print(f"{'removing' if args.delete else 'redundant'}: {path.name}"
@@ -164,7 +220,7 @@ def main() -> int:
 
         planned, skipped, failed = [], [], []
         for r in library.entries(root):
-            path = root / str(r.get("id"))
+            path = library.entry_path(root, r)
             stored_shape = tuple((r.get("image") or {}).get("shape") or ())
             applied = (r.get("image") or {}).get("corrections_applied") or []
             decoded, verdict = library.reconstruct(path)
@@ -188,6 +244,16 @@ def main() -> int:
                 continue
             if np.array_equal(plain, stored) and not applied:
                 continue                       # already raw and says so
+            if not applied and not _one_shading_explains(path, plain, stored):
+                # Not corrected pixels filed as raw: a decode that no longer
+                # reproduces what was stored. That is the regression
+                # `reconstruct` exists to report, and rewriting would launder
+                # it into the library for good.
+                failed.append((path.name,
+                               "stored pixels are neither this decode nor this "
+                               "decode shaded once -- a decode change, not a "
+                               "mislabelled entry; left alone"))
+                continue
             planned.append((path, plain, applied, stored_shape))
 
         for path, _plain, applied, _shape in planned:
@@ -201,15 +267,21 @@ def main() -> int:
                 record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
                 resolution = ((record.get("scan") or {}).get("resolution_dpi")
                               or None)
-                tiff.write(str(path / "scan.tif"), plain, resolution=resolution)
+                # Written beside and swapped in, and the old file kept: it may
+                # be the only corrected rendition the entry has, and an
+                # interruption part way used to leave a truncated scan.tif.
+                fresh = path / ".scan.tif.part"
+                tiff.write(str(fresh), plain, resolution=resolution)
+                os.replace(path / "scan.tif", path / KEPT)
+                os.replace(fresh, path / "scan.tif")
                 image = record.setdefault("image", {})
                 image["corrections_applied"] = []
                 image["shape"] = list(plain.shape)
                 image["dtype"] = str(plain.dtype)
                 image["sha256"] = library._sha256(path / "scan.tif")
-                (path / "scan.json").write_text(
-                    json.dumps(record, indent=2, default=str),
-                    encoding="utf-8")
+                image["replaced"] = KEPT
+                library._write_atomic(path / "scan.json",
+                                      json.dumps(record, indent=2, default=str))
             library.reindex(root)
 
         print(f"\n{len(planned)} entr{'y' if len(planned) == 1 else 'ies'} "

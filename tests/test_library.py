@@ -729,3 +729,84 @@ def test_a_real_7200_dpi_regression_is_still_reported(tmp_path):
     tiff.write(str(path / "scan.tif"), broken)
     _image, verdict = library.reconstruct(path)
     assert verdict.startswith("decode CHANGED"), verdict
+
+
+# --- atomic entries, checksums, and what verify can see ----------------------
+
+
+def test_two_writers_in_one_second_get_two_entries(tmp_path):
+    """The collision check looked for `scan.json`, which the first writer
+    only creates at the very end -- so a second writer in the same second
+    wrote into the same directory."""
+    first = library._reserve(tmp_path, "20260924T220000Z_unknown-film_300dpi")
+    second = library._reserve(tmp_path, "20260924T220000Z_unknown-film_300dpi")
+    assert first != second and first.exists() and second.exists()
+
+
+def test_a_finished_entry_carries_no_incomplete_marker(tmp_path):
+    path, _, _ = make_entry(tmp_path)
+    assert not (path / library.INCOMPLETE).exists()
+    assert not list(path.glob(".*.part"))
+
+
+def test_an_entry_cut_short_is_reported_not_passed_over(tmp_path):
+    make_entry(tmp_path)
+    cut = tmp_path / "20260924T220001Z_unknown-film_300dpi"
+    cut.mkdir()
+    (cut / library.INCOMPLETE).write_text("", encoding="utf-8")
+    (cut / "scan.tif").write_bytes(b"half")
+    orphan = tmp_path / "20260924T220002Z_unknown-film_300dpi"
+    orphan.mkdir()
+    (orphan / "raw.bin.gz").write_bytes(b"bytes with nothing to say what they are")
+    problems = library.verify(tmp_path)
+    assert any(cut.name in p and "did not finish" in p for p in problems)
+    assert any(orphan.name in p and "no scan.json" in p for p in problems)
+
+
+def test_every_file_of_an_entry_is_checksummed(tmp_path):
+    """A damaged reference corrects every export of the entry wrongly, and
+    `verify` could see damage only to scan.tif and the raw bytes."""
+    path = entry_with(tmp_path)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert "shading.npz" in record["files"]
+    assert library.verify(tmp_path) == []
+    data = bytearray((path / "shading.npz").read_bytes())
+    data[-1] ^= 0xFF
+    (path / "shading.npz").write_bytes(bytes(data))
+    assert any("shading.npz does not match" in p for p in library.verify(tmp_path))
+
+
+def test_a_renamed_entry_is_found_where_it_is(tmp_path):
+    path, _, _ = make_entry(tmp_path)
+    moved = path.with_name(path.name + "-copy")
+    path.rename(moved)
+    record = library.entries(tmp_path)[0]
+    assert library.entry_path(tmp_path, record) == moved
+    assert any("records itself as" in p for p in library.verify(tmp_path))
+
+
+def test_a_scan_taken_raw_on_purpose_is_not_a_problem(tmp_path):
+    """Reported as one -- 'correction was asked for', about the sentinel that
+    says it was not -- it kept `make verify` red for a week."""
+    from rps7200.direct import SHADING_SKIPPED_EXPLICIT
+
+    stream, image = index_stream(16, 8, 3)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16, "shading_skipped": SHADING_SKIPPED_EXPLICIT}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    library.save(image, meta, root=tmp_path, raw=stream, raw_layout=layout)
+    assert library.verify(tmp_path) == []
+
+
+def test_an_uncalibrated_ladder_can_be_marked_as_meant(tmp_path):
+    path = entry_with(tmp_path, reference=False)
+    assert any("never be corrected" in p for p in library.verify(tmp_path))
+    library.add_tags(path, [library.ON_PURPOSE])
+    assert library.verify(tmp_path) == []
+
+
+def test_reconstruct_reports_a_missing_scan_tif_and_carries_on(tmp_path):
+    path, _, _ = make_entry(tmp_path)
+    (path / "scan.tif").unlink()
+    _image, verdict = library.reconstruct(path)
+    assert verdict.startswith("could not read scan.tif")
