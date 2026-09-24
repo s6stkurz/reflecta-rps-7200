@@ -636,7 +636,7 @@ driver for Nikon Coolscans:
   band is asymmetric now. Raising a target is not safe unless the band above it
   is looked at too.
 - **~~Otsu plus morphological opening in `film_bounds`.~~ The question is the
-  wrong one, and the harness that says so is stranded on a branch.**
+  wrong one, and the harness that says so has not been run on `main`.**
 
   `film_bounds` is load-bearing in a second place: metering crops to it, so a
   bad edge mis-exposes rather than only mis-reporting registration. It fails
@@ -646,10 +646,10 @@ driver for Nikon Coolscans:
   fraction "lands in the wrong population" when the proportion of film in the
   pass changes.
 
-  **`tools/film_edge_study.py` measures that, and it is not on `main`.** It sits
-  on `analysis/film-edge-study` (2026-09-13), the only local branch never merged
-  -- 424 lines, offline, running against the stored prescans, comparing eight
-  rules including `fixed`, `otsu` and a scale-free `ratio_gap`. Two things it
+  **`tools/film_edge_study.py` measures that.** Written 2026-09-13 on
+  `analysis/film-edge-study` and merged 2026-09-24 -- offline, running against
+  the stored prescans, comparing eight rules including `fixed`, `otsu` and a
+  scale-free `ratio_gap`. Two things it
   records up front, both of which change what is worth doing:
 
   * **The fraction almost never fires.** The `CLEAR_RATIO` gate short-circuits
@@ -676,11 +676,10 @@ driver for Nikon Coolscans:
     level's is not. It is nowhere near the 1-3 px a member needs. Do not try a
     third time without a different mechanism.
 
-  So: do not implement Otsu on the strength of the old entry. Land the harness
-  first, run it against the 217-entry library, and let the numbers say what the
-  rule should be. The harness is incomplete in one visible way -- its docstring
-  points at `--render` for the cases needing a human and `main()` defines only
-  `--root` and `--json`.
+  So: do not implement Otsu on the strength of the old entry. Run the harness
+  against the 217-entry library and let the numbers say what the rule should
+  be. It is incomplete in one visible way: nothing renders the cases needing a
+  human, and `main()` defines only `--root` and `--json`.
 
   (The variance-based `detect_frame` this item used to name has been deleted;
   it was documented as unreliable and nothing called it.)

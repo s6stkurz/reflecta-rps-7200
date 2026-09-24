@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Does `film_bounds` find the film's edge, and would a different rule do better?
 
-    python3 tools/film_edge_study.py
-    python3 tools/film_edge_study.py --json study.json
+    uv run python tools/film_edge_study.py
+    uv run python tools/film_edge_study.py --json study.json
 
 **No scanner needed.** Everything is re-read from stored prescans, so this
 re-runs whenever the rule changes, and the numbers move with it.
@@ -23,8 +23,7 @@ What this CANNOT tell you:
 
 * **Whether an edge it found is the right one**, on a real prescan. There is no
   ground truth in the corpus. Tier A positives below carry a known answer by
-  construction; everything else needs a person to look. That is what
-  `--render` is for.
+  construction; everything else needs a person to look at the prescan.
 * **Anything about empty aperture.** Every bright band in the corpus is clear
   C-41 *film base* -- strongly orange, R:B 3-7 -- and not the neutral empty
   aperture (R:B ~0.93) the `film_bounds` docstring is calibrated to. The two
@@ -55,7 +54,7 @@ from rps7200.framing import (                                     # noqa: E402
     MM_PER_INCH,
     gap_edges,
 )
-from rps7200.protocol import COORD_PER_INCH                       # noqa: E402
+from rps7200.protocol import COORD_PER_INCH, units                # noqa: E402
 
 #: The percentile `film_bounds` calls "clear". Not the maximum, deliberately:
 #: a threshold set as a fraction of the maximum is set by its worst outlier,
@@ -306,10 +305,11 @@ def assess(frame: Frame, rule: Rule) -> dict[str, Any]:
     retained_y = ((y[1] - y[0] + 1) / h) if y else 1.0
 
     deltas = meter_delta(frame.image, sl)
-    # Registration reports x only, in mm across the aperture.
-    span_units = FULL_FRAME[2] - FULL_FRAME[0] + 1
-    mm_per_px = span_units * MM_PER_INCH / COORD_PER_INCH / max(w, 1)
-    shortfall_mm = (w - (x[1] - x[0] + 1)) * mm_per_px if x else 0.0
+    # Registration reports x only. In param units, never millimetres: the
+    # conversion goes through `protocol.units`, the one place it lives.
+    span_coords = FULL_FRAME[2] - FULL_FRAME[0] + 1
+    mm_per_px = span_coords * MM_PER_INCH / COORD_PER_INCH / max(w, 1)
+    shortfall = units((w - (x[1] - x[0] + 1)) * mm_per_px) if x else 0.0
 
     return {
         "abstain_x": x is None,
@@ -318,7 +318,7 @@ def assess(frame: Frame, rule: Rule) -> dict[str, Any]:
         "retained_y": round(retained_y, 4),
         "meter_delta_pct": [round(v, 3) for v in deltas],
         "worst_meter_delta_pct": round(min(deltas), 3) if deltas else 0.0,
-        "shortfall_mm": round(shortfall_mm, 3),
+        "shortfall_units": round(shortfall, 2),
     }
 
 
@@ -409,8 +409,8 @@ def main() -> int:
               f"{s['worst_meter_delta_pct']:>15.2f}{s['frames_meter_lowered']:>9}"
               f"{s['unsafe_frames']:>8}{flag}")
 
-    print(f"\n'abst' counts frames where the rule declines to crop -- for this "
-          f"corpus, where film fills the window, that is the correct answer.")
+    print("\n'abst' counts frames where the rule declines to crop -- for this "
+          "corpus, where film fills the window, that is the correct answer.")
     print(f"'unsafe' counts frames left holding under {MIN_SAFE_RETAINED:.0%} of an "
           f"axis. Any non-zero disqualifies a rule.")
 
