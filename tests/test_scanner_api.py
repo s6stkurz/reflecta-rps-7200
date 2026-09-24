@@ -8,6 +8,8 @@ session together or the scan can never be corrected again -- which is what
 private attributes.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -237,3 +239,51 @@ def test_shading_false_is_still_allowed_at_7200_dpi():
         pytest.fail("shading=False must not be refused")
     except Exception:
         pass  # the fake cannot serve a real pass; only the refusal matters here
+
+
+# --- a calibration's own bytes are kept -------------------------------------
+
+
+def _calibrated(s, data=b"\x01\x02" * 100):
+    ref = reference()
+
+    def calibrate(**kw):
+        s._shading = ref
+        s._shading_origin = {"action": "calibrated", "measured_utc": "now"}
+        return {"reference": ref, "bytes_drained": len(data), "data": data,
+                "ccd_mask": b"\x01" * 8, "pixels_per_line": 8,
+                "bytes_per_line": 18, "resolution": 3600,
+                "commands": {"sent": [{"cdb": "28"}]}, "duration_s": 1.0}
+
+    s.calibrate_shading = calibrate
+    return ref
+
+
+def test_a_calibration_keeps_its_own_bytes(tmp_path):
+    """The reference is a reduction of these; once they are gone no
+    correction in the library can be recomputed from scratch."""
+    import json
+
+    s = scanner()
+    _calibrated(s)
+    result = s.ensure_shading(tmp_path / "calibration" / "shading.npz")
+    folder = Path(s._shading_origin["archive"])
+    assert (folder / "data.bin").read_bytes() == b"\x01\x02" * 100
+    record = json.loads((folder / "calibration.json").read_text(encoding="utf-8"))
+    assert record["bytes"] == 200 and record["sha256"]
+    assert record["commands"]["sent"][0]["cdb"] == "28"
+    assert (folder / "shading.npz").exists() and (folder / "ccd_mask.bin").exists()
+    assert str(folder) in result["summary"]
+
+
+def test_a_cache_that_cannot_be_written_does_not_cost_the_calibration(tmp_path):
+    """A successful 3-4 minute calibration was discarded over a full disk,
+    and every scan after it refused."""
+    s = scanner()
+    ref = _calibrated(s)
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    result = s.ensure_shading(blocker / "shading.npz")
+    assert result["reference"] is ref
+    assert s._shading is ref
+    assert "not cached" in result["summary"]

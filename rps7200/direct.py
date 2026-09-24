@@ -718,8 +718,61 @@ class DirectScanner:
             return None
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._shading.save(path)
+        # Beside, then over: a cache cut short by a kill or a full disk made
+        # "reuse" fail to load and "Use the cached one" offer a broken file.
+        temp = path.with_name(f".{path.stem}.part.npz")
+        self._shading.save(temp)
+        os.replace(temp, path)
         return path
+
+    def archive_calibration(self, result: dict[str, Any],
+                            root: str | Path) -> Path | None:
+        """Keep one calibration's own bytes, beside the cache, for good.
+
+        ``root/<UTC time>/`` holds ``data.bin`` -- every calibration line
+        exactly as read -- with ``calibration.json`` (width, line stride,
+        resolution, when, every command sent and what came back, checksum),
+        the reference reduced from it and the calibration's CCD mask.
+
+        Written uncompressed: the device is still open, and compressing with
+        it open and idle is what preceded a wedge. It is 1.7 MB.
+        """
+        data = result.get("data")
+        if not data:
+            return None
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        root = Path(root)
+        folder, n = root / stamp, 2
+        while True:
+            try:
+                folder.mkdir(parents=True)
+                break
+            except FileExistsError:
+                folder, n = root / f"{stamp}-{n}", n + 1
+        (folder / "data.bin").write_bytes(data)
+        mask = result.get("ccd_mask")
+        if mask is not None:
+            (folder / "ccd_mask.bin").write_bytes(bytes(mask))
+        if result.get("reference") is not None:
+            result["reference"].save(folder / "shading.npz")
+        import hashlib
+        record = {
+            "measured_utc": (self._shading_origin or {}).get("measured_utc"),
+            "resolution": result.get("resolution"),
+            "pixels_per_line": result.get("pixels_per_line"),
+            "bytes_per_line": result.get("bytes_per_line"),
+            "index_header": INDEX_HEADER,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "duration_s": result.get("duration_s"),
+            "commands": result.get("commands"),
+            "reference": "shading.npz" if result.get("reference") is not None else None,
+            "ccd_mask": "ccd_mask.bin" if mask is not None else None,
+            "protocol_revision": PROTOCOL_REVISION,
+        }
+        (folder / "calibration.json").write_text(
+            json.dumps(record, indent=2, default=str), encoding="utf-8")
+        return folder
 
     def ensure_shading(
         self, path: str | Path, reuse: bool = False, skip: bool = False
@@ -763,16 +816,38 @@ class DirectScanner:
             }
 
         started = time.monotonic()
-        result = self.calibrate_shading()
+        result = self.calibrate_shading(keep_data=True)
         duration = round(time.monotonic() - started, 1)
-        saved = self.save_shading(path)
+        # The calibration's own bytes, kept: the reference is a reduction of
+        # them, and a reduction cannot be redone with better code once its
+        # input is gone. Without this no correction in the library could ever
+        # be recomputed from scratch.
+        archive = None
+        try:
+            archive = self.archive_calibration(result, path.parent)
+        except OSError as exc:
+            self._log(f"could not keep the calibration's bytes ({exc})")
+        if archive is not None and self._shading_origin is not None:
+            self._shading_origin["archive"] = str(archive)
+        # A cache that cannot be written costs the cache, not the calibration:
+        # the reference is in hand, and discarding a successful 3-4 minute
+        # calibration over a full disk left every scan refused.
+        saved = None
+        try:
+            saved = self.save_shading(path)
+        except OSError as exc:
+            self._log(f"could not cache the reference at {path} ({exc}); "
+                      "it is still in force for this session")
         drained = result["bytes_drained"] / 1e6
         summary = f"  {drained:.2f} MB in {duration:.0f}s"
         summary += (
-            f", saved {saved}" if result["reference"] is not None
+            (f", saved {saved}" if saved else ", not cached")
+            if result["reference"] is not None
             else " -- no usable shading reference; a corrected scan will be "
                  "refused until a calibration succeeds"
         )
+        if archive is not None:
+            summary += f"; its bytes are in {archive}"
         return {
             "action": "calibrated",
             "reference": result["reference"],
@@ -2072,6 +2147,12 @@ class DirectScanner:
           re-writing gain/offset between them
         """
         self._refuse_if_suspect("a calibration")
+        # Every command of the calibration, with what came back -- the
+        # 128-byte calibration info block, the shading descriptor, the gain
+        # read-back -- kept with its bytes (`archive_calibration`).
+        logger = getattr(self.t, "start", None)
+        if callable(logger):
+            logger()
         for _ in range(4):
             try:
                 if not self.read_state().warming_up:
@@ -2232,6 +2313,8 @@ class DirectScanner:
         finally:
             self.finish_scan()
 
+        stopper = getattr(self.t, "stop", None)
+        commands = stopper() if callable(stopper) else None
         data = b"".join(collected)
         # The point of the pass. The scanner measured its per-column response
         # and handed it back; it does not apply it, so a calibration whose
@@ -2264,6 +2347,8 @@ class DirectScanner:
             "pixels_per_line": width,
             "bytes_drained": drained,
             "duration_s": round(time.monotonic() - started, 1),
+            "resolution": int(resolution),
+            "commands": commands,
         }
 
     # -- exposure ----------------------------------------------------------
