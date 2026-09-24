@@ -199,7 +199,8 @@ class FakeRoll(DirectScanner):
         return self.at
 
     # -- the passes
-    def prescan(self, resolution=300, frame=None, keep_raw=False, shading=True):
+    def prescan(self, resolution=300, frame=None, keep_raw=False, shading=True,
+                film="negative"):
         self.prescan_keep_raw.append(keep_raw)
         # `prescans` lets a test script what successive looks return, which is
         # how a correction's before/after pair gets simulated.

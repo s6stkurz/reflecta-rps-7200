@@ -430,6 +430,73 @@ class _Aim:
     reference: Any
 
 
+class _CommandLog:
+    """The transport, with the commands of the pass in flight written down.
+
+    Every command a pass sends -- the frame, MODE SELECT, gain and offset,
+    SLIDE, START SCAN, the small READs of parameters and mask -- is what
+    defines it, and none of it survived the pass: byte 14, the SLIDE INIT
+    parameter, the GET PARAMETERS answer were all spent and forgotten, so an
+    entry could not say how it was taken. Recorded only while `record` is a
+    list (`scan` sets it for one pass). Image-data READs are counted, not
+    listed: a 7200 dpi pass makes thousands, and the bytes they returned are
+    `raw.bin.gz` already.
+    """
+
+    #: A response this long or longer is image data, counted rather than kept.
+    BULK = 256
+
+    def __init__(self, inner: Any):
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "record", None)
+        object.__setattr__(self, "bulk", None)
+        object.__setattr__(self, "_t0", 0.0)
+
+    def start(self) -> None:
+        object.__setattr__(self, "record", [])
+        object.__setattr__(self, "bulk", {"reads": 0, "bytes": 0})
+        object.__setattr__(self, "_t0", time.monotonic())
+
+    def stop(self) -> dict[str, Any] | None:
+        if self.record is None:
+            return None
+        out = {"sent": self.record, "image_reads": self.bulk}
+        object.__setattr__(self, "record", None)
+        object.__setattr__(self, "bulk", None)
+        return out
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._inner, name, value)
+
+    def command(self, command: bytes, *args: Any, **kwargs: Any) -> Any:
+        if self.record is None:
+            return self._inner.command(command, *args, **kwargs)
+        data = kwargs.get("data", args[0] if args else None)
+        entry: dict[str, Any] = {
+            "t": round(time.monotonic() - self._t0, 3),
+            "cdb": bytes(command).hex(),
+        }
+        if data:
+            entry["out"] = bytes(data).hex()
+        try:
+            reply = self._inner.command(command, *args, **kwargs)
+        except Exception as exc:
+            entry["refused"] = type(exc).__name__
+            self.record.append(entry)
+            raise
+        if reply and len(reply) >= self.BULK and command[0] == SCSI_READ:
+            self.bulk["reads"] += 1
+            self.bulk["bytes"] += len(reply)
+            return reply
+        if reply:
+            entry["in"] = bytes(reply).hex()
+        self.record.append(entry)
+        return reply
+
+
 class DirectScanner:
     """Command-level control of the scanner."""
 
@@ -458,6 +525,9 @@ class DirectScanner:
     #: every command that would drive the device raise `DeviceSuspect`. Never
     #: cleared on this object: the recovery is a power cycle and a new session.
     suspect: str | None = None
+    #: Where the reference in force came from (`load_shading`,
+    #: `calibrate_shading`); recorded with every pass it corrects.
+    _shading_origin: dict[str, Any] | None = None
 
     #: Environment variable that turns automatic filing on without touching
     #: code, so a probe script inherits it rather than having to remember.
@@ -500,7 +570,7 @@ class DirectScanner:
         self.log_hook = log_hook
         self.progress_hook = progress_hook
         self._own_transport = transport is None
-        self.t = transport or Transport(verbose=verbose)
+        self.t = _CommandLog(transport or Transport(verbose=verbose))
         self._scanning = False
         self._inquiry: Inquiry | None = None
         # The shading reference this session has acquired. The scanner returns
@@ -627,6 +697,15 @@ class DirectScanner:
         measured it -- prefer a fresh one when the exposure has moved.
         """
         self._shading = ShadingReference.load(Path(path))
+        # Said in every entry this reference corrects: a cached reference
+        # belongs to the power-on that measured it, and an entry corrected by
+        # one from another day looked exactly like one measured that morning.
+        self._shading_origin = {
+            "action": "loaded", "path": str(path),
+            "file_modified_utc": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(Path(path).stat().st_mtime)),
+            "loaded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
         self._log(
             f"loaded shading from {path}: {self._shading.pixels_per_line} columns, "
             f"channels {self._shading.channels}"
@@ -2158,6 +2237,11 @@ class DirectScanner:
         # and handed it back; it does not apply it, so a calibration whose
         # result is discarded genuinely changes nothing in the image.
         self._shading = calculate_shading(data, width)
+        self._shading_origin = {
+            "action": "calibrated", "resolution": int(resolution),
+            "width": int(width),
+            "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
         if self._shading is None:
             self._log("calibration returned no usable shading lines")
         else:
@@ -2787,6 +2871,14 @@ class DirectScanner:
                 f"auto-exposure: {[round(v, 3) for v in exposure_scale]}"
             )
 
+        # From here to the last line read is this pass: recorded, so the entry
+        # can say exactly what it was sent. After metering on purpose -- the
+        # probes are passes of their own, each with its own record.
+        started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        logger = getattr(self.t, "start", None)
+        if callable(logger):
+            logger()
+
         # Open with READ_STATE polling, as the vendor software does.
         for _ in range(4):
             try:
@@ -2863,9 +2955,13 @@ class DirectScanner:
         carriage = self.carriage_record()
         self.last_read_direction = None
         started = time.monotonic()
-        image, params, ccd_mask = self._read_pass(
-            channels, keep_raw, resolution,
-            idle_timeout=self.read_idle_s(infrared, fast_infrared))
+        try:
+            image, params, ccd_mask = self._read_pass(
+                channels, keep_raw, resolution,
+                idle_timeout=self.read_idle_s(infrared, fast_infrared))
+        finally:
+            stopper = getattr(self.t, "stop", None)
+            commands = stopper() if callable(stopper) else None
 
         # After the scan has settled, never inside it: the vendor polls
         # READ_STATE for several seconds once the last line is read and only
@@ -2988,6 +3084,19 @@ class DirectScanner:
             # Rows the native column-stagger realignment trimmed, 0 when none
             # ran. The one host transform `scan.tif` carries beyond the decode.
             "stagger_realigned": stagger_realigned,
+            # When the pass began, in UTC. An entry's id and `created` are when
+            # it was filed, which for a spooled or queued pass is later.
+            "started_utc": started_utc,
+            # What defined the pass and was otherwise spent and forgotten: the
+            # mode choices, and every command sent with what came back.
+            "mode": {"byte14_override": byte14, "skip_shading": bool(skip_shading),
+                     "slide_init_param": int(slide_init_param),
+                     "depth": int(depth), "passes": int(passes)},
+            "commands": commands,
+            # Where this pass's shading reference came from, and when.
+            "shading_origin": (dict(origin)
+                               if shading and (origin := self._shading_origin)
+                               else None),
             # The READ STATE taken before the pass, kept as evidence of where
             # the carriage was. `carriage_record` says why nothing acts on it.
             "carriage_state": carriage,
@@ -3747,6 +3856,9 @@ class DirectScanner:
                 prescan_image, _ = self.prescan(
                     resolution=prescan_resolution, keep_raw=keep_raw,
                     shading=shading,
+                    # The roll's film, so the prescan's entry says what was in
+                    # the transport; it was recorded as "negative" whatever it was.
+                    film=film,
                 )
                 raw_prescan = self.last_pixels_raw
                 prescan_meta = dict(self.last_scan_meta or {})

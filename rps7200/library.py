@@ -96,12 +96,46 @@ def provenance() -> dict[str, Any]:
         except Exception:
             pass
 
+    status = git("status", "--porcelain", "--untracked-files=no")
+    head = git("rev-parse", "HEAD")
     return {
-        "driver_commit": git("rev-parse", "--short", "HEAD"),
-        "driver_dirty": bool(git("status", "--porcelain")),
+        "driver_commit": head[:7] if head else None,
+        "driver_commit_full": head,
+        # None when git could not say, rather than False: "clean" was what an
+        # absent git reported, and untracked files -- scratch scripts, a
+        # library inside the tree -- no longer count as a change to the code.
+        "driver_dirty": None if head is None else bool(status),
+        # The code this process imported, which is what filed the entry. The
+        # tree can move under a long-running window -- a branch checked out
+        # while it runs -- and the fields above describe the tree now.
+        "driver_commit_at_import": _AT_IMPORT.get("commit"),
+        "driver_dirty_at_import": _AT_IMPORT.get("dirty"),
         "versions": versions,
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
     }
+
+
+def _identity_now() -> dict[str, Any]:
+    """HEAD and whether tracked files differ from it, read once at import."""
+    try:
+        cwd = Path(__file__).resolve().parent.parent
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                              text=True, timeout=10, encoding="utf-8",
+                              errors="replace", cwd=cwd)
+        if head.returncode != 0:
+            return {}
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
+            errors="replace", cwd=cwd)
+        return {"commit": head.stdout.strip() or None,
+                "dirty": bool(status.stdout.strip()) if status.returncode == 0
+                else None}
+    except (OSError, subprocess.SubprocessError):
+        return {}
+
+
+_AT_IMPORT: dict[str, Any] = _identity_now()
 
 
 def _sha256(path: Path) -> str:
@@ -128,6 +162,55 @@ def entry_id(meta: dict[str, Any], film: FilmNotes, when: datetime) -> str:
     if meta.get("channels", 3) >= 4:
         parts.append("ir")
     return "_".join(parts)
+
+
+#: The pass's own fields, recorded as `scan` in every entry. Anything else
+#: the meta carries goes to `extra` -- see :func:`save`.
+SCAN_FIELDS = (
+    "resolution_dpi", "frame", "width", "height", "depth",
+    "channels", "channel_order", "bytes_per_line", "film",
+    "exposure_scale", "exposure_metered", "duration_s",
+    "protocol_revision", "rotation", "flipped", "reversal",
+    # Which way the carriage read the pass, from its own line tags,
+    # and whether `scan.tif` was turned upright from the order the
+    # raw bytes are in (`rps7200.direction`). And the READ STATE
+    # before it, as evidence of where the carriage was.
+    "read_direction", "carriage_state",
+    # Rows the 7200 dpi column-stagger realignment trimmed from the
+    # decode before it became `scan.tif`; `decode_raw` replays it.
+    "stagger_realigned",
+    # Which side of a fast-infrared ladder this pass came from.
+    # Without it `signature` cannot tell the halves apart -- the
+    # whole ladder is one frame at one dpi, depth, channel count
+    # and commanded exposure -- and `duplicates` would call six
+    # deliberately different passes interchangeable.
+    "fast_infrared",
+    # Read from GET PARAMETERS and otherwise discarded. `scan()`
+    # keeps them because they are the prime suspect for the
+    # pass-to-pass offset, and a suspicion that cannot be tested
+    # without the numbers is not worth having.
+    "filter_offsets",
+)
+
+#: Meta keys recorded somewhere other than `extra`.
+_RECORDED = frozenset(SCAN_FIELDS) | {
+    "exposure", "gain", "offset", "metering", "registration", "shading",
+    "shading_skipped",
+}
+
+
+def _describe_inquiry(inquiry: Any) -> dict[str, Any] | None:
+    """The scanner's INQUIRY as a record: vendor, model, firmware and the rest."""
+    if inquiry is None:
+        return None
+    try:
+        from dataclasses import fields, is_dataclass
+        if is_dataclass(inquiry) and not isinstance(inquiry, type):
+            return {f.name: getattr(inquiry, f.name) for f in fields(inquiry)}
+    except Exception:                                    # noqa: BLE001
+        pass
+    describe = getattr(inquiry, "describe", None)
+    return {"description": describe() if callable(describe) else str(inquiry)}
 
 
 def save(
@@ -233,34 +316,17 @@ def save(
             "sha256": raw_sha,
             "layout": raw_layout,
         },
-        "scan": {
-            k: meta.get(k)
-            for k in (
-                "resolution_dpi", "frame", "width", "height", "depth",
-                "channels", "channel_order", "bytes_per_line", "film",
-                "exposure_scale", "exposure_metered", "duration_s",
-                "protocol_revision", "rotation", "flipped", "reversal",
-                # Which way the carriage read the pass, from its own line tags,
-                # and whether `scan.tif` was turned upright from the order the
-                # raw bytes are in (`rps7200.direction`). And the READ STATE
-                # before it, as evidence of where the carriage was.
-                "read_direction", "carriage_state",
-                # Rows the 7200 dpi column-stagger realignment trimmed from the
-                # decode before it became `scan.tif`; `decode_raw` replays it.
-                "stagger_realigned",
-                # Which side of a fast-infrared ladder this pass came from.
-                # Without it `signature` cannot tell the halves apart -- the
-                # whole ladder is one frame at one dpi, depth, channel count
-                # and commanded exposure -- and `duplicates` would call six
-                # deliberately different passes interchangeable.
-                "fast_infrared",
-                # Read from GET PARAMETERS and otherwise discarded. `scan()`
-                # keeps them because they are the prime suspect for the
-                # pass-to-pass offset, and a suspicion that cannot be tested
-                # without the numbers is not worth having.
-                "filter_offsets",
-            )
-        },
+        "scan": {k: meta.get(k) for k in SCAN_FIELDS},
+        # Everything else the pass's meta carried, kept rather than dropped.
+        # A fixed list of fields was the whole record, so whatever a caller
+        # added that the list did not name -- a bracket's membership and
+        # ratios, a roll frame's index and position, the demo's own flag, the
+        # commands a pass was sent -- vanished at filing: a bracket could not
+        # be re-merged, nor a demo entry told from a real one.
+        "extra": {k: v for k, v in meta.items() if k not in _RECORDED},
+        # Which scanner, as it described itself. Every caller handed it over
+        # and it was ignored.
+        "device": _describe_inquiry(inquiry),
         "device_settings": {
             k: meta.get(k) for k in ("exposure", "gain", "offset")
         },
