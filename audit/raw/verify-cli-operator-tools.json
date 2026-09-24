@@ -1,0 +1,276 @@
+{
+ "type": "result",
+ "key": "v2:4456b4630be6b78734544e3a1c35041a3d1e96f4f91703391694a993761e8a3c",
+ "agentId": "a06cb010978000a49",
+ "result": {
+  "verdicts": [
+   {
+    "id": "CLI-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "The handler at tools/scan_roll.py:587 is `except Exception`, and no `finally` exists anywhere in main(). That makes the comments at 347 ('Wrapped so writer.finish() below runs whatever comes out of this') and 598 ('Reached through a `finally`') false. KeyboardInterrupt and SystemExit therefore skip writer.finish() at 605. FrameWriter's thread is `daemon=True` (session.py:1043), so it is killed at interpreter exit: queued jobs are lost, and a library.save interrupted mid-way leaves a directory without scan.json. direct.py:2679 re-raises BaseException after clearing `_scanning`, and `__exit__` then close()s the transport mid-read. Neither tool installs a signal handler (grep finds no signal/atexit), and scan_roll.py never passes `should_stop`, so Ctrl-C is the only stop the CLI has. A default SIGTERM terminates without running `__exit__` at all."
+   },
+   {
+    "id": "CLI-02",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "tools/scan.py:160-235 has no try/finally. `pending` is filed only in the loop at 237-246, after the `with` block exits normally. Any exception out of scan_bracket or scan() propagates past it, including ScanReadError, UsbError, ShadingUnavailable, ValueError from bracket_ladder, MemoryError and KeyboardInterrupt, and every captured pass is dropped. The filing loop has no per-entry guard either, so one library.save failure aborts the remaining passes and the delivered file."
+   },
+   {
+    "id": "CLI-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Both tools construct `DirectScanner(verbose=..., debug=False)` (scan.py:160, scan_roll.py:353). The environment variable is consulted only when `debug is None` (direct.py:464-469), and _debug_capture returns immediately when debug is off (direct.py:664). The dry-run branch (scan_roll.py:498-510) writes prescanNN.tif and prescanNN-before.tif with tiff.write and never touches the library; frame.raw_prescan is discarded. The window's dry run files each prescan through `self._file(..., raw_image=rf.raw_prescan)` (session.py:1818-1830). Metering probes set keep_raw=True (direct.py:2090) but are filed only by debug filing, which these tools force off. Neither doc names these exceptions."
+   },
+   {
+    "id": "CLI-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "`manifest` is always built fresh with `\"frames\": []` (scan_roll.py:298-324) and written over `<out>/roll.json` by checkpoint() at 452, as soon as calibration succeeds. Nothing in the tool reads an existing roll.json except hold_from_walk, and only for --approved. The docstring at 22-24 ('--start-at resumes from the manifest') and README.md:547-549 ('carries forward what the earlier session already did instead of overwriting its manifest') are both contradicted. The window's roll replaces per-frame records instead (session.py:1895-1915)."
+   },
+   {
+    "id": "CLI-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "`--no-shading` reaches only `ensure_shading(skip=True)` (scan_roll.py:172-173). DirectScanner.scan_roll takes no shading argument. Its prescan() hard-codes `shading=True` (direct.py:1705), and its frame scan() call (direct.py:3644-3652) leaves the default `shading=True`. The first prescan therefore finds `self._shading is None` and runs calibrate_shading() inside scan() (direct.py:2582-2594). That is the lazy path the tool's own comment (scan_roll.py:433-441) says stalled with LIBUSB_ERROR_PIPE. All frames are then corrected anyway, so the help text 'scans come back striped' is false. scan.py `--no-shading --auto-exposure` hits the same path, because auto_exposure's probes call scan() with the default shading=True (direct.py:2082-2091)."
+   },
+   {
+    "id": "CLI-06",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "signature() (rps7200/library.py:639-699) identifies the picture only by the stock, frame and subject strings. scan.py defaults all three to '' (112-114). Without --auto-exposure, exposure_metered=False and the commanded scale is 1.0, so any two plain scans of different film frames at the same dpi, channels and IR setting share one signature. prunable() then marks all but `keep` (default 1) as redundant, and `--delete` calls shutil.rmtree (tools/library.py:129) with no confirmation. One nuance: for roll frames the metered scales are filed as a commanded exposure (CLI-12), so same-day default-roll collisions occur mainly with `--meter none|once`, where the scales coincide, not with `--meter each`. The scan.py case alone is enough to destroy the raw bytes of different photographs, and true repeat pairs (needed for the random/fixed split) are also collapsed."
+   },
+   {
+    "id": "CLI-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The algebra holds. With equal group sizes, pstdev(quiet+loaded)^2 = W + (d/2)^2, so 2*spread = sqrt(4W + d^2) > |d| whenever there is any within-group variance, and the 'do NOT overlap' branch (filing_load_test.py:108-110) is effectively unreachable. The test also times only 300 dpi 8-bit FULL_FRAME passes with shading=False against a 32 MB gzip, and the usage line suggests `RPS7200_DEBUG=0` (Bourne syntax, and contrary to the 'always debug' rule). Severity is lowered to medium: the printed per-round times and mean difference are still correct and visible, and no code path gates on the verdict. The defect is in the one-line conclusion, which CLAUDE.md:170 tells readers to trust."
+   },
+   {
+    "id": "CLI-08",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "make_comparison.py:117 builds 2_corrected.tif with `destripe()`. grep shows destripe, find_column_defects and flat_defect_sigma called only here, while production correction is apply_shading via scan() and library.corrected() (library.py:338-391). Its input is an arbitrary TIFF path (default scans/negatives/state_1800dpi.tif), not a library entry, so a regression in decode_index, apply_shading or library.corrected cannot appear in the three files. Argument parsing drops anything starting with '-' (line 94). previews/ is gitignored and absent in this checkout, and line 136 writes into it without mkdir, so the run raises after writing the TIFFs. README.md:195 names this tool as the raw/corrected/inverted generator."
+   },
+   {
+    "id": "CLI-09",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "ensure_shading calls `self.calibrate_shading()` with the default keep_data=False (direct.py:613). calibrate_shading joins the blocks, runs calculate_shading (split_ratio heuristic, shading.py:109-161) and returns `\"data\": data if keep_data else None`; nothing else ever passes keep_data. ShadingReference.save stores only pixels_per_line, channels, dark_channels and the ref/mean/dark/darkmean arrays, with no provenance. The calibration pass's own mask is stored only as `self._ccd_mask`, which the next scan overwrites with the per-pass mask. `--reuse` goes through load_shading, and library.save records nothing that distinguishes a loaded reference from a fresh one."
+   },
+   {
+    "id": "CLI-10",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "At resolution == NATIVE_COLUMN_STAGGER_DPI (7200, direct.py:1622), scan() realigns and trims `lines` rows (direct.py:2695-2702, 1638-1663) before `raw_pixels = image`. That array is what scan.py files through `last_pixels_raw`. library.reconstruct and decode_raw call only decode_index/_deinterleave, and there is no reference to the stagger anywhere in library.py, so the shape comparison at library.py:487-490 returns 'decode CHANGED'. The CLI counts that as a regression and exits 1 (tools/library.py:103-113); migrate-raw lists these entries as failed (179-182). Reachable via `tools/scan.py --dpi 7200 --no-shading`, since a shaded full-frame 7200 dpi pass raises ShadingUnavailable."
+   },
+   {
+    "id": "CLI-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "library.save accepts `inquiry` (library.py:142) and never uses it in the body. The 'scan' block is a fixed key list (204-230) that omits bracket_index, bracket_ratio, bracket_passes and bracket_stops (set at direct.py:2402-2405) and roll_index and roll_position (direct.py:3653-3654). The merged bracket's meta['bracket'] goes only to the --out sidecar (scan.py:261-281)."
+   },
+   {
+    "id": "CLI-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan_roll meters with `self.auto_exposure(...)` (direct.py:3627-3629), then calls scan() with `exposure_scale=scales` and without auto_exposure (3644-3652). scan() sets `\"exposure_metered\": bool(auto_exposure)` (False, direct.py:2791) and attaches metering only `if auto_exposure` (2808-2809). Every metered roll frame is therefore filed as commanded, with metering=null, and signature() treats the metered scales as a commanded exposure."
+   },
+   {
+    "id": "CLI-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "hold_from_walk (scan_roll.py:200-261) reads prescans with tiff.read and calls propose_centred directly. It never reads settings.prescan_resolution (main uses args.prescan_dpi, default 300), never reads rotation/flipped and never reads approved.json. The window un-orients with `preview.unorient(image, turn, mirrored)` (gui.py:4722-4744), uses read_approved(), and pins predpi to `_survey_predpi` (gui.py:2809-2813). Window walks write oriented prescans, because _file composes orientation into meta and FrameWriter orients the delivered paths. This is a CLI-versus-window divergence rather than a demo divergence, so 'bug' would be the better category; the substance stands."
+   },
+   {
+    "id": "CLI-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`--dpi` is a bare int with no choices (scan.py:39, scan_roll.py:73). In scan(), the auto_exposure block (direct.py:2512-2531) runs before the MAX_SHADING_COLUMNS refusal (2566-2575), and ensure_shading (a 3-4 minute calibration) runs before either. bracket_ladder's stops check runs after metering (direct.py:2373-2379). export.write/format_of raises on an unknown suffix only after library filing (scan.py:237-246 before 278). In scan_roll, ShadingUnavailable is caught per frame and keep_going() advances the film (direct.py:3662-3686), so `--dpi 7200` prescans, meters and advances up to max_failures times."
+   },
+   {
+    "id": "CLI-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan.py goes from inquiry() straight to ensure_shading (160-168), with no READ_STATE check, no prompt and no seek plausibility check. The only media check is the logged, unenforced one inside scan() (direct.py:2543-2553), and that comes after calibration. scan_roll.py by contrast seeks, with the FilmNotPlaced refusal, before calibrating (385-390, 446)."
+   },
+   {
+    "id": "CLI-16",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The RAM behaviour is real. Each pending dict holds the raw pixel array plus capture['raw'] bytes and the reference, and scan_bracket's default retain=True keeps every corrected frame as well (direct.py:2415-2418). Nothing is spooled. The CLAUDE.md sentence cited, however, sits in the debug-filing section and describes debug filing, so it is not contradicted as such. The finding is the missing spool, not a doc mismatch.",
+    "corrected_description": "scan.py holds every pass's raw pixels, raw bytes and (via scan_bracket retain=True) corrected frame in RAM until after close(). High-dpi brackets therefore need several GB, and an OOM kill loses every pass and abandons the read. Debug filing's spool-to-disk approach (_debug_capture) is not used because the tool forces debug=False.",
+    "corrected_locations": [
+     "tools/scan.py:174-194",
+     "tools/scan.py:205-221",
+     "rps7200/direct.py:2408-2420",
+     "rps7200/direct.py:650-692"
+    ]
+   },
+   {
+    "id": "CLI-17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The CLI's classifier (tools/library.py:99-104) marks anything that is not 'identical', 'no raw bytes' or 'could not' as '!' and counts it as changed. That includes library.reconstruct's 'stored as it was read, bottom-up ... see migrate-direction' (its own comment calls this 'Not a regression'), 'stored image is shading-corrected but its reference is missing', and every 7200 dpi entry (CLI-10). reconstruct also calls `json.loads(scan.json)` and `tiff.read(scan.tif)` without guards (library.py:462, 487). Its except clause catches only (KeyError, ValueError, TypeError), while decode_index raises ScanReadError, a RuntimeError (protocol.py:341), on unrecognised or mismatched channel tags. The CLI loop has no per-entry try, so one bad entry aborts the whole run. migrate-raw calls reconstruct first and inherits the same crash.",
+    "corrected_description": "`library.py reconstruct` counts needs-migration and missing-reference verdicts as decode regressions and exits 1. One entry with a missing scan.tif, an unreadable scan.json, or raw bytes whose channel tags do not match (ScanReadError is a RuntimeError, which reconstruct's except clause does not catch) aborts the whole run with a traceback, and migrate-raw fails the same way.",
+    "corrected_locations": [
+     "tools/library.py:96-113",
+     "rps7200/library.py:451-503",
+     "rps7200/direct.py:1582-1596",
+     "rps7200/protocol.py:341"
+    ]
+   },
+   {
+    "id": "CLI-18",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "entries() globs `*/scan.json` and silently skips JSON that fails to parse (library.py:741-750). save() writes scan.tif, prescan.tif, shading.npz, ccd_mask.bin and raw.bin.gz before scan.json (library.py:176-297), with no temp dir or rename. verify() iterates only entries(), so directories without scan.json are invisible, and it never checks prescan.tif, which has no checksum. save()'s collision check tests only `scan.json`, so a later save with the same id silently reuses and overwrites an orphan directory."
+   },
+   {
+    "id": "CLI-19",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "This holds as described for the CLI: scan_roll.py:562 passes `prescan=frame.prescan`, which is prescan()'s corrected output (shading=True, direct.py:1700-1711); RollFrame.raw_prescan is unused, and library.save labels it only by file, read_direction and carriage_state. It is not CLI-specific, though. The window's roll does the same (session.py:1883-1890, `prescan=rf.prescan`), so every roll entry from either path carries a corrected, unlabelled prescan.",
+    "corrected_description": "Every roll entry, from the CLI (scan_roll.py:562) and from the window (session.py:1887) alike, stores prescan.tif as the shading-corrected 8-bit prescan. It has no corrections label, no checksum, no raw bytes and no mask. RollFrame.raw_prescan is available and discarded on both paths.",
+    "corrected_locations": [
+     "tools/scan_roll.py:560-566",
+     "rps7200/session.py:1883-1890",
+     "rps7200/session.py:1090-1098",
+     "rps7200/library.py:176-177",
+     "rps7200/library.py:290-296",
+     "rps7200/direct.py:1700-1711"
+    ]
+   },
+   {
+    "id": "CLI-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "scan.py treats only None as 'skip' (hold() at 177; keep_raw uses `is not None`), so `--library ''` becomes library.save(root='') and Path('') resolves to the CWD. scan_roll.py uses truthiness (`bool(args.library)`; FrameWriter checks `if job[\"library\"]`), so '' skips there, as its help says. All default roots are CWD-relative in both tools, and in the GUI (`home = Path('.')`, gui.py:8150)."
+   },
+   {
+    "id": "CLI-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "--nudge is in mm (scan_roll.py:102-107), the prints are in mm (412, 517-521), and there is a hard-coded 0.85 mm threshold. The comment at 396-397 says one command reaches '1.0118 mm', while MAX_CORRECTION_PARAM=87 (direct.py:3123), and plan_nudges' docstring still says 'param in 1..8' and 'clamps silently at param 8' (session.py:676, 690). OVERHEAD_MM = MM_PER_UNIT*COMMAND_UNITS = 0.1057*1.84 ≈ 0.1945 (protocol.py:260-279), against README.md:555-556's 0.1662."
+   },
+   {
+    "id": "CLI-22",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The help at scan_roll.py:131-132 and the docstring at 26-27 promise a walk of about 2.5 minutes, but calibrate(s, args) at 446 runs on dry runs too, adding 3-4 minutes unless --reuse is given."
+   },
+   {
+    "id": "CLI-23",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`if contrast < blank_contrast: ... return` (direct.py:3509-3515) ends the generator. The exit code (scan_roll.py:638) and the summary never compare `scanned` with args.frames. The default --start-at 1 seeks to counter 0 from wherever the film is (386-387)."
+   },
+   {
+    "id": "CLI-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "manifest['settings'] (scan_roll.py:305-321) omits fast_ir, nudge, correct, correct_dry_run, reuse, no_shading, stock, process and max_failures. The --nudge amount goes only to stdout (412-413), and library entries carry no nudge either."
+   },
+   {
+    "id": "CLI-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "For a scalar --exposure-scale, `exposure_scale=(list(...) if isinstance(exposure_scale, list) else None)` passes None, and `auto_exposure=args.auto_exposure and not args.exposure_scale` passes False (scan.py:211-215). scan_bracket then falls to `scales = [1.0, 1.0, 1.0]` (direct.py:2373-2377), while the tool prints '--exposure-scale overrides --auto-exposure'."
+   },
+   {
+    "id": "CLI-26",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "checkpoint() uses write_text in place (scan_roll.py:326-329). migrate-raw accumulates `(path, plain, applied, stored_shape)` for every entry before writing (tools/library.py:185), then overwrites scan.tif and then scan.json non-atomically (198-206). migrate-direction counts errors in `left` but falls through to `return 0` (246)."
+   },
+   {
+    "id": "CLI-27",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "ScanSession._run sends inquiry() and then _report_position(), which reads READ_STATE (session.py:1293-1307, 1996-2009), so 'and nothing else' (Makefile:50-51, tasks.py:150-152) is inaccurate. That is harmless per CLAUDE.md. DEMO_ROLL = 'rolls/aligned-strip' (tasks.py:168). rolls/ is gitignored and absent in this checkout, and gui.py:8171-8177 calls ap.error when the folder is missing, so run-sheet cannot run on a fresh clone or in CI."
+   },
+   {
+    "id": "CLI-28",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The per-frame except (direct.py:3662-3686) catches ScanReadError and TimeoutError from a mid-pass read the same way as a clean refusal, and then keep_going() calls advance(). There is no 'device state unknown' abort. Damage is bounded: a dead device makes advance() return None, which ends the roll."
+   },
+   {
+    "id": "CLI-29",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "grep shows session_start() called only from the probe tools (transport_truth, gain_probe, fast_ir_probe, byte14_probe, roll_registration_walk, exposure_probe, hold_probe), never from scan.py, scan_roll.py or ScanSession. calibrate_shading's own docstring (direct.py:1768-1771) says 0xE7 'is refused with ASC 0x20', which sits oddly with session_start's speculation that 0xE7 enables calibration. Either way the opening sequences differ between the probes and the operator paths."
+   },
+   {
+    "id": "CLI-30",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "test_library_tool.py tests only `list`. No test raises KeyboardInterrupt or BaseException (grep). TY_ARGS excludes tools/ (tasks.py:61-65), and coverage source is ['rps7200'] (pyproject.toml:116-117)."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "CLI-A1",
+    "title": "A calibration that yields no reference prints 'scans will be raw', then the next scan silently recalibrates on the lazy in-scan path",
+    "severity": "medium",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/direct.py:612-626",
+     "rps7200/direct.py:1945-1950",
+     "rps7200/direct.py:2582-2594",
+     "tools/scan_roll.py:166-173",
+     "tools/scan_roll.py:446-453",
+     "tools/scan.py:164-168"
+    ],
+    "evidence": "ensure_shading: `summary += (f\", saved {saved}\" if result[\"reference\"] is not None else \" -- no usable shading reference; scans will be raw\")`. calibrate_shading: `self._shading = calculate_shading(data, width); if self._shading is None: self._log(\"calibration returned no usable shading lines\")` (no raise). scan(): `if self._shading is None or needed > ...: self._log(f\"calibrating before scanning ({reason})\"); self.calibrate_shading()`. scan_roll.py calibrate() only prints the summary, and main sets `placed = True` regardless.",
+    "description": "When the calibration pass returns no usable lines, both tools carry on. The message 'scans will be raw' is false: every later scan() has shading=True and `_shading is None`, so it runs calibrate_shading() inside the scan. scan_roll.py's own comment (433-441) documents that path stalling the device with LIBUSB_ERROR_PIPE. If that second calibration also fails, scan() raises ShadingUnavailable, so the pass is refused rather than delivered raw.",
+    "failure_scenario": "The first calibration of a roll returns no usable lines, and the tool prints '-- no usable shading reference; scans will be raw'. The roll begins. The first prescan calibrates lazily, which is the documented stall, and the device stops answering mid-roll.",
+    "recommendation": "In both tools, treat `result['reference'] is None` after a non-skipped ensure_shading as a hard stop before anything else is scanned, and exit non-zero. Remove the 'scans will be raw' wording."
+   },
+   {
+    "id": "CLI-A2",
+    "title": "Neither CLI tool estimates its runtime or warns before a run that will outlive the 10-minute foreground kill",
+    "severity": "medium",
+    "category": "user-error",
+    "locations": [
+     "tools/scan.py:196-235",
+     "tools/scan_roll.py:455-477",
+     "rps7200/session.py:743",
+     "rps7200/session.py:191"
+    ],
+    "evidence": "grep 'estimate' in tools/scan.py and tools/scan_roll.py returns nothing, while `def estimate_seconds(resolution: int, infrared: bool, ...` exists at session.py:743 and `FORWARD_FRAME_S = 4.6` at session.py:191 for the window.",
+    "description": "CLAUDE.md makes backgrounding anything over ~8 minutes mandatory, because a killed foreground read is an abandoned read, which wedges the device. The CLI tools print nothing before starting that would let a caller (Claude in particular) see that a run is long. Combinations like `scan.py --dpi 3600 --bracket 9 --ir`, which is about 3-4 min of calibration plus 8×138 s plus one RGBI pass, or any multi-frame roll, silently exceed the limit. Taken with CLI-01 and CLI-02, such a kill also loses every pass.",
+    "failure_scenario": "Claude runs `RPS7200_DEBUG=1 uv run python tools/scan.py --dpi 3600 --bracket 5 --ir` in the foreground. Calibration plus five passes take about 16 minutes. The harness kills it at 10 minutes mid-read: the scanner wedges and passes 1-3 are lost unfiled.",
+    "recommendation": "Before opening the device, compute and print an estimate with session.estimate_seconds (plus calibration and advance costs). When the estimate exceeds 8 minutes and stdout is not a TTY, or unless a `--long-ok` flag is given, refuse or warn loudly."
+   },
+   {
+    "id": "CLI-A3",
+    "title": "scan_roll.py --dry-run writes prescan TIFFs on the scanning thread with the device open; the window routes the same writes through FrameWriter",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "tools/scan_roll.py:498-510",
+     "rps7200/session.py:1805-1817"
+    ],
+    "evidence": "scan_roll.py: `pre = out / f\"prescan{number:02d}.tif\"; tiff.write(str(pre), frame.prescan)` inside the `for frame in s.scan_roll(...)` loop. session.py comment: \"Written by the writer thread, not here: it is only ~370 KB, but nothing local happens on the scanning thread with the device open.\"",
+    "description": "The CLI and the window disagree on the rule about local I/O with the device open. The write is small and uncompressed, so the practical risk is low. It remains a divergence from the shared code path the tools claim to follow, and these writes also bypass the library (CLI-03).",
+    "failure_scenario": "Writing to a slow or network rolls/ folder stalls the generator between passes while the session is open and idle, which is the state CLAUDE.md associates with wedges.",
+    "recommendation": "Submit dry-run prescans to FrameWriter with paths=[pre] and library filing (raw_image=frame.raw_prescan), as ScanSession does."
+   },
+   {
+    "id": "CLI-A4",
+    "title": "tests/test_gui.py docstring claims scan.py and scan_roll.py write the 1_/2_/3_ comparison files; neither does",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "tests/test_gui.py:101-106"
+    ],
+    "evidence": "\"`tools/scan.py` and `tools/scan_roll.py` both write 1_/2_/3_*.tif to the repo root and clobber each other.\" grep for '1_nothing_done' finds it only in tools/make_comparison.py, CLAUDE.md, README and docs.",
+    "description": "The rationale for the test is stale. Only make_comparison.py writes these files. A reader looking for which tool regenerates the eye-test files is pointed at the wrong two.",
+    "failure_scenario": "A contributor regenerates the comparison files by running scan.py, as the test docstring implies, and finds nothing written.",
+    "recommendation": "Correct the docstring to name tools/make_comparison.py."
+   }
+  ],
+  "persisted_state_corrections": "Corrections to the persisted_state table:\n\n- **Roll frame prescan (`<entry>/prescan.tif`)** is corrected and unlabelled on BOTH paths. The window's roll also passes `prescan=rf.prescan` (session.py:1887), so this is not only 'from tools/scan_roll.py:562'.\n- **Shading reference npz** also stores a `dark_channels` array (shading.py:79-81). `calibration/shading.npz` is not overwritten when a calibration yields no reference (save_shading returns None), but the tools still carry on (see CLI-A1). It is written on dry runs too, because scan_roll calibrates before walking.\n- **Library index.json** is rewritten non-atomically by every library.save (reindex re-reads every scan.json), including from the FrameWriter thread. Interrupting it can truncate index.json; that is harmless because nothing load-bearing reads it.\n- **Entry scan.json** is also rewritten in place by migrate-direction (library.py:633-635), which can also rewrite `prescan.tif`. save() reuses an existing directory that lacks scan.json (collision check tests only scan.json), so an orphan from an interrupted save is silently overwritten.\n- **scan.tif at 7200 dpi** is realigned and trimmed by NATIVE_COLUMN_STAGGER_LINES=4 rows, and raw.layout.lines still says the untrimmed count. Reachable only via `scan.py --no-shading`: a full-frame shaded 7200 dpi pass raises ShadingUnavailable, and the GUI never passes shading=False.\n- **Single-scan delivery**: filing into the library happens BEFORE export.write. A bad --out suffix therefore leaves the entries filed while the delivered file and sidecar are never written. The sidecar path is `out.with_suffix('.json')`, so with the default `--out scan.tif` it is `./scan.json` in the CWD.\n- **Walk prescans**: from the window they are written oriented (rotation/flip composed in session._file). The CLI writes them unoriented and never un-orients when reading (CLI-13).\n- **Comparison files**: previews/ is not created, so the PNGs fail on a fresh checkout. The inputs are arbitrary TIFFs, not library entries.\n- **Debug spool**: filing_load_test's documented invocation sets RPS7200_DEBUG=0, so in practice it does not spool either."
+ }
+}

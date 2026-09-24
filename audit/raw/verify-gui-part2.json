@@ -1,0 +1,308 @@
+{
+ "type": "result",
+ "key": "v2:784841c664f5c3ce53645b2bf310de6580a8f1cdd2a53ff2dfe6aabfa61da087",
+ "agentId": "a2f8cc086afc766ab",
+ "result": {
+  "verdicts": [
+   {
+    "id": "GUI2-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "session.py:1440-1457 `_scan` calls `self._file(seq, 0, image, meta, ...)` with no raw_image, unlike `_prescan` (1415 `raw_image = getattr(self._scanner, \"last_pixels_raw\", None)`). DirectScanner.scan returns the corrected image (direct.py:2708 `raw_pixels = image`, 2733 `image, shading_report = apply_shading(...)`, 2828 `return image, meta`), and only `last_pixels_raw` holds the decode. FrameWriter._write (session.py:1088-1097) saves `job[\"image\"] if raw_image is None else raw_image` with no `corrections=`, so library.py:228 records `corrections_applied: []`. capture_record (direct.py:641-646) still hands over the reference and mask, so library.corrected (388) runs apply_shading a second time. The GUI reads only through library.corrected (_load_full 4110, _deliver_one 3864). No guard anywhere prevents it."
+   },
+   {
+    "id": "GUI2-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "demo._decode (1009-1010) applies shading and returns the reference in the capture. DemoScanner defines no `last_pixels_raw`, so session._prescan's getattr gets None, and demo.scan_roll's RollFrame (771-779) carries no raw_image/raw_prescan. Every demo pass is therefore filed corrected, with a reference beside it and `corrections_applied` empty. It gets worse: a demo prescan read from `prescan.tif` (_pair_image 1176-1182) does not refresh `self._capture`, so it is filed with the reference and mask of whichever entry was decoded last. Also, demo.scan corrects even when shading=False, because _decode corrects unconditionally."
+   },
+   {
+    "id": "GUI2-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_write_approved (2940-2941): `name = _safe(self.fields[\"roll\"].get().strip())`, `folder = Path(self.session.rolls) / name`. session._roll (1634-1635): `name = job.name or time.strftime(\"%Y-%m-%d\")`; `out = ... self.rolls / name`, with no _safe. session._safe returns 'roll' for an empty string (2184). fields['roll'] is used only at 2156, 2862 and 2940, and open_roll never sets it, so a reopened roll is commissioned under whatever the field holds. read_survey/roll_exports read approved.json from the roll's own folder, so the decisions are not found."
+   },
+   {
+    "id": "GUI2-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "approved_from_sheet (5818-5820) keeps only ticked frames. _write_approved replaces the file with write_text (2943) before the Roll is submitted, and runs even when the roll then refuses at the seek. read_approved (4952-4956) returns empty dicts on a parse error without logging. Offsets are also passed through snap_offset, which clamps them, before the rounding."
+   },
+   {
+    "id": "GUI2-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:1827 files dry-run prescan entries with `frame=job.notes.frame or f\"{name}-{number:02d}\"`, and 1880-1882 does the same for roll frames. roll_entry_index (4999-5008) keeps the last glob hit per key and does not filter by tags or resolution. roll_exports labels every item with the roll's resolution_dpi. A walk and a commission on the same day with an empty name share the key (both default to today's date). FilmNotes.frame from the Film panel overrides the key for every frame."
+   },
+   {
+    "id": "GUI2-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "roll_exports (4885-4898) orients from read_approved plus settings['rotation'/'flipped']. session._file (2102-2110) composes `reversal` into rotation/flipped, and library.save stores them under record['scan'] (library.py:243). roll_entry_index reads scan.json but keeps only the folder. A reversed frame therefore loses its composed half-turn on Export, and GUI2-03 and GUI2-04 make approved.json unreliable as a source."
+   },
+   {
+    "id": "GUI2-07",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "on_roll's dry branch (2112-2133) resets survey, orientations, sheet_state and _sheet_roll but never closes self.sheet. At walk end (3258-3262), `_sheet_roll = last_roll_dir` is set and on_contact_sheet only lifts an alive sheet (2170-2173). _dismiss -> _store_sheet_state (2340-2350) sets sheet_state, and after the walk ends it also stores under the new walk's key. _recall_sheet_state then prefers sheet_state (2359-2360)."
+   },
+   {
+    "id": "GUI2-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "remember_arrangement (3498-3505) appends to self.survey whenever `_surveying and kind == 'prescan' and number`, with no duplicate check. It is called from _arrange, from _carry (on_rotate/on_flip, 3924) and from the sheet's orient handler. Rotating any numbered prescan during a walk appends it again and calls edge_watch.add with it."
+   },
+   {
+    "id": "GUI2-09",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The manifest captures `\"rotation\": self.rotation` once at roll start (session.py:1687-1688, 1732-1733). Each prescan is filed with `_orientation_for(number, 'prescan')`, which returns the current `self.rotation, self.flip` (2029). FrameWriter writes prescanNN.tif oriented by that value (1068-1069). _carry mutates session.rotation/flip from the UI thread mid-walk (3920-3921). read_survey un-orients every prescan by the single manifest value (4722-4723, 4739)."
+   },
+   {
+    "id": "GUI2-10",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_FrameAdjuster._set (6715-6721) pops a zero offset but marks the source operator. state() stores offsets without the zero. _merge_kept (5520) iterates only kept offsets, so an operator zero never recreates the note. _open_sheet (2202) passes the result as proposals, and take_readings (7832-7833) then applies the detector's value because the source is not 'operator'. read_approved (4963) also drops 0.0 through `if record.get(\"offset_mm\")`."
+   },
+   {
+    "id": "GUI2-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "read_survey sets a reopened frame's entry from approved.json `reference_entry` (4742), a cwd-relative real-library path written by a real session. on_delete (3999-4015) offers rmtree plus library.reindex(entry.parent) for any result with an entry, with no check against session.root or demo. main()'s comment (8174-8180) claims the demo cannot write back into the real data. The cited tasks.py:184-185 is right, but DEMO_ROLL is rolls/aligned-strip (168); registration-D is only the docstring example. Severity lowered to medium because the dialog names the entry and warns that the raw bytes cannot be recovered. The harm is that it reaches the real library from the demo, and deletes a roll's reference entry."
+   },
+   {
+    "id": "GUI2-12",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Confirmed: seq=-number (4737), open_roll appends without removing earlier reopened results (2606-2607), _show_seq/_at return the first seq match, and on_delete filters by seq, so it removes both. However, _walk wraps `shown.index(self.current)` in `except ValueError` (767-772). The ambiguous-truth-value ValueError from dataclass __eq__ comparing ndarray images is caught, so the arrow keys jump to the first/last pass instead of raising.",
+    "corrected_description": "Reopened results get seq=-frame and a label shared across rolls. After two rolls (or the same roll twice) are opened in one session, thumbnails, 'Show in preview' and the strip menu resolve to the first roll's frame with that number. The big view, full-res read and readouts then describe the wrong photograph, and Delete targets the first roll's result and entry while removing both from the session. Arrow-key walking onto the later duplicate hits a ValueError inside list.index, which _walk catches, so the view jumps to the first or last pass.",
+    "corrected_locations": [
+     "tools/gui.py:4737",
+     "tools/gui.py:2606-2607",
+     "tools/gui.py:3643-3664",
+     "tools/gui.py:4009-4023",
+     "tools/gui.py:762-773",
+     "rps7200/session.py:960-979"
+    ]
+   },
+   {
+    "id": "GUI2-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "look_only reaches a backend only inside `if args.demo:` (8195-8199). Elsewhere it changes only the sheet header (7266-7272) and a dialog sentence (2695). on_scan_chosen still calls _calibration_missing, whose prompt binds Return to 'measure' (2026-2030). main() neither rejects nor warns about --look-only without --demo."
+   },
+   {
+    "id": "GUI2-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_reopen_survey refuses while busy (2239-2244), but _RollBrowser is a separate non-modal Toplevel, and _open (7049-7053) calls gui.open_roll with no busy or _surveying check. _set_busy (3350-3365) toggles only _run_buttons. open_roll replaces the survey, the edge_watch contents and _sheet_roll while `_surveying` can still be True."
+   },
+   {
+    "id": "GUI2-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_FrameAdjuster.top = tk.Toplevel(gui.root) (6548). Only the sheet's _scan destroys it (8012-8013); _dismiss (7917-7932) and open_roll's `self.sheet.top.destroy()` do not. _set writes into sheet.offsets/proposals and then calls sheet._refresh_caption on destroyed widgets."
+   },
+   {
+    "id": "GUI2-16",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_close (3039-3050) calls _remember and shutdown and never _dismisses an open sheet. open_roll destroys the sheet without storing it (2620-2624). At that point `_sheet_roll` still names the outgoing roll, because it is reassigned at 2626, so the comment's rationale does not hold."
+   },
+   {
+    "id": "GUI2-17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_close checks only self.busy. _wait_to_quit waits only for session._thread. The save-all and export threads are daemon threads (3840-3841, 2451), and _saving is never consulted on quit. export.write/tiff.write write directly to the final path."
+   },
+   {
+    "id": "GUI2-18",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Confirmed: _show calls _load_full for any result with an entry (3538-3539), resets _levels_seq, and _load_full guards only `_loading == r.seq`, so each show or rotate (via _carry -> _show) starts a new, uncancelled full-res read-and-correct thread. on_save_all and on_export_rolls check only _saving, not busy, so they can run during a roll with the device open. However, on_duplicate_roll is guarded: _roll_is_busy refuses while self.busy (2372-2375). Its copytree only freezes the UI; it does not overlap a scan. The OOM-to-abandoned-read chain is plausible but unmeasured.",
+    "corrected_description": "Full-resolution reads are started on every show, rotate or flip with no bound or cancellation, and Save all/Export may run during a roll. All of this runs in the process that holds the USB device open. Duplicate is refused while busy, but its multi-GB copytree runs on the UI thread.",
+    "corrected_locations": [
+     "tools/gui.py:3527-3539",
+     "tools/gui.py:4100-4120",
+     "tools/gui.py:3911-3935",
+     "tools/gui.py:3770-3841",
+     "tools/gui.py:2383-2451",
+     "tools/gui.py:2453-2482"
+    ]
+   },
+   {
+    "id": "GUI2-19",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_press (4500-4504) calls _aim for any current prescan when v_aim is set. _aim ends in on_nudge, and on_nudge (2972-3018) submits a Move with no busy check and no check that the prescan shows the current transport position. Reopened prescans (kind 'prescan') qualify."
+   },
+   {
+    "id": "GUI2-20",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "RESTORABLE (4780-4792) restores 'frames' and 'start_at'. open_roll's no-walk branch then sets start-at to remaining[0] (2588-2589) without adjusting frames or restoring `only`, and on_roll submits Roll(frames=..., start_at=...) with no only. So done frames are rescanned and the span can run past the roll. However, on_roll's own confirm dialog does print 'Scan N frames, from frame K', so the claim that the cost is unpredicted is overstated. It is the reopen dialog ('press Roll') that misleads.",
+    "corrected_description": "Reopening a roll with no walk restores its original frame count and moves start-at to the first remaining frame. The Roll button then scans that count from there, and neither 'only' nor the done set is carried. Done frames between and after the gaps are rescanned, and the span can extend past the roll's own frames. The reopen dialog tells the operator simply to press Roll.",
+    "corrected_locations": [
+     "tools/gui.py:2576",
+     "tools/gui.py:2581-2598",
+     "tools/gui.py:4780-4792",
+     "tools/gui.py:2150-2159"
+    ]
+   },
+   {
+    "id": "GUI2-21",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "on_roll passes the empty field (2156). session._roll defaults to today's date (1634-1635). survey.json is written fresh for a dry run, and `earlier` is read only for non-dry runs (1649). prescanNN.tif paths go straight to FrameWriter/export.write with no _unclaimed (1817, 1067). The confirm dialog (2102-2110) names neither the folder nor a collision."
+   },
+   {
+    "id": "GUI2-22",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The sheet still offers 'nudge registration between frames' (7382-7390). approved_from_sheet gives every ticked frame an Approved. direct.py scan_roll takes the `held` branch, or `elif held is not None` once holding is off, before `elif correct` (3526-3570), so correct never acts. The GUI's own comment (2921-2926) admits this. The roll seeks to chosen_span's first ticked frame (5872-5873), not the start of the strip, which contradicts the header text (7274-7280)."
+   },
+   {
+    "id": "GUI2-23",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_scan_chosen stores orientations[('frame', n)] (2845-2847), and on_roll clears orientations only for dry runs. _arrange reads orientations.get(picture_of(result)), and picture_of keys by ('frame', number) (5432-5433). The session resets _frame_rotation after the roll (1939), so the next roll's files use the session default."
+   },
+   {
+    "id": "GUI2-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "on_export_rolls (2426) and on_save_all (3817) read v_mono/v_mono_channel from the window. _deliver_one applies to_monochrome from those values (3866-3867), not from the manifest's settings or the pass's film."
+   },
+   {
+    "id": "GUI2-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "approved_from_sheet: `source=(labels.get(number) or {}).get(\"source\") or \"operator\"` (5835), and _write_approved defaults to 'operator' too (2953). A frame the edge reader has not reached has no note, so it is stamped as the operator's."
+   },
+   {
+    "id": "GUI2-26",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "export.write's ImportError fallback (185-188) rewrites the path as .tif and writes it unchecked. _write_infrared (146-149) writes <stem>.dng unchecked. Only the primary .jpg name passes through _unclaimed (3826, 2436-2438)."
+   },
+   {
+    "id": "GUI2-27",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gui.py:215 `MAX_FINE_STEPS = 8` duplicates session.py:669. `if short > 0.85` (7554) is a retyped threshold, while the driver uses `drift_warning: int = 240` (direct.py:3302). `* 1.1` appears at 4582 and 6780. _aim refuses at `abs(want) > MAX_TRAVEL_MM`, which is one command (230), but the message says 'more than {MAX_FINE_STEPS} sub-frame moves' (4563-4570)."
+   },
+   {
+    "id": "GUI2-28",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "remember_arrangement sets `self._transport = result.position` for any plausible position (3506-3509). It is reached from _carry and the sheet's orient handler for old or reopened results, and seek_note(self._transport, ...) builds the dialogs' 'last said' sentence (2094, 2817)."
+   },
+   {
+    "id": "GUI2-29",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The editor text (6354-6356) and the _actions docstring (709-711) say no shortcut starts a scan. _actions maps prescan, scan and roll (734-740), and shortcuts.py binds <ACCEL-Return>, <ACCEL-Shift-Return> and <ACCEL-Key-b> (112-117). They do ask first."
+   },
+   {
+    "id": "GUI2-30",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/library.py offers only list/verify/reconstruct/reindex/... (45). Nothing rebuilds survey.json, roll.json or prescanNN.tif. The Delete dialog (2502-2507) and README.md:283-285 say the frames can be rebuilt. _roll_is_busy checks only `_loaded_roll` (2376-2381), not `_sheet_roll`."
+   },
+   {
+    "id": "GUI2-31",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "on_rename_roll only renames (2533). Sheet state and 'opened' are keyed by folder name. on_duplicate_roll runs copytree synchronously with no cleanup on failure (2477-2481). rolls_on_disk joins entries by summary['roll'] from the manifest (5127, 5086), which a copy keeps."
+   },
+   {
+    "id": "GUI2-32",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_deliver_one falls back to result.image (3876-3885) when there is no entry, with the message 'not filed yet', whatever the reason. session._filed logs a failure and never emits 'filed' (1353-1355), so entry stays None. remember_arrangement downscales old results to ARCHIVE_MAX_SIDE (3515-3520)."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "GUI2-A1",
+    "title": "Every GUI single scan and prescan is gzipped into the library on the writer thread while the device is open and idle",
+    "severity": "high",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/session.py:1311",
+     "rps7200/session.py:1086-1097",
+     "rps7200/session.py:1292-1296",
+     "rps7200/library.py:186-205",
+     "rps7200/session.py:1013-1020"
+    ],
+    "evidence": "session._run opens the scanner once (`self._scanner.open()`, 1295) and holds it for the window's life. `self._writer = FrameWriter(on_done=self._filed)` (1311). Every _file goes to `library.save(...)`, which does `with gzip.open(path / \"raw.bin.gz\", \"wb\", compresslevel=6)`. FrameWriter's own docstring: 'On this thread the write instead overlaps the next frame's scan, so the device is busy rather than idle throughout.'",
+    "description": "The overlap argument covers rolls only. After a Scan-button pass or a Prescan the worker has no next job, so the scanner sits open and idle while tens to hundreds of MB are gzipped in the same process. CLAUDE.md says gzipping a library entry with the device open and idle preceded a wedge, and that 'a single scan compresses nothing while the device is open'. That statement describes DirectScanner's debug filing, not the GUI path every operator uses.",
+    "failure_scenario": "The operator presses Scan at 3600 dpi RGBI. The pass returns, and the writer thread gzips ~140 MB of raw bytes for several seconds while the device is open and idle, which is the state recorded as preceding a wedge.",
+    "recommendation": "Either measure it (tools/filing_load_test.py for the idle case) or defer compression of single passes until the session closes or the next job starts. At minimum, correct CLAUDE.md so it describes the GUI path.",
+    "doc_reference": "CLAUDE.md:156-159 ('A single scan compresses nothing while the device is open ... gzipping one with the scanner open and idle preceded a wedge once') and CLAUDE.md:368-369"
+   },
+   {
+    "id": "GUI2-A2",
+    "title": "Save As, Save all and roll Export write files without the scan resolution, so TIFFs are tagged 72 dpi",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "tools/gui.py:3869",
+     "tools/gui.py:3880-3883",
+     "rps7200/tiff.py:216",
+     "rps7200/session.py:1080-1082"
+    ],
+    "evidence": "_deliver_one: `note = export.write(path, full, quality=quality)` and `export.write(path, to_monochrome(...) if mono else turned, quality=quality)`, with no `resolution=`. tiff.py: `res = int(resolution) if resolution else 72`. FrameWriter passes `resolution=job[\"dpi\"]`.",
+    "description": "The same pass delivered by the roll (frameNN.tif) and by Export or Save As carries different resolution metadata: the scanned dpi versus 72. Downstream tools that size or print by the tag get the wrong physical size.",
+    "failure_scenario": "A 3600 dpi frame exported from the Rolls table opens in NegPy or an editor as a 72 dpi image roughly 50 times its physical size, while frame05.tif from the roll says 3600.",
+    "recommendation": "Pass `resolution=(result.meta or {}).get(\"resolution_dpi\")`, or better the entry record's scan.resolution_dpi, in both _deliver_one branches."
+   },
+   {
+    "id": "GUI2-A3",
+    "title": "Save As re-corrects the full-resolution entry on the UI thread with no error handling",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "tools/gui.py:3754-3768",
+     "tools/gui.py:3858-3869"
+    ],
+    "evidence": "on_save_as: `said = self._deliver_one(result, path, jpeg_quality(...), self.v_mono.get(), self.v_mono_channel.get())` is called directly, with no thread and no try/except. _deliver_one calls `library.corrected(result.entry)` and export.write.",
+    "description": "on_save_all's own docstring says re-correcting at full resolution on the UI thread would freeze the window. Save As does exactly that for one pass (142 to 570 MB at 3600/7200 dpi). Any OSError, MemoryError or a corrupt entry propagates out of the Tk callback, so only a stderr traceback appears. The operator sees neither the 'saved' line nor a failure.",
+    "failure_scenario": "Save As to a full disk: the window freezes for seconds, then nothing is said. A partial file may remain under the chosen name.",
+    "recommendation": "Run it on the same worker/queue path as Save all (the _saves queue), and catch and report failures in the log or a dialog."
+   },
+   {
+    "id": "GUI2-A4",
+    "title": "'Scan chosen frames' closes the sheet and adjuster before any refusal or cancel, and the 'over the sheet' prompt parent is dead code",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:8005-8015",
+     "tools/gui.py:2753-2771"
+    ],
+    "evidence": "_ContactSheet._scan: `self._dismiss()` then `self.gui.on_scan_chosen(picked, approved, options)`. on_scan_chosen then refuses when busy, refuses on calibration missing (`self._calibration_missing(self.sheet.top if self.sheet is not None and self.sheet.alive() else None)`), refuses on invalid dpi, or is cancelled at the confirm dialog.",
+    "description": "Every refusal or cancel leaves the operator with the sheet gone and must reopen it. The state is stored by _dismiss. The code that parents the calibrate prompt over the sheet can never see a live sheet, so its comment 'Over the sheet when the sheet asked' is false.",
+    "failure_scenario": "The operator presses Scan chosen frames, reads the time estimate and presses Cancel. The sheet and his adjuster window have closed.",
+    "recommendation": "Validate and confirm in on_scan_chosen first, and dismiss the sheet only once the Roll is actually submitted."
+   },
+   {
+    "id": "GUI2-A5",
+    "title": "approved.json, the Move job and the window's internals still hold transport distances in millimetres",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "tools/gui.py:2949",
+     "tools/gui.py:2977-2979",
+     "tools/gui.py:3018",
+     "tools/gui.py:4963-4964"
+    ],
+    "evidence": "_write_approved: `\"offset_mm\": round(a.offset_mm, 4)`. on_nudge: 'The field is in the transport's own unit. Everything below this line, and the whole session interface, stays in millimetres.' `millimetres = abs(values[0]) * MM_PER_UNIT`, then `Move(millimetres=millimetres * direction)`.",
+    "description": "CLAUDE.md prohibits millimetres for transport distances. The operator-facing text uses units, but the persisted decisions file and the session interface store mm, which is a conversion away from what the hardware executed. Any later change to MM_PER_UNIT silently reinterprets every stored approved.json.",
+    "failure_scenario": "The unit calibration is revised (as happened with 1.57 -> 1.84). Stored approved.json offsets in mm now map to different param values than the operator chose.",
+    "recommendation": "Store offsets in parameter units (or param commands) in approved.json, together with the conversion used, and move the Move interface to units.",
+    "doc_reference": "CLAUDE.md:292-300 ('Millimetres are prohibited ... express every sub-frame distance in units of the adjustment parameter')"
+   }
+  ],
+  "persisted_state_corrections": "approved.json: offset_mm is first passed through snap_offset, which snaps to the reachable lattice and clamps to ±MAX_TRAVEL_MM, and only then rounded to 4 dp. It is stored in millimetres, which CLAUDE.md forbids. The file is written before the Roll is submitted and even if the roll then refuses. Save As / Save all / Export deliverables: _deliver_one never passes resolution, so TIFFs carry 72 dpi (tiff.py:216). Save As runs on the UI thread, not on a daemon thread, and has no error handling. Library entries read by the GUI: demo prescans served from an entry's prescan.tif are filed with a stale capture, i.e. the shading reference and CCD mask of whichever entry was decoded last (demo.py:1176-1182 does not refresh _capture). Their raw bytes are dropped only by the shape guard, so the reference attached to those entries belongs to another pass. Walked roll folder: prescanNN.tif holds the corrected pixels (rf.prescan from DirectScanner, not raw) oriented by the session rotation at filing time. prescanNN-before.tif is written with file_entry=False, i.e. with no library entry. The library-entry deletion row should also say it can be triggered by a keyboard shortcut ('delete_pass' in _actions) as well as the strip menu."
+ }
+}
