@@ -111,3 +111,13 @@ def test_the_contact_sheets_decisions_survive_a_round_trip(tmp_path):
     # Still strings here: JSON has no integer keys, and turning them back is
     # `ScannerGui._clean_sheet_state`'s job rather than this file's.
     assert stored["roll-07"]["rotations"] == {"3": 0}
+
+
+def test_an_unreadable_file_is_kept_aside_not_written_over(tmp_path):
+    """The window opens with defaults either way; but the next save wrote the
+    whole file, and a sheet's unsaved decisions went with no word said."""
+    target = tmp_path / "gui-settings.json"
+    target.write_text('{"sheet": {"strip": [1, 2', encoding="utf-8")
+    assert settings.load(target)["sheet"] == {}
+    kept = list(tmp_path.glob("gui-settings.json.unreadable-*"))
+    assert len(kept) == 1 and "strip" in kept[0].read_text(encoding="utf-8")

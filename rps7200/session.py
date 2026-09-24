@@ -1275,6 +1275,8 @@ class ScanSession:
         out_dir: str | Path | None = None,
     ):
         self.root = str(root) if root else None
+        #: The job the worker is running, for the writer thread to ask about.
+        self._current: Job | None = None
         self.reference = str(reference)
         self.rolls = Path(rolls)
         #: Makes the reader a roll's in-walk correction asks about each frame's
@@ -1349,14 +1351,37 @@ class ScanSession:
         self._thread.start()
 
     def submit(self, job: Job) -> None:
-        # A stop asked for during the previous job must not silently kill the
-        # next one the operator deliberately started.
-        self._stop.clear()
+        # Not clearing the stop flag here. The worker clears it as each job
+        # starts, which is what keeps a stop meant for the previous job from
+        # killing the next one; clearing it on submit as well cancelled a Stop
+        # the operator had just pressed on the job still running, whenever
+        # anything else was queued behind it -- an aim-click, a key.
         self._jobs.put(job)
 
     def request_stop(self) -> None:
-        """Stop at the next safe point. Never risks the device."""
+        """Stop at the next safe point, and drop what is queued behind it.
+
+        Never risks the device: the running job stops where it can, and a job
+        that has not started is simply not started. A Stop that left the
+        queue alone let a double-pressed Scan, or a roll queued behind a
+        walk, run anyway once the first one had stopped.
+        """
         self._stop.set()
+        dropped, shutdown = 0, False
+        while True:
+            try:
+                job = self._jobs.get_nowait()
+            except queue.Empty:
+                break
+            if job is None:
+                shutdown = True          # the close request is not a job
+            else:
+                dropped += 1
+        if shutdown:
+            self._jobs.put(None)
+        if dropped:
+            self._emit("log", text=f"stopped: {dropped} queued job"
+                       f"{'' if dropped == 1 else 's'} not started")
 
     def force_abort(self) -> None:
         """Abandon whatever is running by closing the transport under it.
@@ -1455,6 +1480,7 @@ class ScanSession:
                 job = self._jobs.get()
                 if job is None:
                     break
+                self._current = job
                 self._stop.clear()
                 self._emit("state", text=_describe(job), busy=True)
                 try:
@@ -1493,6 +1519,16 @@ class ScanSession:
                 self._emit("log", text=self._writer.notes.pop(0))
         if entry is None:
             self._emit("log", text=f"picture {number} could not be filed: {err}")
+            if err is not None and isinstance(self._current, Roll):
+                # A disk that is full, or an output folder that has gone, fails
+                # every frame after this one the same way. Scanning on spent
+                # the rest of the roll's film and time on pictures that were
+                # then thrown away, one log line each.
+                self._emit("log", text=(
+                    f"stopping the roll after the frame in flight: picture "
+                    f"{number} could not be filed, and the frames after it "
+                    "would be lost the same way"))
+                self.request_stop()
             return
         self._emit("log", text=f"filed: {entry.name}")
         # The UI needs the path to read full-resolution pixels back for a 1:1

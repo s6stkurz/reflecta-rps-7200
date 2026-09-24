@@ -4534,3 +4534,18 @@ def test_the_big_view_draws_the_frames_other_end_lighter(window, tmp_path):
     assert abs((guides[0] - read) - (far - guides[1])) < 4, "overhanging alike"
     assert "past the left" in adj.v_read.get()
     sheet.top.destroy()
+
+
+def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
+    """Only the buttons grey while the scanner works. The roll key queued a
+    second roll behind the first, and an aim-click or a fine move queued a
+    film move that ran wherever the job ended."""
+    app, _root = window
+    submitted = []
+    app.session.submit = submitted.append
+    app.busy = True
+    app.calibrated = True
+    app.on_roll()
+    app.on_nudge(1, 0.5)
+    app.on_move_frames(1)
+    assert submitted == []

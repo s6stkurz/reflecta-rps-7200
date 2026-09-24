@@ -581,6 +581,82 @@ def test_a_stop_does_not_carry_into_the_next_job(tmp_path):
     assert len(library.entries(tmp_path)) == 1
 
 
+def test_a_job_queued_behind_a_stopped_roll_does_not_cancel_the_stop(tmp_path):
+    """`submit` cleared the stop flag, so an aim-click or a key pressed after
+    Stop -- anything queued behind the running roll -- cancelled the Stop and
+    the roll ran to its end."""
+    holder = {}
+
+    def stop_then_queue(index):
+        if index == 1:
+            holder["session"].request_stop()
+            holder["session"].submit(Prescan())
+
+    scanner = FakeScanner(on_yield=stop_then_queue)
+
+    def remember(s, _scanner):
+        holder["session"] = s
+
+    _, scanner, events = run(Roll(frames=5, resolution=600, name="s"), tmp_path,
+                             scanner=scanner, extra=remember)
+    assert scanner.produced == 2, "the Stop was cancelled by the job behind it"
+
+
+def test_stop_drops_what_is_queued_behind_the_running_job(tmp_path):
+    """A double-pressed Scan, or a roll queued behind a walk, ran anyway once
+    the first had stopped."""
+    holder = {}
+
+    def queue_then_stop(index):
+        if index == 0:
+            holder["session"].submit(Scan(resolution=600))
+            holder["session"].submit(Scan(resolution=600))
+            holder["session"].request_stop()
+
+    scanner = FakeScanner(on_yield=queue_then_stop)
+
+    def remember(s, _scanner):
+        holder["session"] = s
+
+    _, scanner, events = run(Roll(frames=3, resolution=600, name="s"), tmp_path,
+                             scanner=scanner, extra=remember)
+    scans = [c for c in scanner.calls if c[0] == "scan"]
+    assert len(scans) == 1, "a job queued before the Stop still ran"
+    assert any("2 queued jobs not started" in e.text for e in kinds(events, "log"))
+
+
+def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path):
+    """A full disk or a vanished output folder fails every frame after it the
+    same way; scanning on spent the rest of the roll on pictures that were
+    then thrown away, one log line each."""
+    scanner = FakeScanner(frames=6)
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    s = ScanSession(root=str(blocker / "library"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    # Slow the roll a little, so the first failed filing lands before the end.
+    real = scanner.scan
+
+    def scan(**kw):
+        time.sleep(0.05)
+        return real(**kw)
+
+    scanner.scan = scan
+    s.start()
+    s.submit(Roll(frames=6, resolution=600, name="full"))
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        events.extend(s.poll())
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=2.0)
+    assert scanner.produced < 6, "the roll scanned on into a library it could not write"
+    assert any("stopping the roll" in e.text for e in kinds(events, "log"))
+
+
 def test_force_abort_closes_the_transport_and_marks_the_session_dead(tmp_path):
     scanner = FakeScanner()
     s = ScanSession(root=str(tmp_path), open_scanner=lambda: scanner, verbose=False)

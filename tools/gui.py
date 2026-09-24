@@ -380,6 +380,8 @@ class ScannerGui:
         self.results: list = []
         self.current = None
         self.busy = False
+        #: Threads writing files (Save all, Export): Quit waits for them.
+        self._writing: list[threading.Thread] = []
         self.closing = False
         self._photo: tk.PhotoImage | None = None
         self._small: tk.PhotoImage | None = None   # the coarse frame, enlarged
@@ -683,7 +685,7 @@ class ScannerGui:
             window = {"geometry": self.root.winfo_geometry()}
             for name, pane in (("outer", self._outer), ("right", self._right)):
                 window[name] = _sash_positions(pane)
-            settings.save({
+            saved = settings.save({
                 "controls": controls,
                 "film": film,
                 "output": self.v_outdir.get(),
@@ -701,6 +703,12 @@ class ScannerGui:
                 # left out is not merely unsaved, it is erased.
                 "sheet": self.remembered.get("sheet") or {},
             }, self._settings_path)
+            if saved is None:
+                # Said, not swallowed: a sheet's decisions made before
+                # commissioning live only here until then.
+                self._say("could not save the window's settings -- the "
+                          "contact sheet's decisions and the setup were not "
+                          "kept")
         except Exception as exc:                         # noqa: BLE001
             self._say(f"could not save the settings: {exc}")
 
@@ -750,8 +758,9 @@ class ScannerGui:
             "channel_next": lambda: self._cycle_channel(1),
             "channel_previous": lambda: self._cycle_channel(-1),
             "contact_sheet": self.on_contact_sheet,
-            # Only when there is something to stop. `submit` clears the flag,
-            # so a stray press cannot reach the next job -- but the log is
+            # Only when there is something to stop. The worker clears the flag
+            # as each job starts, so a stray press cannot reach the next job --
+            # but the log is
             # evidence, and "finishing what is already running" with nothing
             # running is a line that will be read back one day and believed.
             "stop": lambda: self.on_stop() if self.busy else None,
@@ -2090,6 +2099,13 @@ class ScannerGui:
             self.session.flip = self.current.flipped
 
     def on_roll(self) -> None:
+        # The key reaches here as well as the button, and only the button is
+        # greyed while the scanner works: a second roll was queued behind the
+        # first, and a dry run reset the walk still being read.
+        if self.busy:
+            self._say("the scanner is working -- a roll starts once it has "
+                      "finished")
+            return
         if self._calibration_missing():
             return
         dpi, predpi = self._dpi(), self._prescan_dpi()
@@ -2565,7 +2581,7 @@ class ScannerGui:
                         self._saves.put(("line", f"exported {said}"))
             self._saves.put(("done", written, total))
 
-        threading.Thread(target=run, daemon=True, name="export-rolls").start()
+        self._start_writing(run, "export-rolls")
 
     def on_duplicate_roll(self, summary) -> None:
         """A second copy of the roll under the next free name.
@@ -3083,10 +3099,27 @@ class ScannerGui:
         self._say(f"approved positions written to "
                   f"{folder / 'approved.json'} ({told})")
 
+    def _moving_refused(self) -> bool:
+        """True, having said why, when the film must not be moved now.
+
+        The buttons grey while the scanner works; the keys and an aim-click
+        on the picture did not, and queued a move that ran wherever the job
+        ended -- a distance measured on one frame applied to another.
+        """
+        if self.busy:
+            self._say("the scanner is working -- the film is not moved "
+                      "while it does")
+            return True
+        return False
+
     def on_move_frames(self, frames: int) -> None:
+        if self._moving_refused():
+            return
         self.session.submit(Move(frames=frames))
 
     def on_nudge(self, direction: int, millimetres: float | None = None) -> None:
+        if self._moving_refused():
+            return
         if millimetres is None:
             values = _numbers(self.v_fine.get())
             if not values:
@@ -3154,17 +3187,32 @@ class ScannerGui:
         self.session.force_abort()
 
     def on_close(self) -> None:
-        if self.busy and not messagebox.askokcancel(
-            "Quit",
-            "A scan is still running. Quitting waits for it to finish -- "
-            "abandoning it is what wedges the scanner.\n\nWait and quit?",
-        ):
-            return
+        if self.busy:
+            # Three answers, because "wait" alone meant waiting for a whole
+            # roll and everything queued behind it -- hours -- with no way to
+            # say "after this frame", which is what invites a hard kill.
+            answer = messagebox.askyesnocancel(
+                "Quit",
+                "The scanner is still working. Quitting never abandons a read "
+                "-- that is what wedges the scanner.\n\n"
+                "Yes: stop after the frame in flight, then quit.\n"
+                "No: let everything queued finish, then quit.\n"
+                "Cancel: keep working.", parent=self.root)
+            if answer is None:
+                return
+            if answer:
+                self.session.request_stop()
         self.closing = True
         self.v_state.set("closing ...")
         self._remember()
         self.session.shutdown()
         self._wait_to_quit()
+
+    def _start_writing(self, run, name: str) -> None:
+        """Run a thread that writes files, and let Quit wait for it."""
+        thread = threading.Thread(target=run, daemon=True, name=name)
+        self._writing = [t for t in self._writing if t.is_alive()] + [thread]
+        thread.start()
 
     def _wait_to_quit(self) -> None:
         """Close once the worker has finished with the device, and no sooner.
@@ -3179,9 +3227,15 @@ class ScannerGui:
         if not self._alive:
             return
         thread = self.session._thread
-        if self._session_closed or thread is None or not thread.is_alive():
+        # And for any file still being written by Save all or Export: those
+        # threads die with the window, which left truncated files behind.
+        writing = [t for t in self._writing if t.is_alive()]
+        if (not writing and (self._session_closed or thread is None
+                             or not thread.is_alive())):
             self._quit()
             return
+        if writing:
+            self.v_state.set("closing -- finishing the files being written ...")
         self._later(150, self._wait_to_quit)
 
     def _quit(self) -> None:
@@ -3996,8 +4050,7 @@ class ScannerGui:
                     self._saves.put(("line", f"saved {said}"))
             self._saves.put(("done", written, len(passes)))
 
-        threading.Thread(target=run, daemon=True,
-                         name="save-all").start()
+        self._start_writing(run, "save-all")
 
     def _deliver_one(self, result, path, quality: int, mono: bool,
                      mono_channel: str) -> str:

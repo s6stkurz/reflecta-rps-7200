@@ -15,6 +15,7 @@ and editable by hand.
 from __future__ import annotations
 
 import json
+import time
 import os
 from pathlib import Path
 from typing import Any
@@ -64,11 +65,16 @@ def load(where: str | Path | None = None) -> dict[str, Any]:
     """
     blank: dict[str, Any] = {name: {} for name in SECTIONS}
     blank["output"] = ""
+    target = path(where)
     try:
-        stored = json.loads(path(where).read_text(encoding="utf-8"))
+        stored = json.loads(target.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return blank
     except (OSError, json.JSONDecodeError, ValueError):
+        _keep_aside(target)
         return blank
     if not isinstance(stored, dict):
+        _keep_aside(target)
         return blank
     for name in SECTIONS:
         value = stored.get(name)
@@ -77,6 +83,22 @@ def load(where: str | Path | None = None) -> dict[str, Any]:
         elif isinstance(value, dict):
             blank[name] = value
     return blank
+
+
+def _keep_aside(target: Path) -> Path | None:
+    """Move an unreadable settings file aside before it is written over.
+
+    The window opens with defaults either way. But the next save wrote the
+    whole file, and whatever the damaged one still held -- a contact sheet's
+    unsaved decisions among it -- was gone with no word said.
+    """
+    aside = target.with_name(
+        f"{target.name}.unreadable-{time.strftime('%Y%m%dT%H%M%S')}")
+    try:
+        target.replace(aside)
+        return aside
+    except OSError:
+        return None
 
 
 def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None:
