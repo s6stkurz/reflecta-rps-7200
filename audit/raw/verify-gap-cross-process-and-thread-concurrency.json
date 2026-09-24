@@ -1,0 +1,156 @@
+{
+ "type": "result",
+ "key": "v2:8c258af88d0860ed42b8930aba9413988ddcfc706351014c97d53e8168d4fcab",
+ "agentId": "a8c1bc618545c5cc7",
+ "result": {
+  "verdicts": [
+   {
+    "id": "CC-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "library.py:166-176 is as quoted: entry_id has one-second resolution (library.py:120), the guard tests scan.json (written last, library.py:308), and the directory is created with mkdir(exist_ok=True). Every file, including gzip.open('wb') for raw.bin.gz (192), is written in place. Nothing reserves the name atomically, so two concurrent savers that compute the same id share one directory. Within one process only one thread ever saves: the FrameWriter, or _debug_flush after close. ScanSession forces debug=False (session.py:1270), so the GUI never runs both. The collision therefore needs two processes filing at the same second with the same stock/frame/dpi. Debug flushes (all 'unknown-film', direct.py:722) make that more likely, but it is still narrow, so I rate it medium rather than high. The test ids at tests/test_decode.py:303-306 show that sequential same-second collisions happen and that the -N path handles them."
+   },
+   {
+    "id": "CC-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The manifest records rotation and flip once (session.py:1687-1688, 1732-1733). _orientation_for returns the live self.rotation/self.flip for prescans (2025-2029), and _file reads it per picture (2106). The Tk thread writes session.rotation/flip at any time: _carry at gui.py:3922-3923 (on_rotate/on_flip have no busy guard) and the sheet's _all at 7741-7742. read_survey un-orients every prescan by the single manifest pair (gui.py:4724-4740), and roll_exports falls back to settings.rotation (4888-4897). Each entry's meta does record the applied turn (session.py:2110), but read_survey never consults it. Turning a prescan mid-walk is the documented way to say which way up the film is, so this path is plausible."
+   },
+   {
+    "id": "CC-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The Ctrl-B roll action is bound directly to on_roll (gui.py:740). The _bind_shortcuts runner (878-895) has no busy gate. on_roll checks calibration but never busy, and its dry branch clears survey, orientations, sheet_state and _sheet_roll and calls edge_watch.begin (2112-2133). The comment at 2138-2139 is contradicted by the key path. RollBrowser._open calls gui.open_roll directly (7049-7054), bypassing on_open_rolls' busy check (2239-2244). open_roll replaces self.survey (2603) and calls edge_watch.load (2655) without clearing _surveying, so a running walk's later prescans are appended to the reopened roll via remember_arrangement (3503-3505). remember_arrangement also runs from _carry and the sheet's _orient, so a prescan rotated during a walk is appended to the survey again."
+   },
+   {
+    "id": "CC-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_contact_sheet lifts any alive sheet (gui.py:2170-2173) and is auto-called at walk end (3261-3262). The dry branch of on_roll never touches self.sheet. The sheet copies its frames once (7150), and _scan builds approvals from self.frames (8005-8015). on_scan_chosen checks busy and calibration but not that the sheet belongs to the current generation or survey. _dismiss files the stale state through _store_sheet_state under the new _sheet_roll (2340-2350, 7927). One qualification: open_roll does destroy an alive sheet (2620-2624), so the defect is specific to a new walk. It does not arise when a roll is reopened."
+   },
+   {
+    "id": "CC-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "submit() clears _stop (session.py:1214-1218), and the worker also clears it when a job starts (1317), so the clear in submit only affects a running job. The roll polls _stop live (1762, 1928). on_stop disables the button (gui.py:3023). on_nudge ends in session.submit(Move(...)) (3018) with no busy check, and _aim reaches it from any click on a prescan with 'aim' ticked (4501-4504, 4587). v_aim is not among _run_buttons (3346-3348). Ctrl-B reaches on_roll with no busy check (see CC-03). Either path silently cancels a pending stop."
+   },
+   {
+    "id": "CC-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_file computes the output path with _unclaimed on the worker (session.py:2068-2071). _unclaimed only tests exists() (2198-2199), and FrameWriter writes later (1074-1081). In a correcting walk, the final prescan and prescan_before are filed back to back (1818-1854), both kind='prescan' with the same number and roll. _out_name gives both `{roll}_frame{NN}_{dpi}dpi.tif` (2164). The second job almost always gets the same name, because the first write has not landed yet, so the before picture overwrites the final one. The before job has file_entry=False, so entry is None, and _filed logs 'picture N could not be filed: None' (1353-1354). The export-rolls part is also accurate: on_export_rolls checks only _saving, not busy (2390-2394)."
+   },
+   {
+    "id": "CC-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_roll_is_busy tests only self.busy and the loaded roll (gui.py:2367-2381). 'finished' is emitted as soon as _dispatch returns (session.py:1326), and the FrameWriter is drained only at session close (1341-1343). The writer recreates parent folders (1075). Delete uses rmtree (2513), rename uses source.rename (2533), and duplicate uses copytree (2479, which can copy a half-written frame). A second window whose session failed to open has busy=False. The worker rewrites roll.json after each frame (1924-1926), and that write raises FileNotFoundError once the folder is gone."
+   },
+   {
+    "id": "CC-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "migrate-raw --write rewrites scan.tif first and scan.json second, both in place (tools/library.py:193-206). corrected() trusts corrections_applied (library.py:373-377). duplicates --delete calls rmtree unguarded (tools/library.py:129), and reindex runs only after the loop. _deliver_one falls back to the preview with 'not filed yet' when scan.tif is missing (gui.py:3858, 3883-3885). No lock exists anywhere. Two mitigations are in the code: an interrupted migrate is re-planned on the next run (applied is still ['shading']), and `verify` would flag the image sha mismatch. The Windows claim, that the GUI keeps a file open, is weak: tiff.read and gzip reads are short-lived."
+   },
+   {
+    "id": "CC-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_close asks only when self.busy (gui.py:3040-3045). _wait_to_quit waits only for the session thread (3064-3066), which does include the FrameWriter drain. The save-all and export-rolls threads are daemon threads (3840-3841, 2451), and _saving is never consulted on quit. export.write writes the final name in place (export.py:181-193). Destroying the root ends mainloop, the interpreter exits, and the daemon threads die wherever they are."
+   },
+   {
+    "id": "CC-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_raw_open sends nothing before the claim. On a claim failure it closes the handle and raises (usb_transport.py:445-463). On Linux, libusb refuses to auto-detach a usbfs claim, so the claim fails BUSY. The device side therefore stays consistent. On Windows a NULL handle while the device is enumerated always produces the 'Image/WIA driver ... Zadig' text (478-483), and check_scanner repeats the diagnosis (128-133). A second GUI whose session failed gets 'failed' and then 'closed'. 'closed' calls _set_busy(False), which re-enables the run buttons and sets the light back to idle (3288-3291, 3359-3365). submit() puts jobs on a queue that no thread reads. The failure itself is announced once by the 'No scanner' error box (3285-3286), so 'silently' applies only to later jobs. The macOS auto-detach remark is version-dependent and incidental."
+   },
+   {
+    "id": "CC-11",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "roll_entry_index keys on film.frame rpartition('-') with setdefault(...)[n] = path, so the last match in glob order wins (gui.py:4999-5008). Walk prescans are filed with frame=f\"{name}-{number:02d}\" (session.py:1826-1828), as are roll frames (1880-1882). rolls_on_disk joins by the manifest roll name (5127). roll_exports uses those entries (4893). _deliver_one re-corrects the entry and reports 'at full resolution' (3864-3871). The file name uses settings.resolution (4902), so a 300 dpi prescan is exported under the roll's dpi. Nothing filters on the prescan tag or on resolution."
+   },
+   {
+    "id": "CC-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_file reads self.out_dir twice (session.py:2068-2070), and _set_outdir can set it to None from Tk at any time (gui.py:1544-1545, 1893-1895). A switch between the check and the use raises TypeError before writer.submit, which aborts the roll and loses that frame. The window is a few bytecodes wide. out_format is read in _out_name at submit time (2162) and jpeg_quality is bound into the job (2129), so queued frames are unaffected. The manifest records neither setting."
+   },
+   {
+    "id": "CC-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "save() ends with reindex(root) (library.py:310). reindex re-parses every scan.json and write_text()s index.json in place (753-772). It is also called from the Tk thread in on_delete (gui.py:4011-4012) and from tools/library.py. The only reference to INDEX is library.py:771, and no production code reads index.json. entries() skips unreadable scan.json files silently (741-749). Each save runs provenance(), which makes two git subprocess calls with timeout=10 (library.py:80-99). N=311 cannot be verified because this checkout has no library/."
+   },
+   {
+    "id": "CC-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The following are all written in place: roll.json/survey.json via write_text after each frame (session.py:1924-1926), the scan_roll checkpoint (tools/scan_roll.py:326-329), approved.json (gui.py:2943), and the calibration cache via np.savez_compressed (shading.py:91, called via save_shading at direct.py:563-570, 612). On resume, an unreadable roll.json silently becomes {} (session.py:1650-1654). settings.save is the one atomic writer (settings.py:88-95). Truncation needs a kill inside the write, so this is low."
+   },
+   {
+    "id": "CC-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Its usage line sets RPS7200_DEBUG=0 (filing_load_test.py:3). The load is gzip.compress of random bytes (54-57), and zlib releases the GIL for large buffers. The passes are 300 dpi 8-bit RGB with shading=False (86-89). FrameWriter's real work is different: TIFF encoding, savez_compressed, sha256, git subprocesses, and JSON-parsing reindex (session.py:1067-1100, library.py:179-311). CLAUDE.md:170-172 nonetheless presents the tool as 'the measurement' to run before trusting the roll path."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "CC-A1",
+    "title": "The roll's folder, approved.json's folder and a reopened roll's folder are derived three different ways, so commissioning scatters one roll across folders and the non-derivable approved.json can land in a shared 'rolls/roll/'",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1634-1637",
+     "tools/gui.py:2938-2945",
+     "tools/gui.py:2156",
+     "tools/gui.py:2862",
+     "tools/gui.py:2697-2720",
+     "tools/gui.py:4780-4792",
+     "tools/gui.py:2626"
+    ],
+    "evidence": "Worker (session.py:1634-1635): `name = job.name or time.strftime(\"%Y-%m-%d\")` / `out = Path(job.out) if job.out else self.rolls / name`. The name is not sanitised.\n\n_write_approved (gui.py:2940-2943): `name = _safe(self.fields[\"roll\"].get().strip())` / `folder = Path(self.session.rolls) / name` / `(folder / \"approved.json\").write_text(...)`. _safe('') returns 'roll' (session.py:2184).\n\nThe GUI's Roll jobs pass `name=self.fields[\"roll\"].get().strip()` with no `out` (2156, 2862).\n\nopen_roll sets `self._sheet_roll = folder` (2626) and restores only the RESTORABLE controls (4780-4792), which do not include the roll name field.",
+    "description": "approved.json goes to rolls/<_safe(field) or 'roll'>/. The roll it describes goes to rolls/<raw field or today's date>/. The two differ whenever the Roll field is empty (every unnamed roll) or contains a character _safe rewrites (a space, '/', ':'). Reopening a roll never puts its name back in the field, so a roll commissioned from a reopened sheet, or resumed with the Roll button, is written into whatever folder the field or the date names. It is not written into the folder that was reopened, so the resume merge (session.py:1649-1667) never sees the earlier roll.json. With an empty field, every unnamed roll's approved.json overwrites the same rolls/roll/approved.json.",
+    "failure_scenario": "1. Walk a strip with the Roll field empty. The walk goes to rolls/2026-09-24/.\n2. Commission frames from the sheet. The roll goes to rolls/2026-09-24/ and approved.json to rolls/roll/.\n3. Reopening rolls/2026-09-24 shows no approved positions.\n4. The next unnamed roll overwrites rolls/roll/approved.json, and the operator's hand-set positions and turns (the one file Delete warns is not re-derivable) are gone.\n\nSeparately: reopen 'Portra-A' with the field holding 'Portra-B' and resume. The roll is written into rolls/Portra-B, and Portra-A's roll.json still lists the frames as remaining.",
+    "recommendation": "Derive the folder in one place. Have the worker compute `out` with _safe(name), and have _write_approved write into the folder the job will use: pass it as Roll.out, or write approved.json on the worker from job.approved. On open_roll, set the Roll field (or a dedicated `_loaded_roll` target) so commissioning and resuming go to the folder that was reopened."
+   },
+   {
+    "id": "CC-A2",
+    "title": "The pre-correction prescan's raw bytes are never filed; the _file docstring says a debug entry covers it, but ScanSession forces debug off",
+    "severity": "medium",
+    "category": "library-completeness",
+    "locations": [
+     "rps7200/session.py:2047-2058",
+     "rps7200/session.py:1265-1271",
+     "rps7200/session.py:1834-1854",
+     "rps7200/direct.py:3578-3586",
+     "tools/scan_roll.py:344-353",
+     "tools/scan_roll.py:502-510"
+    ],
+    "evidence": "_file docstring (session.py:2054-2058): 'Under `RPS7200_DEBUG=1` that picture already has a correct entry anyway, filed at the instant it was taken'.\n\n_default_scanner (1265-1271): `DirectScanner(verbose=self.verbose, debug=False)`. scan_roll does the same: `DirectScanner(verbose=args.verbose, debug=False)` (353).\n\nThe before pass keeps only pixels (direct.py:3583-3586): `prescan_before = prescan_image` / `prescan_image = fix.pop(\"prescan\")` / `raw_prescan = self.last_pixels_raw`. It is filed with `file_entry=False` (session.py:1852).",
+    "description": "When the walk's correction moves a frame, the pass the frame arrived as is kept only as a corrected TIFF, prescanNN-before.tif, in the roll folder. It has no raw bytes, no library entry and no shading or mask of its own. The debug filing the docstring relies on cannot run in either roll path, whatever RPS7200_DEBUG says, because both construct DirectScanner with debug=False. So the evidence of whether a correction helped cannot be re-derived with newer decode or correction code, contrary to the library's central requirement. The intermediate passes of the aim/hold loops are not filed either.",
+    "failure_scenario": "A walk with 'correct' on moves 9 of 24 frames. Months later, a changed decode or correction is to be evaluated against the 'before' pictures. Only 8-bit or 16-bit corrected TIFFs exist in the roll folder, and nothing about them can be recomputed.",
+    "recommendation": "Keep the before pass's raw pixels and capture record at the moment it is replaced (as done for raw_prescan), and file it as its own entry tagged 'prescan-before'. Or correct the docstring so it no longer claims debug filing covers it.",
+    "doc_reference": "rps7200/session.py:2054-2058 ('Under RPS7200_DEBUG=1 that picture already has a correct entry anyway'); CLAUDE.md 'File every scan in the library, with its raw bytes'."
+   },
+   {
+    "id": "CC-A3",
+    "title": "roll_entry_index cannot join frames filed by tools/scan_roll.py, and joins a duplicated or same-named roll to the other roll's entries",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/scan_roll.py:571-581",
+     "tools/gui.py:4999-5008",
+     "tools/gui.py:5127",
+     "tools/scan_roll.py:606-609"
+    ],
+    "evidence": "scan_roll files `frame=f\"{roll_name}/{number:02d}\"` (scan_roll.py:579).\n\nroll_entry_index splits on '-': `roll, _, number = frame.rpartition(\"-\")` / `if not roll or not number.isdigit(): continue` (gui.py:5004-5006).\n\nrolls_on_disk joins on the manifest's roll name: `summary[\"entries\"] = dict(index.get(summary[\"roll\"], {}))` (5127).\n\nscan_roll records each frame's entry in its roll.json (`record[\"entry\"] = str(entry)`, 606-609), but nothing in the GUI reads that field.",
+    "description": "For a roll scanned from the command line, 'myroll/05' has no '-', or '2026-09-24/05' gives a non-digit number. Every such frame is skipped, so the roll browser reports no library entries and Export says there is 'nothing to re-correct from'. Meanwhile the exact per-frame entry path is recorded in that roll.json and ignored. Because the join is by the manifest's roll name and not by folder, a Duplicate (which keeps the roll name) and the original share one entry map. Exporting either delivers whichever same-numbered entry glob returned last, which may be the other copy's rescan.",
+    "failure_scenario": "1. Scan a roll with `tools/scan_roll.py --roll portra`.\n2. Open the roll browser. Export reports no frames with a library entry.\n3. Separately, duplicate roll X to X-2 and rescan X-2 at a different dpi.\n4. Exporting X may deliver X-2's frames.",
+    "recommendation": "Prefer the per-frame 'entry' recorded in the manifest. Record it in the GUI's roll.json too, once the 'filed' event arrives. Accept both 'roll-NN' and 'roll/NN' in the fallback join, and scope the join to the roll folder (for example with a roll-folder tag) rather than the manifest name."
+   }
+  ],
+  "persisted_state_corrections": "1. approved.json does not sit reliably beside the roll it describes. It is written to rolls/<_safe(Roll field) or 'roll'>/ (gui.py:2940). The roll and survey manifests go to rolls/<raw Roll field or YYYY-MM-DD>/ (session.py:1634-1635). The two differ for an empty or unsanitised name, and every unnamed roll shares rolls/roll/approved.json (CC-A2 in this report's numbering is CC-A1).\n\n2. For walk prescans and roll frames, add prescanNN-before.tif: a corrected TIFF with no library entry and no raw bytes. Nothing else in the codebase keeps the pre-correction pass (CC-A2). Each library entry's scan.json does record the rotation actually applied (meta rotation/flipped, session.py:2110). read_survey ignores it in favour of the manifest's single value.\n\n3. The GUI's roll.json records no library entry ids. tools/scan_roll.py's roll.json does (per-frame 'entry', scan_roll.py:606-609), but uses film.frame '<roll>/NN', which roll_entry_index cannot parse (CC-A3).\n\n4. Library entries are not read mid-write by the GUI's full-resolution, histogram or Save As paths. Result.entry is set only by the 'filed' event, which is emitted after library.save returns (session.py:1356-1359, gui.py:3237-3240). roll_entry_index and entries() see an entry only once scan.json exists, and scan.json is written last. The race described in focus item (3) is therefore limited to the tools/library.py mutators (CC-08) and cross-process id collisions (CC-01).\n\n5. calibration/shading.npz is written through DirectScanner.save_shading (direct.py:563-570), called from ensure_shading (direct.py:612). It is shared by all processes started from the same working directory.\n\n6. The EdgeWatch generation check (tools/frame_edges/watch.py:221-226) correctly discards stale detector answers. session.edge_reader is set once at start-up (gui.py:8186) and never replaced. The only EdgeWatch hazards are the survey and generation replacements from Tk actions (CC-03), not the watcher itself."
+ }
+}
