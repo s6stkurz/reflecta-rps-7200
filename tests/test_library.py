@@ -679,3 +679,53 @@ def entry_with_prescan(root, scene, prescan):
     record.pop("prescan", None)                       # filed before it existed
     (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
     return path, record
+
+
+# --- the 7200 dpi realignment -------------------------------------------------
+
+
+def _native_entry(tmp_path, *, record_it=True, lines=12, width=16):
+    from rps7200.direct import DirectScanner
+
+    stream, decoded = index_stream(width, lines, 3, seed=7)
+    stored = DirectScanner._realign_native_column_stagger(decoded)
+    meta = {"resolution_dpi": 7200, "channels": 3,
+            "channel_order": list(CHANNEL_ORDER[:3]), "width": width,
+            "height": stored.shape[0], "depth": 16, "frame": [0, 0, 10343, 6887],
+            "bytes_per_line": width * 2, "film": "negative"}
+    if record_it:
+        meta["stagger_realigned"] = DirectScanner.NATIVE_COLUMN_STAGGER_LINES
+    layout = {"format": "index", "bytes_per_line": width * 2,
+              "line_stride": width * 2 + INDEX_HEADER,
+              "index_header": INDEX_HEADER, "width": width, "lines": lines,
+              "channels": 3}
+    return library.save(stored, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout), stored
+
+
+def test_a_7200_dpi_entry_reconstructs_with_its_realignment(tmp_path):
+    """`scan()` realigns the native column stagger before filing, so the
+    decode alone is 4 rows taller and zigzagged. Unrecorded, every 7200 dpi
+    entry read "decode CHANGED" for ever."""
+    path, stored = _native_entry(tmp_path)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert record["scan"]["stagger_realigned"] == 4
+    _image, verdict = library.reconstruct(path)
+    assert verdict == "identical to the stored image", verdict
+    assert np.array_equal(library.decode_raw(path), stored)
+
+
+def test_a_7200_dpi_entry_filed_before_the_record_said_so_is_read_the_same(tmp_path):
+    path, stored = _native_entry(tmp_path, record_it=False)
+    _image, verdict = library.reconstruct(path)
+    assert verdict == "identical to the stored image", verdict
+    assert np.array_equal(library.decode_raw(path), stored)
+
+
+def test_a_real_7200_dpi_regression_is_still_reported(tmp_path):
+    path, stored = _native_entry(tmp_path)
+    broken = stored.copy()
+    broken[0, 0, 0] ^= 1
+    tiff.write(str(path / "scan.tif"), broken)
+    _image, verdict = library.reconstruct(path)
+    assert verdict.startswith("decode CHANGED"), verdict

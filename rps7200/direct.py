@@ -2873,9 +2873,16 @@ class DirectScanner:
         if advance:
             self.advance()
 
+        # Recorded when applied: `scan.tif` then holds the decode *and* this,
+        # and `library.decode_raw`/`reconstruct` replay it from the record.
+        # Unrecorded, every 7200 dpi entry read "decode CHANGED" for ever, and
+        # the session's shape guard took the 4 missing rows for another
+        # pass's bytes and dropped them.
+        stagger_realigned = 0
         if resolution == self.NATIVE_COLUMN_STAGGER_DPI:
             before = image.shape[0]
             image = self._realign_native_column_stagger(image)
+            stagger_realigned = self.NATIVE_COLUMN_STAGGER_LINES
             self._log(
                 f"realigned {self.NATIVE_COLUMN_STAGGER_LINES}-line native "
                 f"column stagger: {before} -> {image.shape[0]} lines"
@@ -2978,6 +2985,9 @@ class DirectScanner:
             # and whether the rows were turned upright -- `decode_index`.
             "read_direction": (self.last_read_direction.as_record()
                                if self.last_read_direction is not None else None),
+            # Rows the native column-stagger realignment trimmed, 0 when none
+            # ran. The one host transform `scan.tif` carries beyond the decode.
+            "stagger_realigned": stagger_realigned,
             # The READ STATE taken before the pass, kept as evidence of where
             # the carriage was. `carriage_record` says why nothing acts on it.
             "carriage_state": carriage,

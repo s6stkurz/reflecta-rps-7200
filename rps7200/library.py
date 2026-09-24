@@ -246,6 +246,9 @@ def save(
                 # raw bytes are in (`rps7200.direction`). And the READ STATE
                 # before it, as evidence of where the carriage was.
                 "read_direction", "carriage_state",
+                # Rows the 7200 dpi column-stagger realignment trimmed from the
+                # decode before it became `scan.tif`; `decode_raw` replays it.
+                "stagger_realigned",
                 # Which side of a fast-infrared ladder this pass came from.
                 # Without it `signature` cannot tell the halves apart -- the
                 # whole ladder is one frame at one dpi, depth, channel count
@@ -408,6 +411,36 @@ def read_raw(path: Path | str) -> bytes | None:
         return None
 
 
+def stagger_lines(record: dict[str, Any], decoded_rows: int | None = None,
+                  stored_rows: int | None = None) -> int:
+    """Rows the 7200 dpi realignment trimmed from this entry's decode.
+
+    From the record where it says (`scan.stagger_realigned`). An entry filed
+    before the record carried it, at the native resolution and exactly that
+    many rows short of its decode, was realigned too -- `scan()` has done it
+    to every 7200 dpi pass since 2026-09-13 -- and is read as such.
+    """
+    scan = record.get("scan") or {}
+    # None, or absent, on an entry filed before it was recorded.
+    if scan.get("stagger_realigned") is not None:
+        return int(scan["stagger_realigned"])
+    lines = DirectScanner.NATIVE_COLUMN_STAGGER_LINES
+    if (scan.get("resolution_dpi") == DirectScanner.NATIVE_COLUMN_STAGGER_DPI
+            and decoded_rows is not None and stored_rows is not None
+            and decoded_rows - stored_rows == lines):
+        return lines
+    return 0
+
+
+def _replay(image: np.ndarray, record: dict[str, Any],
+            stored_rows: int | None = None) -> np.ndarray:
+    """Apply the host transforms `scan()` makes after the decode, from the record."""
+    lines = stagger_lines(record, image.shape[0], stored_rows)
+    if lines:
+        image = DirectScanner._realign_native_column_stagger(image, lines)
+    return image
+
+
 def decode_raw(path: Path | str) -> np.ndarray | None:
     """This entry's raw bytes decoded to pixels, with nothing applied.
 
@@ -431,7 +464,9 @@ def decode_raw(path: Path | str) -> np.ndarray | None:
             filter_offset2=0,
             available_lines=0,
         )
-        return DirectScanner._deinterleave(raw, params, int(layout["channels"]))
+        image = DirectScanner._deinterleave(raw, params, int(layout["channels"]))
+        stored = (record.get("image") or {}).get("shape") or [None]
+        return _replay(image, record, stored[0])
     except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError):
         return None
 
@@ -491,6 +526,9 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         image, _ = apply_shading(image, reference, mask)
 
     stored = tiff.read(str(path / "scan.tif"))
+    # The 7200 dpi realignment is part of the path from bytes to `scan.tif`,
+    # so it is replayed here, not reported as a changed decode.
+    image = _replay(image, record, stored.shape[0])
     if image.shape != stored.shape:
         return image, (
             f"decode CHANGED: now {image.shape}, stored {stored.shape}"

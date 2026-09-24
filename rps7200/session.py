@@ -2194,12 +2194,24 @@ class ScanSession:
         capture = self._scanner.capture_record()
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             shape = image.shape
-            layout = capture.get("raw_layout") or {}
+            layout = dict(capture.get("raw_layout") or {})
             actual = {
                 "lines": shape[0],
                 "width": shape[1],
                 "channels": shape[2] if len(shape) > 2 else 1,
             }
+            # The rows the bytes can decode to: what arrived, not what GET
+            # PARAMETERS declared, less what the 7200 dpi realignment trimmed.
+            # Judged against the declared count, every pass that ended early
+            # -- the one whose bytes matter most -- and every 7200 dpi pass
+            # looked like another pass's bytes, and was filed without them.
+            received = layout.get("lines_received")
+            channels = layout.get("channels")
+            if received is not None and channels:
+                layout["lines"] = int(received) // int(channels)
+            if layout.get("lines") is not None:
+                layout["lines"] = (int(layout["lines"])
+                                   - int(meta.get("stagger_realigned") or 0))
             # Only fields the layout actually declares are judged; an absent one
             # says nothing, and dropping good bytes over it would be its own bug.
             disagree = {

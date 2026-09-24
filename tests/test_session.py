@@ -868,6 +868,45 @@ def test_raw_bytes_that_describe_another_image_are_not_filed(tmp_path):
     assert any("do not describe this image" in e.text for e in kinds(events, "log"))
 
 
+def test_a_pass_that_ended_early_keeps_its_own_bytes(tmp_path):
+    """The bytes of a short read are the ones worth keeping most. Judged
+    against the line count GET PARAMETERS *declared*, a pass that ended early
+    decoded fewer rows and looked like another pass's bytes."""
+    scanner = FakeScanner()
+    scanner.capture_record = lambda: {
+        "reference": None, "ccd_mask": None,
+        "raw": b"\x00\x01" * 32,
+        # Declared 30 rows; 24 arrived, which is what the image holds.
+        "raw_layout": {"format": "index", "width": 36, "lines": 30,
+                       "channels": 4, "lines_received": 4 * 24},
+    }
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    entry = tmp_path / library.entries(tmp_path)[0]["id"]
+    assert (entry / "raw.bin.gz").exists()
+
+
+def test_a_realigned_7200_dpi_pass_keeps_its_own_bytes(tmp_path):
+    """The realignment trims 4 rows the bytes still hold; recorded in the
+    pass's meta, it is not mistaken for another pass's bytes."""
+    scanner = FakeScanner()
+    real = scanner.scan
+
+    def scan(**kw):
+        image, meta = real(**kw)
+        return image, dict(meta, stagger_realigned=4)
+
+    scanner.scan = scan
+    scanner.capture_record = lambda: {
+        "reference": None, "ccd_mask": None,
+        "raw": b"\x00\x01" * 32,
+        "raw_layout": {"format": "index", "width": 36, "lines": 28,
+                       "channels": 4, "lines_received": 4 * 28},
+    }
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    entry = tmp_path / library.entries(tmp_path)[0]["id"]
+    assert (entry / "raw.bin.gz").exists()
+
+
 def test_matching_raw_bytes_are_still_filed(tmp_path):
     """The guard must not throw away good bytes over a field it cannot check."""
     scanner = FakeScanner()
