@@ -1925,17 +1925,32 @@ def _turned_after_the_first(tmp_path, job):
 
 
 def test_a_turn_made_while_a_walk_runs_is_recorded_with_what_it_reached(
-        tmp_path):
+        tmp_path, monkeypatch):
     """The walk's one `rotation` is the session's at the start, and a turn
     made in the window while it runs reaches every prescan written after it.
-    Reopened, those were un-turned by the start's pair."""
-    folder, manifest = _turned_after_the_first(
-        tmp_path, Roll(frames=3, dry_run=True, name="walk"))
+    Reopened, those were un-turned by the start's pair.
+
+    The turn lands where the window's can: on the Tk thread, after frame 2's
+    prescan was handed to the writer and before its record is written. The
+    record asked the session again there, and wrote down a turn the file
+    never had."""
+    real_file = ScanSession._file
+
+    def turned_once_filed(self, seq, number, *a, **kw):
+        arranged = real_file(self, seq, number, *a, **kw)
+        if number == 2:
+            self.rotation = 90
+        return arranged
+
+    monkeypatch.setattr(ScanSession, "_file", turned_once_filed)
+    run(Roll(frames=3, dry_run=True, name="walk"), tmp_path)
+    folder = tmp_path / "rolls" / "walk"
+    manifest = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
     assert manifest["rotation"] == 0
     assert [(f["number"], f["prescan_rotation"]) for f in manifest["frames"]] \
-        == [(1, 0), (2, 90), (3, 90)]
-    assert tiff.read(str(folder / "prescan01.tif")).shape[:2] == (24, 36)
-    assert tiff.read(str(folder / "prescan02.tif")).shape[:2] == (36, 24)
+        == [(1, 0), (2, 0), (3, 90)]
+    assert tiff.read(str(folder / "prescan02.tif")).shape[:2] == (24, 36)
+    assert tiff.read(str(folder / "prescan03.tif")).shape[:2] == (36, 24)
 
 
 def test_a_turn_made_while_a_roll_runs_is_recorded_with_its_frames(tmp_path):
