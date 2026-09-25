@@ -1602,10 +1602,11 @@ class ScanSession:
         #: own strip-level detector decides, as it always has.
         self.edge_reader: Callable[[str], Any] | None = None
         #: Where the last roll or walk wrote its manifest. The folder is
-        #: derived here, from the job's name and a date fallback, so a caller
-        #: that wants to file something beside that manifest -- the contact
-        #: sheet's decisions, which are made after the walk finishes -- can ask
-        #: rather than recompute the same name and drift out of step with it.
+        #: derived here (`roll_dir`, or the job's own `out`), and a walk with
+        #: no name is given a new one, so a caller that wants to file something
+        #: beside that manifest -- the contact sheet's decisions, which are
+        #: made after the walk finishes -- can ask rather than recompute a
+        #: name it never saw.
         self.last_roll_dir: Path | None = None
         self.verbose = verbose
         # A second copy of each scan, written where the operator asked for it as

@@ -380,11 +380,12 @@ def main() -> int:
     #: Whether the film reached the roll's first frame and the calibration
     #: after it succeeded, and so whether this run has a manifest at all.
     #: Nothing is written before that, which is `ScanSession._roll`'s
-    #: "before the directory, before the manifest": the
-    #: default roll name is today's date, the name the window's walks use,
-    #: and the manifest used to be written before the device was even
-    #: opened -- so a seek that refused replaced that day's survey.json with
-    #: an empty one, and the walk it described was gone.
+    #: "before the directory, before the manifest": the default roll name
+    #: was today's date, the name the window's walks used, and the manifest
+    #: used to be written before the device was even opened -- so a seek that
+    #: refused replaced that day's survey.json with an empty one, and the walk
+    #: it described was gone. A folder named with --roll or --out can still
+    #: hold a walk.
     placed = False
 
     writer = FrameWriter()

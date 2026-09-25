@@ -5367,11 +5367,11 @@ def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
     hundred entries and a dozen rolls, and asking the question per roll turns a
     listing into a quadratic one.
 
-    The join is on `film.frame`, which `ScanSession._file` sets to
-    ``"{roll}-{NN}"`` for every roll frame. Nothing in a roll manifest records
-    its entries -- the entry is created on the writer thread *after* the frame's
-    record is written, and writing that file from both threads is a hazard worth
-    not introducing for a convenience.
+    The join is on the entry's own `roll_membership`, or on `film.frame`,
+    which `ScanSession._file` sets to ``"{roll}-{NN}"`` for every roll frame.
+    A roll's manifest names each frame's entry now too, once the writer has
+    filed it (`session.RollManifest`), but no roll written before that does,
+    and the entries are what an export re-corrects from -- so they are asked.
 
     `library.entries()` cannot be used here: it returns the records and throws
     away the folder each came from, which is the only part this needs.
