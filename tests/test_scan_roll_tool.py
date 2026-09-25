@@ -89,8 +89,11 @@ class FakeRollScanner(FilmOnFrame, DirectScanner):
             )
 
 
-def run(tmp_path, monkeypatch, *argv, frames=3):
-    created = []
+def run(tmp_path, monkeypatch, *argv, frames=3, opened=None):
+    """``(the scanner the tool opened, its exit code)``. ``opened`` collects
+    every scanner made, for a test whose run is refused: the pair is never
+    returned then, so it is the only way to see whether one was opened."""
+    created = [] if opened is None else opened
 
     class Patched(FakeRollScanner):
         def __init__(self, **kw):
@@ -770,12 +773,12 @@ def test_approved_prescans_at_the_resolution_its_walk_was_made_at(
 def test_approved_with_another_prescan_dpi_is_refused_before_opening(
         tmp_path, monkeypatch):
     folder = _walked_at(tmp_path, monkeypatch, 600)
-    scanner, code = None, None
+    opened: list = []
     with pytest.raises(SystemExit) as refused:
-        scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
-                            "--prescan-dpi", "300", "--frames", "1")
+        run(tmp_path, monkeypatch, "--approved", str(folder),
+            "--prescan-dpi", "300", "--frames", "1", opened=opened)
     assert refused.value.code == 2
-    assert scanner is None
+    assert opened == [], "the device was opened before the refusal"
 
 
 def test_approved_from_a_walk_that_never_said_keeps_300(tmp_path, monkeypatch):
@@ -804,12 +807,12 @@ def test_correct_at_a_prescan_the_edges_are_not_read_at_is_refused(
     the detector refuses, so --correct would correct nothing -- one "left as
     it came" per frame of an unattended roll. Refused before the device
     opens, and the reason names the resolution."""
-    scanner = None
+    opened: list = []
     with pytest.raises(SystemExit) as refused:
-        scanner, _code = run(tmp_path, monkeypatch, "--correct",
-                             "--prescan-dpi", "600", "--frames", "1")
+        run(tmp_path, monkeypatch, "--correct", "--prescan-dpi", "600",
+            "--frames", "1", opened=opened)
     assert refused.value.code == 2
-    assert scanner is None
+    assert opened == [], "the device was opened before the refusal"
     assert "not read at a 600 dpi prescan" in capsys.readouterr().err
 
 
