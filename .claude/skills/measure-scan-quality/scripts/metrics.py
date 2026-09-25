@@ -87,12 +87,26 @@ def noise_split(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     multi-pass method could ever remove.
 
     Returns ``(random_sigma, total_sigma, random_share)`` in DN.
+
+    **Both terms go through the same high-pass**, so the random part is a
+    share of the total by construction. It used to be taken from the plain
+    difference against a high-passed total, and the filter removes 1/k of
+    white noise's variance: a registered, gain-matched pair of pure random
+    noise read a share of 1/sqrt(1 - 1/5) = 1.118, which :func:`ceiling`
+    rightly cannot answer and so refused -- in exactly the case where
+    averaging helps most. It also counted what the filter removes from the
+    total -- noise that is smooth along a row, a whole line brighter in one
+    pass -- as random, which the total then never contained.
+
+    The shares the skill quotes (21% at 300 dpi, 27% at 1800, the -3.5%
+    ceiling) were measured with that earlier estimator, which read white
+    noise 1.118x high. Re-measure before holding a new pair against them.
     """
     _check(a, "a")
     _check(b, "b")
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
-    random_sigma = float(np.std((x - y)[mask]) / np.sqrt(2))
+    random_sigma = float(np.std(_highpass(x - y)[mask]) / np.sqrt(2))
     total_sigma = float(np.std(_highpass(x)[mask]))
     return random_sigma, total_sigma, random_sigma / max(total_sigma, 1e-9)
 
@@ -104,9 +118,11 @@ def ceiling(random_sigma: float, total_sigma: float, passes: int) -> float:
     many passes are taken. Compute this *before* booking scanner time -- on a
     slide here it came to -3.5% for nine passes, which is not worth 25 minutes.
 
-    A random part as large as the total is refused rather than answered. It
-    cannot be true of a real pair -- the random part is a share of the total --
-    and it is what a pair that was not registered, or not matched in gain,
+    A random part as large as the total is refused rather than answered.
+    :func:`noise_split` reads both through one filter, so on a registered,
+    gain-matched pair the random part is a share of the total and can reach
+    it only by sampling error, where the fixed part is too small for the mask
+    to resolve. Past that it is what an unregistered or unmatched pair
     measures: grain and detail leak into the difference. Clamping the fixed
     part to zero there turned the worst measurement into the most optimistic
     ceiling -- a share of 1.12 came out at -63% for nine passes, against the
@@ -116,7 +132,9 @@ def ceiling(random_sigma: float, total_sigma: float, passes: int) -> float:
         raise ValueError(
             f"random {random_sigma:.1f} DN is not less than the total "
             f"{total_sigma:.1f} DN: no split to take a ceiling from. Register "
-            f"the pair and match its gain before trusting noise_split.")
+            f"the pair and match its gain before trusting noise_split; if it "
+            f"is both, the fixed part is below what this mask resolves -- "
+            f"take a larger one.")
     fixed = np.sqrt(total_sigma**2 - random_sigma**2)
     reached = np.sqrt((random_sigma / np.sqrt(passes)) ** 2 + fixed**2)
     return float(reached / max(total_sigma, 1e-9) - 1.0)
