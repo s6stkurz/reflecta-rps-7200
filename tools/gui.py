@@ -2151,7 +2151,10 @@ class ScannerGui:
                                         question + where + "\n\nStart?"):
             return
         if keep:
-            folder = Path(self._sheet_roll)
+            # The sheet's own folder -- under this session's rolls, so a walk
+            # added to a roll opened from elsewhere (`--open-roll` under
+            # `--demo`) is not written back into it; see `_roll_folder`.
+            folder = self._roll_folder()
         else:
             self._show_roll_name(folder.name, ours=not typed)
         if not dry:

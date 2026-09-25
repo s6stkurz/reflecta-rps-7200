@@ -4715,6 +4715,28 @@ def test_a_roll_opened_from_elsewhere_is_never_scanned_back_into(window,
     app.sheet.top.destroy()
 
 
+def test_a_walk_added_to_a_roll_opened_from_elsewhere_stays_here(window,
+                                                                 tmp_path,
+                                                                 monkeypatch):
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.v_startat.set("4")
+    app.v_last.set("5")
+    app.on_roll()
+    assert jobs[0].extend_walk
+    assert jobs[0].out == str(pathlib.Path(app.session.rolls) / folder.name)
+
+
 def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
     new = gui.folder_note(tmp_path / "rolls" / "fresh", dry=True)
     assert new == "Into rolls/fresh, a new roll."
