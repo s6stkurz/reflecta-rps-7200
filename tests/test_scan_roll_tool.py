@@ -409,6 +409,36 @@ def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
         encoding="utf-8")) == walk
 
 
+def test_a_manifest_the_disk_refuses_does_not_stop_the_roll(tmp_path,
+                                                            monkeypatch,
+                                                            capsys):
+    """Each frame's rewrite of roll.json raised into the roll's except, and
+    the roll stopped at its first frame; the last write raised past the
+    summary as a traceback. On Windows a rename is refused whenever anyone
+    has the file open. The frames are scanned and filed, and the exit status
+    and stderr say the manifest is behind."""
+    import os
+
+    from rps7200 import session
+
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", ())
+    real = os.replace
+    first = []
+
+    def refused_after_the_first(src, dst):
+        if str(dst).endswith("roll.json"):
+            if first:
+                raise PermissionError(13, "being used by another process")
+            first.append(dst)
+        return real(src, dst)
+
+    monkeypatch.setattr(session.os, "replace", refused_after_the_first)
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3")
+    assert len(list((tmp_path / "roll").glob("frame*.tif"))) == 3
+    assert code == 1
+    assert "could not write" in capsys.readouterr().err
+
+
 def test_a_frame_that_was_never_filed_names_no_file(tmp_path, monkeypatch):
     """`file` named a TIFF before anything had written it, and a resume took
     that as done."""

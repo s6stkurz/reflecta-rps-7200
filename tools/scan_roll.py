@@ -574,7 +574,11 @@ def main() -> int:
                 # that holds a walk, and this one replaces it.
                 print(f"replacing the walk in {manifest_path}; the old one is "
                       f"kept beside it as {manifest_path.name}.bak")
-            record_of = RollManifest(manifest_path, manifest)
+            # Said on stderr when a frame's rewrite of it is refused, and
+            # the roll goes on: the next one writes it whole.
+            record_of = RollManifest(
+                manifest_path, manifest,
+                say=lambda m: print(m, file=sys.stderr))
             record_of.write()
             placed = True
 
@@ -801,8 +805,9 @@ def main() -> int:
         manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
-    if record_of is not None:                      # placed, so it was made
-        record_of.write()
+    # Placed, so it was made. Not a traceback when the disk refuses it: the
+    # manifest says so on stderr, and the exit status says it went wrong.
+    saved = record_of is None or record_of.save()
 
     print(f"\n{scanned} scanned, {failed} failed, "
           f"{manifest['duration_s']/60:.1f} min")
@@ -812,7 +817,7 @@ def main() -> int:
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    return 1 if trouble is not None or failed else 0
+    return 1 if trouble is not None or failed or not saved else 0
 
 
 if __name__ == "__main__":
