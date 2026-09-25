@@ -97,7 +97,9 @@ from rps7200.session import (                              # noqa: E402
     plan_nudges,
     plausible,
     read_manifest,
+    recorded_roll_name,
     renumbered,
+    roll_dir,
     walked_prescans,
     write_manifest,
 )
@@ -490,6 +492,11 @@ class ScannerGui:
         #: filed against. Kept apart from `_loaded_roll`, which answers the
         #: different question of which roll the browser should mark as open.
         self._sheet_roll = None
+        #: The roll name this window last put in the roll box itself -- a
+        #: new roll's generated name, a reopened roll's folder. A fresh walk
+        #: with that still in the box is a new strip and gets a new name; only
+        #: a name he typed sends a fresh walk into a folder that exists.
+        self._roll_named: str | None = None
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
         self._loaded_roll = None             # which roll folder is open, if any
@@ -2123,16 +2130,28 @@ class ScannerGui:
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
             f"{move}\n\n"
             f"{cost}")
+        # Where it goes, decided before anything is asked so the question can
+        # say it: a new roll's own name, or the folder he named -- and what is
+        # in that folder already, since a walk into it replaces its walk.
+        typed = self._typed_roll_name(fresh=dry)
+        folder = roll_dir(self.session.rolls, typed)
+        where = folder_note(folder, dry)
         # One question either way: `on_roll` is the only confirmation the
         # `roll` key gets, and asking twice trains the habit of dismissing both.
         keep = False
         if dry and self._sheet_to_keep():
-            answer = self._ask_keep_sheet(question, start_at, frames, predpi)
+            answer = self._ask_keep_sheet(question, start_at, frames, predpi,
+                                          where)
             if answer is None:
                 return
             keep = answer
-        elif not messagebox.askokcancel("Scan roll", question + "Start?"):
+        elif not messagebox.askokcancel("Scan roll",
+                                        question + where + "\n\nStart?"):
             return
+        if keep:
+            folder = Path(self._sheet_roll)
+        else:
+            self._show_roll_name(folder.name, ours=not typed)
         if dry:
             # The sheet open now belongs to the walk before this one. Closed
             # here, keeping what was decided in it under its own roll, before
@@ -2197,12 +2216,12 @@ class ScannerGui:
             correct_dry_run=self.v_correct_dry.get(),
             mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
-            # A kept walk goes into the folder the sheet came from, whatever
-            # the roll box or the date says now -- a walk continued after
-            # midnight would otherwise start a new roll named by the new day.
-            name=(Path(self._sheet_roll).name if keep
-                  else self.fields["roll"].get().strip()),
-            out=str(self._sheet_roll) if keep else "",
+            # The folder decided above: a kept walk's is the one the sheet came
+            # from, whatever the roll box or the date says now -- a walk
+            # continued after midnight would otherwise start a new roll named
+            # by the new day. The session labels the frames by the name that
+            # folder already records.
+            out=str(folder),
             extend_walk=keep,
             notes=self._notes(), tags=self._tags(),
         ))
@@ -2212,7 +2231,8 @@ class ScannerGui:
         return bool(self.survey) and self._sheet_roll is not None
 
     def _ask_keep_sheet(self, question: str, start_at: int,
-                        frames: int | None, predpi: int) -> bool | None:
+                        frames: int | None, predpi: int,
+                        where: str = "") -> bool | None:
         """Ask whether this walk adds to the sheet there is: True, False or None.
 
         None is Cancel. A walk of 1 to 10 on a strip of 12 left two frames
@@ -2223,6 +2243,9 @@ class ScannerGui:
         differs from the walk being kept: those frames would be references at
         another resolution, or read by the detector as another film, beside
         frames that are not.
+
+        ``where`` is `folder_note` for the folder a new sheet would go into,
+        said beside the answer that would put it there.
         """
         walked = [int(r.number) for r in self.survey if r.number]
         have = (f"The contact sheet has frames {number_spans(walked)} of "
@@ -2244,7 +2267,8 @@ class ScannerGui:
                 question + have + " It was walked with "
                 + " and with ".join(differ) + ", so this walk cannot be added "
                 "to it. Set them back to add to it.\n\n"
-                "OK starts a new sheet; the old one stays under Rolls ...")
+                "OK starts a new sheet; the old one stays under Rolls ..."
+                + (f"\n\n{where}" if where else ""))
             return False if started else None
         again = rewalked(walked, start_at, frames)
         note = ""
@@ -2261,7 +2285,63 @@ class ScannerGui:
             "Yes -- add what this walk finds to it. Its ticks, positions and "
             "turns stay.\n"
             "No -- start a new sheet. The old one stays under Rolls ...\n"
-            "Cancel -- nothing moves." + note)
+            "Cancel -- nothing moves." + note
+            + (f"\n\nA new sheet: {where}" if where else ""))
+
+    def _typed_roll_name(self, fresh: bool) -> str:
+        """The roll box as he typed it, or "" for a roll that wants a new name.
+
+        Empty is a new name (`session.new_roll_name`) -- and so, when
+        ``fresh`` (a walk that is not added to a sheet), is the name this
+        window put in the box itself: that was the last strip's, and a fresh
+        walk into it replaced that strip's walk. Only a name he typed sends a
+        fresh walk into a folder that exists, and the question that starts it
+        says what is there (`folder_note`).
+        """
+        typed = self.fields["roll"].get().strip()
+        if fresh and typed and typed == self._roll_named:
+            return ""
+        return typed
+
+    def _next_roll_folder(self, fresh: bool) -> Path:
+        """Where a roll from the Roll button would go: `session.roll_dir`."""
+        return roll_dir(self.session.rolls, self._typed_roll_name(fresh))
+
+    def _show_roll_name(self, name: str, ours: bool = True) -> None:
+        """Put the roll's name in the roll box, so the operator sees it.
+
+        ``ours`` says the window chose it -- a new roll's name, a reopened
+        roll's folder -- rather than echoing back one he typed; see
+        `_typed_roll_name`.
+        """
+        if self.fields["roll"].get().strip() != name:
+            self.fields["roll"].set(name)
+        if ours:
+            self._roll_named = name
+
+    def _roll_folder(self) -> Path:
+        """The folder the sheet's roll is scanned into, and its decisions filed in.
+
+        The sheet's own -- its walk's, or the reopened roll's -- so the frames,
+        `approved.json` and the walk are one folder. They were three: the
+        session wrote to the roll box's name or the date, `approved.json` went
+        to `_safe` of the box ("roll" when it was empty), and a reopened roll's
+        name was never put back, so continuing it scanned somewhere else.
+
+        Always under this session's `rolls`. A roll opened from elsewhere --
+        `--open-roll` under `--demo` shows a real walk -- is scanned into the
+        folder of the same name here, never back into the one it was read
+        from.
+        """
+        rolls = Path(self.session.rolls)
+        if self._sheet_roll is not None:
+            sheet = Path(self._sheet_roll)
+            try:
+                inside = sheet.resolve().parent == rolls.resolve()
+            except OSError:
+                inside = False
+            return sheet if inside else roll_dir(rolls, sheet.name)
+        return self._next_roll_folder(fresh=False)
 
     def _close_sheet(self) -> None:
         """Close the contact sheet if it is open, keeping what was decided.
@@ -2694,6 +2774,11 @@ class ScannerGui:
         done = out["scanned"]
         remaining = [n for n in out["wanted"] if n not in done]
         restored = self._restore_roll_settings(out["settings"])
+        # The roll box names the folder now, so a roll continued from here --
+        # the Roll button for a roll with no walk, as well as the sheet --
+        # scans into this folder. It was never put back, and "continue"
+        # scanned into rolls/<today> beside it.
+        self._show_roll_name(folder.name)
 
         if not out["results"]:
             # A roll commissioned without a walk has no prescans, so there is
@@ -2948,7 +3033,11 @@ class ScannerGui:
             + "\n\nStart?",
         ):
             return
-        self._write_approved(approved)
+        folder = self._roll_folder()
+        self._show_roll_name(
+            folder.name,
+            ours=folder.name != self.fields["roll"].get().strip())
+        self._write_approved(approved, folder)
         # Counted like a roll from the Roll button, so the header says which
         # of the chosen frames it is on and the line under the picture times
         # it. A sheet's roll used to run with neither.
@@ -2979,7 +3068,8 @@ class ScannerGui:
             approved=tuple(approved), reverse_hold=self.v_reverse.get(),
             mono=mono,
             mono_channel=self.v_mono_channel.get(),
-            name=self.fields["roll"].get().strip(),
+            # Beside its walk and its `approved.json`; see `_roll_folder`.
+            out=str(folder),
             notes=self._notes(), tags=self._tags(),
         ))
 
@@ -3046,19 +3136,22 @@ class ScannerGui:
         # happens. See TODO.md: the tick itself should go.
         return note
 
-    def _write_approved(self, approved) -> None:
+    def _write_approved(self, approved, folder) -> None:
         """Record the positions beside the roll before anything is scanned.
 
         Written from here rather than by the scan thread because it is the
         operator's decision, made before the roll starts -- and it is the file
         that says what was asked for, whatever the roll then does about it.
         A kilobyte of JSON with the device idle between jobs.
+
+        ``folder`` is the one the roll is scanned into (`_roll_folder`), so
+        the decisions and the frames they are about cannot part.
         """
         if not approved:
             return
         try:
-            name = _safe(self.fields["roll"].get().strip())
-            folder = Path(self.session.rolls) / name
+            folder = Path(folder)
+            name = recorded_roll_name(folder) or folder.name
             folder.mkdir(parents=True, exist_ok=True)
             path = folder / "approved.json"
             # Merged, frame by frame, into what earlier commissions decided.
@@ -5476,6 +5569,39 @@ def roll_line(summary: dict) -> str:
     if summary["film"]:
         parts.append(str(summary["film"]))
     return "  ·  ".join(parts)
+
+
+def folder_note(folder, dry: bool) -> str:
+    """Where a roll from the Roll button goes, and what is there already.
+
+    Said in the question that starts it, because the folder decides what is
+    replaced: a walk into a folder that holds one replaces its survey.json and
+    overwrites its prescans frame by frame, and a roll into one adds to its
+    roll.json and overwrites its frame files. With the date as every unnamed
+    roll's folder that happened to each strip of a day with no word; the name
+    is new for each roll now, so this only ever warns about a name he typed.
+    """
+    folder = Path(folder)
+    where = f"Into {folder.parent.name}/{folder.name}"
+    summary = roll_summary(folder) if folder.is_dir() else None
+    if summary is None:
+        return f"{where}, a new roll."
+    held = []
+    if summary["walked"]:
+        held.append(f"a walk of frames {number_spans(summary['wanted'])}"
+                    if summary["wanted"] else "a walk")
+    if summary["scanned"]:
+        done = len(summary["done"])
+        held.append(f"{done} scanned frame{'s' if done != 1 else ''}")
+    already = f"{where}, which already holds {' and '.join(held) or 'files'}."
+    if dry:
+        return (f"{already} This walk replaces its walk -- the old survey is "
+                "kept beside it as survey.json.bak, and its prescans are "
+                "overwritten frame by frame. Clear the roll box for a new "
+                "roll if this is another strip.")
+    return (f"{already} This roll adds its frames to it, and a frame scanned "
+            "again replaces its file. Clear the roll box for a new roll if "
+            "this is another strip.")
 
 
 def scanned_frames(manifest: dict) -> set[int]:
@@ -8465,9 +8591,10 @@ def main() -> int:
     # A path is taken as given, which under --demo means a real walk in
     # `rolls/` and not `demo/rolls`. That is deliberate: the point of the demo
     # sheet is a strip that was actually walked. It is safe because opening a
-    # roll only reads it -- `_write_approved` derives its folder from
-    # `session.rolls`, which --demo pins under `demo/`, so nothing the window
-    # does afterwards can write back into the walk it is showing.
+    # roll only reads it -- a roll commissioned from it goes to
+    # `_roll_folder`, which is always under `session.rolls`, and --demo pins
+    # that under `demo/`, so nothing the window does afterwards can write
+    # back into the walk it is showing.
     open_roll = None
     if args.open_roll:
         rolls_dir = Path(args.rolls) if args.rolls else home / "rolls"

@@ -64,7 +64,9 @@ from rps7200.session import (
     earlier_manifest,
     keep_first_numbering,
     plan_nudges,
+    recorded_roll_name,
     renumbered,
+    roll_dir,
     seek,
     walk_shift,
     walked_prescans,
@@ -154,7 +156,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-shading", action="store_true",
                     help="skip calibration entirely; scans come back striped")
     ap.add_argument("--roll", default=None,
-                    help="name for this roll (default: today's date)")
+                    help="name for this roll (default: the date and time, "
+                         "new for every run). Made safe to be a folder name, "
+                         "as the window makes it")
     ap.add_argument("--out", default=None, metavar="DIR",
                     help="where the manifest and per-frame TIFFs go "
                          "(default: rolls/<roll>)")
@@ -314,8 +318,18 @@ def main() -> int:
               f"{args.approved}: "
               + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
 
-    roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
-    out = Path(args.out or f"rolls/{roll_name}")
+    # The folder the window's rolls use for the same name (`roll_dir`): made
+    # safe to be one folder, and a new name of its own when none is given.
+    # It was `rolls/<today>`, the folder every unnamed walk of the window's
+    # went into too -- so a run from here replaced that day's walk. The label
+    # its frames carry is the one the folder already records, as the
+    # window's is, so a roll added to keeps calling itself what it did.
+    if args.out:
+        out = Path(args.out)
+        roll_name = args.roll or recorded_roll_name(out) or out.name
+    else:
+        out = roll_dir("rolls", args.roll or "")
+        roll_name = recorded_roll_name(out) or out.name
     # A dry run and the scan that follows it share a directory, so they must
     # not share a file: the record of what was walked is what says which frames
     # are worth scanning, and writing the scan over it loses that.
@@ -498,6 +512,11 @@ def main() -> int:
                           f"{len(manifest['frames'])} frame(s) from earlier "
                           "runs are kept, and a frame taken again replaces "
                           "its own record")
+            elif manifest_path.exists():
+                # Said, since nobody is asked: --roll or --out named a folder
+                # that holds a walk, and this one replaces it.
+                print(f"replacing the walk in {manifest_path}; the old one is "
+                      f"kept beside it as {manifest_path.name}.bak")
             record_of = RollManifest(manifest_path, manifest)
             record_of.write()
             placed = True

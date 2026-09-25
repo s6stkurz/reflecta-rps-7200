@@ -828,6 +828,8 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _per_frame_seconds=lambda **kw: 60.0,
         _approved_note=lambda *a: "", _options_note=lambda *a: "",
         _write_approved=lambda *a: None, _notes=FilmNotes,
+        _roll_folder=lambda: tmp_path / "rolls" / "sheet-roll",
+        _show_roll_name=lambda name, ours=True: None,
         _edges_pending=lambda: "", _update_roll_eta=lambda: None,
         _tags=lambda: (), _say=lambda *a: None,
         session=types.SimpleNamespace(submit=submitted.append,
@@ -1706,11 +1708,7 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
     import types
 
     said = []
-    stub = types.SimpleNamespace(
-        session=types.SimpleNamespace(rolls=str(tmp_path)),
-        fields={"roll": types.SimpleNamespace(get=lambda: "a-roll")},
-        _say=said.append,
-    )
+    stub = types.SimpleNamespace(_say=said.append)
 
     class Approvedish:
         number = 1
@@ -1718,35 +1716,30 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
         reference_entry = ""
 
     # Anything at all going wrong in here -- not just the Path that actually
-    # did it -- has to be contained.
-    def boom():
-        raise RuntimeError("the roll name went missing")
-
-    stub.fields["roll"].get = boom
-    gui.ScannerGui._write_approved(stub, (Approvedish(),))
+    # did it -- has to be contained: here a folder that cannot be made.
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    gui.ScannerGui._write_approved(stub, (Approvedish(),), blocker / "a-roll")
 
     assert said and "scanning anyway" in said[0]
-    assert "went missing" in said[0]
+    assert "a-roll" in said[0]
 
 
-def _approving(tmp_path, said=None):
+def _approving(said=None):
     """Enough of the window for `_write_approved` to file into a roll."""
     return types.SimpleNamespace(
-        session=types.SimpleNamespace(rolls=str(tmp_path)),
-        fields={"roll": types.SimpleNamespace(get=lambda: "a-roll")},
-        _say=(said.append if said is not None else lambda *a: None),
-    )
+        _say=(said.append if said is not None else lambda *a: None))
 
 
 def test_a_commission_adds_to_the_decisions_already_filed(tmp_path):
     """Each commission replaced approved.json with only the frames ticked
     that time, so finishing a roll's last three frames erased the turns of
     the first fifteen -- which Export then used."""
-    stub = _approving(tmp_path)
+    stub, folder = _approving(), tmp_path / "a-roll"
     gui.ScannerGui._write_approved(stub, (Approved(1, rotation=90),
-                                          Approved(2, rotation=180)))
+                                          Approved(2, rotation=180)), folder)
     gui.ScannerGui._write_approved(stub, (Approved(2, rotation=0),
-                                          Approved(3, rotation=270)))
+                                          Approved(3, rotation=270)), folder)
     _off, rotations, _flips, _entries, _src = gui.read_approved(
         tmp_path / "a-roll")
     assert rotations == {1: 90, 2: 0, 3: 270}
@@ -1765,8 +1758,8 @@ def test_approved_json_that_cannot_be_read_is_kept_and_said(tmp_path):
     said = []
     assert gui.read_approved(folder, say=said.append)[1] == {}
     assert said and "approved.json" in said[0]
-    gui.ScannerGui._write_approved(_approving(tmp_path, said),
-                                   (Approved(4, rotation=90),))
+    gui.ScannerGui._write_approved(_approving(said),
+                                   (Approved(4, rotation=90),), folder)
     assert (folder / "approved.json.unreadable").read_text(
         encoding="utf-8") == '{"frames": [{"num'
     assert gui.read_approved(folder)[1] == {4: 90}
@@ -4458,6 +4451,126 @@ def test_a_fresh_walk_closes_the_sheet_of_the_last_one(window, monkeypatch):
     assert not old.alive() and app.sheet is not old
     assert [r.number for r in app.sheet.frames] == [1, 2, 3]
     app.sheet.top.destroy()
+
+
+# -- one roll, one folder ----------------------------------------------------
+
+
+def test_an_unnamed_strip_gets_a_name_of_its_own_and_keeps_it(window,
+                                                              monkeypatch):
+    """With the roll box empty, every walk and roll of a day went to
+    rolls/<date>, the sheet's decisions to rolls/roll, and a second strip
+    replaced the first one's walk. Now the walk makes a name, shows it, and
+    the commission scans into the walk's own folder beside its decisions."""
+    import pathlib
+
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    assert app.fields["roll"].get() == ""
+    _walk_through(app, root, monkeypatch, "1", "2")
+    first = pathlib.Path(app._sheet_roll)
+    assert first.parent == pathlib.Path(app.session.rolls)
+    assert app.fields["roll"].get() == first.name, "shown to the operator"
+
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.sheet._scan()
+    assert jobs[0].out == str(first)
+    assert (first / "approved.json").exists()
+    assert (first / "survey.json").exists()
+    assert not (pathlib.Path(app.session.rolls) / "roll").exists()
+
+
+def test_a_second_strip_walked_is_a_second_roll(window, monkeypatch):
+    import pathlib
+
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    first = pathlib.Path(app._sheet_roll)
+    _walk_through(app, root, monkeypatch, "1", "3", keep=False)
+    second = pathlib.Path(app._sheet_roll)
+    assert second != first and app.fields["roll"].get() == second.name
+    walked = json.loads((first / "survey.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in walked["frames"]] == [1, 2], "left alone"
+    app.sheet.top.destroy()
+
+
+def test_a_folder_he_named_says_what_it_holds_before_a_walk_replaces_it(
+        window, monkeypatch):
+    """A name he typed is his to reuse, and the question that starts the walk
+    says what is in that folder already."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    app.fields["roll"].set("mine")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    app.sheet.top.destroy()
+    app.survey = []                              # nothing to keep: one question
+    said, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or False)
+    app.v_startat.set("1")
+    app.v_last.set("3")
+    app.on_roll()
+    assert "Into rolls/mine, which already holds a walk" in said[0]
+    assert "replaces its walk" in said[0]
+    assert jobs == [], "Cancel moves nothing"
+
+
+def test_a_reopened_roll_is_continued_in_its_own_folder(window, tmp_path,
+                                                        monkeypatch):
+    """Its name was never put back in the roll box, so "continue" scanned
+    into rolls/<today> beside it."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    (tmp_path / "rolls").mkdir()
+    folder = _walked_folder(tmp_path / "rolls", count=3)
+    app.open_roll(folder)
+    assert app.fields["roll"].get() == folder.name
+    assert app._next_roll_folder(fresh=False) == folder
+    assert app._roll_folder() == folder
+    assert app._next_roll_folder(fresh=True) != folder, (
+        "a fresh walk is another strip, not a walk over this one")
+    app.sheet.top.destroy()
+
+
+def test_a_roll_opened_from_elsewhere_is_never_scanned_back_into(window,
+                                                                 tmp_path,
+                                                                 monkeypatch):
+    """`--open-roll` under `--demo` shows a real walk; what the demo then
+    scans goes under its own rolls folder, beside nothing real."""
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)
+    assert app._roll_folder() == pathlib.Path(app.session.rolls) / folder.name
+    app.sheet.top.destroy()
+
+
+def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
+    new = gui.folder_note(tmp_path / "rolls" / "fresh", dry=True)
+    assert new == "Into rolls/fresh, a new roll."
+    folder = tmp_path / "rolls" / "old"
+    folder.mkdir(parents=True)
+    (folder / "survey.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": [{"number": 1}, {"number": 2}]}),
+        encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": [{"number": 2, "done": True}]}),
+        encoding="utf-8")
+    walk = gui.folder_note(folder, dry=True)
+    assert "a walk of frames 1-2 and 1 scanned frame" in walk
+    assert "replaces its walk" in walk
+    assert "adds its frames" in gui.folder_note(folder, dry=False)
 
 
 # -- a pass read bottom-up is shown upright, and nothing is turned by it ------

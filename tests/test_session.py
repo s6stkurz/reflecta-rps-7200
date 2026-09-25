@@ -1403,6 +1403,63 @@ def test_a_roll_named_after_a_dos_device_can_still_be_created(tmp_path):
         (tmp_path / _safe(name)).mkdir()
 
 
+def test_unnamed_walks_never_share_a_folder(tmp_path):
+    """The date was every unnamed roll's folder, so a second strip walked the
+    same day replaced the first one's survey.json and prescans."""
+    import re
+
+    first, _s, _e = run(Roll(frames=2, dry_run=True), tmp_path)
+    second, _s, _e = run(Roll(frames=3, dry_run=True), tmp_path)
+    one, two = first.last_roll_dir, second.last_roll_dir
+    assert one != two and one.parent == two.parent == tmp_path / "rolls"
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d-\d{6}(-\d+)?", one.name), one.name
+    walked = json.loads((one / "survey.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in walked["frames"]] == [1, 2], "overwritten"
+    assert walked["roll"] == one.name
+
+
+def test_a_roll_name_cannot_leave_the_rolls_folder(tmp_path):
+    s, _scanner, _events = run(Roll(frames=1, resolution=600,
+                                    name="../../Gold 200"), tmp_path)
+    assert s.last_roll_dir == tmp_path / "rolls" / "Gold-200"
+    assert [e["film"]["frame"] for e in library.entries(tmp_path)] == [
+        "Gold-200-01"], "labelled by the folder it is in"
+
+
+def test_one_name_finds_one_folder():
+    """The session, the window's approved.json, a reopened roll and the roll
+    tool all ask this, and used to derive it three ways."""
+    from pathlib import Path
+
+    from rps7200.session import roll_dir
+
+    rolls = Path("rolls")
+    assert roll_dir(rolls, "strip") == rolls / "strip"
+    assert roll_dir(rolls, " a/b\\c ") == rolls / "a-b-c"
+    assert roll_dir(rolls, "con") == rolls / "con-roll"
+    for nothing in ("", "   ", "..", "///"):
+        made = roll_dir(rolls, nothing)
+        assert made.parent == rolls and made.name[:2] == "20", nothing
+
+
+def test_a_folder_named_before_names_were_cleaned_is_still_found(tmp_path):
+    """`rolls/Gold 200` from before: the name that made it finds it, and a
+    roll added to it goes on labelling its frames the way the walk did."""
+    from rps7200.session import roll_dir
+
+    folder = tmp_path / "rolls" / "Gold 200"
+    folder.mkdir(parents=True)
+    (folder / "survey.json").write_text(json.dumps(
+        {"roll": "Gold 200", "numbering": "strip", "frames": []}),
+        encoding="utf-8")
+    assert roll_dir(tmp_path / "rolls", "Gold 200") == folder
+    s, _scanner, _events = run(Roll(frames=1, resolution=600,
+                                    name="Gold 200"), tmp_path)
+    assert s.last_roll_dir == folder
+    assert [e["film"]["frame"] for e in library.entries(tmp_path)] == [
+        "Gold 200-01"]
+
+
 def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
     """A framing pass does not expose for the film -- it runs at the device's
     own settings -- but the entry should still say what was in the transport.

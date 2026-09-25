@@ -381,6 +381,34 @@ def test_start_at_resumes_the_roll_rather_than_replacing_it(tmp_path,
     assert [f["number"] for f in before["frames"]] == [1, 2]
 
 
+def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
+    """`rolls/<today>` was also the folder of every unnamed walk the window
+    made that day, so a run from here replaced that walk's survey."""
+    import time
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    today = tmp_path / "rolls" / time.strftime("%Y-%m-%d")
+    today.mkdir(parents=True)
+    walk = {"roll": today.name, "frames": [{"number": 1}]}
+    (today / "survey.json").write_text(json.dumps(walk), encoding="utf-8")
+    for _ in range(2):
+        monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
+                                          "--no-shading", "--dry-run",
+                                          "--frames", "1"])
+        assert scan_roll.main() == 0
+    made = sorted(p for p in (tmp_path / "rolls").iterdir() if p != today)
+    assert len(made) == 2, made
+    for folder in made:
+        assert folder.name.startswith(today.name + "-")
+        survey = json.loads((folder / "survey.json").read_text(
+            encoding="utf-8"))
+        assert survey["roll"] == folder.name
+    assert json.loads((today / "survey.json").read_text(
+        encoding="utf-8")) == walk
+
+
 def test_a_frame_that_was_never_filed_names_no_file(tmp_path, monkeypatch):
     """`file` named a TIFF before anything had written it, and a resume took
     that as done."""

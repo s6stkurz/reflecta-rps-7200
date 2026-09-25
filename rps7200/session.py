@@ -725,8 +725,69 @@ def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str,
 
 
 # ---------------------------------------------------------------------------
-# A roll's own files: survey.json, roll.json, approved.json
+# A roll's folder, and its own files: survey.json, roll.json, approved.json
 # ---------------------------------------------------------------------------
+
+
+def new_roll_name(rolls, now: float | None = None) -> str:
+    """A name no roll under `rolls` has yet: the date and the time, to the second.
+
+    What a roll is called when nobody named it. It used to be the date alone,
+    so every unnamed walk and roll of a day went into one folder: a second
+    walk replaced the first one's survey.json and prescans, a second roll
+    wrote over frameNN.tif and merged into roll.json, and the sheet's turns
+    for one strip were applied to the next. Still starting with the date, so
+    the folder sorts by it and `folder_created` reads it.
+    """
+    stamp = time.strftime("%Y-%m-%d-%H%M%S", time.localtime(now))
+    name, n = stamp, 2
+    while (Path(rolls) / name).exists():
+        name, n = f"{stamp}-{n}", n + 1
+    return name
+
+
+def roll_dir(rolls, name: str) -> Path:
+    """The one folder a roll called `name` lives in, under `rolls`.
+
+    One function for the session, the window's `approved.json`, a reopened
+    roll and `tools/scan_roll.py`. They derived it three ways -- the name as
+    typed, `_safe` of it with "roll" for an empty one, and today's date -- so
+    one roll's frames, decisions and walk could land in three folders.
+
+    The name is made safe to be one folder (`_safe`): no separators, no
+    ``..``, nothing absolute, no Windows device name. A folder that already
+    has exactly this name is kept as it is, so a roll made before names were
+    cleaned -- `rolls/Gold 200` -- is still the folder that name finds. An
+    empty name, or one of which nothing survives cleaning, is never a shared
+    default such as `rolls/roll`; it is a new one (`new_roll_name`), and the
+    caller takes it from the result's `.name`.
+    """
+    rolls = Path(rolls)
+    name = (name or "").strip()
+    as_typed = rolls / name
+    if (name not in ("", ".", "..") and not any(c in name for c in "/\\:")
+            and as_typed.parent == rolls and as_typed.is_dir()):
+        return as_typed
+    cleaned = _safe(name, fallback="")
+    return rolls / (cleaned or new_roll_name(rolls))
+
+
+def recorded_roll_name(folder) -> str | None:
+    """The name a roll folder's own manifest gives its roll, if it has one.
+
+    A frame's library label is ``<roll>-<NN>`` (`roll_frame_label`), and a
+    roll is found from its entries by that roll -- so a roll added to must go
+    on calling itself what it did, whatever its folder is called now. A
+    duplicate or a renamed folder keeps the name it was scanned under.
+    """
+    for manifest in ("survey.json", "roll.json"):
+        try:
+            name = read_manifest(Path(folder) / manifest).get("roll")
+        except ValueError:
+            continue
+        if isinstance(name, str) and name.strip():
+            return name
+    return None
 
 
 #: What a manifest's previous version is kept as, beside it: the file as it
@@ -2020,8 +2081,17 @@ class ScanSession:
         if self._stop.is_set():
             return (f"stopped with the film on frame {first + 1}, before "
                     "anything was scanned")
-        name = job.name or time.strftime("%Y-%m-%d")
-        out = Path(job.out) if job.out else self.rolls / name
+        # The folder by `roll_dir`, the one derivation everything that files
+        # beside a roll uses; the label the roll's entries carry is the name
+        # its folder already records, so a roll added to keeps calling itself
+        # what it did. `job.out` is a folder the caller already has -- the
+        # sheet's own, a reopened roll's -- and a name given with it wins.
+        if job.out:
+            out = Path(job.out)
+            name = job.name or recorded_roll_name(out) or out.name
+        else:
+            out = roll_dir(self.rolls, job.name)
+            name = recorded_roll_name(out) or out.name
         out.mkdir(parents=True, exist_ok=True)
         self.last_roll_dir = out
         # Two products, two files. A walk and the scan of what it found go into
@@ -2608,13 +2678,17 @@ _RESERVED = frozenset(
 )
 
 
-def _safe(name: str) -> str:
-    """`name` with anything a filename should not carry taken out."""
+def _safe(name: str, fallback: str = "roll") -> str:
+    """`name` with anything a filename should not carry taken out.
+
+    ``fallback`` when nothing of it is left; `roll_dir` asks for "" there, so
+    that a name of nothing but slashes is a new roll and not a shared one.
+    """
     kept = [c if (c.isalnum() or c in "-_.") else "-" for c in name.strip()]
-    cleaned = "".join(kept).strip("-.") or "roll"
+    cleaned = "".join(kept).strip("-.") or fallback
     # Checked against the part before the first dot, which is what Windows
     # matches on: `con.tif` is refused as surely as `con`.
-    if cleaned.split(".")[0].lower() in _RESERVED:
+    if cleaned and cleaned.split(".")[0].lower() in _RESERVED:
         cleaned = f"{cleaned}-roll"
     return cleaned
 
