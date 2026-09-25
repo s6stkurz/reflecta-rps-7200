@@ -296,11 +296,14 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
                     source=(notes.get(n) or {}).get("source") or "none")
         for n, im in frames if n in offsets
     }
+    # The film too, as the one the positions above were read on: whether the
+    # walk's prescans could be read at all is a question about its film, and
+    # `--film` is negative unless told whatever the walk was.
     return held, {"offsets": {n: round(v, 4) for n, v in offsets.items()},
                   "sources": {n: (notes.get(n) or {}).get("source")
                               for n in offsets},
                   "walked": len(frames), "from": str(folder),
-                  "prescan_resolution": walked_at}
+                  "prescan_resolution": walked_at, "film": film}
 
 
 def main() -> int:
@@ -372,11 +375,24 @@ def main() -> int:
     # it would correct nothing, and an unattended roll is exactly where
     # nobody reads the per-frame "left as it came". A walk is only warned
     # about: its prescans are still a survey of the strip.
+    #
+    # Each judged on the film its prescans are read as. This run's own --
+    # what --correct and --correct-dry-run read, and what a --dry-run walk is
+    # read as on the sheet later -- are --film's. The walk --approved names
+    # was read by `hold_from_walk` on the walk's film, and was judged on
+    # --film too, which is negative unless told: a slide walk at 600 dpi was
+    # warned about though slides never reach this detector, and a negative
+    # walk run with --film positive was not, though every frame of it had
+    # been refused.
     unread = frame_edges.unread_at(args.prescan_dpi, args.film)
     if unread and args.correct:
         ap.error(f"--correct with --prescan-dpi {args.prescan_dpi}: {unread}")
-    if unread and (args.dry_run or args.correct_dry_run or args.approved):
-        print(f"warning: {unread}", file=sys.stderr)
+    warning = unread if (args.dry_run or args.correct_dry_run) else None
+    if args.approved and not warning:
+        warning = frame_edges.unread_at(args.prescan_dpi,
+                                        held_note.get("film") or args.film)
+    if warning:
+        print(f"warning: {warning}", file=sys.stderr)
 
     # The folder the window's rolls use for the same name (`roll_dir`): made
     # safe to be one folder, and a new name of its own when none is given.
