@@ -116,7 +116,9 @@ def ceiling(random_sigma: float, total_sigma: float, passes: int) -> float:
 
     Averaging divides only the random part; the fixed part is untouched however
     many passes are taken. Compute this *before* booking scanner time -- on a
-    slide here it came to -3.5% for nine passes, which is not worth 25 minutes.
+    slide here it came to -3.5% for nine passes, which is not worth 25 minutes
+    (measured with the earlier, unfiltered estimator; re-measure before
+    comparing a new pair with it).
 
     A random part as large as the total is refused rather than answered.
     :func:`noise_split` reads both through one filter, so on a registered,

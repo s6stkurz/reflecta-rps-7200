@@ -262,6 +262,14 @@ def test_sensor_frames_and_rails_are_one_or_the_other():
                       sensor_rails=[sensor_rail(x) for x in f])
 
 
+def test_sensor_pixels_passed_as_rails_are_refused():
+    """Sixteen-bit pixels read as rail codes decode past the clip at every
+    level, and the merge that drops them all still looks like a picture."""
+    f = [np.zeros((4, 4, 3), np.uint16)] * 2
+    with pytest.raises(ValueError, match="sensor_frames"):
+        merge_bracket(f, [1.0, 2.0], sensor_rails=f)
+
+
 @pytest.mark.parametrize("sensor,match", [
     ([np.zeros((4, 4, 3), np.uint16)], "sensor frames"),
     ([np.zeros((4, 4, 3), np.uint16), np.zeros((4, 5, 3), np.uint16)],

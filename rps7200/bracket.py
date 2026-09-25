@@ -399,6 +399,12 @@ def merge_bracket(
     if sensor_frames is not None and sensor_rails is not None:
         raise ValueError("sensor_frames or sensor_rails, not both: they are "
                          "two forms of the same pixels")
+    # Sensor pixels passed as rail codes read as a plausible merge: every
+    # level decodes past the clip, the fit drops them all, and nothing says.
+    if sensor_rails is not None and any(
+            np.asarray(r).dtype != np.uint8 for r in sensor_rails):
+        raise ValueError("sensor_rails are sensor_rail() codes (uint8); pass "
+                         "the pixels themselves as sensor_frames")
     # Where saturation is judged from, in whichever form it came, and how to
     # read a level out of it.
     sensors = sensor_frames if sensor_rails is None else sensor_rails

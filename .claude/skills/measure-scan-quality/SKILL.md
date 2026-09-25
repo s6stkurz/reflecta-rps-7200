@@ -64,6 +64,11 @@ scanner time**, because it decides whether the experiment can succeed at all:
 A 25-minute bracket was run to confirm a ceiling a 4-minute repeat pair had
 already given.
 
+*The 21%, 27% and -3.5% above were measured with the earlier estimator, which
+read the random part through no filter and white noise about 1.12x high.*
+`noise_split` now filters both parts alike, so re-measure a stored repeat pair
+-- registered and gain-matched -- before holding a new one against them.
+
 ## Comparing scans taken at different exposures
 
 **Solve the relation from the pixels; never trust the commanded exposure.** At a
