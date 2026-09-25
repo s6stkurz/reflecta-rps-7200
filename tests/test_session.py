@@ -532,6 +532,69 @@ def test_a_roll_straight_after_another_keeps_its_frames_done(tmp_path,
         1: True, 2: True, 3: True}
 
 
+def test_a_roll_straight_after_another_does_not_wait_for_its_filing(
+        tmp_path, monkeypatch):
+    """It waited for the writer before reading the manifest -- with the film
+    moved and the device open and idle while the last roll's frames gzipped,
+    the state FrameWriter exists to avoid. Here the first roll's filing is
+    held until the second roll starts scanning: waited for, it never would."""
+    real_save = library.save
+    scanning = threading.Event()
+    held = []
+
+    def held_until_the_next_roll_scans(*a, **kw):
+        if not scanning.is_set():
+            held.append(scanning.wait(timeout=2.0))
+        return real_save(*a, **kw)
+
+    monkeypatch.setattr(library, "save", held_until_the_next_roll_scans)
+    scanner = FakeScanner(frames=4)
+    real_roll = scanner.scan_roll
+    rolls = []
+
+    def scan_roll(*a, **kw):
+        rolls.append(kw.get("first_index"))
+        if len(rolls) == 2:
+            scanning.set()
+        return real_roll(*a, **kw)
+
+    scanner.scan_roll = scan_roll
+
+    def first(s, _scanner):                      # queued ahead of the job
+        s.submit(Roll(frames=2, resolution=600, name="pair"))
+
+    _s, _scanner, events = run(
+        Roll(frames=4, only=(3,), start_at=3, resolution=600, name="pair"),
+        tmp_path, scanner=scanner, extra=first)
+    assert held and all(held), "the second roll waited for the first's filing"
+    assert not kinds(events, "failed")
+    recorded = json.loads(
+        (tmp_path / "rolls" / "pair" / "roll.json").read_text(encoding="utf-8"))
+    assert {f["number"]: f["done"] for f in recorded["frames"]} == {
+        1: True, 2: True, 3: True}
+    assert all(f["entry"] for f in recorded["frames"])
+
+
+def test_a_frame_taken_again_before_its_first_filing_lands_waits_for_its_own(
+        tmp_path):
+    """A roll straight after another carries the same manifest on, and can
+    take again a frame the writer has not filed yet. The first take's answer
+    is not the second's: applied to it, a frame whose own filing then failed
+    read done, with the other take's entry."""
+    path = tmp_path / "roll.json"
+    manifest = session.RollManifest(path, {"frames": []})
+    manifest.record({"number": 2, "take": 1}, awaiting=True)
+    manifest.record({"number": 2, "take": 2}, awaiting=True)
+    manifest.filed(2, tmp_path / "lib" / "first-take", None)
+    (record,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert record["take"] == 2 and record["done"] is False
+    manifest.filed(2, None, "No space left on device")
+    (record,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert record["done"] is False and record.get("entry") is None
+    assert "No space" in record["filing_error"]
+    assert not manifest.pending()
+
+
 def test_a_manifest_is_replaced_whole_and_the_last_run_kept(tmp_path):
     """Truncated and rewritten in place, a kill between the two left an empty
     roll.json: the roll vanished from the list and the next resume wrote a

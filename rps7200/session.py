@@ -1005,7 +1005,11 @@ class RollManifest:
         self.path = Path(path)
         self.data = data
         self._lock = threading.Lock()
-        self._awaiting: set[int] = set()
+        #: How many filings each frame number still waits for. A count and
+        #: not a set, because a roll straight after another into the same
+        #: folder carries this manifest on (`ScanSession._roll`), and may take
+        #: again a frame whose first filing has not come back yet.
+        self._awaiting: dict[int, int] = {}
         self._early: dict[int, tuple] = {}
         self._written = False
 
@@ -1017,6 +1021,23 @@ class RollManifest:
     def write(self) -> None:
         with self._lock:
             self._write()
+
+    def pending(self) -> bool:
+        """Whether any frame recorded here still waits for its filing."""
+        with self._lock:
+            return bool(self._awaiting)
+
+    def carry_on(self, data: dict) -> None:
+        """Take a new run's manifest, built on this one's `data`, as its own.
+
+        For a roll into a folder whose last roll is still being filed: the
+        filings still to come are this object's to apply, and they find the
+        new run's records -- the same dicts, carried forward. The new run
+        keeps a copy of the file as it stood, as every run does.
+        """
+        with self._lock:
+            self.data = data
+            self._written = False
 
     def record(self, record: dict, awaiting: bool = False) -> None:
         """This frame's record, replacing any earlier one of its number.
@@ -1031,7 +1052,7 @@ class RollManifest:
                 self._apply(record, *early)
             elif awaiting:
                 record["done"] = False
-                self._awaiting.add(number)
+                self._awaiting[number] = self._awaiting.get(number, 0) + 1
             self.data["frames"] = [
                 f for f in self.data.get("frames") or ()
                 if str(f.get("number")) != str(number)] + [record]
@@ -1046,10 +1067,17 @@ class RollManifest:
         """
         number = int(number)
         with self._lock:
-            if number not in self._awaiting:
+            waiting = self._awaiting.get(number, 0)
+            if not waiting:
                 self._early[number] = (entry, error, extra)
                 return
-            self._awaiting.discard(number)
+            if waiting > 1:
+                # An earlier take's answer. The writer answers in the order
+                # it was given frames, and the record here is the later
+                # take's, which has its own answer still to come.
+                self._awaiting[number] = waiting - 1
+                return
+            del self._awaiting[number]
             for record in self.data.get("frames") or ():
                 if str(record.get("number")) == str(number):
                     self._apply(record, entry, error, extra)
@@ -1705,6 +1733,10 @@ class ScanSession:
         self._thread: threading.Thread | None = None
         self._scanner: Any = None
         self._writer: FrameWriter | None = None
+        #: Each roll folder's manifest as the last run into it left it, by
+        #: file: its filings can still be coming in when the next run into
+        #: that folder starts (`_roll`).
+        self._manifests: dict[Path, RollManifest] = {}
         self._seq = 0
         self.dead = False                    # set by force_abort
         self.inquiry_text = ""
@@ -2223,15 +2255,19 @@ class ScanSession:
         # frames 11 to 12 used to replace the record of 1 to 10.
         earlier: dict[str, Any] = {}
         carried = not job.dry_run or job.extend_walk
-        if carried and manifest_path.exists():
-            # Only once the frames the last roll queued are filed: each says
-            # it is done in this same file, as it lands, and read before that
-            # this run would carry them forward as not done and write over the
-            # writer's answer. Nothing is waited for when nothing is queued.
-            if self._writer is not None and self._writer.queue.unfinished_tasks:
-                self._emit("log", text="waiting for the last roll's frames to "
-                           "be filed before adding to its manifest ...")
-                self._writer.queue.join()
+        # The last run into this file, while its frames are still being filed:
+        # each says it is done in this same manifest as it lands, so the file
+        # on disk is behind, and read from there this run would carry those
+        # frames forward as not done and write over the writer's answer. It
+        # used to wait for the writer instead -- with the film moved and the
+        # device open and idle while the last frames gzipped, the state
+        # FrameWriter exists to avoid. So the run carries on the manifest
+        # still in hand, whose filings then land in the records it carries.
+        key = manifest_path.resolve()
+        live = self._manifests.get(key)
+        if carried and live is not None and live.pending():
+            earlier = live.data
+        elif carried and manifest_path.exists():
             # Not read as "nothing" when it cannot be read: the version kept
             # beside it is tried, and failing that the file is kept aside and
             # said. `json.loads` inside a bare except used to hand a damaged
@@ -2352,8 +2388,14 @@ class ScanSession:
             "frames": list(earlier.get("frames") or []),
         }
         # The one writer of this file from here on, from both threads; see
-        # `RollManifest`.
-        record_of = RollManifest(manifest_path, manifest)
+        # `RollManifest`. The last run's, when its filings are still to come
+        # and this run was built on what it holds.
+        if live is not None and earlier is live.data:
+            live.carry_on(manifest)
+            record_of = live
+        else:
+            record_of = RollManifest(manifest_path, manifest)
+        self._manifests[key] = record_of
 
         # How each chosen picture is arranged. Every approved frame appears,
         # zeros and falses included: the contact sheet knows each frame's
