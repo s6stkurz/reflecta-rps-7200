@@ -8399,8 +8399,18 @@ def main() -> int:
                          "the prescans, every launch.")
     ap.add_argument("--look-only", action="store_true",
                     help="there is no film in the transport. Every control "
-                         "still works; anything that reaches for film says so")
+                         "still works; anything that reaches for film says so. "
+                         "Only with --demo")
     args = ap.parse_args()
+    # Only the demo's stand-in can be told there is no film, so only it can
+    # refuse for want of one. Given alone, the flag changed the sheet's words
+    # and nothing else: it promised a refusal while the real scanner was
+    # sought, moved, calibrated with an empty transport and scanned.
+    if args.look_only and not args.demo:
+        ap.error("--look-only needs --demo: it tells the stand-in scanner "
+                 "there is no film, and the real one cannot be told that -- "
+                 "it would be driven as usual while the window said scanning "
+                 "would refuse")
 
     home = DEMO_ROOT if args.demo else Path(".")
 

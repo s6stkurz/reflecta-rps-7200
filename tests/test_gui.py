@@ -3807,6 +3807,27 @@ def test_make_run_opens_the_real_scanner(monkeypatch, tmp_path):
     assert session._open_scanner == session._default_scanner
 
 
+def test_look_only_without_the_demo_is_refused_before_anything_opens(
+        monkeypatch, tmp_path, capsys):
+    """Only the demo's stand-in can be told there is no film. Given alone,
+    the flag changed the sheet's words and nothing else: it promised a
+    refusal while the real scanner was sought, moved, calibrated with an
+    empty transport and scanned. Refused as a usage error instead, before a
+    session or a window exists."""
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    monkeypatch.setattr(gui, "ScannerGui",
+                        lambda *a, **kw: pytest.fail("a window was built"))
+    monkeypatch.setattr(sys, "argv", [
+        "gui.py", "--library", str(tmp_path / "library"),
+        "--rolls", str(tmp_path / "rolls"), "--look-only"])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    assert "--look-only needs --demo" in capsys.readouterr().err
+
+
 def test_no_film_is_told_to_the_backend(monkeypatch, tmp_path):
     """Which is the only place that could honestly know it."""
     import rps7200.demo
@@ -3846,6 +3867,7 @@ def test_an_empty_transport_refuses_where_the_transport_would():
 
     empty = DemoScanner("library", no_film=True)
     for call in (lambda: empty.scan(resolution=300, infrared=False),
+                 empty.prescan,
                  lambda: list(empty.scan_roll(frames=1, dry_run=True)),
                  empty.advance, empty.retreat, lambda: empty.nudge(0.5)):
         with pytest.raises(UsbError, match="no film in the transport"):
