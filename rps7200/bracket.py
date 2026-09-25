@@ -27,6 +27,18 @@ Everything works on **shading-corrected linear samples**. Correct each pass with
 its own reference and CCD mask first (`rps7200.shading`), because the passes
 carry different masks and an uncorrected bracket fuses the sensor's column
 pattern along with the picture.
+
+**Saturation is the exception: it is judged on what the sensor returned.** The
+correction multiplies each column by its own gain, and that moves the rail.
+Where a column is brighter than the mean its gain is below one, so a sample the
+sensor railed at 65535 comes back somewhere under 0.8 of full scale -- inside
+the range judged linear -- and kept nearly full confidence. The longest pass is
+pinned to the exposure timer's ceiling, so it is the one most often railed, and
+it carries the most weight: judged on corrected values alone it pulled the
+merged highlights down by a different amount in every column. So
+:func:`merge_bracket` takes the pixels each pass was corrected from as
+``sensor_frames`` and judges the rail on those; the corrected values are still
+what gets merged.
 """
 from __future__ import annotations
 
@@ -122,15 +134,35 @@ def _smoothstep(x: np.ndarray) -> np.ndarray:
     return x * x * (3.0 - 2.0 * x)
 
 
-def confidence(raw: np.ndarray) -> np.ndarray:
-    """How much a raw sample is worth: zero in the noise, zero at saturation.
+def _clip_weight(x: np.ndarray) -> np.ndarray:
+    """One below `CLIP_START`, falling smoothly to zero at `CLIP_END`."""
+    return 1.0 - _smoothstep((x - CLIP_START) / max(CLIP_END - CLIP_START, 1e-12))
+
+
+def confidence(sample: np.ndarray, sensor: np.ndarray | None = None) -> np.ndarray:
+    """How much a sample is worth: zero in the noise, zero at saturation.
 
     A ramp up from the noise floor multiplied by a smooth ramp down into
     saturation. Smooth on purpose -- a hard switch between passes prints as
     banding across a gradient.
+
+    ``sensor`` is what the scanner returned for the same sample, when
+    ``sample`` is its shading-corrected value. Saturation is then judged on
+    both, and the worse of the two wins. On ``sensor`` because that is where
+    the rail is: the correction's gain below one hides a railed sample inside
+    the linear range (see the module docstring). On ``sample`` as well because
+    a gain above one reaches the correction's own clamp before the sensor
+    rails, and a clamped value is no more a measurement than a railed one --
+    that half is conservative in the edge columns, and zero-weights some good
+    samples there, but it cannot bias the merge the way a trusted rail does.
+
+    The noise floor is judged on ``sample`` alone: it is a question about
+    signal above dark, and a raw count still carries the dark offset.
     """
-    floor_w = np.clip((raw - SNR_FLOOR) / max(SNR_FLOOR, 1e-12), 0.0, 1.0)
-    clip_w = 1.0 - _smoothstep((raw - CLIP_START) / max(CLIP_END - CLIP_START, 1e-12))
+    floor_w = np.clip((sample - SNR_FLOOR) / max(SNR_FLOOR, 1e-12), 0.0, 1.0)
+    clip_w = _clip_weight(sample)
+    if sensor is not None:
+        clip_w = np.minimum(clip_w, _clip_weight(sensor))
     return floor_w * clip_w
 
 
@@ -193,7 +225,13 @@ def fit_noise_params(flats: list[np.ndarray], patch: int = 32) -> tuple[float, f
     return float(alpha), float(max(beta, 1.0))
 
 
-def solve_relation(ref: np.ndarray, other: np.ndarray) -> tuple[float, float]:
+def solve_relation(
+    ref: np.ndarray,
+    other: np.ndarray,
+    *,
+    ref_sensor: np.ndarray | None = None,
+    other_sensor: np.ndarray | None = None,
+) -> tuple[float, float]:
     """Fit ``other = slope * ref + intercept`` on the pixels both resolve.
 
     The commanded exposure ratio is not the relationship between two passes.
@@ -209,11 +247,18 @@ def solve_relation(ref: np.ndarray, other: np.ndarray) -> tuple[float, float]:
     single noisiest pass.
 
     Only pixels well clear of both the noise floor and saturation are fitted,
-    since neither end carries a usable relationship.
+    since neither end carries a usable relationship. ``ref_sensor`` and
+    ``other_sensor`` are the uncorrected pixels behind corrected inputs, and
+    saturation is then judged on them too, for the reason :func:`confidence`
+    gives: a railed sample in a column whose gain is below one comes back
+    under `CLIP_START`, and fitted as if linear it bends the slope.
     """
     a = np.asarray(ref, dtype=np.float64).reshape(-1)
     b = np.asarray(other, dtype=np.float64).reshape(-1)
     usable = (a > SNR_FLOOR) & (a < CLIP_START) & (b > SNR_FLOOR) & (b < CLIP_START)
+    for sensor in (ref_sensor, other_sensor):
+        if sensor is not None:
+            usable &= np.asarray(sensor).reshape(-1) < CLIP_START
     if usable.sum() < 64:
         return float("nan"), 0.0
     a, b = a[usable], b[usable]
@@ -260,6 +305,7 @@ def merge_bracket(
     *,
     alpha: float = DEFAULT_ALPHA,
     beta: float = DEFAULT_BETA,
+    sensor_frames: list[np.ndarray] | None = None,
 ) -> tuple[np.ndarray, MergeStats]:
     """Fuse `frames` into one, weighting each pass by how much it is worth.
 
@@ -267,6 +313,13 @@ def merge_bracket(
     aligned to ``frames[0]``, which is the reference: everything is computed in
     its exposure units, so the result stays on the reference's scale rather than
     drifting to some average of the bracket's.
+
+    ``sensor_frames`` are the pixels each of `frames` was corrected from, as
+    the scanner returned them (`DirectScanner.last_pixels_raw`, or an entry's
+    `scan.tif`), and saturation is judged on them -- see the module docstring.
+    Give them whenever `frames` are corrected. Leaving them out judges it on
+    `frames` themselves, which is right only when those are what the sensor
+    returned.
 
     Reduces exactly to the pairwise form at two frames.
     """
@@ -287,14 +340,32 @@ def merge_bracket(
             raise ValueError(
                 f"frame {i} is {np.asarray(f).shape}, frame 0 is {ref.shape}"
             )
+    if sensor_frames is not None:
+        if len(sensor_frames) != len(frames):
+            raise ValueError(
+                f"{len(frames)} frames but {len(sensor_frames)} sensor frames"
+            )
+        for i, s in enumerate(sensor_frames):
+            if np.asarray(s).shape != ref.shape:
+                raise ValueError(
+                    f"sensor frame {i} is {np.asarray(s).shape}, the frames "
+                    f"are {ref.shape}: it has to be the pixels frame {i} was "
+                    f"corrected from"
+                )
+    sensor_ref = None if sensor_frames is None else np.asarray(sensor_frames[0])
 
     commanded = [float(e) / float(exposures[0]) for e in exposures]
     # Solve each pass against the reference rather than trusting what the
     # scanner was told; see :func:`solve_relation`.
     ratios = [1.0]
     offsets = [0.0]
-    for frame, want in zip(frames[1:], commanded[1:]):
-        slope, intercept = solve_relation(ref[..., 1], np.asarray(frame)[..., 1])
+    for i, (frame, want) in enumerate(zip(frames[1:], commanded[1:]), 1):
+        slope, intercept = solve_relation(
+            ref[..., 1], np.asarray(frame)[..., 1],
+            ref_sensor=None if sensor_ref is None else sensor_ref[..., 1],
+            other_sensor=(None if sensor_frames is None
+                          else np.asarray(sensor_frames[i])[..., 1]),
+        )
         if not np.isfinite(slope):
             slope, intercept = want, 0.0
         ratios.append(slope)
@@ -312,9 +383,11 @@ def merge_bracket(
     for y0 in range(0, h, CHUNK_ROWS):
         y1 = min(h, y0 + CHUNK_ROWS)
         raws, scaled, confs, weights = [], [], [], []
-        for frame, r, off in zip(frames, ratios, offsets):
+        for i, (frame, r, off) in enumerate(zip(frames, ratios, offsets)):
             raw = np.asarray(frame[y0:y1], dtype=np.float32)
-            c = confidence(raw)
+            sensor = (None if sensor_frames is None
+                      else np.asarray(sensor_frames[i][y0:y1], dtype=np.float32))
+            c = confidence(raw, sensor)
             raw = raw - np.float32(off)
             # Variance transforms with the square of the scale, so a long pass
             # divided down carries proportionally less variance -- which is the
