@@ -803,7 +803,8 @@ def _analyse(image: np.ndarray, ctx: dict
         if (s.state == REFUSE and s.note.startswith("flat") and o.state == EDGE
                 and name in data and other in data and data[other].band_level is not None):
             mine, theirs = data[name], data[other]
-            drop = float((mine.w * (1.0 - mine.ref / np.maximum(theirs.band_level, 1e-9))).sum())
+            level = np.asarray(theirs.band_level, dtype=float)   # checked not None above
+            drop = float((mine.w * (1.0 - mine.ref / np.maximum(level, 1e-9))).sum())
             debug[name]["drop_vs_other"] = round(drop, 4)
             if drop > OTHER_SIDE_DROP:
                 sides[name] = Side(state=PICTURE_TO_BORDER, conf=0.6,
