@@ -2248,8 +2248,22 @@ class ScannerGui:
         if keep:
             # The sheet's own folder -- under this session's rolls, so a walk
             # added to a roll opened from elsewhere (`--open-roll` under
-            # `--demo`) is not written back into it; see `_roll_folder`.
+            # `--demo`) is not written back into it; see `_roll_folder`. And
+            # that walk goes with it, or this one would be added to nothing.
             folder = self._roll_folder()
+            try:
+                carried = carry_walk(self._sheet_roll, folder)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror(
+                    "Scan roll",
+                    f"The walk in {self._sheet_roll} could not be copied into "
+                    f"{folder}, so this walk could not be added to it: {exc}"
+                    "\n\nNothing has moved.")
+                return
+            if carried:
+                self._say(f"copied the walk in {self._sheet_roll} into "
+                          f"{folder}, which this walk adds to; the original "
+                          "is left as it was")
         else:
             self._show_roll_name(folder.name, ours=not typed)
         if not dry:
@@ -2443,7 +2457,7 @@ class ScannerGui:
         Always under this session's `rolls`. A roll opened from elsewhere --
         `--open-roll` under `--demo` shows a real walk -- is scanned into the
         folder of the same name here, never back into the one it was read
-        from.
+        from. A walk added to it copies that walk across first (`carry_walk`).
         """
         rolls = Path(self.session.rolls)
         if self._sheet_roll is not None:
@@ -4451,15 +4465,18 @@ class ScannerGui:
     def on_delete(self, result) -> None:
         entry = result.entry
         question = f"Remove {result.label} from this session?"
-        if entry and entry.exists() and self.demo and not _within(
-                entry, self.session.root):
+        if entry and entry.exists() and not _within(entry,
+                                                     self.session.root):
             # A reopened roll's frames carry the entry their walk filed, and
-            # `make run-sheet` opens a real walk -- so this was a real entry,
-            # raw bytes and all, one "No" away from rmtree under the one mode
-            # promised to touch nothing real. The demo only ever removes what
-            # the demo filed; this frame leaves the window and nothing else.
-            question += (f"\n\nIts library entry {entry.name} is not the "
-                         "demo's own, and the demo leaves it alone.")
+            # `make run-sheet` opens a real walk -- so under the demo this was
+            # a real entry, raw bytes and all, one "No" away from rmtree under
+            # the one mode promised to touch nothing real. Not a demo branch:
+            # the window only ever removes an entry from the library it files
+            # into, and a demo files into its own. Outside the demo that is
+            # every entry it shows, bar a roll opened from another library,
+            # which this leaves to that library too.
+            question += (f"\n\nIts library entry {entry.name} is not in "
+                         "this session's library, and is left where it is.")
             entry = None
         if entry and entry.exists():
             question += (f"\n\nIts library entry {entry.name} holds the raw "
@@ -5743,6 +5760,45 @@ def roll_line(summary: dict) -> str:
     if summary["film"]:
         parts.append(str(summary["film"]))
     return "  ·  ".join(parts)
+
+
+def carry_walk(source, target) -> list[str]:
+    """Copy the walk in ``source`` into ``target``, when ``target`` has none.
+
+    For a walk added to a sheet opened from outside this session's rolls:
+    the walk goes into the folder of the same name here (`_roll_folder`),
+    and the session carries forward the `survey.json` it finds *there* --
+    which was none, so the new one listed only the frames just walked while
+    the sheet, `approved.json` and `roll.json` covered the strip, and the
+    folder reopened as a partial sheet. The source is read, never written.
+
+    What is copied is what the walk's records name, not whatever the folder
+    holds (see `walked_prescans`), and `survey.json` last, as it was read --
+    so a target with a survey has the prescans it lists. Returns the names
+    copied, empty when there was nothing to do. Raises OSError or
+    ValueError, naming the file, when the walk cannot be read or copied.
+    """
+    source, target = Path(source), Path(target)
+    if (target / "survey.json").exists() or not (source / "survey.json").exists():
+        return []
+    try:
+        if source.resolve() == target.resolve():
+            return []
+    except OSError:
+        pass
+    manifest = read_manifest(source / "survey.json")
+    names: list[str] = []
+    for record in manifest.get("frames") or ():
+        for key in ("prescan", "prescan_before"):
+            name = record.get(key)
+            if (isinstance(name, str) and name and Path(name).name == name
+                    and (source / name).is_file() and name not in names):
+                names.append(name)
+    target.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        shutil.copyfile(source / name, target / name)
+    write_manifest(target / "survey.json", manifest)
+    return [*names, "survey.json"]
 
 
 def folder_note(folder, dry: bool) -> str:

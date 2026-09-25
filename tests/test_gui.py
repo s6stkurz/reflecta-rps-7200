@@ -4973,6 +4973,71 @@ def test_a_walk_added_to_a_roll_opened_from_elsewhere_stays_here(window,
     assert jobs[0].out == str(pathlib.Path(app.session.rolls) / folder.name)
 
 
+def test_a_walk_added_to_a_roll_opened_from_elsewhere_takes_that_walk_along(
+        window, tmp_path, monkeypatch):
+    """The walk goes into the folder of the same name here, and the session
+    carries forward the survey.json it finds there -- none. So the new survey
+    listed only the frames just walked, while the sheet covered the strip,
+    and the folder reopened as a partial sheet."""
+    import pathlib
+
+    from conftest import StripScanner
+    from rps7200.session import ScanSession
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    before = sorted((p.name, p.read_bytes()) for p in folder.iterdir())
+    app.open_roll(folder)
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.v_startat.set("4")
+    app.v_last.set("5")
+    app.on_roll()
+    here = pathlib.Path(app.session.rolls) / folder.name
+    assert sorted(p.name for p in here.glob("prescan*.tif")) == [
+        "prescan01.tif", "prescan02.tif", "prescan03.tif"]
+
+    # The walk itself, run by the session the window hands it to.
+    walked = ScanSession(root=str(tmp_path / "library"),
+                         rolls=app.session.rolls, verbose=False,
+                         open_scanner=lambda: StripScanner(at=3, last=5))
+    walked.start()
+    walked.submit(jobs[0])
+    walked.shutdown()
+    walked.join(timeout=10)
+    survey = json.loads((here / "survey.json").read_text(encoding="utf-8"))
+    assert sorted(f["number"] for f in survey["frames"]) == [1, 2, 3, 4, 5]
+    assert all((here / f["prescan"]).exists() for f in survey["frames"])
+    assert sorted((p.name, p.read_bytes()) for p in folder.iterdir()) \
+        == before, "the walk it was opened from is left as it was"
+
+
+def test_carrying_a_walk_never_writes_over_one_or_follows_a_path(tmp_path):
+    source = _walked_folder(tmp_path, count=2)
+    survey = json.loads((source / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][0]["prescan"] = "../elsewhere.tif"
+    (tmp_path / "elsewhere.tif").write_bytes(b"not the walk's")
+    (source / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+    target = tmp_path / "rolls" / "walk"
+    assert gui.carry_walk(source, target) == ["prescan02.tif", "survey.json"]
+    assert not (target / "elsewhere.tif").exists()
+    assert json.loads((target / "survey.json").read_text(encoding="utf-8")) \
+        == survey
+
+    # A folder that has a walk of its own keeps it.
+    (target / "survey.json").write_text('{"frames": []}', encoding="utf-8")
+    assert gui.carry_walk(source, target) == []
+    assert (target / "survey.json").read_text(encoding="utf-8") \
+        == '{"frames": []}'
+    assert gui.carry_walk(source, source) == []
+
+
 def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
     new = gui.folder_note(tmp_path / "rolls" / "fresh", dry=True)
     assert new == "Into rolls/fresh, a new roll."
@@ -5015,12 +5080,17 @@ def _reopened_with_entry(app, entry):
     return result
 
 
+@pytest.mark.parametrize("demo", [True, False])
 def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
-                                                           monkeypatch):
+                                                           monkeypatch, demo):
     """`make run-sheet` opens a real walk, whose frames carry the entries it
     filed. Delete on one, and No to "keep the entry?", removed a real entry's
-    raw bytes under the one mode promised to touch nothing real."""
+    raw bytes under the one mode promised to touch nothing real.
+
+    And the same without the demo: the refusal is the window's rule about
+    its own library, not an `if demo:` -- the demo exercises what runs."""
     app, root = window
+    app.demo = demo
     entry = tmp_path / "real-library" / "an-entry"
     entry.mkdir(parents=True)
     (entry / "scan.tif").write_bytes(b"raw")
@@ -5032,7 +5102,7 @@ def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
                         lambda *a, **k: pytest.fail("offered to delete it"))
     app.on_delete(result)
     assert (entry / "scan.tif").exists()
-    assert "not the demo's own" in said[0]
+    assert "not in this session's library" in said[0]
     assert result not in app.results, "it still leaves the window"
 
 

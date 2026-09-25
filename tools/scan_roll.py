@@ -20,8 +20,10 @@ film advances between frames.
 Every frame goes to disk the moment it exists: a library entry with the raw
 bytes, the shading reference and the CCD mask beside the pixels, plus a
 `roll.json` manifest rewritten after each one. A roll takes hours, and a crash
-two hours in should cost the frame it was on, not the roll -- `--start-at`
-resumes from the manifest.
+two hours in should cost the frame it was on, not the roll -- `--start-at`,
+with the roll's `--roll` or `--out`, resumes from the manifest. Without either
+a run is a new roll in a folder of its own, so the tool names the folder when
+it says how to resume.
 
 Start with `--dry-run`. It prescans and advances only, so it walks the whole
 strip in a couple of minutes and shows where each picture sits before three
@@ -164,7 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--roll", default=None,
                     help="name for this roll (default: the date and time, "
                          "new for every run). Made safe to be a folder name, "
-                         "as the window makes it")
+                         "as the window makes it. To resume a roll, give the "
+                         "name it was given -- the folder under rolls/ -- "
+                         "with --start-at")
     ap.add_argument("--out", default=None, metavar="DIR",
                     help="where the manifest and per-frame TIFFs go "
                          "(default: rolls/<roll>)")
@@ -574,7 +578,11 @@ def main() -> int:
                 # that holds a walk, and this one replaces it.
                 print(f"replacing the walk in {manifest_path}; the old one is "
                       f"kept beside it as {manifest_path.name}.bak")
-            record_of = RollManifest(manifest_path, manifest)
+            # Said on stderr when a frame's rewrite of it is refused, and
+            # the roll goes on: the next one writes it whole.
+            record_of = RollManifest(
+                manifest_path, manifest,
+                say=lambda m: print(m, file=sys.stderr))
             record_of.write()
             placed = True
 
@@ -801,18 +809,34 @@ def main() -> int:
         manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
-    if record_of is not None:                      # placed, so it was made
-        record_of.write()
+    # Placed, so it was made. Not a traceback when the disk refuses it: the
+    # manifest says so on stderr, and the exit status says it went wrong.
+    saved = record_of is None or record_of.save()
 
     print(f"\n{scanned} scanned, {failed} failed, "
           f"{manifest['duration_s']/60:.1f} min")
     print(f"manifest: {manifest_path}")
     if failed:
-        print("resume a failed picture with --start-at N", file=sys.stderr)
+        # With the folder named. An unnamed roll's folder is new every run,
+        # so "--start-at N" alone started another roll beside this one, and
+        # never read the manifest that says what this one has done.
+        again = (f"--out {_quoted(out)}" if args.out
+                 else f"--roll {_quoted(out.name)}")
+        print(f"resume a failed picture with {again} --start-at N",
+              file=sys.stderr)
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    return 1 if trouble is not None or failed else 0
+    return 1 if trouble is not None or failed or not saved else 0
+
+
+def _quoted(value) -> str:
+    """A path or name as it would be typed, quoted where a shell would split it.
+
+    Double quotes, which bash, PowerShell and cmd.exe all read the same way.
+    """
+    text = str(value)
+    return f'"{text}"' if not text or any(c.isspace() for c in text) else text
 
 
 if __name__ == "__main__":

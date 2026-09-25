@@ -11,6 +11,7 @@ the same reason `FakeRoll` stays beside test_roll.
 """
 import inspect
 import json
+import os
 import queue
 import threading
 import time
@@ -530,6 +531,152 @@ def test_a_roll_straight_after_another_keeps_its_frames_done(tmp_path,
         (tmp_path / "rolls" / "pair" / "roll.json").read_text(encoding="utf-8"))
     assert {f["number"]: f["done"] for f in recorded["frames"]} == {
         1: True, 2: True, 3: True}
+
+
+def test_a_roll_straight_after_another_does_not_wait_for_its_filing(
+        tmp_path, monkeypatch):
+    """It waited for the writer before reading the manifest -- with the film
+    moved and the device open and idle while the last roll's frames gzipped,
+    the state FrameWriter exists to avoid. Here the first roll's filing is
+    held until the second roll starts scanning: waited for, it never would."""
+    real_save = library.save
+    scanning = threading.Event()
+    held = []
+
+    def held_until_the_next_roll_scans(*a, **kw):
+        if not scanning.is_set():
+            held.append(scanning.wait(timeout=2.0))
+        return real_save(*a, **kw)
+
+    monkeypatch.setattr(library, "save", held_until_the_next_roll_scans)
+    scanner = FakeScanner(frames=4)
+    real_roll = scanner.scan_roll
+    rolls = []
+
+    def scan_roll(*a, **kw):
+        rolls.append(kw.get("first_index"))
+        if len(rolls) == 2:
+            scanning.set()
+        return real_roll(*a, **kw)
+
+    scanner.scan_roll = scan_roll
+
+    def first(s, _scanner):                      # queued ahead of the job
+        s.submit(Roll(frames=2, resolution=600, name="pair"))
+
+    _s, _scanner, events = run(
+        Roll(frames=4, only=(3,), start_at=3, resolution=600, name="pair"),
+        tmp_path, scanner=scanner, extra=first)
+    assert held and all(held), "the second roll waited for the first's filing"
+    assert not kinds(events, "failed")
+    recorded = json.loads(
+        (tmp_path / "rolls" / "pair" / "roll.json").read_text(encoding="utf-8"))
+    assert {f["number"]: f["done"] for f in recorded["frames"]} == {
+        1: True, 2: True, 3: True}
+    assert all(f["entry"] for f in recorded["frames"])
+
+
+def test_a_frame_taken_again_before_its_first_filing_lands_waits_for_its_own(
+        tmp_path):
+    """A roll straight after another carries the same manifest on, and can
+    take again a frame the writer has not filed yet. The first take's answer
+    is not the second's: applied to it, a frame whose own filing then failed
+    read done, with the other take's entry."""
+    path = tmp_path / "roll.json"
+    manifest = session.RollManifest(path, {"frames": []})
+    manifest.record({"number": 2, "take": 1}, awaiting=True)
+    manifest.record({"number": 2, "take": 2}, awaiting=True)
+    manifest.filed(2, tmp_path / "lib" / "first-take", None)
+    (record,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert record["take"] == 2 and record["done"] is False
+    manifest.filed(2, None, "No space left on device")
+    (record,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert record["done"] is False and record.get("entry") is None
+    assert "No space" in record["filing_error"]
+    assert not manifest.pending()
+
+
+def _refusing_replace(monkeypatch, refuse):
+    """`os.replace` refusing a manifest as Windows does while it is held open.
+
+    Only the manifests: the library's own atomic writes go through untouched.
+    """
+    real = os.replace
+    refused = []
+
+    def replace(src, dst):
+        if Path(dst).name in ("roll.json", "survey.json") and refuse():
+            refused.append(Path(dst).name)
+            raise PermissionError(13, "The process cannot access the file "
+                                      "because it is being used by another "
+                                      "process")
+        return real(src, dst)
+
+    monkeypatch.setattr(session.os, "replace", replace)
+    return refused
+
+
+def test_a_manifest_held_open_for_a_moment_is_still_replaced(tmp_path,
+                                                             monkeypatch):
+    """A rename once a frame, for hours, meets Defender, the indexer and the
+    window's own reader, each holding the file for a moment."""
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", (0.0, 0.0, 0.0))
+    attempts = iter(range(100))
+    refused = _refusing_replace(monkeypatch, lambda: next(attempts) < 2)
+    path = tmp_path / "roll.json"
+    session.write_manifest(path, {"frames": [1]})
+    assert refused == ["roll.json"] * 2
+    assert json.loads(path.read_text(encoding="utf-8")) == {"frames": [1]}
+
+    _refusing_replace(monkeypatch, lambda: True)
+    with pytest.raises(PermissionError):
+        session.write_manifest(path, {"frames": [1, 2]})
+    assert json.loads(path.read_text(encoding="utf-8")) == {"frames": [1]}
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".part")] \
+        == [], "the refused copy is not left beside it"
+
+
+def test_a_roll_goes_on_when_its_manifest_cannot_be_written(tmp_path,
+                                                            monkeypatch):
+    """It raised out of the scanning loop, so a rename refused for half a
+    second ended an hours-long roll part-way. The next frame writes it whole,
+    so this one's record is kept and said, and the roll carries on."""
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", (0.0, 0.0))
+    attempts = iter(range(100))
+    refused = _refusing_replace(monkeypatch, lambda: next(attempts) < 3)
+    _s, _scanner, events = run(Roll(frames=3, resolution=600, name="held"),
+                               tmp_path)
+    assert not kinds(events, "failed")
+    assert refused == ["roll.json"] * 3, "the first write was refused outright"
+    assert any("could not write" in e.text and "roll.json" in e.text
+               for e in kinds(events, "log"))
+    recorded = json.loads((tmp_path / "rolls" / "held" / "roll.json")
+                          .read_text(encoding="utf-8"))
+    assert [(f["number"], f["done"]) for f in recorded["frames"]] == [
+        (1, True), (2, True), (3, True)]
+
+
+def test_a_manifest_refused_to_the_end_is_written_once_the_scanner_closes(
+        tmp_path, monkeypatch):
+    """The last frame's filing has no frame after it to carry what it could
+    not write, so the session writes it again once everything is filed."""
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", ())
+    filed = threading.Event()
+    real_finish = session.FrameWriter.finish
+
+    def finish(self):
+        real_finish(self)
+        filed.set()
+
+    monkeypatch.setattr(session.FrameWriter, "finish", finish)
+    _refusing_replace(monkeypatch, lambda: not filed.is_set())
+    _s, _scanner, events = run(Roll(frames=2, resolution=600, name="late"),
+                               tmp_path)
+    assert not kinds(events, "failed")
+    recorded = json.loads((tmp_path / "rolls" / "late" / "roll.json")
+                          .read_text(encoding="utf-8"))
+    assert [(f["number"], f["done"]) for f in recorded["frames"]] == [
+        (1, True), (2, True)]
 
 
 def test_a_manifest_is_replaced_whole_and_the_last_run_kept(tmp_path):
@@ -1778,17 +1925,32 @@ def _turned_after_the_first(tmp_path, job):
 
 
 def test_a_turn_made_while_a_walk_runs_is_recorded_with_what_it_reached(
-        tmp_path):
+        tmp_path, monkeypatch):
     """The walk's one `rotation` is the session's at the start, and a turn
     made in the window while it runs reaches every prescan written after it.
-    Reopened, those were un-turned by the start's pair."""
-    folder, manifest = _turned_after_the_first(
-        tmp_path, Roll(frames=3, dry_run=True, name="walk"))
+    Reopened, those were un-turned by the start's pair.
+
+    The turn lands where the window's can: on the Tk thread, after frame 2's
+    prescan was handed to the writer and before its record is written. The
+    record asked the session again there, and wrote down a turn the file
+    never had."""
+    real_file = ScanSession._file
+
+    def turned_once_filed(self, seq, number, *a, **kw):
+        arranged = real_file(self, seq, number, *a, **kw)
+        if number == 2:
+            self.rotation = 90
+        return arranged
+
+    monkeypatch.setattr(ScanSession, "_file", turned_once_filed)
+    run(Roll(frames=3, dry_run=True, name="walk"), tmp_path)
+    folder = tmp_path / "rolls" / "walk"
+    manifest = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
     assert manifest["rotation"] == 0
     assert [(f["number"], f["prescan_rotation"]) for f in manifest["frames"]] \
-        == [(1, 0), (2, 90), (3, 90)]
-    assert tiff.read(str(folder / "prescan01.tif")).shape[:2] == (24, 36)
-    assert tiff.read(str(folder / "prescan02.tif")).shape[:2] == (36, 24)
+        == [(1, 0), (2, 0), (3, 90)]
+    assert tiff.read(str(folder / "prescan02.tif")).shape[:2] == (24, 36)
+    assert tiff.read(str(folder / "prescan03.tif")).shape[:2] == (36, 24)
 
 
 def test_a_turn_made_while_a_roll_runs_is_recorded_with_its_frames(tmp_path):

@@ -856,6 +856,32 @@ def recorded_roll_name(folder) -> str | None:
 #: stood before this run or this commission first wrote over it.
 PREVIOUS = ".bak"
 
+#: How long `write_manifest` waits between attempts to rename a manifest
+#: over one that someone has open. On Windows the rename fails outright
+#: while any handle lacks FILE_SHARE_DELETE -- Python's own `open()` for
+#: reading does, and the window reads these files, and Defender and the
+#: indexer briefly hold every new file as a matter of course. Writing in
+#: place had no such window; a rename once a frame, for hours, meets it.
+REPLACE_RETRY_S = (0.05, 0.05, 0.1, 0.1, 0.1)
+
+
+def _replace(temp: Path, path: Path) -> None:
+    """`os.replace`, patient with a file that is only briefly held open.
+
+    Raises the last PermissionError once the retries are spent, with the
+    temporary file removed: a sharing violation that outlasts half a second
+    is not the transient one this waits out, and the caller says so.
+    """
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if wait is None:
+                temp.unlink(missing_ok=True)
+                raise
+            time.sleep(wait)
+
 
 def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
     """Write a roll's JSON beside itself, then rename it over: old or new, never half.
@@ -871,6 +897,9 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
     frame, so the copy is the manifest as it stood before this run began:
     a walk that replaced another strip's, or a resume that merged wrongly,
     can still be undone by hand.
+
+    The rename waits out a reader that briefly holds the file (`_replace`),
+    and raises only once that has failed too, leaving no ``.part`` behind.
     """
     path = Path(path)
     text = json.dumps(data, indent=2, default=str)
@@ -890,7 +919,7 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
             shutil.copyfile(path, path.with_name(path.name + PREVIOUS))
         except OSError:
             pass                        # the copy is a courtesy; the write is not
-    os.replace(temp, path)
+    _replace(temp, path)
 
 
 def read_manifest(path, say=None) -> dict:
@@ -999,24 +1028,75 @@ class RollManifest:
     get there first -- a small frame on an idle disk -- and then the answer
     waits for the record rather than being lost. One lock, because both
     threads write the one file.
+
+    A frame's record and its filing never stop the roll by failing to reach
+    the disk. The file is rewritten whole each time, so what one write could
+    not say the next one does; until then it is kept here, said to ``say``,
+    and named by `unsaved`. It used to raise out of the scanning loop, and a
+    rename refused for half a second on Windows -- a reader, Defender --
+    ended an hours-long roll part-way.
     """
 
-    def __init__(self, path, data: dict):
+    def __init__(self, path, data: dict, say=None):
         self.path = Path(path)
         self.data = data
+        self.say = say
         self._lock = threading.Lock()
-        self._awaiting: set[int] = set()
+        #: How many filings each frame number still waits for. A count and
+        #: not a set, because a roll straight after another into the same
+        #: folder carries this manifest on (`ScanSession._roll`), and may take
+        #: again a frame whose first filing has not come back yet.
+        self._awaiting: dict[int, int] = {}
         self._early: dict[int, tuple] = {}
         self._written = False
+        #: Why the last write did not reach the disk, while it has not.
+        self.unsaved: str | None = None
 
     def _write(self) -> None:
         # The first write of a run keeps what was there before it.
         write_manifest(self.path, self.data, keep_previous=not self._written)
         self._written = True
+        self.unsaved = None
+
+    def _keep(self) -> None:
+        """`_write`, and when the disk will not take it, keep it and say so."""
+        try:
+            self._write()
+        except OSError as exc:
+            self.unsaved = str(exc)
+            if self.say is not None:
+                self.say(f"could not write {self.path} ({exc}); what it "
+                         "should say is kept, and the next write of it "
+                         "carries it -- the next frame's, or one more once "
+                         "the scanner is closed")
 
     def write(self) -> None:
+        """Write it now, raising when that fails: for a caller that must know."""
         with self._lock:
             self._write()
+
+    def save(self) -> bool:
+        """Write it now, as a frame does; whether it reached the disk."""
+        with self._lock:
+            self._keep()
+            return self.unsaved is None
+
+    def pending(self) -> bool:
+        """Whether any frame recorded here still waits for its filing."""
+        with self._lock:
+            return bool(self._awaiting)
+
+    def carry_on(self, data: dict) -> None:
+        """Take a new run's manifest, built on this one's `data`, as its own.
+
+        For a roll into a folder whose last roll is still being filed: the
+        filings still to come are this object's to apply, and they find the
+        new run's records -- the same dicts, carried forward. The new run
+        keeps a copy of the file as it stood, as every run does.
+        """
+        with self._lock:
+            self.data = data
+            self._written = False
 
     def record(self, record: dict, awaiting: bool = False) -> None:
         """This frame's record, replacing any earlier one of its number.
@@ -1031,11 +1111,11 @@ class RollManifest:
                 self._apply(record, *early)
             elif awaiting:
                 record["done"] = False
-                self._awaiting.add(number)
+                self._awaiting[number] = self._awaiting.get(number, 0) + 1
             self.data["frames"] = [
                 f for f in self.data.get("frames") or ()
                 if str(f.get("number")) != str(number)] + [record]
-            self._write()
+            self._keep()
 
     def filed(self, number: int, entry, error: str | None,
               **extra: Any) -> None:
@@ -1046,14 +1126,21 @@ class RollManifest:
         """
         number = int(number)
         with self._lock:
-            if number not in self._awaiting:
+            waiting = self._awaiting.get(number, 0)
+            if not waiting:
                 self._early[number] = (entry, error, extra)
                 return
-            self._awaiting.discard(number)
+            if waiting > 1:
+                # An earlier take's answer. The writer answers in the order
+                # it was given frames, and the record here is the later
+                # take's, which has its own answer still to come.
+                self._awaiting[number] = waiting - 1
+                return
+            del self._awaiting[number]
             for record in self.data.get("frames") or ():
                 if str(record.get("number")) == str(number):
                     self._apply(record, entry, error, extra)
-            self._write()
+            self._keep()
 
     @staticmethod
     def _apply(record: dict, entry, error, extra=None) -> None:
@@ -1705,6 +1792,11 @@ class ScanSession:
         self._thread: threading.Thread | None = None
         self._scanner: Any = None
         self._writer: FrameWriter | None = None
+        #: Each roll folder's manifest as the last run into it left it, by
+        #: file: its filings can still be coming in when the next run into
+        #: that folder starts (`_roll`), and one it could not write is
+        #: written again once the scanner is closed.
+        self._manifests: dict[Path, RollManifest] = {}
         self._seq = 0
         self.dead = False                    # set by force_abort
         self.inquiry_text = ""
@@ -1881,6 +1973,13 @@ class ScanSession:
                 self._writer.finish()
                 for problem in self._writer.errors:
                     self._emit("log", text=problem)
+                # Every filing is in now, so a manifest whose last write was
+                # refused -- the last frame's, with no frame after it to
+                # carry it -- is written once more, and says so again if it
+                # still cannot be.
+                for manifest in self._manifests.values():
+                    if manifest.unsaved is not None:
+                        manifest.save()
                 # Now, with the device closed: see `_file`'s `compress`.
                 for entry in self._writer.uncompressed:
                     try:
@@ -2223,15 +2322,19 @@ class ScanSession:
         # frames 11 to 12 used to replace the record of 1 to 10.
         earlier: dict[str, Any] = {}
         carried = not job.dry_run or job.extend_walk
-        if carried and manifest_path.exists():
-            # Only once the frames the last roll queued are filed: each says
-            # it is done in this same file, as it lands, and read before that
-            # this run would carry them forward as not done and write over the
-            # writer's answer. Nothing is waited for when nothing is queued.
-            if self._writer is not None and self._writer.queue.unfinished_tasks:
-                self._emit("log", text="waiting for the last roll's frames to "
-                           "be filed before adding to its manifest ...")
-                self._writer.queue.join()
+        # The last run into this file, while its frames are still being filed:
+        # each says it is done in this same manifest as it lands, so the file
+        # on disk is behind, and read from there this run would carry those
+        # frames forward as not done and write over the writer's answer. It
+        # used to wait for the writer instead -- with the film moved and the
+        # device open and idle while the last frames gzipped, the state
+        # FrameWriter exists to avoid. So the run carries on the manifest
+        # still in hand, whose filings then land in the records it carries.
+        key = manifest_path.resolve()
+        live = self._manifests.get(key)
+        if carried and live is not None and live.pending():
+            earlier = live.data
+        elif carried and manifest_path.exists():
             # Not read as "nothing" when it cannot be read: the version kept
             # beside it is tried, and failing that the file is kept aside and
             # said. `json.loads` inside a bare except used to hand a damaged
@@ -2352,8 +2455,16 @@ class ScanSession:
             "frames": list(earlier.get("frames") or []),
         }
         # The one writer of this file from here on, from both threads; see
-        # `RollManifest`.
-        record_of = RollManifest(manifest_path, manifest)
+        # `RollManifest`. The last run's, when its filings are still to come
+        # and this run was built on what it holds.
+        if live is not None and earlier is live.data:
+            live.carry_on(manifest)
+            record_of = live
+        else:
+            record_of = RollManifest(
+                manifest_path, manifest,
+                say=lambda m: self._emit("log", text=m))
+        self._manifests[key] = record_of
 
         # How each chosen picture is arranged. Every approved frame appears,
         # zeros and falses included: the contact sheet knows each frame's
