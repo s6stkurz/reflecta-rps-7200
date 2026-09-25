@@ -1,0 +1,106 @@
+{
+ "type": "result",
+ "key": "v2:18235b25ba03e4572ac3be6b4db39a72f5b51c0293024ead360fb9f971b1111b",
+ "agentId": "a85bdf2a600275766",
+ "result": {
+  "problems": [
+   {
+    "id": "P17",
+    "title": "Calibration starts without asking what is in the transport",
+    "status": "partly-fixed",
+    "commits": [
+     "1ac726f"
+    ],
+    "evidence": "Window fixed: tools/gui.py:1967-1981 `on_calibrate_pressed` no longer submits and opens `ask_to_calibrate(for_scan=False)` instead (except when \"reuse\" would only load a cached file). The prompt adds an unticked `ttk.Checkbutton(... text=\"The film is in the transport\")` at tools/gui.py:2094-2097, and `choose()` refuses with `if measures and not loaded.get(): ... return` at tools/gui.py:2110-2116. A bare Return at tools/gui.py:2134 goes through the same refusal. `on_calibrate` (tools/gui.py:1993-2008) is reached only from the prompt.\n\nCLIs unchanged. tools/scan.py:270-274 goes from `info = s.inquiry()` straight to `s.ensure_shading(ref_path, reuse=args.reuse, skip=args.no_shading)` with no question and no --film-loaded flag. tools/scan_roll.py:189-196 `calibrate()` likewise runs `scanner.ensure_shading(...)` unasked, called at tools/scan_roll.py:568 after the seek. The seek (rps7200/session.py `seek`) moves nothing when the counter already reads the target, so with the default --start-at 1 and an empty transport reading 0 it passes, and the calibration runs on an empty transport. tools/uniformity.py:700-702 still prints \"Metering on the EMPTY transport\" and waits for `confirm(\"    press Enter with the transport empty: \")`. At 729-735 it still runs `scanner.calibrate_shading()` with no prompt to load film.\n\nMedia bit: `calibrate_shading` still reads state only for `if not self.read_state().warming_up: break` (rps7200/direct.py:2185-2192) and never consults `State.media_loaded`/`no_media` (rps7200/protocol.py:568-585). Because `_CommandLog.start()` runs first (direct.py:2181-2183, 455-495), the READ_STATE reply bytes land in `commands` of calibration.json via `archive_calibration` (direct.py:749-800). That happens only on the `ensure_shading` path, and nothing interprets or logs the bit.",
+    "remaining": "(1) tools/scan.py and tools/scan_roll.py calibrate with no film confirmation and no --film-loaded option. scan_roll's seek-before-calibrate protects only a start_at>1 roll, since a seek to frame 1 on an empty transport moves nothing and succeeds. (2) tools/uniformity.py still tells the operator to empty the transport, and still calls calibrate_shading() with no prompt to load film (reachable with --exposure-scale). It also does not archive that calibration's bytes, unlike ensure_shading. (3) The media bit is never logged or recorded as a field at calibration time. It survives only as a raw READ_STATE reply inside calibration.json's command list, on the ensure_shading path alone.",
+    "new_problems": "Side effect of the P15 fix (direct.py:2948-2963 refuses a shaded pass with no reference, before any command is sent). tools/uniformity.py capture without --exposure-scale now asks for an empty transport, opens a fresh DirectScanner with no reference and calls auto_exposure(shading=True). That raises ShadingUnavailable as an uncaught traceback. The old empty-transport lazy calibration is gone, which is good, but the tool's default metering path is broken."
+   },
+   {
+    "id": "P18",
+    "title": "One roll is scattered across folders; unnamed rolls share one folder",
+    "status": "mostly-fixed",
+    "commits": [
+     "40bfd83",
+     "b4aa22c",
+     "1056451",
+     "0fd90c4",
+     "69b04fc"
+    ],
+    "evidence": "One derivation. `roll_dir(rolls, name)` (rps7200/session.py:811-834) sanitises through `_safe(name, fallback=\"\")` (session.py:2946-2959: separators, '..' and Windows reserved names) and maps an empty or fully-stripped name to `new_roll_name(rolls)` (session.py:794-808, `%Y-%m-%d-%H%M%S` plus a -N suffix, checked against existing folders). Users: the session `_roll` (session.py:2305-2311, `out = roll_dir(self.rolls, job.name)`, or `job.out` from the window), the window's Roll button (tools/gui.py:2233-2234, `folder = roll_dir(self.session.rolls, typed)`, with `out=str(folder)` passed at 2336-2358), the sheet's `_roll_folder` (gui.py:2449-2470), `_write_approved(approved, folder)` into that same folder (gui.py:3162-3165, 3265-3284), and the CLI (tools/scan_roll.py:403-408). The label is `recorded_roll_name(out) or out.name` in both writers. Reopen restores the box with `self._show_roll_name(folder.name)` (gui.py:2907). The new name is shown in the box (gui.py:2268). The question before a walk or roll names the folder and what it holds (`folder_note`, gui.py:5804-5834: 'This walk replaces its walk -- the old survey is kept beside it as survey.json.bak'). The survey's previous version is kept by `write_manifest(..., keep_previous=True)` (session.py:886-922).",
+    "remaining": "(1) DP-05 is unchanged. tools/gui.py:8856-8889 pins demo paths only when --library/--rolls/--reference/--settings are absent, so `--demo --rolls rolls` or `--demo --library library` writes a demo walk's survey.json, prescans and approved.json, or demo entries, into the real folders. The comment at gui.py:8868-8874 ('--demo pins that under demo/') holds only for the default. (2) A fresh walk into a folder the operator typed still overwrites prescanNN.tif and replaces survey.json after the warning. The old strip's approved.json stays in the folder (merged on the next commission, read by read_survey on reopen), and its sheet state stored in gui-settings.json under the same folder name is restored onto the new strip (see P22). (3) `_roll_folder` maps a sheet from outside session.rolls onto `roll_dir(rolls, sheet.name)` (gui.py:2469). That returns an existing local folder of that name without checking it holds the same strip, and `carry_walk` returns [] when the target already has a survey.json (gui.py:5782). A roll opened from elsewhere that shares a local folder's name is therefore added to, and commissioned into, an unrelated roll.",
+    "new_problems": "Item (3) above arises from the P18 review change that keeps outside rolls under session.rolls (b4aa22c/1056451). It is narrow: it needs a roll opened from another root whose folder name matches a local one, such as legacy date-named folders."
+   },
+   {
+    "id": "P19",
+    "title": "roll.json / survey.json / approved.json can lie about what was done",
+    "status": "fixed",
+    "commits": [
+     "46e60a8",
+     "a19da84",
+     "7f0a6c5",
+     "69c8dcb"
+    ],
+    "evidence": "Done only once filed. `RollManifest.record(record, awaiting=True)` sets `record[\"done\"] = False` (rps7200/session.py:1109-1127). `filed()` / `_apply` set `done=True` with `record[\"entry\"]`, or `done=False` with `filing_error` (session.py:1129-1161). The window's roll passes `awaiting=scanned is not None` with `on_filed=... record_of.filed(n, entry, error)` (session.py:2622-2626, 2683). The CLI does the same (tools/scan_roll.py:771-781). Atomic writes: `write_manifest` writes `.{name}.part`, fsyncs it, copies the old file to `.bak` once per run and then `os.replace`s (session.py:886-922). `read_manifest` falls back to `.bak` and raises rather than returning {} (session.py:925-956). `earlier_manifest` sets an unreadable file aside as `.unreadable` and says so (session.py:969-985). --start-at merge: tools/scan_roll.py:574-590 reads `earlier_manifest(manifest_path)`, then `keep_first_numbering`, then `renumbered`, and carries `manifest[\"frames\"]` forward. Renumbering keeps the original as `<name>.legacy` once (session.py:999-1013). approved.json is merged frame by frame, unreadable files are set aside, and `keep_previous=True` applies (tools/gui.py:3265-3330). `read_approved` reports a damaged file instead of returning silence (gui.py:5439-5450).",
+    "remaining": "Nothing in the listed sub-issues. Minor: a walk's `record[\"prescan\"]` names prescanNN.tif before the writer thread has written it (session.py:2669-2680, file written asynchronously via `_file`). If that write fails, survey.json names a missing file; `walked_prescans` skips it (session.py:666). tools/scan_roll.py:255-263 (`--approved`) still reads survey.json with a bare `json.loads` and no `.bak` fallback, unlike `read_manifest`.",
+    "new_problems": "`RollManifest._keep` now swallows every OSError on a manifest write (session.py:1061-1071). That is deliberate (7f0a6c5), but it removed the one thing that used to end a CLI roll on a full disk; see P24."
+   },
+   {
+    "id": "P20",
+    "title": "Turning or flipping during a walk corrupts the stored walk",
+    "status": "fixed",
+    "commits": [
+     "1892778",
+     "85b75ea"
+    ],
+    "evidence": "`_file` returns the turn and flip it actually applied (rps7200/session.py `_file` ... `return turn, flip`, and the writer receives the same `rotate=turn, flip=flip`). The walk records them per file: `record[\"prescan_rotation\"] = turn; record[\"prescan_flipped\"] = mirrored` from `walked_as` (session.py:2669-2680). Frames record `record[\"rotation\"], record[\"flipped\"] = arranged` (session.py:2656-2663). Earlier walks' frames get the file-level pair via `setdefault` before this walk overwrites it (session.py:2372-2380). Readers use the per-file pair through `prescan_arrangement(manifest, record)` (session.py:672-686): the window's read_survey (tools/gui.py:5189) and `scan_roll --approved` (tools/scan_roll.py:271-273). Export uses the per-frame `arranged` first (gui.py:5358-5367, from roll_summary gui.py:5580-5588). No duplicate survey entries: `remember_arrangement` (gui.py:3968-3989) no longer touches the survey, and `_into_survey` (gui.py:3947-3966) returns early when `any(r is result for r in self.survey)`.",
+    "remaining": "Nothing. Cosmetic: read_survey's docstring (tools/gui.py:5117-5127) still opens with 'the manifest's single `rotation` is what un-rotates them' before adding that the per-record pair wins, and the manifest's top-level and settings `rotation`/`flipped` are still the start-of-walk values (session.py:2395-2396, 2450-2451)."
+   },
+   {
+    "id": "P21",
+    "title": "Roll export can deliver the wrong entry (a 300 dpi prescan as a frame)",
+    "status": "partly-fixed",
+    "commits": [
+     "8061a86"
+    ],
+    "evidence": "Prescan-as-frame closed. Entries now carry `roll_membership(roll, number, kind, folder)` (rps7200/session.py:777-787), set with kind 'prescan' for walk prescans (session.py:2550-2552, tools/scan_roll.py:678-680) and 'frame' for frames (session.py:2612-2613, scan_roll.py:751-752). `roll_entry_index` skips `member.get(\"kind\") != \"frame\"`, and for legacy entries skips `\"prescan\" in tags` (tools/gui.py:5503-5524). The Film-panel note no longer overrides the label: `notes = replace(job.notes, frame=roll_frame_label(name, number))` (session.py:2607-2611, 2560). There is one label format, `roll_frame_label` (session.py:769-775), used by scan_roll.py:766; the legacy `<roll>/<NN>` is parsed at gui.py:5520.\n\nThe join is still by roll *name* only. `summary[\"entries\"] = dict(index.get(summary[\"roll\"], {}))` (gui.py:5654), and `out.setdefault(roll, {})[number] = record_path.parent` over `sorted(root.glob(\"*/scan.json\"))` (gui.py:5498-5512), so the newest entry id (timestamp prefix, rps7200/library.py:154-164) wins. The recorded `folder` in roll_membership and the manifest's per-frame `record[\"entry\"]` (session.py:1155) are both ignored by export (`roll_exports`, gui.py:5335-5373).",
+    "remaining": "Fix-plan item 2 (export follows roll.json's entry id) is not done, and item 1 only half: membership records the folder but the join ignores it. A duplicated roll keeps its roll name (`recorded_roll_name`, session.py:836-852; `name = recorded_roll_name(out) or out.name`, session.py:2308-2311). Rescanning the duplicate, the use `on_duplicate_roll` documents at gui.py:2778-2784 ('so a strip can be rescanned at different settings'), files entries under the same roll name with newer ids. Export of the ORIGINAL roll then delivers the duplicate's rescans, named with the original's `settings.resolution` (gui.py:5368-5369). The same happens after Rename (the manifest keeps the old name, gui.py:2844-2866) when a new roll is later given the freed folder name. Both rolls join into one index and each frame number goes to whichever entry is newest.",
+    "new_problems": ""
+   },
+   {
+    "id": "P22",
+    "title": "Contact-sheet decisions leak between strips or are lost",
+    "status": "partly-fixed",
+    "commits": [
+     "ec9c6ab"
+    ],
+    "evidence": "Fixed. A new walk closes the old sheet before resetting state: `if dry: self._close_sheet()` (tools/gui.py:2279-2285), then `self.sheet_state = {}` (gui.py:2311). Explicit zero: `_write_approved` marks `{\"as_walked\": True}` for operator zeros (gui.py:3319-3323), and `read_approved` keeps it (`placed = bool(record.get(\"offset_mm\")) or bool(record.get(\"as_walked\"))`, gui.py:5461-5463). `_merge_kept` restores an operator source with no offset as 0.0. The Frame position window is `tk.Toplevel(sheet.top)` (gui.py:7229) and `_dismiss` destroys it (gui.py:8615-8617). Quit and open_roll now call `_close_sheet()` (gui.py:3452, 2938), which runs `_store_sheet_state` and writes `remembered[\"sheet\"][<folder name>]` (gui.py:2666-2676).\n\nStill wrong. What is stored is never read back where it matters. `open_roll` builds `self.sheet_state` from approved.json alone (gui.py:2961-2976) and opens the sheet from `out[\"offsets\"]` (gui.py:2985-2991). `_recall_sheet_state` consults `remembered[\"sheet\"]` only when `self.sheet_state` is empty (gui.py:2685-2692), which it never is after open_roll. The tests test_opening_another_roll_keeps_what_the_open_sheet_held / test_quitting_keeps_what_the_open_sheet_held (tests/test_gui.py:4497-4523) assert only that the state was written. And the key is the bare folder name (`_sheet_key`, gui.py:2606-2615). A fresh walk into an existing folder whose name the operator typed resets `sheet_state = {}`, sets `_sheet_roll` to that folder at walk end (gui.py:3712-3713) and auto-opens the sheet. The sheet then recalls the previous strip's ticks, positions and turns from `remembered[\"sheet\"][name]`.",
+    "remaining": "(1) Decisions on an uncommissioned walk are saved to gui-settings.json on quit or when another roll is opened, but no reopen path reads them back: after a restart, Rolls... / --open-roll show approved.json only. They are lost to the operator, which is what GUI2-16 described. (2) Leak between strips. Keep a typed roll name, e.g. the film stock, for a second strip of the same film and answer 'No -- start a new sheet' in `_ask_keep_sheet` (the folder is still rolls/<typed>). The first strip's decisions are stored under that name by `_close_sheet` and restored onto the second strip's frames at the end of its walk. The old approved.json in the folder is also read on reopen. (3) Fix-plan item 3, 'decisions saved on every change', is not done: a crash or kill with a sheet open loses everything since it was opened.",
+    "new_problems": "Leak (2) is new in its mechanism. The folder-name key was added with the quit/reopen persistence, and it replaces the old stale-sheet leak for the typed-name case."
+   },
+   {
+    "id": "P23",
+    "title": "Busy guards sit on buttons, not on actions; submit() cancels Stop",
+    "status": "partly-fixed",
+    "commits": [
+     "7b9df4d"
+    ],
+    "evidence": "Fixed. `ScanSession.submit` no longer clears `_stop` (rps7200/session.py:1822-1828). `request_stop` drains the queue and re-queues a shutdown sentinel (session.py:1830-1852). `on_roll` checks `if self.busy:` (tools/gui.py:2181-2188). Moves and aim-clicks go through `_moving_refused` (gui.py:3343-3359, 3361-3363; `_aim` ends in `on_nudge`, gui.py:5070). on_scan_chosen checks busy (gui.py:3087-3095), and `on_reopen_survey` checks busy before opening the browser (gui.py:2555-2560).\n\nNot fixed. The browser's Open, `_RollBrowser._open` -> `self.gui.open_roll(summary[\"folder\"])` (gui.py:7730-7735), and `open_roll` itself (gui.py:2878-2890) have no busy check. A browser opened while idle and used during a walk replaces `self.survey`. The walk's later prescans are appended to it by `_into_survey`, and `_walk_ended` then sets `_sheet_roll` to the walk's folder (gui.py:3712-3713), so a reopened roll's frames get mixed into the running walk's sheet. `on_scan` / `on_prescan` (gui.py:2141-2170) have no busy check at all and rely on the button being disabled. `busy` is set only when the pump polls the worker's 'state' event (`POLL_MS = 120`, gui.py:244; `_set_busy` at 3615), so a double click inside that window queues two scans. The guard was not moved into the session (fix-plan 1): `submit` still accepts anything. `_roll_is_busy` (gui.py:2693-2707) checks only `self.busy` and `_loaded_roll`, not the session's `FrameWriter`/`RollManifest.pending()`, which keep filing into the roll folder after the job's busy=False (session.py:1946-1967, 2327-2340).",
+    "remaining": "(1) Rolls browser Open during a job (GUI1-22/GUI2-14) is still unguarded. (2) Scan/Prescan buttons are guarded only by widget state, which lags the worker by up to a poll, so double presses still queue duplicates; they can be stopped now. (3) Aim-click still does not check that the prescan clicked shows where the film is now (`_aim` never compares `self.current.position` with `self._transport`, gui.py:5014-5070). (4) Delete/Rename can hit a roll folder the writer is still filing into: the job is finished but the last frames are still queued. They also do not protect the just-walked `_sheet_roll`, which is not `_loaded_roll`, so renaming it strands the open sheet's commission path. (5) The Calibrate prompt is non-modal and its 'Calibrate now' submits without a busy check (gui.py:1993-2001). That only queues, but it is a job submitted while busy.",
+    "new_problems": "Stale comment: tools/gui.py:2324-2325 still says 'The button this handler is behind is disabled while busy, so this cannot race a job that is still running' about on_roll, which is reached by a key. It is true now only because of the explicit check at 2185."
+   },
+   {
+    "id": "P24",
+    "title": "A full disk does not stop a roll; quitting kills writes mid-file",
+    "status": "partly-fixed",
+    "commits": [
+     "7b9df4d",
+     "7f0a6c5",
+     "69c8dcb"
+    ],
+    "evidence": "Window fixed. `ScanSession._filed` calls `self.request_stop()` when a Roll frame cannot be filed (rps7200/session.py:1995-2015), and the manifest records `filing_error`/`done: False` (session.py:1157-1161). `on_close` offers 'stop after the frame in flight' (tools/gui.py:3430-3456). `_wait_to_quit` waits for Save all / Export threads (gui.py:3463-3485), and the worker's finally joins the FrameWriter after closing the device (session.py:1969-1993). A corrupt gui-settings.json is moved aside (`_keep_aside`, rps7200/settings.py:73-78, 88-101), and a failed save is said (gui.py:724-729).\n\nNot fixed. No free-space check exists anywhere (no disk_usage/statvfs in rps7200/ or tools/). The CLI builds `writer = FrameWriter()` (tools/scan_roll.py:459). Its loop's only stop is `should_stop=interrupt.requested` (scan_roll.py:627), and `writer.errors` is printed only after `writer.finish()` at the end (scan_roll.py:796-811). Library filing failures reach `record_of.filed` silently. `library.save` still calls `reindex(root)` after the entry is complete (rps7200/library.py:396-399), and reindex writes index.json non-atomically (library.py:1062-1064). A reindex ENOSPC therefore raises out of `FrameWriter._write` before the delivered copies. `_run` then reports a complete entry as unfiled (session.py:1587-1597), which stops the roll and marks the frame not done. The session log is still only a Tk text widget (`_say`, gui.py:3874-3878). Nothing is persisted to library/logs.",
+    "remaining": "(1) tools/scan_roll.py does not stop on a failed filing and says nothing until the end. With the library on a full volume it scans every remaining frame and discards it. (2) No free-space estimate before each frame (fix-plan 1). (3) No error dialog for a failed filing. The roll ends with the final state `stopped after frame N, as asked` (session.py:2689), which says the operator asked for a stop that the disk caused. (4) A reindex failure after a complete library entry is reported as a failed filing, and the frame's delivered copies are not written. (5) No persisted session log (fix-plan 4). Dropped raw bytes ('raw bytes do not describe this image', session.py `_file`) are still only a log line. (6) The unreadable-settings set-aside is silent in the window, since `settings.load` has no reporter.",
+    "new_problems": "Regression in the CLI from 7f0a6c5. Old tools/scan_roll.py rewrote roll.json in the loop with a bare `manifest_path.write_text` (83dbb22 scan_roll.py:326-329, 585). With rolls/ on the full volume that raised ENOSPC and ended the roll. `RollManifest._keep` now catches the OSError and carries on (session.py:1061-1071, 1109-1127), so a CLI roll on a full shared volume scans and discards every remaining frame (about 6 min each at 3600 dpi). Until the end, the only sign is the per-frame manifest message on stderr."
+   }
+  ]
+ }
+}
