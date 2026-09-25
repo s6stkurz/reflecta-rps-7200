@@ -437,6 +437,138 @@ def test_a_frame_scanned_twice_appears_once(tmp_path):
     assert [f["number"] for f in recorded["frames"]] == [1]
 
 
+def test_a_frame_the_writer_could_not_file_is_not_done(tmp_path, monkeypatch):
+    """A frame used to be marked done the moment it was queued. The disk
+    filled at frame 20, the writer failed 20 to 24, and the reopened roll said
+    it was finished -- five frames that existed nowhere, and nothing left to
+    resume."""
+    real_save = library.save
+
+    def full_disk(image, meta, **kw):
+        if "roll-02" in str((kw.get("film") or FilmNotes()).frame):
+            raise OSError(28, "No space left on device")
+        return real_save(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", full_disk)
+    run(Roll(frames=3, resolution=600, name="roll"), tmp_path)
+    recorded = json.loads(
+        (tmp_path / "rolls" / "roll" / "roll.json").read_text(encoding="utf-8"))
+    by_number = {f["number"]: f for f in recorded["frames"]}
+    assert [by_number[n]["done"] for n in (1, 2, 3)] == [True, False, True]
+    assert "No space left" in by_number[2]["filing_error"]
+    assert by_number[1]["entry"] and by_number[3]["entry"]
+    assert by_number[2].get("entry") is None
+
+
+def test_a_frame_waiting_to_be_filed_is_not_yet_done(tmp_path):
+    """The two threads, in either order: the record first and the filing
+    after, or a small frame filed before its record was written."""
+    path = tmp_path / "roll.json"
+    manifest = session.RollManifest(path, {"frames": []})
+    manifest.record({"number": 1}, awaiting=True)
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["frames"] == [{"number": 1, "done": False}]
+    manifest.filed(1, tmp_path / "lib" / "entry-1", None)
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["frames"][0]["done"] is True
+    assert on_disk["frames"][0]["entry"].endswith("entry-1")
+
+    manifest.filed(2, tmp_path / "lib" / "entry-2", None, file="frame02.tif")
+    manifest.record({"number": 2}, awaiting=True)
+    second = json.loads(path.read_text(encoding="utf-8"))["frames"][1]
+    assert second["done"] is True and second["file"] == "frame02.tif"
+
+
+def test_a_roll_straight_after_another_keeps_its_frames_done(tmp_path,
+                                                             monkeypatch):
+    """The second roll into a folder reads the first one's manifest to carry
+    it forward. Read while the writer was still filing the first roll's last
+    frame, it would carry that frame forward as not done and write over the
+    writer's answer."""
+    real_save = library.save
+
+    def slow(*a, **kw):
+        time.sleep(0.2)
+        return real_save(*a, **kw)
+
+    monkeypatch.setattr(library, "save", slow)
+
+    def first(s, _scanner):                      # queued ahead of the job
+        s.submit(Roll(frames=4, only=(3,), start_at=3, resolution=600,
+                      name="pair"))
+
+    run(Roll(frames=2, resolution=600, name="pair"), tmp_path, extra=first)
+    recorded = json.loads(
+        (tmp_path / "rolls" / "pair" / "roll.json").read_text(encoding="utf-8"))
+    assert {f["number"]: f["done"] for f in recorded["frames"]} == {
+        1: True, 2: True, 3: True}
+
+
+def test_a_manifest_is_replaced_whole_and_the_last_run_kept(tmp_path):
+    """Truncated and rewritten in place, a kill between the two left an empty
+    roll.json: the roll vanished from the list and the next resume wrote a
+    fresh one over it."""
+    path = tmp_path / "roll.json"
+    session.write_manifest(path, {"frames": [1]})
+    session.write_manifest(path, {"frames": [1, 2]}, keep_previous=True)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"frames": [1, 2]}
+    kept = tmp_path / "roll.json.bak"
+    assert json.loads(kept.read_text(encoding="utf-8")) == {"frames": [1]}
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".part")] == []
+
+    # Every frame of a run after the first leaves the kept copy alone, so it
+    # is the manifest as it stood before this run, not one frame back.
+    manifest = session.RollManifest(path, {"frames": [1, 2, 3]})
+    manifest.write()
+    manifest.write()
+    assert json.loads(kept.read_text(encoding="utf-8")) == {"frames": [1, 2]}
+
+
+def test_a_damaged_manifest_is_read_from_the_version_kept_beside_it(tmp_path):
+    path = tmp_path / "survey.json"
+    (tmp_path / "survey.json.bak").write_text('{"frames": [7]}',
+                                              encoding="utf-8")
+    path.write_text('{"frames": [', encoding="utf-8")
+    said = []
+    assert session.read_manifest(path, say=said.append) == {"frames": [7]}
+    assert "survey.json.bak" in said[0]
+    (tmp_path / "survey.json.bak").unlink()
+    with pytest.raises(ValueError, match="survey.json"):
+        session.read_manifest(path)
+
+
+def test_an_unreadable_roll_json_is_kept_aside_not_written_over(tmp_path):
+    """It was read as empty and replaced by the resume that could not read
+    it, and with it the record of every frame already scanned."""
+    folder = tmp_path / "rolls" / "roll"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text('{"frames": [{"number": 1, "do',
+                                      encoding="utf-8")
+    _s, _scanner, events = run(Roll(frames=1, only=(2,), start_at=2,
+                                    resolution=600, name="roll"), tmp_path)
+    aside = folder / "roll.json.unreadable"
+    assert aside.read_text(encoding="utf-8").startswith('{"frames": [{"number"')
+    assert any("roll.json.unreadable" in e.text for e in kinds(events, "log"))
+    recorded = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in recorded["frames"]] == [2]
+
+
+def test_resuming_an_old_roll_keeps_the_numbering_it_was_written_with(tmp_path):
+    """A resume moves an old file's numbers onto the strip's and writes them
+    back for good. What it moved them from is kept, once."""
+    folder = tmp_path / "rolls" / "old"
+    folder.mkdir(parents=True)
+    old = {"roll": "old", "frames": [
+        {"number": 1, "transport_position": 4, "done": True}]}
+    (folder / "roll.json").write_text(json.dumps(old), encoding="utf-8")
+    run(Roll(frames=1, only=(7,), start_at=7, resolution=600, name="old"),
+        tmp_path)
+    assert json.loads((folder / "roll.json.legacy").read_text(
+        encoding="utf-8")) == old
+    recorded = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert sorted(f["number"] for f in recorded["frames"]) == [5, 7]
+
+
 def test_a_walk_records_no_exposure_because_it_took_none(tmp_path):
     """A dry run prescans and advances; there is no scan and so nothing to
     record. The key is absent rather than zero, which is the difference between

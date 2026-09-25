@@ -362,6 +362,48 @@ def test_start_at_is_a_place_on_the_strip(tmp_path, monkeypatch):
     assert manifest["numbering"] == "strip"
 
 
+def test_start_at_resumes_the_roll_rather_than_replacing_it(tmp_path,
+                                                            monkeypatch):
+    """The docstring promised `--start-at` resumes from the manifest; it wrote
+    a fresh one over it, and the record of the frames already scanned went
+    with it."""
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    _scanner, code = run(tmp_path, monkeypatch, "--start-at", "3",
+                         "--frames", "2")
+    assert code == 0
+    folder = tmp_path / "roll"
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in manifest["frames"]] == [1, 2, 3, 4]
+    assert all(f["done"] and f["file"] for f in manifest["frames"])
+    # and the run before this one, as it stood, beside it
+    before = json.loads((folder / "roll.json.bak").read_text(encoding="utf-8"))
+    assert [f["number"] for f in before["frames"]] == [1, 2]
+
+
+def test_a_frame_that_was_never_filed_names_no_file(tmp_path, monkeypatch):
+    """`file` named a TIFF before anything had written it, and a resume took
+    that as done."""
+    from rps7200 import session
+
+    real = session.FrameWriter._write
+
+    def fails_on_two(self, job):
+        if job["number"] == 2:
+            raise OSError(28, "No space left on device")
+        return real(self, job)
+
+    monkeypatch.setattr(session.FrameWriter, "_write", fails_on_two)
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3")
+    assert code == 1
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    frames = {f["number"]: f for f in manifest["frames"]}
+    assert frames[2]["done"] is False and frames[2]["file"] is None
+    assert "No space left" in frames[2]["filing_error"]
+    assert frames[1]["done"] and frames[1]["file"] == "frame01.tif"
+
+
 def test_a_roll_the_tool_cannot_place_scans_nothing(tmp_path, monkeypatch):
     from rps7200 import session
 

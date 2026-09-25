@@ -1729,6 +1729,50 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
     assert "went missing" in said[0]
 
 
+def _approving(tmp_path, said=None):
+    """Enough of the window for `_write_approved` to file into a roll."""
+    return types.SimpleNamespace(
+        session=types.SimpleNamespace(rolls=str(tmp_path)),
+        fields={"roll": types.SimpleNamespace(get=lambda: "a-roll")},
+        _say=(said.append if said is not None else lambda *a: None),
+    )
+
+
+def test_a_commission_adds_to_the_decisions_already_filed(tmp_path):
+    """Each commission replaced approved.json with only the frames ticked
+    that time, so finishing a roll's last three frames erased the turns of
+    the first fifteen -- which Export then used."""
+    stub = _approving(tmp_path)
+    gui.ScannerGui._write_approved(stub, (Approved(1, rotation=90),
+                                          Approved(2, rotation=180)))
+    gui.ScannerGui._write_approved(stub, (Approved(2, rotation=0),
+                                          Approved(3, rotation=270)))
+    _off, rotations, _flips, _entries, _src = gui.read_approved(
+        tmp_path / "a-roll")
+    assert rotations == {1: 90, 2: 0, 3: 270}
+    kept = json.loads((tmp_path / "a-roll" / "approved.json.bak").read_text(
+        encoding="utf-8"))
+    assert [f["number"] for f in kept["frames"]] == [1, 2]
+
+
+def test_approved_json_that_cannot_be_read_is_kept_and_said(tmp_path):
+    """A damaged file read back as "no decisions" with nothing said, and the
+    next commission wrote over it."""
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text('{"frames": [{"num',
+                                          encoding="utf-8")
+    said = []
+    assert gui.read_approved(folder, say=said.append)[1] == {}
+    assert said and "approved.json" in said[0]
+    gui.ScannerGui._write_approved(_approving(tmp_path, said),
+                                   (Approved(4, rotation=90),))
+    assert (folder / "approved.json.unreadable").read_text(
+        encoding="utf-8") == '{"frames": [{"num'
+    assert gui.read_approved(folder)[1] == {4: 90}
+    assert any("approved.json.unreadable" in line for line in said)
+
+
 def test_an_unticked_frame_says_so_in_words():
     """A prescan of a negative is very dark -- mean 16 of 255 across real
     surveys -- so a ring turning from amber to dark grey around a nearly black

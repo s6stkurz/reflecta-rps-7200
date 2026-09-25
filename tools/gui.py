@@ -91,12 +91,15 @@ from rps7200.session import (                              # noqa: E402
     _safe,
     _unclaimed,
     deliverable_mm,
+    earlier_manifest,
     estimate_seconds,
     legacy_shift,
     plan_nudges,
     plausible,
+    read_manifest,
     renumbered,
     walked_prescans,
+    write_manifest,
 )
 
 #: Resolutions this scanner has actually been driven at, plus the optical
@@ -3057,19 +3060,45 @@ class ScannerGui:
             name = _safe(self.fields["roll"].get().strip())
             folder = Path(self.session.rolls) / name
             folder.mkdir(parents=True, exist_ok=True)
-            (folder / "approved.json").write_text(json.dumps({
+            path = folder / "approved.json"
+            # Merged, frame by frame, into what earlier commissions decided.
+            # Each used to replace the file with only the frames ticked this
+            # time, so resuming a roll to scan its last three frames erased
+            # the turns of the first fifteen -- which Export then used. One
+            # that cannot be read is kept aside and said, never taken for
+            # "no decisions" and written over.
+            earlier = earlier_manifest(path, say=self._say)
+            # An older file's numbers onto the strip's first, the way
+            # `read_survey` reads them, so a kept frame is not filed under
+            # another frame's number beside the new ones.
+            shift = 0
+            if earlier and earlier.get("numbering") != NUMBERING:
+                shift = approved_legacy(
+                    read_manifest(folder / "survey.json", say=self._say),
+                    read_manifest(folder / "roll.json", say=self._say))
+            now = {int(a.number) for a in approved}
+            kept = []
+            for record in earlier.get("frames") or ():
+                try:
+                    number = int(record["number"]) + shift
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if number not in now:
+                    kept.append(dict(record, number=number))
+            write_manifest(path, {
                 "roll": name,
                 # The numbers below are places on the strip; a file without
                 # this was numbered the way its walk was. See `read_approved`.
                 "numbering": NUMBERING,
-                "frames": [{"number": a.number,
-                            "offset_mm": round(a.offset_mm, 4),
-                            "rotation": int(a.rotation),
-                            "flipped": bool(a.flipped),
-                            "reference_entry": str(a.reference_entry or ""),
-                            "source": str(a.source or "operator")}
-                           for a in approved],
-            }, indent=2, default=str), encoding="utf-8")
+                "frames": sorted(kept + [
+                    {"number": a.number,
+                     "offset_mm": round(a.offset_mm, 4),
+                     "rotation": int(a.rotation),
+                     "flipped": bool(a.flipped),
+                     "reference_entry": str(a.reference_entry or ""),
+                     "source": str(a.source or "operator")}
+                    for a in approved], key=lambda r: int(r["number"])),
+            }, keep_previous=True)
         except Exception as exc:                          # noqa: BLE001
             # Broad on purpose. This file is a note about what was asked for;
             # the scan is the work. Losing the note must never cost the roll,
@@ -4848,11 +4877,11 @@ def read_survey(folder, say=None) -> dict:
     roll_path = folder / "roll.json"
     if not survey_path.exists() and not roll_path.exists():
         raise ValueError("no survey.json and no roll.json")
-    manifest = json.loads(
-        (survey_path if survey_path.exists()
-         else roll_path).read_text(encoding="utf-8"))
-    progress = (json.loads(roll_path.read_text(encoding="utf-8"))
-                if roll_path.exists() else {})
+    # A file that does not parse is read from the version kept beside it, or
+    # refused by name -- never taken for an empty roll.
+    manifest = read_manifest(survey_path if survey_path.exists()
+                             else roll_path, say=say)
+    progress = read_manifest(roll_path, say=say)
     # Onto the strip's numbering, whatever each file was written with. A walk
     # made before frame numbers were places on the strip counted from wherever
     # it started -- rolls/2026-09-23 calls the frame on the counter's 5 its
@@ -4864,11 +4893,7 @@ def read_survey(folder, say=None) -> dict:
     # (`session.renumbered`) -- and the decisions filed against those
     # numbers with the walk's shift, having none of their own.
     shift = legacy_shift(manifest) or 0
-    # `approved.json` was written when a roll was commissioned, and that roll
-    # numbered its frames the way the file did -- so where the roll recorded
-    # positions, its shift is the file's, even when a later walk into the
-    # same folder has replaced the survey it was decided on.
-    decided = legacy_shift(progress) if progress else None
+    decided = approved_legacy(manifest, progress)
     manifest = renumbered(manifest, say=say)
     # The roll is said as well: a stale 72 in it, or two scans of one place,
     # is what the operator needs before scanning more into it -- and each of
@@ -4886,7 +4911,7 @@ def read_survey(folder, say=None) -> dict:
     mirrored = bool(manifest.get("flipped"))
 
     offsets, rotations, flips, entries, sources = read_approved(
-        folder, legacy=shift if decided is None else decided)
+        folder, legacy=decided, say=say)
 
     results = []
     # The walk's own records, as the roll tool's `--approved` reads them, so
@@ -5099,7 +5124,23 @@ def duplicate_name(folder) -> Path:
     raise ValueError(f"no free name beside {folder.name}")
 
 
-def read_approved(folder, legacy: int = 0):
+def approved_legacy(walk: dict, progress: dict) -> int:
+    """How far an older `approved.json`'s numbers sit behind the strip's.
+
+    It was written when a roll was commissioned, and that roll numbered its
+    frames the way the file did -- so where the roll recorded positions, its
+    shift is the file's, even when a later walk into the same folder has
+    replaced the survey it was decided on; otherwise the walk's. Both as read
+    from disk, before `renumbered`. One function for the reader and for the
+    commission that merges into the file, so the two cannot key one file two
+    ways.
+    """
+    shift = legacy_shift(walk or progress) or 0
+    decided = legacy_shift(progress) if progress else None
+    return shift if decided is None else decided
+
+
+def read_approved(folder, legacy: int = 0, say=None):
     """A roll's stored decisions: `(offsets, rotations, flips, entries, sources)`.
 
     `approved.json` is the one thing in a roll folder that is **not** derivable
@@ -5114,6 +5155,10 @@ def read_approved(folder, legacy: int = 0):
     numbers by the strip is read as it stands, and so is every file when the
     caller leaves ``legacy`` at 0 -- the export path, whose library entries
     carry the same numbers the file does.
+
+    ``say`` hears about a file that cannot be read. It used to come back as
+    "no decisions" with nothing said, which reopened a roll with every turn
+    and position gone and no sign that anything was missing.
     """
     folder = Path(folder)
     offsets: dict[int, float] = {}
@@ -5128,9 +5173,12 @@ def read_approved(folder, legacy: int = 0):
     if not approved_path.exists():
         return offsets, rotations, flips, entries, sources
     try:
-        stored = json.loads(approved_path.read_text(encoding="utf-8"))
+        stored = read_manifest(approved_path, say=say)
         records = stored.get("frames", [])
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError) as exc:
+        if say is not None:
+            say(f"{exc} -- this roll's own positions and turns are not "
+                "shown; the file is left as it is")
         return offsets, rotations, flips, entries, sources
     shift = 0 if stored.get("numbering") == NUMBERING else legacy
     for record in records:
@@ -5241,11 +5289,11 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     if not survey_path.exists() and not roll_path.exists():
         return None
     try:
-        manifest = json.loads(
-            (survey_path if survey_path.exists()
-             else roll_path).read_text(encoding="utf-8"))
-        progress = (json.loads(roll_path.read_text(encoding="utf-8"))
-                    if roll_path.exists() else {})
+        # The version kept beside a file that does not parse, rather than the
+        # roll dropping out of the list; see `session.read_manifest`.
+        manifest = read_manifest(survey_path if survey_path.exists()
+                                 else roll_path)
+        progress = read_manifest(roll_path)
     except (OSError, ValueError):
         return None
     # The same numbering `read_survey` puts on them, so the list and the sheet

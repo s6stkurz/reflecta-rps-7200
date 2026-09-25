@@ -34,7 +34,9 @@ Cancelling is two different things and they are not interchangeable:
 from __future__ import annotations
 
 import json
+import os
 import queue
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -722,6 +724,225 @@ def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str,
             "folder": str(folder)}
 
 
+# ---------------------------------------------------------------------------
+# A roll's own files: survey.json, roll.json, approved.json
+# ---------------------------------------------------------------------------
+
+
+#: What a manifest's previous version is kept as, beside it: the file as it
+#: stood before this run or this commission first wrote over it.
+PREVIOUS = ".bak"
+
+
+def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
+    """Write a roll's JSON beside itself, then rename it over: old or new, never half.
+
+    These were truncated and rewritten in place, once a frame, for hours. A
+    kill or a full disk between the two left an empty `roll.json`: the roll
+    dropped out of the window's list, could not be reopened, and the next
+    resume read nothing and wrote a fresh one over it.
+
+    Serialised before anything on disk is touched, so a value JSON cannot
+    carry costs this write and not the file already there. ``keep_previous``
+    copies that file to ``<name>.bak`` first -- once per run, not once per
+    frame, so the copy is the manifest as it stood before this run began:
+    a walk that replaced another strip's, or a resume that merged wrongly,
+    can still be undone by hand.
+    """
+    path = Path(path)
+    text = json.dumps(data, indent=2, default=str)
+    temp = path.with_name(f".{path.name}.part")
+    try:
+        with open(temp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except BaseException:
+        # A full disk, most likely: the file already there is untouched, and
+        # the half-written one beside it is not left to be mistaken for it.
+        temp.unlink(missing_ok=True)
+        raise
+    if keep_previous and path.exists():
+        try:
+            shutil.copyfile(path, path.with_name(path.name + PREVIOUS))
+        except OSError:
+            pass                        # the copy is a courtesy; the write is not
+    os.replace(temp, path)
+
+
+def read_manifest(path, say=None) -> dict:
+    """A roll's JSON: ``{}`` when there is none, and never a silent ``{}`` otherwise.
+
+    A file that does not parse falls back to the version kept beside it
+    (`write_manifest`), and says so. Raises ValueError, naming the file, when
+    neither can be read -- a reader that took a damaged manifest for an empty
+    one reported a roll as having no frames, and a writer that did the same
+    replaced it.
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+        return data
+    except (OSError, ValueError) as exc:
+        problem = exc
+    kept = path.with_name(path.name + PREVIOUS)
+    try:
+        data = json.loads(kept.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict):
+        if say is not None:
+            say(f"{path} cannot be read ({problem}); read {kept.name}, the "
+                "version before it, instead")
+        return data
+    raise ValueError(f"{path} cannot be read: {problem}")
+
+
+def set_aside(path) -> Path:
+    """Move a file that cannot be read out of the way, under a name that says so.
+
+    Before anything is written where it was: it may be the only record of a
+    roll, and a hand can often recover what a parser cannot.
+    """
+    path = Path(path)
+    aside = _unclaimed(path.with_name(path.name + ".unreadable"))
+    os.replace(path, aside)
+    return aside
+
+
+def earlier_manifest(path, say=None) -> dict:
+    """The manifest a run is about to add to, for a writer.
+
+    As `read_manifest`, except that a file neither it nor its kept version can
+    read is moved aside (`set_aside`) and said, and the run starts a new one:
+    a resume that cannot tell what was done still has a roll to scan, and the
+    file it could not read is kept rather than written over.
+    """
+    try:
+        return read_manifest(path, say=say)
+    except ValueError as exc:
+        aside = set_aside(path)
+        if say is not None:
+            say(f"{exc}; kept as {aside.name}, and a new "
+                f"{Path(path).name} started beside it")
+        return {}
+
+
+def walk_shift(folder) -> int:
+    """How the walk beside a roll numbered its frames, for a legacy roll.
+
+    See :func:`legacy_shift`. 0 when there is no walk or it cannot say,
+    which leaves the numbers exactly as they were.
+    """
+    try:
+        return legacy_shift(read_manifest(Path(folder) / "survey.json")) or 0
+    except ValueError:
+        return 0
+
+
+def keep_first_numbering(path, earlier: dict) -> None:
+    """Keep a manifest as first written before its frame numbers are moved.
+
+    A resume moves an old file's numbers onto the strip's (`renumbered`) and
+    writes them back, for good -- and that is a best guess from recorded
+    positions, not a fact. The file as it was is copied once, to
+    ``<name>.legacy``, so the numbering it was written with is never lost.
+    """
+    path = Path(path)
+    if (not earlier or earlier.get("numbering") == NUMBERING
+            or not earlier.get("frames") or not path.exists()):
+        return
+    legacy = path.with_name(path.name + ".legacy")
+    if not legacy.exists():
+        shutil.copyfile(path, legacy)
+
+
+class RollManifest:
+    """One roll's manifest, and the only thing that writes it.
+
+    Two threads have something to say about a frame. The scanning thread
+    records it as it is taken; the writer thread says, some seconds later,
+    whether it was filed. `done` used to be decided on the first and written
+    at once, while the frame was still only queued -- so a frame the writer
+    then failed to file, or that a crash took with it, was recorded as done,
+    and a resume skipped a frame that existed nowhere.
+
+    So a frame waiting to be filed is recorded with ``done`` false, and
+    `filed` makes it true, with the library entry it went to. The writer can
+    get there first -- a small frame on an idle disk -- and then the answer
+    waits for the record rather than being lost. One lock, because both
+    threads write the one file.
+    """
+
+    def __init__(self, path, data: dict):
+        self.path = Path(path)
+        self.data = data
+        self._lock = threading.Lock()
+        self._awaiting: set[int] = set()
+        self._early: dict[int, tuple] = {}
+        self._written = False
+
+    def _write(self) -> None:
+        # The first write of a run keeps what was there before it.
+        write_manifest(self.path, self.data, keep_previous=not self._written)
+        self._written = True
+
+    def write(self) -> None:
+        with self._lock:
+            self._write()
+
+    def record(self, record: dict, awaiting: bool = False) -> None:
+        """This frame's record, replacing any earlier one of its number.
+
+        ``awaiting`` says it was handed to the writer and is not done until
+        `filed` says so.
+        """
+        number = int(record["number"])
+        with self._lock:
+            early = self._early.pop(number, None)
+            if early is not None:
+                self._apply(record, *early)
+            elif awaiting:
+                record["done"] = False
+                self._awaiting.add(number)
+            self.data["frames"] = [
+                f for f in self.data.get("frames") or ()
+                if str(f.get("number")) != str(number)] + [record]
+            self._write()
+
+    def filed(self, number: int, entry, error: str | None,
+              **extra: Any) -> None:
+        """The writer's answer for one frame: its entry, or why there is none.
+
+        ``extra`` is written into the record only when it was filed -- the
+        roll tool's `file`, which named a TIFF before anything had written it.
+        """
+        number = int(number)
+        with self._lock:
+            if number not in self._awaiting:
+                self._early[number] = (entry, error, extra)
+                return
+            self._awaiting.discard(number)
+            for record in self.data.get("frames") or ():
+                if str(record.get("number")) == str(number):
+                    self._apply(record, entry, error, extra)
+            self._write()
+
+    @staticmethod
+    def _apply(record: dict, entry, error, extra=None) -> None:
+        if error is None:
+            record["done"] = True
+            record["entry"] = str(entry) if entry else None
+            record.update(extra or {})
+        else:
+            record["done"] = False
+            record["filing_error"] = str(error)
+
+
 def walk_span(earlier: dict, start_at: int,
               frames: int | None) -> tuple[int, int | None]:
     """The range two walks of one strip cover together, as ``(start, count)``.
@@ -1155,8 +1376,25 @@ class FrameWriter:
                 self.errors.append(f"picture {job['number']}: {exc}")
                 if self.on_done is not None:
                     self.on_done(job.get("seq", 0), job["number"], None, str(exc))
+                self._tell(job, None, str(exc), [])
             finally:
                 self.queue.task_done()
+
+    def _tell(self, job: dict, entry, error: str | None, written: list) -> None:
+        """The job's own answer, for whoever records it: see `RollManifest`.
+
+        Per job rather than on the writer, because the roll that queued a
+        frame is the one whose manifest says whether it is done. Never lets a
+        failure here cost the writer the frames behind it.
+        """
+        then = job.get("on_filed")
+        if then is None:
+            return
+        try:
+            then(entry, error, written)
+        except Exception as exc:                         # noqa: BLE001
+            self.errors.append(f"picture {job['number']}: filed, but its "
+                               f"manifest could not say so ({exc})")
 
     def _write(self, job: dict) -> None:
         # The delivered files carry the orientation that was asked for and the
@@ -1209,6 +1447,7 @@ class FrameWriter:
                 **job["capture"],
             )
         problems = []
+        written = []
         for path in job.get("paths") or ():
             # Each copy on its own: one that cannot be written -- a missing
             # drive, a full disk -- says so and does not stop the others.
@@ -1224,6 +1463,7 @@ class FrameWriter:
             except Exception as exc:                     # noqa: BLE001
                 problems.append(f"could not write {path} ({exc})")
                 continue
+            written.append(Path(path))
             if note:
                 self.notes.append(f"{Path(path).name}: {note}")
         if problems and entry is None:
@@ -1238,6 +1478,7 @@ class FrameWriter:
         self.done.append((job["number"], entry))
         if self.on_done is not None:
             self.on_done(job.get("seq", 0), job["number"], entry, None)
+        self._tell(job, entry, None, written)
 
     def submit(self, **job) -> None:
         self.queue.put(job)
@@ -1801,10 +2042,23 @@ class ScanSession:
         earlier: dict[str, Any] = {}
         carried = not job.dry_run or job.extend_walk
         if carried and manifest_path.exists():
-            try:
-                earlier = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                earlier = {}
+            # Only once the frames the last roll queued are filed: each says
+            # it is done in this same file, as it lands, and read before that
+            # this run would carry them forward as not done and write over the
+            # writer's answer. Nothing is waited for when nothing is queued.
+            if self._writer is not None and self._writer.queue.unfinished_tasks:
+                self._emit("log", text="waiting for the last roll's frames to "
+                           "be filed before adding to its manifest ...")
+                self._writer.queue.join()
+            # Not read as "nothing" when it cannot be read: the version kept
+            # beside it is tried, and failing that the file is kept aside and
+            # said. `json.loads` inside a bare except used to hand a damaged
+            # roll.json back as empty, and the next write replaced it.
+            earlier = earlier_manifest(
+                manifest_path, say=lambda m: self._emit("log", text=m))
+            # The numbering it was written with, kept once before it is
+            # moved; see `keep_first_numbering`.
+            keep_first_numbering(manifest_path, earlier)
             # Written before frame numbers were places on the strip, its
             # numbers are counted from wherever that roll started, and this
             # run's are not -- merged as they stand, frame 1 of the old record
@@ -1915,6 +2169,9 @@ class ScanSession:
             # ones for the frames it scans and leave the rest alone.
             "frames": list(earlier.get("frames") or []),
         }
+        # The one writer of this file from here on, from both threads; see
+        # `RollManifest`.
+        record_of = RollManifest(manifest_path, manifest)
 
         # How each chosen picture is arranged. Every approved frame appears,
         # zeros and falses included: the contact sheet knows each frame's
@@ -2065,6 +2322,10 @@ class ScanSession:
                         roll=name,
                         mono=wants_mono(job.mono, job.film),
                         mono_channel=job.mono_channel,
+                        # Done when the writer says it was filed, and not
+                        # before: see `RollManifest`.
+                        on_filed=(lambda entry, error, _written, n=number:
+                                  record_of.filed(n, entry, error)),
                     )
 
                 record: dict[str, Any] = {
@@ -2076,7 +2337,9 @@ class ScanSession:
                     # What a resume needs to know about this frame: whether it
                     # is finished. A frame that errored is *not* done and gets
                     # offered again -- that is the case a resume exists for.
-                    "done": bool(rf.error is None and rf.image is not None),
+                    # Nor is one merely scanned: it is done once the writer
+                    # has filed it, which `record_of.filed` says.
+                    "done": False,
                 }
                 if scanned is not None:
                     # Per frame rather than only in `settings`, because metering
@@ -2097,16 +2360,10 @@ class ScanSession:
                     record["prescan_flipped"] = mirrored
                 # This frame's record replaces any earlier attempt's, so a
                 # frame rescanned after a failure is not in the file twice
-                # saying two different things about itself.
-                manifest["frames"] = [
-                    f for f in manifest["frames"]
-                    if str(f.get("number")) != str(number)
-                ] + [record]
-                # Rewritten after every frame. A roll takes hours and a crash
-                # should cost the frame it was on, not the roll.
-                manifest_path.write_text(
-                    json.dumps(manifest, indent=2, default=str),
-                    encoding="utf-8")
+                # saying two different things about itself. Rewritten after
+                # every frame, whole and atomically: a roll takes hours and a
+                # crash should cost the frame it was on, not the roll.
+                record_of.record(record, awaiting=scanned is not None)
 
                 if self._stop.is_set():
                     stopped = f"stopped after frame {number}, as asked"
@@ -2155,19 +2412,8 @@ class ScanSession:
 
     @staticmethod
     def _walk_shift(folder: Path) -> int:
-        """How the walk beside a roll numbered its frames, for a legacy roll.
-
-        See :func:`legacy_shift`. 0 when there is no walk or it cannot say,
-        which leaves the numbers exactly as they were.
-        """
-        walked = folder / "survey.json"
-        if not walked.exists():
-            return 0
-        try:
-            survey = json.loads(walked.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return 0
-        return legacy_shift(survey) or 0
+        """See :func:`walk_shift`."""
+        return walk_shift(folder)
 
     def _position(self) -> int | None:
         """Where the transport is, or None if it will not say."""
@@ -2228,6 +2474,7 @@ class ScanSession:
         mono: bool = False,
         mono_channel: str = MONO_CHANNEL,
         file_entry: bool = True,
+        on_filed: Callable[..., Any] | None = None,
     ) -> None:
         """Write this picture, and unless told otherwise file it in the library.
 
@@ -2241,6 +2488,10 @@ class ScanSession:
         picture already has a correct entry anyway, filed at the instant it was
         taken, which is the only moment its bytes and its pixels are certainly
         the same pass.
+
+        ``on_filed(entry, error, written)`` is called on the writer thread
+        once the picture has been filed, or has failed to be; see
+        `RollManifest`.
         """
         if self._writer is None:
             return
@@ -2316,6 +2567,7 @@ class ScanSession:
             capture=capture,
             mono=mono,
             mono_channel=mono_channel,
+            on_filed=on_filed,
         )
 
     def _out_name(

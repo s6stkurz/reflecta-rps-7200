@@ -60,8 +60,13 @@ from rps7200.session import (
     Approved,
     FilmNotPlaced,
     FrameWriter,
+    RollManifest,
+    earlier_manifest,
+    keep_first_numbering,
     plan_nudges,
+    renumbered,
     seek,
+    walk_shift,
     walked_prescans,
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
@@ -344,10 +349,9 @@ def main() -> int:
         "frames": [],
     }
 
-    def checkpoint() -> None:
-        """Rewritten after every frame: a crash must not lose the record."""
-        manifest_path.write_text(json.dumps(manifest, indent=2, default=str),
-                                 encoding="utf-8")
+    #: The one writer of the manifest, from this thread and the writer's; see
+    #: `session.RollManifest`. Made once the roll is placed, and not before.
+    record_of: RollManifest | None = None
 
     started = time.monotonic()
     scanned = failed = 0
@@ -476,7 +480,26 @@ def main() -> int:
             # hand, so there is a roll to record -- and not before. See
             # `placed`: a calibration that fails leaves the folder as it was.
             out.mkdir(parents=True, exist_ok=True)
-            checkpoint()
+            if not args.dry_run:
+                # Carried forward, as the window's rolls are: this run's frames
+                # replace the ones it takes again and the rest stay. The
+                # docstring has promised a resume since `--start-at` existed,
+                # and the manifest was written afresh over the earlier run's
+                # -- the one record of which frames it had scanned. A walk is
+                # its own: a new one replaces the last, which stays beside it
+                # as survey.json.bak.
+                earlier = earlier_manifest(manifest_path, say=print)
+                keep_first_numbering(manifest_path, earlier)
+                earlier = renumbered(earlier, fallback=walk_shift(out),
+                                     say=print)
+                manifest["frames"] = list(earlier.get("frames") or [])
+                if manifest["frames"]:
+                    print(f"adding to {manifest_path}: "
+                          f"{len(manifest['frames'])} frame(s) from earlier "
+                          "runs are kept, and a frame taken again replaces "
+                          "its own record")
+            record_of = RollManifest(manifest_path, manifest)
+            record_of.write()
             placed = True
 
             for frame in s.scan_roll(
@@ -517,7 +540,11 @@ def main() -> int:
                     "error": frame.error,
                     "entry": None,
                     "file": None,
+                    # True once the writer has filed it, and not before; see
+                    # `session.RollManifest`.
+                    "done": False,
                 }
+                submitted = False
 
                 if frame.error:
                     failed += 1
@@ -588,7 +615,10 @@ def main() -> int:
                 else:
                     scanned += 1
                     path = out / f"frame{number:02d}.tif"
-                    record["file"] = path.name
+                    # `file` is written when the writer has written it, by
+                    # `on_filed` below. It used to be set here, naming a TIFF
+                    # nothing had written yet -- and after a crash or a full
+                    # disk, one nothing ever would.
                     record["shape"] = list(frame.image.shape)
                     record["duration_s"] = frame.meta.get("duration_s")
                     record["exposure"] = frame.meta.get("exposure")
@@ -638,12 +668,17 @@ def main() -> int:
                             frame=roll_frame_label(roll_name, number),
                             notes=args.notes,
                         ),
+                        on_filed=(lambda entry, error, written, n=number,
+                                  p=path: record_of.filed(
+                                      n, entry, error,
+                                      **({"file": p.name} if p in written
+                                         else {}))),
                     )
+                    submitted = True
                     print(f"picture {number}: {path} {frame.image.shape} "
                           f"in {frame.meta.get('duration_s')}s")
 
-                manifest["frames"].append(record)
-                checkpoint()
+                record_of.record(record, awaiting=submitted)
 
     except BaseException as exc:                          # noqa: BLE001
         # Recorded rather than raised: the frames already scanned are
@@ -690,7 +725,8 @@ def main() -> int:
         manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
-    checkpoint()
+    if record_of is not None:                      # placed, so it was made
+        record_of.write()
 
     print(f"\n{scanned} scanned, {failed} failed, "
           f"{manifest['duration_s']/60:.1f} min")
