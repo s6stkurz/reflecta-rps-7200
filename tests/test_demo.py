@@ -888,6 +888,40 @@ def test_scanning_chosen_frames_scans_the_strip_that_was_walked(tmp_path):
     assert [f.prescan.tobytes() for f in chosen] == [walked[1], walked[3]]
 
 
+def test_a_roll_the_driver_refuses_lays_no_strip(tmp_path):
+    """The driver's loop refuses infrared on film blind to it, and an unknown
+    meter mode, on its first step. The demo had laid a new strip and counted
+    the roll before that step, so a refused roll used up a strip: frames then
+    chosen on the sheet were scanned from pictures nobody walked, and the
+    roll after the operator fixed his settings showed a third set."""
+    for n in range(8):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+
+    def session(refuse):
+        with DemoScanner(root=tmp_path, speed=100000.0, seed=3) as s:
+            s.LAST_POSITION = 3                # a four-frame strip of eight
+            first = _shown(s.scan_roll(frames=4, dry_run=True))
+            for _ in range(4):
+                s.retreat()
+            if refuse:
+                rolls, strips = s._rolls, dict(s._strips)
+                with pytest.raises(ValueError, match="infrared is blind"):
+                    list(s.scan_roll(frames=4, dry_run=True, infrared=True,
+                                     film="bw"))
+                with pytest.raises(ValueError, match="unknown meter mode"):
+                    list(s.scan_roll(frames=4, dry_run=True, meter="sometimes"))
+                assert (s._rolls, s._strips) == (rolls, strips)
+            chosen = _shown(s.scan_roll(frames=4, only=(1, 3), dry_run=True))
+            for _ in range(3):
+                s.retreat()
+            second = _shown(s.scan_roll(frames=4, dry_run=True))
+        return first, chosen, second
+
+    first, chosen, second = session(refuse=True)
+    assert chosen == [first[1], first[3]], "the strip that was walked"
+    assert second == session(refuse=False)[2], "the second set, not a third"
+
+
 # -- the pictures a later roll can draw on: every library, one per photograph -
 
 

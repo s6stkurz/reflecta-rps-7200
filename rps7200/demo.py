@@ -246,6 +246,9 @@ class DemoScanner:
         #: Rolls run this session. The first walks the strip as it always has;
         #: each one after it started from the Roll button gets a new strip.
         self._rolls = 0
+        #: The roll `scan_roll` has been asked for and `_begin_roll` has not
+        #: yet counted: its film, and whether it reads a new strip.
+        self._starting: tuple[str, bool] | None = None
         #: Lays each new strip. Seeded only where a test wants it repeatable.
         self._rng = random.Random(seed)
         #: The bytes and calibration behind the last pass, and nothing older:
@@ -731,12 +734,13 @@ class DemoScanner:
         end after one of 1 to 10, added to the same sheet -- and a new strip
         would put other pictures there. An empty transport refuses a roll
         before anything moves.
+
+        The roll is counted, and a new strip laid, at its first pass
+        (`_begin_roll`), not here: the driver's loop makes its own refusals
+        on its first step, and a roll it refuses has walked nothing.
         """
         self._need_film("roll")
-        if only is None or only:            # an empty choice is the driver's to say
-            if only is None and self._rolls and first_index == 0:
-                self._next_strip(film)
-            self._rolls += 1
+        self._starting = (film, only is None and first_index == 0)
         self._rolling = film
         self._new_frame()
         try:
@@ -748,6 +752,27 @@ class DemoScanner:
             # than the last frame's, and a manual nudge from the window is not
             # mistaken for the slipping frame.
             self._rolling = None
+            self._starting = None
+
+    def _begin_roll(self) -> None:
+        """Count the roll in progress, and lay its strip, at its first pass.
+
+        Not as `scan_roll` is called. The driver's loop refuses infrared on
+        film blind to it, an unknown film or an unknown meter mode on its
+        first step, before any pass -- and a roll it refused used to have
+        laid a strip and been counted already. The roll after the operator
+        fixed his settings then showed a third set of pictures rather than
+        the second, and frames chosen on the sheet were scanned from a strip
+        nobody had walked. A roll that ends before its first pass for any
+        reason -- an empty choice, a stop -- walked nothing either.
+        """
+        if self._starting is None:
+            return
+        film, fresh = self._starting
+        self._starting = None
+        if fresh and self._rolls:
+            self._next_strip(film)
+        self._rolls += 1
 
     #: The real loop, run against the simulated film above rather than
     #: reimplemented. It only needs `nudge`, `prescan` and `_log`, all of
@@ -1043,6 +1068,7 @@ class DemoScanner:
         film being metered, whatever film the probe was sent with.
         """
         if self._rolling is not None:
+            self._begin_roll()
             strip = self._strip_for(self._rolling)
             if strip:
                 return strip[self._position % len(strip)]
