@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import itertools
 import json
 import math
 import queue
@@ -91,12 +92,18 @@ from rps7200.session import (                              # noqa: E402
     _safe,
     _unclaimed,
     deliverable_mm,
+    earlier_manifest,
     estimate_seconds,
     legacy_shift,
     plan_nudges,
     plausible,
+    prescan_arrangement,
+    read_manifest,
+    recorded_roll_name,
     renumbered,
+    roll_dir,
     walked_prescans,
+    write_manifest,
 )
 
 #: Resolutions this scanner has actually been driven at, plus the optical
@@ -489,6 +496,11 @@ class ScannerGui:
         #: filed against. Kept apart from `_loaded_roll`, which answers the
         #: different question of which roll the browser should mark as open.
         self._sheet_roll = None
+        #: The roll name this window last put in the roll box itself -- a
+        #: new roll's generated name, a reopened roll's folder. A fresh walk
+        #: with that still in the box is a new strip and gets a new name; only
+        #: a name he typed sends a fresh walk into a folder that exists.
+        self._roll_named: str | None = None
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
         self._loaded_roll = None             # which roll folder is open, if any
@@ -2136,16 +2148,40 @@ class ScannerGui:
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
             f"{move}\n\n"
             f"{cost}")
+        # Where it goes, decided before anything is asked so the question can
+        # say it: a new roll's own name, or the folder he named -- and what is
+        # in that folder already, since a walk into it replaces its walk.
+        typed = self._typed_roll_name(fresh=dry)
+        folder = roll_dir(self.session.rolls, typed)
+        where = folder_note(folder, dry)
         # One question either way: `on_roll` is the only confirmation the
         # `roll` key gets, and asking twice trains the habit of dismissing both.
         keep = False
         if dry and self._sheet_to_keep():
-            answer = self._ask_keep_sheet(question, start_at, frames, predpi)
+            answer = self._ask_keep_sheet(question, start_at, frames, predpi,
+                                          where)
             if answer is None:
                 return
             keep = answer
-        elif not messagebox.askokcancel("Scan roll", question + "Start?"):
+        elif not messagebox.askokcancel("Scan roll",
+                                        question + where + "\n\nStart?"):
             return
+        if keep:
+            # The sheet's own folder -- under this session's rolls, so a walk
+            # added to a roll opened from elsewhere (`--open-roll` under
+            # `--demo`) is not written back into it; see `_roll_folder`.
+            folder = self._roll_folder()
+        else:
+            self._show_roll_name(folder.name, ours=not typed)
+        if not dry:
+            # A roll from this button carries no per-frame turns: its files
+            # follow the session's arrangement. Turns a commissioned roll or
+            # the sheet left against frame numbers would otherwise be put on
+            # this roll's frames of the same number -- on screen and in Save
+            # As, but not in the files it writes.
+            self.orientations = {key: turn for key, turn
+                                 in self.orientations.items()
+                                 if key[0] != "frame"}
         if dry:
             # The sheet open now belongs to the walk before this one. Closed
             # here, keeping what was decided in it under its own roll, before
@@ -2210,12 +2246,12 @@ class ScannerGui:
             correct_dry_run=self.v_correct_dry.get(),
             mono=self.v_mono.get(),
             mono_channel=self.v_mono_channel.get(),
-            # A kept walk goes into the folder the sheet came from, whatever
-            # the roll box or the date says now -- a walk continued after
-            # midnight would otherwise start a new roll named by the new day.
-            name=(Path(self._sheet_roll).name if keep
-                  else self.fields["roll"].get().strip()),
-            out=str(self._sheet_roll) if keep else "",
+            # The folder decided above: a kept walk's is the one the sheet came
+            # from, whatever the roll box or the date says now -- a walk
+            # continued after midnight would otherwise start a new roll named
+            # by the new day. The session labels the frames by the name that
+            # folder already records.
+            out=str(folder),
             extend_walk=keep,
             notes=self._notes(), tags=self._tags(),
         ))
@@ -2225,7 +2261,8 @@ class ScannerGui:
         return bool(self.survey) and self._sheet_roll is not None
 
     def _ask_keep_sheet(self, question: str, start_at: int,
-                        frames: int | None, predpi: int) -> bool | None:
+                        frames: int | None, predpi: int,
+                        where: str = "") -> bool | None:
         """Ask whether this walk adds to the sheet there is: True, False or None.
 
         None is Cancel. A walk of 1 to 10 on a strip of 12 left two frames
@@ -2236,6 +2273,9 @@ class ScannerGui:
         differs from the walk being kept: those frames would be references at
         another resolution, or read by the detector as another film, beside
         frames that are not.
+
+        ``where`` is `folder_note` for the folder a new sheet would go into,
+        said beside the answer that would put it there.
         """
         walked = [int(r.number) for r in self.survey if r.number]
         have = (f"The contact sheet has frames {number_spans(walked)} of "
@@ -2257,7 +2297,8 @@ class ScannerGui:
                 question + have + " It was walked with "
                 + " and with ".join(differ) + ", so this walk cannot be added "
                 "to it. Set them back to add to it.\n\n"
-                "OK starts a new sheet; the old one stays under Rolls ...")
+                "OK starts a new sheet; the old one stays under Rolls ..."
+                + (f"\n\n{where}" if where else ""))
             return False if started else None
         again = rewalked(walked, start_at, frames)
         note = ""
@@ -2274,7 +2315,63 @@ class ScannerGui:
             "Yes -- add what this walk finds to it. Its ticks, positions and "
             "turns stay.\n"
             "No -- start a new sheet. The old one stays under Rolls ...\n"
-            "Cancel -- nothing moves." + note)
+            "Cancel -- nothing moves." + note
+            + (f"\n\nA new sheet: {where}" if where else ""))
+
+    def _typed_roll_name(self, fresh: bool) -> str:
+        """The roll box as he typed it, or "" for a roll that wants a new name.
+
+        Empty is a new name (`session.new_roll_name`) -- and so, when
+        ``fresh`` (a walk that is not added to a sheet), is the name this
+        window put in the box itself: that was the last strip's, and a fresh
+        walk into it replaced that strip's walk. Only a name he typed sends a
+        fresh walk into a folder that exists, and the question that starts it
+        says what is there (`folder_note`).
+        """
+        typed = self.fields["roll"].get().strip()
+        if fresh and typed and typed == self._roll_named:
+            return ""
+        return typed
+
+    def _next_roll_folder(self, fresh: bool) -> Path:
+        """Where a roll from the Roll button would go: `session.roll_dir`."""
+        return roll_dir(self.session.rolls, self._typed_roll_name(fresh))
+
+    def _show_roll_name(self, name: str, ours: bool = True) -> None:
+        """Put the roll's name in the roll box, so the operator sees it.
+
+        ``ours`` says the window chose it -- a new roll's name, a reopened
+        roll's folder -- rather than echoing back one he typed; see
+        `_typed_roll_name`.
+        """
+        if self.fields["roll"].get().strip() != name:
+            self.fields["roll"].set(name)
+        if ours:
+            self._roll_named = name
+
+    def _roll_folder(self) -> Path:
+        """The folder the sheet's roll is scanned into, and its decisions filed in.
+
+        The sheet's own -- its walk's, or the reopened roll's -- so the frames,
+        `approved.json` and the walk are one folder. They were three: the
+        session wrote to the roll box's name or the date, `approved.json` went
+        to `_safe` of the box ("roll" when it was empty), and a reopened roll's
+        name was never put back, so continuing it scanned somewhere else.
+
+        Always under this session's `rolls`. A roll opened from elsewhere --
+        `--open-roll` under `--demo` shows a real walk -- is scanned into the
+        folder of the same name here, never back into the one it was read
+        from.
+        """
+        rolls = Path(self.session.rolls)
+        if self._sheet_roll is not None:
+            sheet = Path(self._sheet_roll)
+            try:
+                inside = sheet.resolve().parent == rolls.resolve()
+            except OSError:
+                inside = False
+            return sheet if inside else roll_dir(rolls, sheet.name)
+        return self._next_roll_folder(fresh=False)
 
     def _close_sheet(self) -> None:
         """Close the contact sheet if it is open, keeping what was decided.
@@ -2707,6 +2804,11 @@ class ScannerGui:
         done = out["scanned"]
         remaining = [n for n in out["wanted"] if n not in done]
         restored = self._restore_roll_settings(out["settings"])
+        # The roll box names the folder now, so a roll continued from here --
+        # the Roll button for a roll with no walk, as well as the sheet --
+        # scans into this folder. It was never put back, and "continue"
+        # scanned into rolls/<today> beside it.
+        self._show_roll_name(folder.name)
 
         if not out["results"]:
             # A roll commissioned without a walk has no prescans, so there is
@@ -2733,6 +2835,11 @@ class ScannerGui:
                       f"{len(remaining)} left, no sheet")
             return
 
+        # The sheet open now is the outgoing roll's. Closed the way its own
+        # Close button closes it, so what was decided in it is kept -- under
+        # its own roll, which `_sheet_roll` still names until below. It was
+        # destroyed, and twenty minutes of positions went with it.
+        self._close_sheet()
         self.survey = out["results"]
         self._survey_predpi = out["prescan_resolution"]
         self._survey_film = out.get("film")
@@ -2750,11 +2857,6 @@ class ScannerGui:
                      if any(out["flips"].values()) else "")
                   + (f", settings restored: {', '.join(sorted(restored))}"
                      if restored else ""))
-        if self.sheet is not None and self.sheet.alive():
-            # Destroyed rather than dismissed: `_loaded_roll` already names the
-            # roll being opened, so keeping the old sheet's decisions here
-            # would file the outgoing roll's positions under the incoming one.
-            self.sheet.top.destroy()
         self._sheet_done = {int(n) for n in done}
         self._sheet_roll = folder
         # The manifest is the record for this roll, so it replaces whatever
@@ -2961,7 +3063,11 @@ class ScannerGui:
             + "\n\nStart?",
         ):
             return
-        self._write_approved(approved)
+        folder = self._roll_folder()
+        self._show_roll_name(
+            folder.name,
+            ours=folder.name != self.fields["roll"].get().strip())
+        self._write_approved(approved, folder)
         # Counted like a roll from the Roll button, so the header says which
         # of the chosen frames it is on and the line under the picture times
         # it. A sheet's roll used to run with neither.
@@ -2992,7 +3098,8 @@ class ScannerGui:
             approved=tuple(approved), reverse_hold=self.v_reverse.get(),
             mono=mono,
             mono_channel=self.v_mono_channel.get(),
-            name=self.fields["roll"].get().strip(),
+            # Beside its walk and its `approved.json`; see `_roll_folder`.
+            out=str(folder),
             notes=self._notes(), tags=self._tags(),
         ))
 
@@ -3059,33 +3166,68 @@ class ScannerGui:
         # happens. See TODO.md: the tick itself should go.
         return note
 
-    def _write_approved(self, approved) -> None:
+    def _write_approved(self, approved, folder) -> None:
         """Record the positions beside the roll before anything is scanned.
 
         Written from here rather than by the scan thread because it is the
         operator's decision, made before the roll starts -- and it is the file
         that says what was asked for, whatever the roll then does about it.
         A kilobyte of JSON with the device idle between jobs.
+
+        ``folder`` is the one the roll is scanned into (`_roll_folder`), so
+        the decisions and the frames they are about cannot part.
         """
         if not approved:
             return
         try:
-            name = _safe(self.fields["roll"].get().strip())
-            folder = Path(self.session.rolls) / name
+            folder = Path(folder)
+            name = recorded_roll_name(folder) or folder.name
             folder.mkdir(parents=True, exist_ok=True)
-            (folder / "approved.json").write_text(json.dumps({
+            path = folder / "approved.json"
+            # Merged, frame by frame, into what earlier commissions decided.
+            # Each used to replace the file with only the frames ticked this
+            # time, so resuming a roll to scan its last three frames erased
+            # the turns of the first fifteen -- which Export then used. One
+            # that cannot be read is kept aside and said, never taken for
+            # "no decisions" and written over.
+            earlier = earlier_manifest(path, say=self._say)
+            # An older file's numbers onto the strip's first, the way
+            # `read_survey` reads them, so a kept frame is not filed under
+            # another frame's number beside the new ones.
+            shift = 0
+            if earlier and earlier.get("numbering") != NUMBERING:
+                shift = approved_legacy(
+                    read_manifest(folder / "survey.json", say=self._say),
+                    read_manifest(folder / "roll.json", say=self._say))
+            now = {int(a.number) for a in approved}
+            kept = []
+            for record in earlier.get("frames") or ():
+                try:
+                    number = int(record["number"]) + shift
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if number not in now:
+                    kept.append(dict(record, number=number))
+            write_manifest(path, {
                 "roll": name,
                 # The numbers below are places on the strip; a file without
                 # this was numbered the way its walk was. See `read_approved`.
                 "numbering": NUMBERING,
-                "frames": [{"number": a.number,
-                            "offset_mm": round(a.offset_mm, 4),
-                            "rotation": int(a.rotation),
-                            "flipped": bool(a.flipped),
-                            "reference_entry": str(a.reference_entry or ""),
-                            "source": str(a.source or "operator")}
-                           for a in approved],
-            }, indent=2, default=str), encoding="utf-8")
+                "frames": sorted(kept + [
+                    dict({"number": a.number,
+                          "offset_mm": round(a.offset_mm, 4),
+                          "rotation": int(a.rotation),
+                          "flipped": bool(a.flipped),
+                          "reference_entry": str(a.reference_entry or ""),
+                          "source": str(a.source or "operator")},
+                         # His "as surveyed", said as one: a zero is otherwise
+                         # what every untouched ticked frame carries, and
+                         # older files called those his too.
+                         **({"as_walked": True}
+                            if a.source == "operator" and not a.offset_mm
+                            else {}))
+                    for a in approved], key=lambda r: int(r["number"])),
+            }, keep_previous=True)
         except Exception as exc:                          # noqa: BLE001
             # Broad on purpose. This file is a note about what was asked for;
             # the scan is the work. Losing the note must never cost the roll,
@@ -3204,6 +3346,11 @@ class ScannerGui:
                 self.session.request_stop()
         self.closing = True
         self.v_state.set("closing ...")
+        # Every way out of the sheet keeps what was decided in it, and quitting
+        # with it open is one: for a walk not yet commissioned its state is the
+        # only record of the ticks, positions and turns. Before `_remember`,
+        # which is what writes them.
+        self._close_sheet()
         self._remember()
         self.session.shutdown()
         self._wait_to_quit()
@@ -3658,6 +3805,14 @@ class ScannerGui:
                     result.supersedes = earlier.seq
                     superseded = earlier
                     break
+        if self._surveying and result.kind == "prescan" and result.number:
+            # Here, where a walked prescan arrives, and nowhere else. It was
+            # done in `remember_arrangement`, which a turn or a flip also
+            # calls -- so turning a prescan while the walk ran put it in the
+            # survey a second time, and turning an older walk's put that one
+            # into this walk.
+            self._into_survey(result)
+            self.edge_watch.add(result.number, result.image)
         self._arrange(result, superseded)
         self.results.append(result)
 
@@ -3697,8 +3852,11 @@ class ScannerGui:
 
         Only a frame the sheet already held is replaced: the walk adding to it
         took that frame again, and one frame is one cell. Anything else is
-        appended, as every walk's prescans always were.
+        appended, as every walk's prescans always were -- once: a result the
+        survey already holds is left where it is.
         """
+        if any(r is result for r in self.survey):
+            return
         number = int(result.number)
         if number in self._kept_walk:
             for i, earlier in enumerate(self.survey):
@@ -3713,9 +3871,6 @@ class ScannerGui:
         key = picture_of(result)
         if key is not None:
             self.orientations[key] = (result.rotation, result.flipped)
-        if self._surveying and result.kind == "prescan" and result.number:
-            self._into_survey(result)
-            self.edge_watch.add(result.number, result.image)
         # Through the same filter the session's readout reports use, so a
         # counter no strip can have never becomes a forecast either.
         if plausible(result.position):
@@ -4211,9 +4366,23 @@ class ScannerGui:
     def on_delete(self, result) -> None:
         entry = result.entry
         question = f"Remove {result.label} from this session?"
+        if entry and entry.exists() and self.demo and not _within(
+                entry, self.session.root):
+            # A reopened roll's frames carry the entry their walk filed, and
+            # `make run-sheet` opens a real walk -- so this was a real entry,
+            # raw bytes and all, one "No" away from rmtree under the one mode
+            # promised to touch nothing real. The demo only ever removes what
+            # the demo filed; this frame leaves the window and nothing else.
+            question += (f"\n\nIts library entry {entry.name} is not the "
+                         "demo's own, and the demo leaves it alone.")
+            entry = None
         if entry and entry.exists():
             question += (f"\n\nIts library entry {entry.name} holds the raw "
                          "bytes, which cannot be recovered without rescanning.")
+            if result.seq < 0:
+                question += ("\n\nThis frame was reopened from a roll: the "
+                             "entry is the one its walk filed, not a copy made "
+                             "for this window.")
             keep = messagebox.askyesnocancel(
                 "Delete", question + "\n\nKeep the library entry?", parent=self.root)
             if keep is None:
@@ -4862,6 +5031,14 @@ def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
     return out
 
 
+#: Sequence numbers for reopened frames: negative, so never a live pass's --
+#: the session counts those up from 1 -- and never the same twice. They were
+#: ``-number``, so two reopened rolls, or one opened twice, gave two frames
+#: one number: the full-resolution view could show the other roll's pixels,
+#: and Delete removed both.
+_REOPENED_SEQ = itertools.count(-1, -1)
+
+
 def read_survey(folder, say=None) -> dict:
     """A walked strip, read back off disk so it need not be walked again.
 
@@ -4901,11 +5078,11 @@ def read_survey(folder, say=None) -> dict:
     roll_path = folder / "roll.json"
     if not survey_path.exists() and not roll_path.exists():
         raise ValueError("no survey.json and no roll.json")
-    manifest = json.loads(
-        (survey_path if survey_path.exists()
-         else roll_path).read_text(encoding="utf-8"))
-    progress = (json.loads(roll_path.read_text(encoding="utf-8"))
-                if roll_path.exists() else {})
+    # A file that does not parse is read from the version kept beside it, or
+    # refused by name -- never taken for an empty roll.
+    manifest = read_manifest(survey_path if survey_path.exists()
+                             else roll_path, say=say)
+    progress = read_manifest(roll_path, say=say)
     # Onto the strip's numbering, whatever each file was written with. A walk
     # made before frame numbers were places on the strip counted from wherever
     # it started -- rolls/2026-09-23 calls the frame on the counter's 5 its
@@ -4917,11 +5094,7 @@ def read_survey(folder, say=None) -> dict:
     # (`session.renumbered`) -- and the decisions filed against those
     # numbers with the walk's shift, having none of their own.
     shift = legacy_shift(manifest) or 0
-    # `approved.json` was written when a roll was commissioned, and that roll
-    # numbered its frames the way the file did -- so where the roll recorded
-    # positions, its shift is the file's, even when a later walk into the
-    # same folder has replaced the survey it was decided on.
-    decided = legacy_shift(progress) if progress else None
+    decided = approved_legacy(manifest, progress)
     manifest = renumbered(manifest, say=say)
     # The roll is said as well: a stale 72 in it, or two scans of one place,
     # is what the operator needs before scanning more into it -- and each of
@@ -4939,7 +5112,7 @@ def read_survey(folder, say=None) -> dict:
     mirrored = bool(manifest.get("flipped"))
 
     offsets, rotations, flips, entries, sources = read_approved(
-        folder, legacy=shift if decided is None else decided)
+        folder, legacy=decided, say=say)
 
     results = []
     # The walk's own records, as the roll tool's `--approved` reads them, so
@@ -4948,14 +5121,12 @@ def read_survey(folder, say=None) -> dict:
     for number, path, record in walked_prescans(folder, manifest):
         image = tiff.read(str(path))
         # Each file as it was written. A walk that added to another may have
-        # been made after "rotate all", so its frames need not share the
-        # manifest's pair; a record from before that was recorded has only it.
-        own = record.get("prescan_rotation")
-        own = turn if own is None else int(own)
-        own_flip = record.get("prescan_flipped")
-        own_flip = mirrored if own_flip is None else bool(own_flip)
+        # been made after "rotate all", or turned in the window while it ran,
+        # so its frames need not share the manifest's pair; a record from
+        # before that was recorded has only it.
+        own, own_flip = prescan_arrangement(manifest, record)
         result = Result(
-            seq=-number,                     # negative: never a live pass's seq
+            seq=next(_REOPENED_SEQ),         # see `_REOPENED_SEQ`
             kind="prescan",
             label=f"frame {number} (reopened)",
             image=preview.unorient(image, own, own_flip),
@@ -5118,15 +5289,21 @@ def roll_exports(summary: dict) -> list:
     settings = summary.get("settings") or {}
     turn = int(settings.get("rotation") or 0)
     mirrored = bool(settings.get("flipped"))
+    arranged = summary.get("arranged") or {}
     channels = 4 if settings.get("infrared") else 3
     out = []
     for number in sorted(summary.get("entries") or {}):
+        # What its frameNN.tif was written with, where the roll recorded it:
+        # a turn made in the window while the roll ran reached the frames
+        # written after it, and the roll's one `rotation` is the one it began
+        # with. Otherwise the frame's own decision where it made one, the
+        # roll's where not -- the precedence `_orientation_for` uses on the
+        # way out.
+        own = arranged.get(number)
         out.append(SimpleNamespace(
             entry=Path(summary["entries"][number]),
-            # The frame's own decision where it made one, the roll's otherwise --
-            # the same precedence `_orientation_for` uses on the way out.
-            rotation=rotations.get(number, turn),
-            flipped=flips.get(number, mirrored),
+            rotation=own[0] if own else rotations.get(number, turn),
+            flipped=own[1] if own else flips.get(number, mirrored),
             image=None,
             kind="frame",
             number=number,
@@ -5152,7 +5329,23 @@ def duplicate_name(folder) -> Path:
     raise ValueError(f"no free name beside {folder.name}")
 
 
-def read_approved(folder, legacy: int = 0):
+def approved_legacy(walk: dict, progress: dict) -> int:
+    """How far an older `approved.json`'s numbers sit behind the strip's.
+
+    It was written when a roll was commissioned, and that roll numbered its
+    frames the way the file did -- so where the roll recorded positions, its
+    shift is the file's, even when a later walk into the same folder has
+    replaced the survey it was decided on; otherwise the walk's. Both as read
+    from disk, before `renumbered`. One function for the reader and for the
+    commission that merges into the file, so the two cannot key one file two
+    ways.
+    """
+    shift = legacy_shift(walk or progress) or 0
+    decided = legacy_shift(progress) if progress else None
+    return shift if decided is None else decided
+
+
+def read_approved(folder, legacy: int = 0, say=None):
     """A roll's stored decisions: `(offsets, rotations, flips, entries, sources)`.
 
     `approved.json` is the one thing in a roll folder that is **not** derivable
@@ -5167,6 +5360,10 @@ def read_approved(folder, legacy: int = 0):
     numbers by the strip is read as it stands, and so is every file when the
     caller leaves ``legacy`` at 0 -- the export path, whose library entries
     carry the same numbers the file does.
+
+    ``say`` hears about a file that cannot be read. It used to come back as
+    "no decisions" with nothing said, which reopened a roll with every turn
+    and position gone and no sign that anything was missing.
     """
     folder = Path(folder)
     offsets: dict[int, float] = {}
@@ -5181,9 +5378,12 @@ def read_approved(folder, legacy: int = 0):
     if not approved_path.exists():
         return offsets, rotations, flips, entries, sources
     try:
-        stored = json.loads(approved_path.read_text(encoding="utf-8"))
+        stored = read_manifest(approved_path, say=say)
         records = stored.get("frames", [])
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError) as exc:
+        if say is not None:
+            say(f"{exc} -- this roll's own positions and turns are not "
+                "shown; the file is left as it is")
         return offsets, rotations, flips, entries, sources
     shift = 0 if stored.get("numbering") == NUMBERING else legacy
     for record in records:
@@ -5191,8 +5391,14 @@ def read_approved(folder, legacy: int = 0):
             number = int(record["number"]) + shift
         except (KeyError, TypeError, ValueError):
             continue
-        if record.get("offset_mm"):
-            offsets[number] = float(record["offset_mm"])
+        # A zero only where it says it was his: every ticked frame is written
+        # with a position, and an untouched one's zero is no decision at all.
+        # His "as surveyed" is, and read as absent the detector's number took
+        # its place on reopen. Who decided goes with the position, so an
+        # untouched frame's `source` is not read as his either.
+        placed = bool(record.get("offset_mm")) or bool(record.get("as_walked"))
+        if placed:
+            offsets[number] = float(record.get("offset_mm") or 0.0)
         # `is not None` rather than truthiness: an explicit zero is a decision
         # here, and a file written before this existed has no key at all rather
         # than a zero.
@@ -5202,7 +5408,7 @@ def read_approved(folder, legacy: int = 0):
             flips[number] = bool(record["flipped"])
         if record.get("reference_entry"):
             entries[number] = record["reference_entry"]
-        if record.get("source"):
+        if record.get("source") and placed:
             sources[number] = str(record["source"])
     return offsets, rotations, flips, entries, sources
 
@@ -5214,11 +5420,11 @@ def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
     hundred entries and a dozen rolls, and asking the question per roll turns a
     listing into a quadratic one.
 
-    The join is on `film.frame`, which `ScanSession._file` sets to
-    ``"{roll}-{NN}"`` for every roll frame. Nothing in a roll manifest records
-    its entries -- the entry is created on the writer thread *after* the frame's
-    record is written, and writing that file from both threads is a hazard worth
-    not introducing for a convenience.
+    The join is on the entry's own `roll_membership`, or on `film.frame`,
+    which `ScanSession._file` sets to ``"{roll}-{NN}"`` for every roll frame.
+    A roll's manifest names each frame's entry now too, once the writer has
+    filed it (`session.RollManifest`), but no roll written before that does,
+    and the entries are what an export re-corrects from -- so they are asked.
 
     `library.entries()` cannot be used here: it returns the records and throws
     away the folder each came from, which is the only part this needs.
@@ -5294,11 +5500,11 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     if not survey_path.exists() and not roll_path.exists():
         return None
     try:
-        manifest = json.loads(
-            (survey_path if survey_path.exists()
-             else roll_path).read_text(encoding="utf-8"))
-        progress = (json.loads(roll_path.read_text(encoding="utf-8"))
-                    if roll_path.exists() else {})
+        # The version kept beside a file that does not parse, rather than the
+        # roll dropping out of the list; see `session.read_manifest`.
+        manifest = read_manifest(survey_path if survey_path.exists()
+                                 else roll_path)
+        progress = read_manifest(roll_path)
     except (OSError, ValueError):
         return None
     # The same numbering `read_survey` puts on them, so the list and the sheet
@@ -5309,6 +5515,16 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     settings = progress.get("settings") or manifest.get("settings") or {}
     wanted = wanted_frames(manifest, progress)
     done = scanned_frames(progress)
+    # How each scanned frame's file was arranged, where the roll said.
+    arranged = {}
+    for record in progress.get("frames") or ():
+        try:
+            number = int(record["number"])
+            if record.get("rotation") is not None:
+                arranged[number] = (int(record["rotation"]) % 360,
+                                    bool(record.get("flipped")))
+        except (KeyError, TypeError, ValueError):
+            continue
     # `stat` only, no pixels: a roll directory can hold 38 frames at 142 MB, and
     # the whole point of this function is that listing a shelf of them is cheap.
     sizes, newest = 0, 0.0
@@ -5346,6 +5562,7 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         "wanted": wanted,
         "done": sorted(done),
         "remaining": [n for n in wanted if n not in done],
+        "arranged": arranged,
     }
 
 
@@ -5481,6 +5698,39 @@ def roll_line(summary: dict) -> str:
     if summary["film"]:
         parts.append(str(summary["film"]))
     return "  ·  ".join(parts)
+
+
+def folder_note(folder, dry: bool) -> str:
+    """Where a roll from the Roll button goes, and what is there already.
+
+    Said in the question that starts it, because the folder decides what is
+    replaced: a walk into a folder that holds one replaces its survey.json and
+    overwrites its prescans frame by frame, and a roll into one adds to its
+    roll.json and overwrites its frame files. With the date as every unnamed
+    roll's folder that happened to each strip of a day with no word; the name
+    is new for each roll now, so this only ever warns about a name he typed.
+    """
+    folder = Path(folder)
+    where = f"Into {folder.parent.name}/{folder.name}"
+    summary = roll_summary(folder) if folder.is_dir() else None
+    if summary is None:
+        return f"{where}, a new roll."
+    held = []
+    if summary["walked"]:
+        held.append(f"a walk of frames {number_spans(summary['wanted'])}"
+                    if summary["wanted"] else "a walk")
+    if summary["scanned"]:
+        done = len(summary["done"])
+        held.append(f"{done} scanned frame{'s' if done != 1 else ''}")
+    already = f"{where}, which already holds {' and '.join(held) or 'files'}."
+    if dry:
+        return (f"{already} This walk replaces its walk -- the old survey is "
+                "kept beside it as survey.json.bak, and its prescans are "
+                "overwritten frame by frame. Clear the roll box for a new "
+                "roll if this is another strip.")
+    return (f"{already} This roll adds its frames to it, and a frame scanned "
+            "again replaces its file. Clear the roll box for a new roll if "
+            "this is another strip.")
 
 
 def scanned_frames(manifest: dict) -> set[int]:
@@ -5765,6 +6015,13 @@ def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[di
     than kept, so today's reading replaces it; see `_propose_positions`.
     """
     known = remembered or {}
+    # His "as surveyed" as well, which a sheet saved before zeros were kept
+    # recorded as his with no position at all.
+    theirs = {int(n) for n, source in known.items() if source == "operator"}
+    kept = dict(kept)
+    for n in theirs:
+        if all(int(k) != n for k in kept):
+            kept[n] = 0.0
     for number, value in kept.items():
         n = int(number)
         fresh = notes.get(n) or {}
@@ -5988,6 +6245,11 @@ def frame_caption(offset, source, done=False, contrast=0.0, read=False):
         said = f"{say_units(offset)} ({source})" if offset else f"in place ({source})"
     elif offset:
         said = f"moved {say_units(offset)}"
+    elif source == "operator":
+        # His "as surveyed". It read "contrast 0.42", the same as a frame
+        # nobody had touched, so the one decision that keeps the detector off
+        # a frame could not be seen on the sheet.
+        said = "as walked (yours)"
     elif read:
         said = "in place"
     else:
@@ -6058,8 +6320,10 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
 
     `sources` says where each number came from -- the sheet's own per-frame
     note, keyed by frame number. Defaulted, so the records still build without
-    it, and absent means `operator`: that is what an approval used to mean
-    before the sheet pre-filled a position for every frame it could read. It is
+    it; a frame with no note is `none`, since nothing has decided it -- not
+    `operator`, which is what an approval meant before the sheet pre-filled a
+    position for every frame it could read, and which then claimed his
+    decision for every frame the reader had not reached yet. It is
     carried so the driver's log can say `measured` where a detector decided,
     which is what `_hold_to_approved`'s `source` exists for.
     """
@@ -6080,7 +6344,11 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
             # and a Path here reaches json.dumps in _write_approved and
             # raises -- which used to take the whole commission down with it.
             reference_entry=str(getattr(result, "entry", "") or ""),
-            source=(labels.get(number) or {}).get("source") or "operator",
+            # "none" for a frame nothing has placed: not read yet and not
+            # touched. It was "operator", so a roll commissioned while the
+            # edge light was still blue logged his decision for frames he
+            # never touched -- and filed their zeros as his "as surveyed".
+            source=(labels.get(number) or {}).get("source") or "none",
         ))
     return tuple(out)
 
@@ -6853,9 +7121,13 @@ class _FrameAdjuster:
         self._drag_from: float | None = None
         self._drag_base = 0.0
 
-        self.top = tk.Toplevel(gui.root)
+        # A child of the sheet's window, so it closes with the sheet however
+        # the sheet is closed. A child of the main window, it outlived the
+        # sheet, and every position set in it afterwards went into a sheet
+        # that no longer existed -- redrawn here as if accepted, and lost.
+        self.top = tk.Toplevel(sheet.top)
         self.top.title("Frame position")
-        self.top.transient(gui.root)
+        self.top.transient(sheet.top)
         self.top.geometry(f"{self.WIDTH}x{self.HEIGHT}")
 
         outer = ttk.Frame(self.top, padding=10)
@@ -7020,11 +7292,11 @@ class _FrameAdjuster:
         badge, and the confirm dialog went on counting it as measured. It is
         his the moment he moves it.
         """
-        value = snap_offset(millimetres)
-        if value:
-            self.sheet.offsets[self.number] = value
-        else:
-            self.sheet.offsets.pop(self.number, None)
+        # Zero is kept, not dropped: "as walked" is his answer as much as any
+        # other, and an absent entry is where the detector's goes. Dropped,
+        # it survived only as long as this sheet did -- reopened, the detector's
+        # number came back in its place and the roll moved the frame.
+        self.sheet.offsets[self.number] = snap_offset(millimetres)
         self.sheet.proposals[self.number] = {"source": "operator",
                                              "reason": "you set this one"}
         self._refresh()
@@ -7486,9 +7758,10 @@ class _ContactSheet:
         #: resume exists to not spend twice. Ticking one anyway rescans it,
         #: which is the right escape hatch for a frame that came out wrong.
         self.done: set[int] = {int(n) for n in (done or ())}
-        #: Where the operator says each frame should sit, in mm, relative to
-        #: where it was surveyed. Absent means "as surveyed" -- an explicit
-        #: zero never lands here, because snap_offset returns it as absent.
+        #: Where each frame should sit, in mm, relative to where it was
+        #: surveyed. Absent means no decision: as surveyed until the detector
+        #: says otherwise. A zero is his "as surveyed" (`_FrameAdjuster._set`)
+        #: and its note says so; the detector's in-place frames are absent.
         self.offsets: dict[int, float] = dict(offsets or {})
         #: Where each proposed offset came from, so a caption can say whether
         #: a number was measured, read by one detector and uncorroborated, or
@@ -8196,12 +8469,13 @@ class _ContactSheet:
         and a sheet rebuilt without them comes back with the whole strip
         ticked, which is the opposite of what was decided.
 
-        The three per-frame maps keep their own conventions rather than being
-        flattened together. `offsets` treats an absent entry and an explicit
-        zero as the same thing; `rotations` and `flips` must not, because
-        "rotate all" moves the session default and a frame straightened by
-        hand would fall back to it and be scanned sideways. That happened on
-        the first strip this was driven on.
+        In none of the three per-frame maps is an explicit zero the same as an
+        absent entry. `rotations` and `flips` because "rotate all" moves the
+        session default and a frame straightened by hand would fall back to
+        it and be scanned sideways -- that happened on the first strip this
+        was driven on. `offsets` because an absent position is the
+        detector's to fill, and his "as surveyed" was replaced by its number
+        on the next reopen.
         """
         return {
             "ticks": {int(n): bool(v.get()) for n, v in self.ticks.items()},
@@ -8237,6 +8511,8 @@ class _ContactSheet:
             # Remembering is never allowed to stop the window closing. A sheet
             # that will not close is worse than one that forgets.
             self.gui._say(f"could not keep the contact sheet settings: {exc}")
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster.top.destroy()
         self.top.destroy()
 
     # -- picking -----------------------------------------------------------
@@ -8327,6 +8603,17 @@ class _ContactSheet:
             return bool(self.top.winfo_exists())
         except tk.TclError:
             return False
+
+
+def _within(path, root) -> bool:
+    """Whether `path` is inside the folder `root`, both as the disk sees them."""
+    if not root:
+        return False
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _descendants(widget):
@@ -8470,9 +8757,10 @@ def main() -> int:
     # A path is taken as given, which under --demo means a real walk in
     # `rolls/` and not `demo/rolls`. That is deliberate: the point of the demo
     # sheet is a strip that was actually walked. It is safe because opening a
-    # roll only reads it -- `_write_approved` derives its folder from
-    # `session.rolls`, which --demo pins under `demo/`, so nothing the window
-    # does afterwards can write back into the walk it is showing.
+    # roll only reads it -- a roll commissioned from it goes to
+    # `_roll_folder`, which is always under `session.rolls`, and --demo pins
+    # that under `demo/`, so nothing the window does afterwards can write
+    # back into the walk it is showing.
     open_roll = None
     if args.open_roll:
         rolls_dir = Path(args.rolls) if args.rolls else home / "rolls"

@@ -828,6 +828,8 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _per_frame_seconds=lambda **kw: 60.0,
         _approved_note=lambda *a: "", _options_note=lambda *a: "",
         _write_approved=lambda *a: None, _notes=FilmNotes,
+        _roll_folder=lambda: tmp_path / "rolls" / "sheet-roll",
+        _show_roll_name=lambda name, ours=True: None,
         _edges_pending=lambda: "", _update_roll_eta=lambda: None,
         _tags=lambda: (), _say=lambda *a: None,
         session=types.SimpleNamespace(submit=submitted.append,
@@ -1706,11 +1708,7 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
     import types
 
     said = []
-    stub = types.SimpleNamespace(
-        session=types.SimpleNamespace(rolls=str(tmp_path)),
-        fields={"roll": types.SimpleNamespace(get=lambda: "a-roll")},
-        _say=said.append,
-    )
+    stub = types.SimpleNamespace(_say=said.append)
 
     class Approvedish:
         number = 1
@@ -1718,15 +1716,54 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
         reference_entry = ""
 
     # Anything at all going wrong in here -- not just the Path that actually
-    # did it -- has to be contained.
-    def boom():
-        raise RuntimeError("the roll name went missing")
-
-    stub.fields["roll"].get = boom
-    gui.ScannerGui._write_approved(stub, (Approvedish(),))
+    # did it -- has to be contained: here a folder that cannot be made.
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    gui.ScannerGui._write_approved(stub, (Approvedish(),), blocker / "a-roll")
 
     assert said and "scanning anyway" in said[0]
-    assert "went missing" in said[0]
+    assert "a-roll" in said[0]
+
+
+def _approving(said=None):
+    """Enough of the window for `_write_approved` to file into a roll."""
+    return types.SimpleNamespace(
+        _say=(said.append if said is not None else lambda *a: None))
+
+
+def test_a_commission_adds_to_the_decisions_already_filed(tmp_path):
+    """Each commission replaced approved.json with only the frames ticked
+    that time, so finishing a roll's last three frames erased the turns of
+    the first fifteen -- which Export then used."""
+    stub, folder = _approving(), tmp_path / "a-roll"
+    gui.ScannerGui._write_approved(stub, (Approved(1, rotation=90),
+                                          Approved(2, rotation=180)), folder)
+    gui.ScannerGui._write_approved(stub, (Approved(2, rotation=0),
+                                          Approved(3, rotation=270)), folder)
+    _off, rotations, _flips, _entries, _src = gui.read_approved(
+        tmp_path / "a-roll")
+    assert rotations == {1: 90, 2: 0, 3: 270}
+    kept = json.loads((tmp_path / "a-roll" / "approved.json.bak").read_text(
+        encoding="utf-8"))
+    assert [f["number"] for f in kept["frames"]] == [1, 2]
+
+
+def test_approved_json_that_cannot_be_read_is_kept_and_said(tmp_path):
+    """A damaged file read back as "no decisions" with nothing said, and the
+    next commission wrote over it."""
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text('{"frames": [{"num',
+                                          encoding="utf-8")
+    said = []
+    assert gui.read_approved(folder, say=said.append)[1] == {}
+    assert said and "approved.json" in said[0]
+    gui.ScannerGui._write_approved(_approving(said),
+                                   (Approved(4, rotation=90),), folder)
+    assert (folder / "approved.json.unreadable").read_text(
+        encoding="utf-8") == '{"frames": [{"num'
+    assert gui.read_approved(folder)[1] == {4: 90}
+    assert any("approved.json.unreadable" in line for line in said)
 
 
 def test_an_unticked_frame_says_so_in_words():
@@ -3106,6 +3143,60 @@ def test_an_export_plan_holds_each_frames_own_arrangement(tmp_path):
     assert plan[1].meta["channels"] == 4, "the roll was infrared"
 
 
+def test_an_export_is_arranged_the_way_each_frame_file_was_written():
+    """A turn made in the window while a roll ran reached the frames written
+    after it; the roll's one `rotation` is the one it began with. The frame's
+    own record says what its file got, and wins."""
+    summary = {"folder": "/nowhere", "settings": {"rotation": 0},
+               "entries": {1: "e1", 2: "e2", 3: "e3"},
+               "arranged": {2: (90, True)}}
+    plan = {item.number: item for item in gui.roll_exports(summary)}
+    assert (plan[1].rotation, plan[1].flipped) == (0, False)
+    assert (plan[2].rotation, plan[2].flipped) == (90, True)
+
+
+def test_a_roll_summary_says_how_each_frame_file_was_arranged(tmp_path):
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": 1, "done": True},
+            {"number": 2, "done": True, "rotation": 450, "flipped": True}]}),
+        encoding="utf-8")
+    assert gui.roll_summary(folder)["arranged"] == {2: (90, True)}
+
+
+def test_turning_a_walked_prescan_does_not_walk_it_twice():
+    """A turn or a flip calls `remember_arrangement`, which added a walked
+    prescan to the survey: turning one while the walk ran put it on the sheet
+    twice, and turning an older walk's put it into this walk."""
+    import types
+
+    added = []
+    stub = types.SimpleNamespace(
+        rotation=0, flip=False, orientations={}, results=[], survey=[],
+        _surveying=True, _transport=None, _kept_walk=set(), _rewalked=set(),
+        edge_watch=types.SimpleNamespace(add=lambda n, im: added.append(n)),
+        _show=lambda _r: None, _redraw_strip=lambda: None)
+    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    stub._into_survey = lambda r: gui.ScannerGui._into_survey(stub, r)
+    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
+        stub, r)
+
+    def prescan(number, seq):
+        return types.SimpleNamespace(kind="prescan", number=number, seq=seq,
+                                     image=None, position=number - 1, meta={})
+
+    older = prescan(7, 1)          # from a walk before this one, not in it
+    first = prescan(1, 2)
+    gui.ScannerGui._add_result(stub, first)
+    first.rotation = 90
+    stub.remember_arrangement(first)
+    older.rotation, older.flipped = 180, False
+    stub.remember_arrangement(older)
+    assert stub.survey == [first] and added == [1]
+
+
 def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):
     """Export re-corrects from the entries, so a frame without one cannot be
     exported at all. Left out here; the window counts the difference against
@@ -4123,6 +4214,111 @@ def test_a_reading_that_arrives_late_fills_the_sheet_and_leaves_his_alone(
     sheet.top.destroy()
 
 
+def test_his_as_surveyed_is_still_his_when_the_sheet_is_reopened(window,
+                                                                 tmp_path):
+    """Centre on a frame the detector wanted to move: an explicit zero. It
+    was dropped from the offsets, so on the next reopen the detector's number
+    came back labelled measured, and the roll moved the frame."""
+    app, root = window
+    sheet, offsets, notes = _sheet_with_readings(app, tmp_path)
+    sheet.take_readings(offsets, notes)
+    assert sheet.offsets.get(1), "the detector proposes a move for frame 1"
+    sheet.adjust(0)
+    root.update()
+    sheet._adjuster._centre()
+    assert sheet.offsets[1] == 0.0 and sheet.proposals[1]["source"] == "operator"
+    assert sheet._captions[1].cget("text") == "as walked (yours)"
+    state = json.loads(json.dumps(sheet.state()))       # through the settings
+    frames = sheet.frames
+    sheet.top.destroy()
+
+    kept = gui.ScannerGui._clean_sheet_state(state)
+    mine, mine_notes = gui._merge_kept({}, {}, kept["offsets"], kept["sources"])
+    again = gui._ContactSheet(app, frames, offsets=mine, proposals=mine_notes,
+                              readings=(offsets, notes))
+    assert again.offsets[1] == 0.0
+    assert again.proposals[1]["source"] == "operator"
+    again.top.destroy()
+
+
+def test_a_sheet_saved_before_zeros_were_kept_still_keeps_his_centre():
+    """Those recorded him as the source of a frame with no position at all."""
+    out, notes = gui._merge_kept({1: 0.5116}, {1: {"source": "measured"}},
+                                 {}, {1: "operator", 2: "measured"})
+    assert out[1] == 0.0 and notes[1]["source"] == "operator"
+    assert 2 not in out
+
+
+def test_his_as_surveyed_goes_into_approved_json_as_his(tmp_path):
+    """Every ticked frame is written with a position, so a zero alone says
+    nothing -- an untouched frame's zero is no decision, and older files
+    labelled those `operator` too. His is marked."""
+    class R:
+        def __init__(self, number):
+            self.number, self.image, self.entry = number, None, ""
+
+    approved = gui.approved_from_sheet(
+        [R(1), R(2), R(3)], (1, 2, 3), {1: 0.0, 3: 0.5116},
+        {1: {"source": "operator"}, 3: {"source": "measured"}})
+    assert [a.source for a in approved] == ["operator", "none", "measured"]
+    folder = tmp_path / "roll"
+    gui.ScannerGui._write_approved(_approving(), approved, folder)
+    offsets, _r, _f, _e, sources = gui.read_approved(folder)
+    assert offsets == {1: 0.0, 3: pytest.approx(0.5116)}
+    assert sources == {1: "operator", 3: "measured"}
+
+    older = tmp_path / "older"
+    older.mkdir()
+    (older / "approved.json").write_text(json.dumps({"numbering": "strip",
+        "frames": [{"number": 4, "offset_mm": 0.0, "source": "operator"}]}),
+        encoding="utf-8")
+    offsets, _r, _f, _e, sources = gui.read_approved(older)
+    assert offsets == {} and sources == {}, "an untouched frame, as it was"
+
+
+def test_the_frame_position_window_closes_with_its_sheet(window, tmp_path):
+    """It was the main window's child, outlived the sheet, and every position
+    set in it afterwards went into a sheet that no longer existed."""
+    app, root = window
+    sheet, _offsets, _notes = _sheet_with_readings(app, tmp_path)
+    sheet.adjust(0)
+    root.update()
+    adjuster = sheet._adjuster
+    assert adjuster.alive()
+    sheet._dismiss()
+    root.update()
+    assert not adjuster.alive()
+
+
+def test_opening_another_roll_keeps_what_the_open_sheet_held(window, tmp_path,
+                                                            monkeypatch):
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    first = _walked_folder(tmp_path, count=3).rename(tmp_path / "first")
+    second = _walked_folder(tmp_path, count=3)
+    app.open_roll(first)
+    app.sheet._rotate(2, 90)
+    app.open_roll(second)
+    assert app.remembered["sheet"]["first"]["rotations"][2] == 90
+    app.sheet.top.destroy()
+
+
+def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
+                                                 monkeypatch):
+    """For a walk not yet commissioned the sheet is the only record of the
+    ticks, positions and turns, and quitting with it open lost them."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    sheet = app.sheet
+    sheet._rotate(3, 180)
+    app.on_close()
+    assert not sheet.alive()
+    assert app.remembered["sheet"]["walk"]["rotations"][3] == 180
+
+
 def test_reset_in_the_big_view_puts_that_frame_back_and_no_other(window, tmp_path):
     app, root = window
     sheet, offsets, notes = _sheet_with_readings(app, tmp_path)
@@ -4414,6 +4610,227 @@ def test_a_fresh_walk_closes_the_sheet_of_the_last_one(window, monkeypatch):
     assert not old.alive() and app.sheet is not old
     assert [r.number for r in app.sheet.frames] == [1, 2, 3]
     app.sheet.top.destroy()
+
+
+# -- one roll, one folder ----------------------------------------------------
+
+
+def test_an_unnamed_strip_gets_a_name_of_its_own_and_keeps_it(window,
+                                                              monkeypatch):
+    """With the roll box empty, every walk and roll of a day went to
+    rolls/<date>, the sheet's decisions to rolls/roll, and a second strip
+    replaced the first one's walk. Now the walk makes a name, shows it, and
+    the commission scans into the walk's own folder beside its decisions."""
+    import pathlib
+
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    assert app.fields["roll"].get() == ""
+    _walk_through(app, root, monkeypatch, "1", "2")
+    first = pathlib.Path(app._sheet_roll)
+    assert first.parent == pathlib.Path(app.session.rolls)
+    assert app.fields["roll"].get() == first.name, "shown to the operator"
+
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.sheet._scan()
+    assert jobs[0].out == str(first)
+    assert (first / "approved.json").exists()
+    assert (first / "survey.json").exists()
+    assert not (pathlib.Path(app.session.rolls) / "roll").exists()
+
+
+def test_a_second_strip_walked_is_a_second_roll(window, monkeypatch):
+    import pathlib
+
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    first = pathlib.Path(app._sheet_roll)
+    _walk_through(app, root, monkeypatch, "1", "3", keep=False)
+    second = pathlib.Path(app._sheet_roll)
+    assert second != first and app.fields["roll"].get() == second.name
+    walked = json.loads((first / "survey.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in walked["frames"]] == [1, 2], "left alone"
+    app.sheet.top.destroy()
+
+
+def test_a_folder_he_named_says_what_it_holds_before_a_walk_replaces_it(
+        window, monkeypatch):
+    """A name he typed is his to reuse, and the question that starts the walk
+    says what is in that folder already."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    app.fields["roll"].set("mine")
+    _walk_through(app, root, monkeypatch, "1", "2")
+    app.sheet.top.destroy()
+    app.survey = []                              # nothing to keep: one question
+    said, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or False)
+    app.v_startat.set("1")
+    app.v_last.set("3")
+    app.on_roll()
+    assert "Into rolls/mine, which already holds a walk" in said[0]
+    assert "replaces its walk" in said[0]
+    assert jobs == [], "Cancel moves nothing"
+
+
+def test_a_reopened_roll_is_continued_in_its_own_folder(window, tmp_path,
+                                                        monkeypatch):
+    """Its name was never put back in the roll box, so "continue" scanned
+    into rolls/<today> beside it."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    (tmp_path / "rolls").mkdir()
+    folder = _walked_folder(tmp_path / "rolls", count=3)
+    app.open_roll(folder)
+    assert app.fields["roll"].get() == folder.name
+    assert app._next_roll_folder(fresh=False) == folder
+    assert app._roll_folder() == folder
+    assert app._next_roll_folder(fresh=True) != folder, (
+        "a fresh walk is another strip, not a walk over this one")
+    app.sheet.top.destroy()
+
+
+def test_a_roll_opened_from_elsewhere_is_never_scanned_back_into(window,
+                                                                 tmp_path,
+                                                                 monkeypatch):
+    """`--open-roll` under `--demo` shows a real walk; what the demo then
+    scans goes under its own rolls folder, beside nothing real."""
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)
+    assert app._roll_folder() == pathlib.Path(app.session.rolls) / folder.name
+    app.sheet.top.destroy()
+
+
+def test_a_walk_added_to_a_roll_opened_from_elsewhere_stays_here(window,
+                                                                 tmp_path,
+                                                                 monkeypatch):
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.v_startat.set("4")
+    app.v_last.set("5")
+    app.on_roll()
+    assert jobs[0].extend_walk
+    assert jobs[0].out == str(pathlib.Path(app.session.rolls) / folder.name)
+
+
+def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
+    new = gui.folder_note(tmp_path / "rolls" / "fresh", dry=True)
+    assert new == "Into rolls/fresh, a new roll."
+    folder = tmp_path / "rolls" / "old"
+    folder.mkdir(parents=True)
+    (folder / "survey.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": [{"number": 1}, {"number": 2}]}),
+        encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": [{"number": 2, "done": True}]}),
+        encoding="utf-8")
+    walk = gui.folder_note(folder, dry=True)
+    assert "a walk of frames 1-2 and 1 scanned frame" in walk
+    assert "replaces its walk" in walk
+    assert "adds its frames" in gui.folder_note(folder, dry=False)
+
+
+# -- reopened frames ------------------------------------------------------------
+
+
+def test_reopened_frames_never_share_a_sequence_number(tmp_path):
+    """They were ``-number``: two rolls reopened, or one opened twice, gave
+    two frames one number, and the full-resolution view and Delete took the
+    wrong one."""
+    folder = _walked_folder(tmp_path, count=3)
+    seqs = [r.seq for _ in range(2)
+            for r in gui.read_survey(folder)["results"]]
+    assert len(set(seqs)) == 6 and all(seq < 0 for seq in seqs)
+
+
+def _reopened_with_entry(app, entry):
+    from rps7200.session import Result
+
+    result = Result(seq=-99, kind="prescan", label="frame 3 (reopened)",
+                    image=np.zeros((4, 6, 3), np.uint8), meta={},
+                    entry=entry, number=3)
+    result.hidden, result.supersedes = False, None
+    result.rotation, result.flipped = 0, False
+    app.results.append(result)
+    return result
+
+
+def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
+                                                           monkeypatch):
+    """`make run-sheet` opens a real walk, whose frames carry the entries it
+    filed. Delete on one, and No to "keep the entry?", removed a real entry's
+    raw bytes under the one mode promised to touch nothing real."""
+    app, root = window
+    entry = tmp_path / "real-library" / "an-entry"
+    entry.mkdir(parents=True)
+    (entry / "scan.tif").write_bytes(b"raw")
+    result = _reopened_with_entry(app, entry)
+    said = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("offered to delete it"))
+    app.on_delete(result)
+    assert (entry / "scan.tif").exists()
+    assert "not the demo's own" in said[0]
+    assert result not in app.results, "it still leaves the window"
+
+
+def test_deleting_a_reopened_frames_entry_says_what_it_is_first(window,
+                                                                monkeypatch):
+    import pathlib
+
+    app, root = window
+    entry = pathlib.Path(app.session.root) / "an-entry"
+    entry.mkdir(parents=True)
+    (entry / "scan.tif").write_bytes(b"raw")
+    result = _reopened_with_entry(app, entry)
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or None)
+    app.on_delete(result)
+    assert "the one its walk filed" in asked[0]
+    assert entry.exists() and result in app.results, "Cancel is cancel"
+
+
+def test_a_plain_roll_is_not_shown_with_the_sheets_turns(window, monkeypatch):
+    """The Roll button's frames are written the session's way; turns a sheet
+    left against frame numbers put this roll's frames of the same number on
+    screen, and in Save As, the other way up from their files."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(False)
+    app.orientations = {("frame", 2): (90, False), ("at", 5): (180, True)}
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    app.v_startat.set("1")
+    app.v_last.set("3")
+    app.on_roll()
+    assert app.orientations == {("at", 5): (180, True)}
 
 
 # -- a pass read bottom-up is shown upright, and nothing is turned by it ------

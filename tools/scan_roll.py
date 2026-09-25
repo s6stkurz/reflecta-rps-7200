@@ -40,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import tiff
+from rps7200 import preview, tiff
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
@@ -60,8 +60,16 @@ from rps7200.session import (
     Approved,
     FilmNotPlaced,
     FrameWriter,
+    RollManifest,
+    earlier_manifest,
+    keep_first_numbering,
     plan_nudges,
+    prescan_arrangement,
+    recorded_roll_name,
+    renumbered,
+    roll_dir,
     seek,
+    walk_shift,
     walked_prescans,
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
@@ -149,7 +157,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-shading", action="store_true",
                     help="skip calibration entirely; scans come back striped")
     ap.add_argument("--roll", default=None,
-                    help="name for this roll (default: today's date)")
+                    help="name for this roll (default: the date and time, "
+                         "new for every run). Made safe to be a folder name, "
+                         "as the window makes it")
     ap.add_argument("--out", default=None, metavar="DIR",
                     help="where the manifest and per-frame TIFFs go "
                          "(default: rolls/<roll>)")
@@ -244,9 +254,16 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
             except (OSError, ValueError) as exc:
                 raise SystemExit(f"{folder / name} cannot be read: {exc}")
             break
-    frames = [(number, tiff.read(str(path)))
-              for number, path, _ in walked_prescans(folder, manifest,
-                                                     say=print)]
+    # Each un-turned into the film's own orientation first, by the pair its
+    # file was written with, as the window's `read_survey` does. The window
+    # writes a walk's prescans arranged the way the screen had them, and they
+    # were used here as they lay on disk -- a walk made turned or mirrored was
+    # handed to the detector, and to the hold as references, the wrong way
+    # round.
+    frames = [(number, preview.unorient(tiff.read(str(path)),
+                                        *prescan_arrangement(manifest, record)))
+              for number, path, record in walked_prescans(folder, manifest,
+                                                          say=print)]
     if not frames:
         raise SystemExit(f"{folder}'s walk lists no prescans that are still "
                          "there, so there is nothing to propose positions from")
@@ -309,8 +326,18 @@ def main() -> int:
               f"{args.approved}: "
               + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
 
-    roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
-    out = Path(args.out or f"rolls/{roll_name}")
+    # The folder the window's rolls use for the same name (`roll_dir`): made
+    # safe to be one folder, and a new name of its own when none is given.
+    # It was `rolls/<today>`, the folder every unnamed walk of the window's
+    # went into too -- so a run from here replaced that day's walk. The label
+    # its frames carry is the one the folder already records, as the
+    # window's is, so a roll added to keeps calling itself what it did.
+    if args.out:
+        out = Path(args.out)
+        roll_name = args.roll or recorded_roll_name(out) or out.name
+    else:
+        out = roll_dir("rolls", args.roll or "")
+        roll_name = recorded_roll_name(out) or out.name
     # A dry run and the scan that follows it share a directory, so they must
     # not share a file: the record of what was walked is what says which frames
     # are worth scanning, and writing the scan over it loses that.
@@ -344,21 +371,21 @@ def main() -> int:
         "frames": [],
     }
 
-    def checkpoint() -> None:
-        """Rewritten after every frame: a crash must not lose the record."""
-        manifest_path.write_text(json.dumps(manifest, indent=2, default=str),
-                                 encoding="utf-8")
+    #: The one writer of the manifest, from this thread and the writer's; see
+    #: `session.RollManifest`. Made once the roll is placed, and not before.
+    record_of: RollManifest | None = None
 
     started = time.monotonic()
     scanned = failed = 0
     #: Whether the film reached the roll's first frame and the calibration
     #: after it succeeded, and so whether this run has a manifest at all.
     #: Nothing is written before that, which is `ScanSession._roll`'s
-    #: "before the directory, before the manifest": the
-    #: default roll name is today's date, the name the window's walks use,
-    #: and the manifest used to be written before the device was even
-    #: opened -- so a seek that refused replaced that day's survey.json with
-    #: an empty one, and the walk it described was gone.
+    #: "before the directory, before the manifest": the default roll name
+    #: was today's date, the name the window's walks used, and the manifest
+    #: used to be written before the device was even opened -- so a seek that
+    #: refused replaced that day's survey.json with an empty one, and the walk
+    #: it described was gone. A folder named with --roll or --out can still
+    #: hold a walk.
     placed = False
 
     writer = FrameWriter()
@@ -476,7 +503,31 @@ def main() -> int:
             # hand, so there is a roll to record -- and not before. See
             # `placed`: a calibration that fails leaves the folder as it was.
             out.mkdir(parents=True, exist_ok=True)
-            checkpoint()
+            if not args.dry_run:
+                # Carried forward, as the window's rolls are: this run's frames
+                # replace the ones it takes again and the rest stay. The
+                # docstring has promised a resume since `--start-at` existed,
+                # and the manifest was written afresh over the earlier run's
+                # -- the one record of which frames it had scanned. A walk is
+                # its own: a new one replaces the last, which stays beside it
+                # as survey.json.bak.
+                earlier = earlier_manifest(manifest_path, say=print)
+                keep_first_numbering(manifest_path, earlier)
+                earlier = renumbered(earlier, fallback=walk_shift(out),
+                                     say=print)
+                manifest["frames"] = list(earlier.get("frames") or [])
+                if manifest["frames"]:
+                    print(f"adding to {manifest_path}: "
+                          f"{len(manifest['frames'])} frame(s) from earlier "
+                          "runs are kept, and a frame taken again replaces "
+                          "its own record")
+            elif manifest_path.exists():
+                # Said, since nobody is asked: --roll or --out named a folder
+                # that holds a walk, and this one replaces it.
+                print(f"replacing the walk in {manifest_path}; the old one is "
+                      f"kept beside it as {manifest_path.name}.bak")
+            record_of = RollManifest(manifest_path, manifest)
+            record_of.write()
             placed = True
 
             for frame in s.scan_roll(
@@ -517,7 +568,11 @@ def main() -> int:
                     "error": frame.error,
                     "entry": None,
                     "file": None,
+                    # True once the writer has filed it, and not before; see
+                    # `session.RollManifest`.
+                    "done": False,
                 }
+                submitted = False
 
                 if frame.error:
                     failed += 1
@@ -588,7 +643,10 @@ def main() -> int:
                 else:
                     scanned += 1
                     path = out / f"frame{number:02d}.tif"
-                    record["file"] = path.name
+                    # `file` is written when the writer has written it, by
+                    # `on_filed` below. It used to be set here, naming a TIFF
+                    # nothing had written yet -- and after a crash or a full
+                    # disk, one nothing ever would.
                     record["shape"] = list(frame.image.shape)
                     record["duration_s"] = frame.meta.get("duration_s")
                     record["exposure"] = frame.meta.get("exposure")
@@ -638,12 +696,17 @@ def main() -> int:
                             frame=roll_frame_label(roll_name, number),
                             notes=args.notes,
                         ),
+                        on_filed=(lambda entry, error, written, n=number,
+                                  p=path: record_of.filed(
+                                      n, entry, error,
+                                      **({"file": p.name} if p in written
+                                         else {}))),
                     )
+                    submitted = True
                     print(f"picture {number}: {path} {frame.image.shape} "
                           f"in {frame.meta.get('duration_s')}s")
 
-                manifest["frames"].append(record)
-                checkpoint()
+                record_of.record(record, awaiting=submitted)
 
     except BaseException as exc:                          # noqa: BLE001
         # Recorded rather than raised: the frames already scanned are
@@ -690,7 +753,8 @@ def main() -> int:
         manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
-    checkpoint()
+    if record_of is not None:                      # placed, so it was made
+        record_of.write()
 
     print(f"\n{scanned} scanned, {failed} failed, "
           f"{manifest['duration_s']/60:.1f} min")

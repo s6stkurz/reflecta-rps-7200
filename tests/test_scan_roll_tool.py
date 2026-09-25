@@ -362,6 +362,76 @@ def test_start_at_is_a_place_on_the_strip(tmp_path, monkeypatch):
     assert manifest["numbering"] == "strip"
 
 
+def test_start_at_resumes_the_roll_rather_than_replacing_it(tmp_path,
+                                                            monkeypatch):
+    """The docstring promised `--start-at` resumes from the manifest; it wrote
+    a fresh one over it, and the record of the frames already scanned went
+    with it."""
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    _scanner, code = run(tmp_path, monkeypatch, "--start-at", "3",
+                         "--frames", "2")
+    assert code == 0
+    folder = tmp_path / "roll"
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in manifest["frames"]] == [1, 2, 3, 4]
+    assert all(f["done"] and f["file"] for f in manifest["frames"])
+    # and the run before this one, as it stood, beside it
+    before = json.loads((folder / "roll.json.bak").read_text(encoding="utf-8"))
+    assert [f["number"] for f in before["frames"]] == [1, 2]
+
+
+def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
+    """`rolls/<today>` was also the folder of every unnamed walk the window
+    made that day, so a run from here replaced that walk's survey."""
+    import time
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    today = tmp_path / "rolls" / time.strftime("%Y-%m-%d")
+    today.mkdir(parents=True)
+    walk = {"roll": today.name, "frames": [{"number": 1}]}
+    (today / "survey.json").write_text(json.dumps(walk), encoding="utf-8")
+    for _ in range(2):
+        monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
+                                          "--no-shading", "--dry-run",
+                                          "--frames", "1"])
+        assert scan_roll.main() == 0
+    made = sorted(p for p in (tmp_path / "rolls").iterdir() if p != today)
+    assert len(made) == 2, made
+    for folder in made:
+        assert folder.name.startswith(today.name + "-")
+        survey = json.loads((folder / "survey.json").read_text(
+            encoding="utf-8"))
+        assert survey["roll"] == folder.name
+    assert json.loads((today / "survey.json").read_text(
+        encoding="utf-8")) == walk
+
+
+def test_a_frame_that_was_never_filed_names_no_file(tmp_path, monkeypatch):
+    """`file` named a TIFF before anything had written it, and a resume took
+    that as done."""
+    from rps7200 import session
+
+    real = session.FrameWriter._write
+
+    def fails_on_two(self, job):
+        if job["number"] == 2:
+            raise OSError(28, "No space left on device")
+        return real(self, job)
+
+    monkeypatch.setattr(session.FrameWriter, "_write", fails_on_two)
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3")
+    assert code == 1
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    frames = {f["number"]: f for f in manifest["frames"]}
+    assert frames[2]["done"] is False and frames[2]["file"] is None
+    assert "No space left" in frames[2]["filing_error"]
+    assert frames[1]["done"] and frames[1]["file"] == "frame01.tif"
+
+
 def test_a_roll_the_tool_cannot_place_scans_nothing(tmp_path, monkeypatch):
     from rps7200 import session
 
@@ -624,6 +694,38 @@ def _prescans(folder, numbers):
     for n in numbers:
         tiff.write(str(folder / f"prescan{n:02d}.tif"),
                    np.full((4, 6, 3), 40 + n, np.uint8))
+
+
+def test_a_turned_walk_is_held_to_references_the_way_the_film_sits(
+        tmp_path, monkeypatch):
+    """The window writes a walk's prescans arranged the way the screen had
+    them, each record saying how. Read as they lay on disk, a walk made turned
+    handed the detector and the hold sideways references."""
+    from rps7200 import preview, tiff
+
+    folder = tmp_path / "turned-walk"
+    folder.mkdir()
+    film = np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3)
+    records = []
+    for n, (turn, flip) in ((1, (0, False)), (2, (90, True))):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   preview.orient(film, turn, flip))
+        records.append({"number": n, "prescan": f"prescan{n:02d}.tif",
+                        "prescan_rotation": turn, "prescan_flipped": flip})
+    (folder / "survey.json").write_text(json.dumps(
+        {"numbering": "strip", "rotation": 0, "frames": records}),
+        encoding="utf-8")
+    seen = {}
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: (seen.update(frames) or
+                                   {n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"}
+                                    for n, _ in frames}))
+    held, _note = scan_roll.hold_from_walk(folder)
+    for n in (1, 2):
+        assert np.array_equal(seen[n], film), f"frame {n} read as it lay"
+        assert np.array_equal(held[n].reference, film)
 
 
 def test_a_walk_with_only_its_roll_json_is_held_from_that(tmp_path,
