@@ -840,3 +840,13 @@ def test_an_entry_filed_plain_reads_like_any_other_and_compacts_losslessly(tmp_p
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
     assert library.reconstruct(path)[1] == "identical to the stored image"
     assert library.compact(path) is False, "compacted twice"
+
+
+def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):
+    """Built from a finished picture, it has no calibration by design."""
+    stream, image = index_stream(16, 8, 3)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    library.save(image, {"resolution_dpi": 300, "channels": 3, "width": 16,
+                         "height": 8, "depth": 16, "demo": True},
+                 root=tmp_path, raw=stream, raw_layout=layout)
+    assert library.verify(tmp_path) == []

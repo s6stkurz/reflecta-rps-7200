@@ -1109,7 +1109,12 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             # not -- it kept `make verify` red for a week, and a check that is
             # always red is a check nobody reads.
             why = cal.get("skipped")
-            if why != SHADING_SKIPPED_EXPLICIT and ON_PURPOSE not in (record.get("tags") or ()):
+            # A demo entry built from a finished picture -- a stored prescan,
+            # a test card -- has no calibration to describe it by design; it is
+            # not evidence, and listing it here buries what is.
+            demo = bool((record.get("extra") or {}).get("demo"))
+            if (why != SHADING_SKIPPED_EXPLICIT and not demo
+                    and ON_PURPOSE not in (record.get("tags") or ())):
                 problems.append(
                     f"{path.name}: no shading reference, so this scan can never "
                     f"be corrected"
