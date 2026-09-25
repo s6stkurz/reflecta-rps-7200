@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import itertools
 import json
 import math
 import queue
@@ -2153,6 +2154,15 @@ class ScannerGui:
             folder = Path(self._sheet_roll)
         else:
             self._show_roll_name(folder.name, ours=not typed)
+        if not dry:
+            # A roll from this button carries no per-frame turns: its files
+            # follow the session's arrangement. Turns a commissioned roll or
+            # the sheet left against frame numbers would otherwise be put on
+            # this roll's frames of the same number -- on screen and in Save
+            # As, but not in the files it writes.
+            self.orientations = {key: turn for key, turn
+                                 in self.orientations.items()
+                                 if key[0] != "frame"}
         if dry:
             # The sheet open now belongs to the walk before this one. Closed
             # here, keeping what was decided in it under its own roll, before
@@ -4300,9 +4310,23 @@ class ScannerGui:
     def on_delete(self, result) -> None:
         entry = result.entry
         question = f"Remove {result.label} from this session?"
+        if entry and entry.exists() and self.demo and not _within(
+                entry, self.session.root):
+            # A reopened roll's frames carry the entry their walk filed, and
+            # `make run-sheet` opens a real walk -- so this was a real entry,
+            # raw bytes and all, one "No" away from rmtree under the one mode
+            # promised to touch nothing real. The demo only ever removes what
+            # the demo filed; this frame leaves the window and nothing else.
+            question += (f"\n\nIts library entry {entry.name} is not the "
+                         "demo's own, and the demo leaves it alone.")
+            entry = None
         if entry and entry.exists():
             question += (f"\n\nIts library entry {entry.name} holds the raw "
                          "bytes, which cannot be recovered without rescanning.")
+            if result.seq < 0:
+                question += ("\n\nThis frame was reopened from a roll: the "
+                             "entry is the one its walk filed, not a copy made "
+                             "for this window.")
             keep = messagebox.askyesnocancel(
                 "Delete", question + "\n\nKeep the library entry?", parent=self.root)
             if keep is None:
@@ -4951,6 +4975,14 @@ def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
     return out
 
 
+#: Sequence numbers for reopened frames: negative, so never a live pass's --
+#: the session counts those up from 1 -- and never the same twice. They were
+#: ``-number``, so two reopened rolls, or one opened twice, gave two frames
+#: one number: the full-resolution view could show the other roll's pixels,
+#: and Delete removed both.
+_REOPENED_SEQ = itertools.count(-1, -1)
+
+
 def read_survey(folder, say=None) -> dict:
     """A walked strip, read back off disk so it need not be walked again.
 
@@ -5038,7 +5070,7 @@ def read_survey(folder, say=None) -> dict:
         # before that was recorded has only it.
         own, own_flip = prescan_arrangement(manifest, record)
         result = Result(
-            seq=-number,                     # negative: never a live pass's seq
+            seq=next(_REOPENED_SEQ),         # see `_REOPENED_SEQ`
             kind="prescan",
             label=f"frame {number} (reopened)",
             image=preview.unorient(image, own, own_flip),
@@ -8515,6 +8547,17 @@ class _ContactSheet:
             return bool(self.top.winfo_exists())
         except tk.TclError:
             return False
+
+
+def _within(path, root) -> bool:
+    """Whether `path` is inside the folder `root`, both as the disk sees them."""
+    if not root:
+        return False
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _descendants(widget):

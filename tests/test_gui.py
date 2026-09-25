@@ -4732,6 +4732,85 @@ def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
     assert "adds its frames" in gui.folder_note(folder, dry=False)
 
 
+# -- reopened frames ------------------------------------------------------------
+
+
+def test_reopened_frames_never_share_a_sequence_number(tmp_path):
+    """They were ``-number``: two rolls reopened, or one opened twice, gave
+    two frames one number, and the full-resolution view and Delete took the
+    wrong one."""
+    folder = _walked_folder(tmp_path, count=3)
+    seqs = [r.seq for _ in range(2)
+            for r in gui.read_survey(folder)["results"]]
+    assert len(set(seqs)) == 6 and all(seq < 0 for seq in seqs)
+
+
+def _reopened_with_entry(app, entry):
+    from rps7200.session import Result
+
+    result = Result(seq=-99, kind="prescan", label="frame 3 (reopened)",
+                    image=np.zeros((4, 6, 3), np.uint8), meta={},
+                    entry=entry, number=3)
+    result.hidden, result.supersedes = False, None
+    result.rotation, result.flipped = 0, False
+    app.results.append(result)
+    return result
+
+
+def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
+                                                           monkeypatch):
+    """`make run-sheet` opens a real walk, whose frames carry the entries it
+    filed. Delete on one, and No to "keep the entry?", removed a real entry's
+    raw bytes under the one mode promised to touch nothing real."""
+    app, root = window
+    entry = tmp_path / "real-library" / "an-entry"
+    entry.mkdir(parents=True)
+    (entry / "scan.tif").write_bytes(b"raw")
+    result = _reopened_with_entry(app, entry)
+    said = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("offered to delete it"))
+    app.on_delete(result)
+    assert (entry / "scan.tif").exists()
+    assert "not the demo's own" in said[0]
+    assert result not in app.results, "it still leaves the window"
+
+
+def test_deleting_a_reopened_frames_entry_says_what_it_is_first(window,
+                                                                monkeypatch):
+    import pathlib
+
+    app, root = window
+    entry = pathlib.Path(app.session.root) / "an-entry"
+    entry.mkdir(parents=True)
+    (entry / "scan.tif").write_bytes(b"raw")
+    result = _reopened_with_entry(app, entry)
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or None)
+    app.on_delete(result)
+    assert "the one its walk filed" in asked[0]
+    assert entry.exists() and result in app.results, "Cancel is cancel"
+
+
+def test_a_plain_roll_is_not_shown_with_the_sheets_turns(window, monkeypatch):
+    """The Roll button's frames are written the session's way; turns a sheet
+    left against frame numbers put this roll's frames of the same number on
+    screen, and in Save As, the other way up from their files."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(False)
+    app.orientations = {("frame", 2): (90, False), ("at", 5): (180, True)}
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    app.v_startat.set("1")
+    app.v_last.set("3")
+    app.on_roll()
+    assert app.orientations == {("at", 5): (180, True)}
+
+
 # -- a pass read bottom-up is shown upright, and nothing is turned by it ------
 
 
