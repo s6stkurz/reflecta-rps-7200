@@ -16,8 +16,11 @@ way to wedge this scanner. So measure rather than assume.
 Method: time identical 300 dpi passes, alternating between a quiet host and one
 gzipping in a background thread, and compare. Alternating rather than
 before-and-after so that lamp warm-up or thermal drift cannot masquerade as an
-effect. Debug filing on, as for every scan here: each pass spools the same way
-in both arms, so it cannot tilt the comparison.
+effect -- and the order inside a round alternates too, quiet first in one
+round and loaded first in the next, because a round that always ran quiet
+first gave every loaded pass the second slot and whatever drifts across a
+round with it. Debug filing on, as for every scan here: each pass spools the
+same way in both arms, so it cannot tilt the comparison.
 
 The verdict is one of three, against a stated line -- see :func:`verdict`.
 It used to be two, and one of them could not happen: it called any difference
@@ -36,6 +39,8 @@ import statistics
 import sys
 import threading
 import time
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -62,16 +67,67 @@ MARGIN_SE = 2.0
 MIN_ROUNDS = 3
 
 
+def loaded_first(round_index: int) -> bool:
+    """Whether round `round_index`, counted from 0, times its loaded pass first.
+
+    Every other round. Pairing a round's two passes takes out drift *between*
+    rounds; it cannot take out drift *inside* one -- the second pass of a
+    round running warmer, or on a warmer cache, than the first -- because that
+    lands on whichever arm always goes second. Alternating the order puts it on
+    the loaded arm in half the rounds and on the quiet arm in the other half,
+    where :func:`verdict` cancels it.
+    """
+    return round_index % 2 == 1
+
+
+def run_rounds(one: Callable[[], float], rounds: int,
+               load: Callable[[], AbstractContextManager],
+               show: Callable[[str], None] = print,
+               ) -> tuple[list[float], list[float]]:
+    """Time `rounds` quiet/loaded pairs, in the order :func:`loaded_first` sets.
+
+    ``one()`` takes a pass and returns its seconds; ``load()`` is the
+    background compression, as a context manager that runs while it is open.
+    Returns ``(quiet, loaded)``, one of each per round.
+    """
+    def under_load() -> tuple[float, object]:
+        with load() as g:
+            return one(), g
+
+    quiet: list[float] = []
+    loaded: list[float] = []
+    show(f"{'round':>6} {'first':>7} {'quiet':>9} {'loaded':>9} {'difference':>11}")
+    for i in range(rounds):
+        if loaded_first(i):
+            t_loaded, g = under_load()
+            t_quiet = one()
+        else:
+            t_quiet = one()
+            t_loaded, g = under_load()
+        quiet.append(t_quiet)
+        loaded.append(t_loaded)
+        show(f"{i + 1:6d} {'loaded' if loaded_first(i) else 'quiet':>7} "
+             f"{t_quiet:8.2f}s {t_loaded:8.2f}s {t_loaded - t_quiet:+10.2f}s"
+             f"   ({getattr(g, 'passes', 0)} gzip passes alongside)")
+    return quiet, loaded
+
+
 def verdict(quiet: list[float], loaded: list[float],
             limit: float = SLOWDOWN_LIMIT) -> tuple[str, str]:
     """``("safe" | "unsafe" | "inconclusive", why)`` for paired pass timings.
 
-    Paired, because the rounds alternate: round *i*'s loaded pass minus its
-    quiet one takes out whatever drifted between rounds, and what is left is
-    the effect plus noise. The mean of those differences is judged against
-    ``limit`` times the quiet mean, with `MARGIN_SE` standard errors either
-    side: clear below the line is safe, clear above it is unsafe, and a range
-    that straddles it says to run more rounds. Only "safe" says to overlap.
+    Paired: round *i*'s loaded pass minus its quiet one takes out whatever
+    drifted between rounds. The rounds are in :func:`run_rounds`'s order, so
+    a drift inside a round adds to the differences of the quiet-first rounds
+    and subtracts from the loaded-first ones; the effect is the mean of the
+    two orders' means, which cancels it whatever the count of each. The drift
+    stays in the spread, so a large one widens the range rather than taking a
+    side, and the two orders' means are reported so it shows.
+
+    That effect is judged against ``limit`` times the quiet mean, with
+    `MARGIN_SE` standard errors either side: clear below the line is safe,
+    clear above it is unsafe, and a range that straddles it says to run more
+    rounds. Only "safe" says to overlap.
     """
     n = min(len(quiet), len(loaded))
     if n < MIN_ROUNDS:
@@ -79,14 +135,21 @@ def verdict(quiet: list[float], loaded: list[float],
                                 f"before the spread of the differences means "
                                 f"anything")
     diffs = [b - a for a, b in zip(quiet[:n], loaded[:n])]
+    quiet_first = [d for i, d in enumerate(diffs) if not loaded_first(i)]
+    load_first = [d for i, d in enumerate(diffs) if loaded_first(i)]
+    orders = [d for d in (quiet_first, load_first) if d]
     base = statistics.mean(quiet[:n])
-    mean = statistics.mean(diffs)
-    se = statistics.stdev(diffs) / math.sqrt(n)
+    mean = statistics.mean(statistics.mean(d) for d in orders)
+    se = (statistics.stdev(diffs) * math.sqrt(sum(1 / len(d) for d in orders))
+          / len(orders))
     line = limit * base
     lo, hi = mean - MARGIN_SE * se, mean + MARGIN_SE * se
     said = (f"loaded passes {mean:+.2f}s ({mean / base:+.1%}), "
             f"{lo:+.2f}s to {hi:+.2f}s at {MARGIN_SE:g} standard errors, "
             f"against a line of {line:.2f}s ({limit:.0%} of a quiet pass)")
+    if len(orders) == 2:
+        said += (f"; {statistics.mean(quiet_first):+.2f}s in rounds run quiet "
+                 f"first, {statistics.mean(load_first):+.2f}s loaded first")
     if lo > line:
         return "unsafe", f"{said} -- slower than the line: do NOT overlap filing"
     if hi < line:
@@ -124,7 +187,8 @@ def main() -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=4,
-                    help="quiet/loaded pairs to time")
+                    help="quiet/loaded pairs to time; an even number balances "
+                         "the two orders")
     ap.add_argument("--mb", type=int, default=32,
                     help="size of the block the background thread compresses")
     ap.add_argument("--limit", type=float, default=100 * SLOWDOWN_LIMIT,
@@ -137,9 +201,6 @@ def main() -> int:
     payload = np.random.default_rng(0).integers(
         0, 255, args.mb << 20, dtype=np.uint8).tobytes()
 
-    quiet: list[float] = []
-    loaded: list[float] = []
-
     with DirectScanner(verbose=False) as s:
         s.wait_ready(timeout=180.0)
         s.wait_warm(timeout=300.0)
@@ -150,15 +211,7 @@ def main() -> int:
                    frame=FULL_FRAME, shading=False, require_media=False)
             return time.monotonic() - t0
 
-        print(f"{'round':>6} {'quiet':>9} {'loaded':>9} {'difference':>11}")
-        for r in range(1, args.rounds + 1):
-            q = one()
-            with Grinder(payload) as g:
-                under_load = one()
-            quiet.append(q)
-            loaded.append(under_load)
-            print(f"{r:6d} {q:8.2f}s {under_load:8.2f}s {under_load - q:+10.2f}s"
-                  f"   ({g.passes} gzip passes alongside)")
+        quiet, loaded = run_rounds(one, args.rounds, lambda: Grinder(payload))
 
         qm, lm = statistics.mean(quiet), statistics.mean(loaded)
         print(f"\n  quiet  mean {qm:.2f}s   (n={len(quiet)})")
