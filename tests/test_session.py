@@ -559,7 +559,7 @@ def test_a_roll_straight_after_another_does_not_wait_for_its_filing(
             scanning.set()
         return real_roll(*a, **kw)
 
-    scanner.scan_roll = scan_roll
+    monkeypatch.setattr(scanner, "scan_roll", scan_roll)
 
     def first(s, _scanner):                      # queued ahead of the job
         s.submit(Roll(frames=2, resolution=600, name="pair"))
@@ -677,6 +677,54 @@ def test_a_manifest_refused_to_the_end_is_written_once_the_scanner_closes(
                           .read_text(encoding="utf-8"))
     assert [(f["number"], f["done"]) for f in recorded["frames"]] == [
         (1, True), (2, True)]
+
+
+def test_a_roll_after_one_whose_last_write_was_refused_carries_it_on(
+        tmp_path, monkeypatch):
+    """The first roll's last filing reaches the manifest in hand but not the
+    disk. A roll into the same folder read the stale file instead -- that
+    frame not done -- replaced the manifest that knew better, and wrote the
+    stale record for good."""
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", ())
+    refusing = threading.Event()
+    refused = threading.Event()
+    real_filed = session.RollManifest.filed
+
+    def filed(self, number, *a, **kw):
+        if int(number) != 2 or refused.is_set():
+            return real_filed(self, number, *a, **kw)
+        refusing.set()
+        try:
+            return real_filed(self, number, *a, **kw)
+        finally:
+            refusing.clear()
+            refused.set()
+
+    monkeypatch.setattr(session.RollManifest, "filed", filed)
+    _refusing_replace(monkeypatch, refusing.is_set)
+    real_roll = session.ScanSession._roll
+    started = []
+
+    def roll(self, job):
+        started.append(job)
+        if len(started) == 2:                    # after the refused filing
+            assert refused.wait(timeout=5.0)
+        return real_roll(self, job)
+
+    monkeypatch.setattr(session.ScanSession, "_roll", roll)
+
+    def first(s, _scanner):                      # queued ahead of the job
+        s.submit(Roll(frames=2, resolution=600, name="pair"))
+
+    _s, _scanner, events = run(
+        Roll(frames=4, only=(3,), start_at=3, resolution=600, name="pair"),
+        tmp_path, extra=first)
+    assert refused.is_set() and not kinds(events, "failed")
+    recorded = json.loads(
+        (tmp_path / "rolls" / "pair" / "roll.json").read_text(encoding="utf-8"))
+    assert {f["number"]: f["done"] for f in recorded["frames"]} == {
+        1: True, 2: True, 3: True}
+    assert all(f.get("entry") for f in recorded["frames"])
 
 
 def test_a_manifest_is_replaced_whole_and_the_last_run_kept(tmp_path):

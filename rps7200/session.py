@@ -1086,6 +1086,12 @@ class RollManifest:
         with self._lock:
             return bool(self._awaiting)
 
+    def ahead_of_disk(self) -> bool:
+        """Whether this holds what the file does not: a filing still to come,
+        or a write the disk refused and nothing has caught up since."""
+        with self._lock:
+            return bool(self._awaiting) or self.unsaved is not None
+
     def carry_on(self, data: dict) -> None:
         """Take a new run's manifest, built on this one's `data`, as its own.
 
@@ -2330,9 +2336,13 @@ class ScanSession:
         # device open and idle while the last frames gzipped, the state
         # FrameWriter exists to avoid. So the run carries on the manifest
         # still in hand, whose filings then land in the records it carries.
+        # The same when the last run's final write was refused: the file is
+        # stale by exactly that frame, and read from there it would be
+        # carried forward as not done -- and the manifest that knew better
+        # dropped, with nothing left to catch the file up.
         key = manifest_path.resolve()
         live = self._manifests.get(key)
-        if carried and live is not None and live.pending():
+        if carried and live is not None and live.ahead_of_disk():
             earlier = live.data
         elif carried and manifest_path.exists():
             # Not read as "nothing" when it cannot be read: the version kept
