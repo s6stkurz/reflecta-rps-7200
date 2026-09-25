@@ -473,6 +473,10 @@ def _reserve(root: Path, name: str) -> Path:
             path.mkdir()
             return path
         except FileExistsError:
+            # Only a name that is taken earns the next one; anything else
+            # would be asked again, under a new name, for ever.
+            if not path.exists():
+                raise
             path = root / f"{name}-{n}"
             n += 1
 

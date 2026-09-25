@@ -287,3 +287,41 @@ def test_a_cache_that_cannot_be_written_does_not_cost_the_calibration(tmp_path):
     assert result["reference"] is ref
     assert s._shading is ref
     assert "not cached" in result["summary"]
+
+
+def test_a_parent_in_the_way_fails_the_archive_once(tmp_path, monkeypatch):
+    """Windows answers `mkdir` under a file with FileExistsError for a folder
+    that does not exist, and a retry-the-next-name loop took that as a name
+    collision and never ended -- inside a calibration, with the device open.
+    Windows' answer is reproduced here so the loop is caught on any runner."""
+    import os
+
+    real_mkdir = os.mkdir
+    calls = []
+
+    def windows_mkdir(path, *args, **kwargs):
+        calls.append(path)
+        assert len(calls) < 50, "mkdir retried without end"
+        p = Path(path)
+        if any(parent.is_file() for parent in p.parents):
+            raise FileNotFoundError(path)
+        if p.is_file():
+            raise FileExistsError(path)
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", windows_mkdir)
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    s = scanner()
+    with pytest.raises(OSError):
+        s.archive_calibration({"data": b"\x01" * 8}, blocker / "calibration")
+    assert len(calls) < 10
+
+
+def test_two_calibrations_in_one_second_keep_both(tmp_path):
+    s = scanner()
+    first = s.archive_calibration({"data": b"\x01" * 8}, tmp_path)
+    second = s.archive_calibration({"data": b"\x02" * 8}, tmp_path)
+    assert first != second
+    assert (first / "data.bin").read_bytes() == b"\x01" * 8
+    assert (second / "data.bin").read_bytes() == b"\x02" * 8

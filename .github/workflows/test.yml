@@ -20,6 +20,10 @@ jobs:
   suite:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # The whole suite takes 3-12 minutes. A test that hangs instead of failing
+    # -- a retry loop that never ends, as one did on Windows only -- otherwise
+    # holds the runner for the default six hours and reports nothing.
+    timeout-minutes: 40
     strategy:
       # One platform failing should not hide the other two: the whole point is
       # seeing which of them disagrees.

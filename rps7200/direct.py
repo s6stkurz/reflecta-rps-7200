@@ -763,12 +763,20 @@ class DirectScanner:
             return None
         stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
         root = Path(root)
+        # The parents first and on their own. Asked of the folder itself,
+        # `mkdir(parents=True)` on Windows answers FileExistsError when a
+        # *parent* is a file -- for a folder that does not exist -- and a loop
+        # that takes that as "name taken, try the next" never ends, with the
+        # device open. Here a parent in the way raises, once.
+        root.mkdir(parents=True, exist_ok=True)
         folder, n = root / stamp, 2
         while True:
             try:
-                folder.mkdir(parents=True)
+                folder.mkdir()
                 break
             except FileExistsError:
+                if not folder.exists():
+                    raise
                 folder, n = root / f"{stamp}-{n}", n + 1
         (folder / "data.bin").write_bytes(data)
         mask = result.get("ccd_mask")
