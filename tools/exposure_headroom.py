@@ -63,7 +63,11 @@ from rps7200.direct import (                                        # noqa: E402
     locks_white_balance,
 )
 from rps7200.protocol import ScanParameters                         # noqa: E402
-from rps7200.shading import ShadingReference, apply_shading         # noqa: E402
+from rps7200.shading import (                                        # noqa: E402
+    ShadingReference,
+    apply_shading,
+    build_width_to_loc,
+)
 
 #: Targets to try, as a fraction of full scale. 0.80 is what ships, 0.85 is
 #: pieusb's, 0.97 is nkscan's; the rest fill in between so the knee is visible
@@ -116,23 +120,42 @@ def calibration(path: Path, record: dict[str, Any]):
     return reference, mask
 
 
-def dark_floor(reference: ShadingReference, channel: int, width: int) -> np.ndarray:
-    """Per-column dark offset, or zero where the reference has only one point."""
-    if channel in reference.dark:
-        dark = reference.dark[channel]
-        return dark[:width] if dark.size >= width else np.zeros(width)
-    return np.zeros(width)
+def dark_floor(reference: ShadingReference, channel: int, width: int,
+               mask: bytes | None = None) -> np.ndarray:
+    """Per-column dark offset, or zero where the reference has only one point.
+
+    Column *j* of a pass is not column *j* of the reference: the reference spans
+    the whole CCD, and below native resolution the pass reads only the elements
+    its mask marks. So the dark offset is looked up exactly as `apply_shading`
+    looks it up, through `build_width_to_loc`. Indexing it by output column
+    held every column's floor at another element's dark offset -- which varies
+    12-15% from one element to the next -- and so added a column pattern of
+    ``(k - 1)`` times the difference to every simulated pass.
+    """
+    out = np.zeros(width)
+    if channel not in reference.dark:
+        return out
+    loc = (np.arange(min(width, reference.pixels_per_line)) if mask is None
+           else build_width_to_loc(bytes(mask), width))
+    out[:loc.size] = reference.dark[channel][loc]
+    return out
 
 
 def scale_exposure(
-    image: np.ndarray, reference: ShadingReference, k: Sequence[float]
+    image: np.ndarray, reference: ShadingReference, k: Sequence[float],
+    mask: bytes | None = None,
 ) -> np.ndarray:
-    """Simulate the same frame taken at ``k[c]`` times the exposure."""
+    """Simulate the same frame taken at ``k[c]`` times the exposure.
+
+    Clipped at the image's own rail, not at 16 bits: an 8-bit array handed a
+    16-bit ceiling wraps on the cast instead of clipping.
+    """
+    rail = float(np.iinfo(image.dtype).max)
     out = np.empty_like(image)
     for c in range(image.shape[2]):
-        dark = dark_floor(reference, c, image.shape[1])[None, :]
+        dark = dark_floor(reference, c, image.shape[1], mask)[None, :]
         vals = (image[..., c].astype(np.float64) - dark) * k[c] + dark
-        np.clip(vals, 0, FULL_SCALE, out=vals)
+        np.clip(vals, 0, rail, out=vals)
         out[..., c] = vals.astype(image.dtype)
     return out
 
@@ -170,6 +193,12 @@ def study(path: Path, targets=TARGETS) -> dict[str, Any] | None:
     if got is None:
         return None
     image, record = got
+    if image.dtype != np.uint16:
+        # An 8-bit prescan -- debug filing and every roll put them in the
+        # library, and they are usually the newest entries, so the default
+        # selection picked them. Metering and its target are 16-bit, and read
+        # as 16-bit an 8-bit pass "landed" at 0.4% and was asked for 200x.
+        return None
     reference, mask = calibration(path, record)
     if reference is None:
         return None
@@ -196,7 +225,7 @@ def study(path: Path, targets=TARGETS) -> dict[str, Any] | None:
     rows = []
     for target in targets:
         k = wanted(target, achieved, channels, locked)
-        lifted = scale_exposure(image, reference, k)
+        lifted = scale_exposure(image, reference, k, mask)
         corrected, report = apply_shading(lifted, reference, mask)
         per = report.get("clipped_per_channel") or [0] * channels
         samples = corrected[..., 0].size
@@ -295,7 +324,7 @@ def main() -> int:
             results.append(got)
 
     if not results:
-        print("no entry had both raw bytes and a shading reference",
+        print("no 16-bit entry had both raw bytes and a shading reference",
               file=sys.stderr)
         return 1
 
