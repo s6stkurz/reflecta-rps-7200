@@ -21,11 +21,12 @@ from rps7200.library import FilmNotes
 
 
 def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
-          prescan=None):
+          prescan=None, skipped=None):
     """A library entry with raw bytes, its TIFF, and nothing corrected.
 
     `prescan` stores a framing pass beside the scan, which is what makes an
-    entry one a roll can walk.
+    entry one a roll can walk. `skipped` records the pass as taken raw on
+    purpose, with that reason.
     """
     tags = "RGBI"[:channels]
     rows, raw = [], bytearray()
@@ -42,6 +43,8 @@ def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
         "channel_order": list(tags), "width": width, "height": lines,
         "bytes_per_line": width * 2, "depth": 16,
     }
+    if skipped:
+        meta["shading_skipped"] = skipped
     return library.save(
         image, meta, root=root, film=FilmNotes(frame="demo"),
         prescan=prescan,
@@ -1157,6 +1160,27 @@ def test_a_prescan_from_a_stored_tiff_carries_nothing_of_the_pass_before(tmp_pat
     assert meta["demo_source"]["file"] == "prescan.tif"
 
 
+def test_a_prescan_kept_raw_on_purpose_is_handed_over_raw(tmp_path):
+    """A roll taken with --no-shading ran its prescans raw too, so the
+    `prescan.tif` beside its frames is raw. Handed over as corrected, it was
+    filed as a corrected picture that never was."""
+    from rps7200.demo import UNCALIBRATED_SOURCE
+
+    stored = np.random.default_rng(8).integers(0, 255, (6, 9, 3), dtype=np.uint8)
+    entry(tmp_path, film="bw", prescan=stored, skipped="raw on purpose")
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, _ = s.prescan(keep_raw=True, film="bw")
+    s.close()
+    assert np.array_equal(image, stored)
+    assert s.last_pixels_raw is not None, "a raw read, handed over as one"
+    assert np.array_equal(s.last_pixels_raw, stored)
+    meta = s.last_scan_meta
+    assert meta["shading"] is None
+    assert meta["shading_skipped"] == UNCALIBRATED_SOURCE
+    assert meta["demo_source"]["file"] == "prescan.tif"
+
+
 def test_a_prescan_is_drawn_from_the_raw_bytes_where_they_can_be_corrected(
         tmp_path):
     """The demo's commonest prescan: an entry with a stored prescan, raw bytes
@@ -1322,6 +1346,37 @@ def test_a_demo_prescan_is_filed_as_what_it_is(tmp_path):
     # The raw read is clean; the kept picture says only what is true of it.
     assert library.verify(tmp_path / "demo-library") == [
         f"{kept.name}: no raw bytes, so it cannot be re-decoded"]
+
+
+def test_a_demo_walk_of_calibrated_entries_is_filed_as_raw_reads(tmp_path):
+    """The demo's commonest walk on a real library: every frame's entry has
+    raw bytes and a reference, so every walk prescan is drawn from the bytes
+    and corrected last. Each is filed as the raw read it is, reconstructs
+    identically, and corrects to the picture the sheet was shown."""
+    from pathlib import Path
+
+    from rps7200.session import Roll
+
+    for n in range(3):
+        stored = np.random.default_rng(n).integers(0, 255, (6, 9, 3),
+                                                   dtype=np.uint8)
+        calibrated_entry(tmp_path / "lib", prescan=stored, seed=n + 11)
+    events = _through_a_session(
+        DemoScanner(tmp_path / "lib", speed=1e9), tmp_path,
+        [Roll(frames=3, resolution=900, dry_run=True, name="walk")])
+    assert not [e.text for e in events if e.kind == "failed"]
+    filed = [Path(e.text) for e in events if e.kind == "filed"]
+    assert len(filed) == 3
+    for path in filed:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+        assert record["extra"]["demo_source"]["file"] == "raw.bin.gz", path
+        assert record["image"]["corrections_applied"] == [], path
+        assert library.reconstruct(path)[1].startswith("identical"), path
+    shown = [tiff.read(str(p)) for p in
+             sorted((tmp_path / "rolls" / "walk").glob("prescan0*.tif"))]
+    assert len(shown) == 3
+    for path, picture in zip(filed, shown, strict=True):
+        assert np.array_equal(library.corrected(path)[0], picture), path
 
 
 # -- what the demo refuses, and how it answers ---------------------------------

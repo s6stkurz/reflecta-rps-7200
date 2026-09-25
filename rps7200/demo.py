@@ -1342,7 +1342,10 @@ class DemoScanner:
         used to be served as though it were this pass's raw read: every demo
         prescan and walk frame was then filed as raw pixels that were not,
         the failure CLAUDE.md records of 26 prescans. It is handed over as
-        what it is (``corrected``), so the session files it labelled so.
+        what it is (``corrected``), so the session files it labelled so --
+        unless its entry was taken raw on purpose (``calibration.skipped``),
+        whose pass ran its prescan raw as well: that one is a raw read with
+        nothing to correct it, and is handed over as one.
 
         Keys: ``pixels``; ``dpi``, None where unknown; ``reference`` and
         ``ccd_mask``, None where nothing describes the pixels; ``entry``
@@ -1360,7 +1363,8 @@ class DemoScanner:
                     self._log(f"prescan.tif from {source.name}  {image.shape}")
                     return {"pixels": image, "dpi": None, "reference": None,
                             "ccd_mask": None, "entry": source.name,
-                            "file": "prescan.tif", "corrected": True}
+                            "file": "prescan.tif",
+                            "corrected": not _taken_raw(source)}
                 except Exception as exc:                 # noqa: BLE001
                     self._log(f"could not read {tif.name}: {exc}")
         got = self._decode(source)
@@ -1464,6 +1468,21 @@ def _correctable(path: Path) -> bool:
     return bool(not cal.get("skipped") and ref_file and (path / ref_file).exists()
                 and ((path / library.RAW_FILE).exists()
                      or (path / library.RAW_PLAIN).exists()))
+
+
+def _taken_raw(path: Path) -> bool:
+    """Whether an entry's pass was taken with no correction, on purpose.
+
+    Such a pass ran its framing prescan the same way (`scan_roll` hands its
+    `shading` to both), so the `prescan.tif` beside it is raw too. Unknown --
+    no record, or none that says -- is read as not raw: a prescan kept for
+    the operator was corrected unless someone asked otherwise.
+    """
+    try:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return bool((record.get("calibration") or {}).get("skipped"))
 
 
 def _entry_channels(path: Path) -> int:
