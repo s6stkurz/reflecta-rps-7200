@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import export, library
+from rps7200.bracket import sensor_rail
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import DirectScanner, supports_infrared
 # The class itself, for checks made before any scanner is opened. Not the
@@ -254,7 +255,11 @@ def main() -> int:
     pending: list[dict] = []
     # Each bracket pass as the sensor returned it, for the merge to judge
     # saturation on -- see rps7200/bracket.py. With the library on, these are
-    # the same arrays `pending` files, not copies.
+    # the same arrays `pending` files, not copies. With it off nothing else
+    # keeps them, and whole passes held here beside the corrected frames
+    # `scan_bracket` returns doubled the bracket's pixels -- about another
+    # gigabyte for nine passes at 3600 dpi -- so only the byte a sample the
+    # merge reads of them is kept (`bracket.sensor_rail`).
     sensor: list[np.ndarray] = []
     try:
         with interrupt:
@@ -314,7 +319,12 @@ def main() -> int:
                         # pass rebinds it. None where the pass was not
                         # corrected, and then the pass is its own sensor.
                         raw = getattr(s, "last_pixels_raw", None)
-                        sensor.append(image if raw is None else raw)
+                        pixels = image if raw is None else raw
+                        # The rail is taken here, session open, because the
+                        # pixels are unreachable after the next pass; it is
+                        # built to be light for exactly that.
+                        sensor.append(pixels if args.library is not None
+                                      else sensor_rail(pixels))
                         hold(image, meta, capture)
 
                     bracket = s.scan_bracket(
@@ -377,7 +387,10 @@ def main() -> int:
         # Merged corrected, judged raw: a railed sample in a column whose
         # gain is below one comes back from the correction inside the range
         # the merge trusts. Every pass is RGB -- --ir is refused above.
-        merged, stats = merge_bracket(frames, ratios, sensor_frames=sensor)
+        if args.library is not None:
+            merged, stats = merge_bracket(frames, ratios, sensor_frames=sensor)
+        else:
+            merged, stats = merge_bracket(frames, ratios, sensor_rails=sensor)
         print(f"bracket: {stats.describe()}")
         image = merged
         meta = dict(metas[-1])

@@ -4,8 +4,12 @@ The roll gzips each frame while the next one scans, and this tool is the
 measurement that is meant to say whether that is safe. Its verdict could not
 say "unsafe": it called a difference safe whenever it was under twice the
 spread of all passes together, and that spread contains the difference -- so
-a consistent 27% slowdown read "no measurable effect". The timings here are
-made up; what is under test is only the judgement drawn from them.
+a consistent 27% slowdown read "no measurable effect". Once it could, the
+order it took its passes in could put it there without cause: quiet first in
+every round, so whatever drifts inside a round landed on the loaded arm alone.
+
+The timings here are made up; what is under test is the judgement drawn from
+them and the order they are taken in.
 """
 
 import pytest
@@ -33,7 +37,7 @@ def test_no_effect_is_safe():
 
 def test_a_noisy_run_near_the_line_says_so_rather_than_guessing():
     quiet = [22.0, 22.0, 22.0, 22.0]
-    loaded = [21.0, 26.0, 21.5, 25.5]           # +1.0 s on average, +/-2.5
+    loaded = [21.0, 26.0, 21.5, 25.5]           # +1.5 s on average, +/-2.5
     outcome, why = tool.verdict(quiet, loaded)
     assert outcome == "inconclusive", why
     assert "more rounds" in why
@@ -55,3 +59,76 @@ def test_the_line_is_the_stated_one(limit, expected):
     assert outcome == expected, why
     assert f"{limit:.0%}" in why
 
+
+class Bench:
+    """A pass that costs `drift` more when it is the second of its round --
+    lamp, heat, a warm cache -- and `effect` more with the grinder running."""
+
+    def __init__(self, drift=0.0, effect=0.0):
+        self.drift, self.effect = drift, effect
+        self.taken = 0
+        self.loaded = False
+
+    def one(self):
+        second = self.taken % 2 == 1
+        self.taken += 1
+        return 22.0 + self.drift * second + self.effect * self.loaded
+
+    def load(self):
+        bench = self
+
+        class Load:
+            passes = 0
+
+            def __enter__(self):
+                bench.loaded = True
+                return self
+
+            def __exit__(self, *exc):
+                bench.loaded = False
+
+        return Load()
+
+
+def rounds(bench, n=4):
+    return tool.run_rounds(bench.one, n, bench.load, show=lambda line: None)
+
+
+def test_drift_inside_a_round_is_not_read_as_an_effect(monkeypatch):
+    """Every round ran quiet first, so the loaded pass always took the second
+    slot: 2 s of warm-up inside a round, and no effect at all, read as a
+    consistent 9% slowdown -- "unsafe", and the pairing could not see it."""
+    quiet, loaded = rounds(Bench(drift=2.0))
+    outcome, why = tool.verdict(quiet, loaded)
+    assert outcome == "inconclusive", why
+    # And the drift is shown, not only absorbed: +2 s one way, -2 s the other.
+    assert "+2.00s in rounds run quiet first, -2.00s loaded first" in why
+
+    monkeypatch.setattr(tool, "loaded_first", lambda i: False)
+    outcome, why = tool.verdict(*rounds(Bench(drift=2.0)))
+    assert outcome == "unsafe", (
+        f"the fixture no longer shows the defect in the old order: {why}")
+
+
+def test_the_order_alternates_and_the_arms_stay_paired():
+    bench = Bench(effect=5.0)
+    quiet, loaded = rounds(bench, 5)
+    assert [tool.loaded_first(i) for i in range(5)] == [False, True, False,
+                                                        True, False]
+    assert quiet == [22.0] * 5 and loaded == [27.0] * 5
+    assert bench.taken == 10
+
+
+def test_a_real_slowdown_survives_the_alternation():
+    quiet, loaded = rounds(Bench(effect=6.0), 4)
+    outcome, why = tool.verdict(quiet, loaded)
+    assert outcome == "unsafe", why
+
+
+def test_an_odd_count_of_rounds_still_cancels_the_drift():
+    """Three rounds are two of one order and one of the other; the mean of
+    all three differences would keep a third of the drift, the mean of the
+    two orders' means keeps none."""
+    quiet, loaded = rounds(Bench(drift=2.0, effect=3.0), 3)
+    _outcome, why = tool.verdict(quiet, loaded)
+    assert why.startswith("loaded passes +3.00s"), why

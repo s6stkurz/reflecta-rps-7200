@@ -2,8 +2,9 @@
 
 `metrics.py` sits beside the skill rather than in the package, and nothing
 tested it. These hold the parts that returned an answer they could not have
-measured: a ceiling from a random share of 100% or more, a window that
-crashed when even, and 16-bit thresholds applied to 8-bit passes.
+measured: a ceiling from a random share of 100% or more, a random share
+read through a different filter from the total it is a share of, a window
+that crashed when even, and 16-bit thresholds applied to 8-bit passes.
 """
 
 import sys
@@ -35,6 +36,49 @@ def test_an_honest_split_still_gives_its_ceiling():
     # fixed = sqrt(1 - 0.25); nine passes leave random / 3
     want = np.sqrt((0.5 / 3) ** 2 + 0.75) - 1.0
     assert metrics.ceiling(0.5, 1.0, 9) == pytest.approx(want)
+
+
+def repeat_pair(random_dn, fixed_dn, seed=3, shape=(300, 400)):
+    """Two passes of one frame, registered and matched in gain by
+    construction: a smooth scene, a column pattern both passes share, and
+    each pass's own white noise. Nothing leaks into their difference."""
+    rng = np.random.default_rng(seed)
+    h, w = shape
+    scene = np.linspace(8000, 30000, w)[None, :] + rng.normal(0, fixed_dn, (1, w))
+
+    def one():
+        p = scene + rng.normal(0, random_dn, (h, w))
+        return np.repeat(p[..., None], 3, axis=2).clip(0, 65535).astype(np.uint16)
+
+    return one(), one(), np.ones(shape, bool)
+
+
+def test_a_pair_that_is_mostly_random_noise_has_a_ceiling():
+    """The case where averaging helps most was the one refused: the random
+    part was read unfiltered against a high-passed total, so 100 DN of noise
+    beside a 20 DN pattern came out at a share of 1.10 and `ceiling` told a
+    perfectly registered pair to register itself."""
+    a, b, mask = repeat_pair(random_dn=100, fixed_dn=20)
+    rnd, total, share = metrics.noise_split(a, b, mask)
+    assert share < 1.0, share
+    reached = metrics.ceiling(rnd, total, 9)
+    # Between all-fixed (nothing to gain) and all-random (1/3 of the noise).
+    assert 1 / 3 - 1 < reached < 0
+
+
+def test_white_noise_alone_is_all_random_not_more():
+    """1/sqrt(1 - 1/5) = 1.118 is what the two filters used to read here."""
+    a, b, mask = repeat_pair(random_dn=100, fixed_dn=0)
+    _, _, share = metrics.noise_split(a, b, mask)
+    assert share == pytest.approx(1.0, abs=0.02)
+
+
+def test_a_mostly_fixed_pair_still_reads_mostly_fixed():
+    a, b, mask = repeat_pair(random_dn=20, fixed_dn=100)
+    _, _, share = metrics.noise_split(a, b, mask)
+    # sqrt(0.8 * 20**2 / (0.8 * (20**2 + 100**2))), the fixed part white
+    # along the row as the random part is.
+    assert share == pytest.approx(20 / np.hypot(20, 100), rel=0.05)
 
 
 @pytest.mark.parametrize("window", [24, 25])

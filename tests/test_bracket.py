@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from rps7200.bracket import (
+    CLIP_END,
     CLIP_START,
     DEFAULT_ALPHA,
     DEFAULT_BETA,
@@ -16,6 +17,7 @@ from rps7200.bracket import (
     confidence,
     fit_noise_params,
     merge_bracket,
+    sensor_rail,
     solve_relation,
 )
 
@@ -227,6 +229,37 @@ def test_an_uncorrected_bracket_is_its_own_sensor():
     alone, _ = merge_bracket(frames, [1.5, 6.0])
     again, _ = merge_bracket(frames, [1.5, 6.0], sensor_frames=frames)
     assert np.array_equal(alone, again)
+
+
+def test_a_rail_judges_as_the_sensor_frames_do():
+    """`tools/scan.py` with the library off hands the merge a byte a sample
+    rather than keep every pass's sensor pixels beside the corrected frames.
+    It must be the same judgement: what the relation fits exactly, and the
+    ramp's weights to within a step of it."""
+    rng = np.random.default_rng(1)
+    exposures = [1.0, 8.0]
+    _truth, raws, corrected = shaded_bracket(exposures, rng)
+    rails = [sensor_rail(r) for r in raws]
+    ramp = (raws[1] >= CLIP_START) & (raws[1] < CLIP_END)
+    assert ramp.any(), "the fixture must have samples on the ramp, or the " \
+        "steps between its ends are untested"
+    for raw, rail in zip(raws, rails):
+        assert rail.dtype == np.uint8 and rail.nbytes * 2 == raw.nbytes
+        assert np.array_equal(rail == 0, raw < CLIP_START)
+        assert (rail[raw >= CLIP_END] == 255).all()
+
+    judged, stats = merge_bracket(corrected, exposures, sensor_frames=raws)
+    railed, stats_railed = merge_bracket(corrected, exposures, sensor_rails=rails)
+    assert stats_railed.exposure_ratio == stats.exposure_ratio
+    gap = np.abs(railed.astype(np.int64) - judged)
+    assert gap.max() <= 2, f"{gap.max()} DN apart"
+
+
+def test_sensor_frames_and_rails_are_one_or_the_other():
+    f = [np.zeros((4, 4, 3), np.uint16)] * 2
+    with pytest.raises(ValueError, match="not both"):
+        merge_bracket(f, [1.0, 2.0], sensor_frames=f,
+                      sensor_rails=[sensor_rail(x) for x in f])
 
 
 @pytest.mark.parametrize("sensor,match", [
