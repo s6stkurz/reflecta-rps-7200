@@ -69,7 +69,11 @@ re-decoding their stored raw bytes reproduces the stored pixels exactly.
   `BLUE_RGBI_HEADROOM` — without closing the *cause*, which is still unknown.
   Metering an IR scan from an RGB probe is therefore fine, and remains what
   CyberView does; a throwaway IR pass is not needed and would cost the 212 s
-  floor.
+  floor. *(Since: one constant per film, `blue_rgbi_headroom(film)` -- 5.2, the
+  `BLUE_RGBI_HEADROOM` above, on colour negative and 11.0 where unmeasured --
+  because 5.2 put a third of a black and white scan's blue at the rail. And an
+  IR pass tied to the resolution, the default since 2026-09-16, costs ~25 s at
+  300 dpi rather than the floor.)*
 - ~~The 7200 dpi guard~~ **— settled on the hardware 2026-09-13.** The device
   declares the same descriptor at 7200 dpi as at 3600 (`pixels_per_line=10344`
   *bytes*, so 5172 columns) and calibrates 5172 columns however it is asked,
@@ -213,6 +217,12 @@ pieusb, written before the two-phase structure was known):
   At 7200 dpi the image is 10344 columns but the mask holds 5172 entries, so the
   mapping cannot cover it. Log and return raw rather than corrupt half the frame.
 
+  *As built, not this.* `scan()` compares the pass width with the reference's
+  width, which catches 7200 dpi -- refused before the pass, not returned raw
+  (`DirectScanner.uncorrectable`). The comparison with the mask's used count
+  was never made, and `apply_shading` leaves any columns past it uncorrected,
+  which a 600 dpi pass of 862 columns against a mask of 860 reaches (TODO.md).
+
 No change to the command sequence. This has been verified twice; the entire diff of
 commit `5ded2d6` against the command path was two lines assigning return values.
 
@@ -292,8 +302,10 @@ different section of the same document.
 
 **After every significant step, regenerate the three files in the repo root and send
 them** — `1_nothing_done.tif`, `2_corrected.tif`, `3_corrected_inverted.tif` via
-`tools/make_comparison.py`, plus the previews. This is the primary acceptance test;
-Stefan judges by eye and has repeatedly caught defects the metrics missed.
+`tools/make_comparison.py <entry>`, plus the previews. (It takes a library entry: the
+raw decode, `library.corrected(entry)` and its inversion, through `export.write`.)
+This is the primary acceptance test; Stefan judges by eye and has repeatedly caught
+defects the metrics missed.
 
 1. **Reference sanity, before any scan.** Light mean ≈ 47,000 (72% of full scale), no
    saturated samples, line-to-line spread < 0.5%, dark mean ≈ 170. Compare the parsed

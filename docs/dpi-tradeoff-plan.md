@@ -193,6 +193,17 @@ old televisions, plenty of fine detail — seven RGB passes from 300 to 7200 dpi
 with a repeat pair at the top. `tools/dpi_analysis.py` reproduces all of it from
 the library, with no scanner.
 
+*Updated 2026-09-25 (3f5cce0, audit P30):* not as it stands. The tool used to
+load every rung through `library.corrected` without looking at what came back,
+and a full-width 7200 dpi pass cannot be corrected at all -- so the reference B
+divides every rung by, A's crop and C's residuals were raw, column pattern
+included, while every lower rung was flat-fielded. It now loads every rung in
+one domain or refuses the series, and in its default, corrected domain it
+refuses this one. `--domain raw` re-runs the whole series raw and gives
+different numbers, and `--entries` names the rungs outright. The figures below
+are the mixed comparison as recorded; the recommendation has not been
+re-derived from a single domain yet.
+
 ## The recommendation
 
 **RGB: 3600 dpi** for quality, **1800 dpi** when time matters.
@@ -333,4 +344,6 @@ green    random 212.8 DN   total 475.9 DN   random share 44.7%
   and does not rail.
 - **Re-runnable.** Everything came from stored raw bytes. When the shading
   correction lowers the noise floor, run `tools/dpi_analysis.py` again — no
-  scanner, no film, no re-shoot.
+  scanner, no film, no re-shoot. *(For this series, with `--domain raw`: its
+  default refuses it, because the 7200 dpi rung cannot be corrected -- see the
+  note under Results.)*

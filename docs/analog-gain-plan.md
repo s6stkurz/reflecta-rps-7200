@@ -198,7 +198,8 @@ after the converter does and what an analog gain would not.
 
 - **Blue's rail limit in RGB stands, and gain cannot lift it.** The answer for
   a frame whose blue record matters is RGBI, where blue is several times more
-  sensitive (`blue_rgbi_headroom`, film-dependent) -- at the cost of the ~212 s infrared floor.
+  sensitive (`blue_rgbi_headroom`, film-dependent) -- at the cost of the infrared
+  pass: ~110 s at 1800 dpi tied to the resolution, the default, or ~220 s untied.
 - **No code change.** The register stays where the device puts it, exactly as
   the vendor leaves it in 36 of 36 captures.
 - The eight passes are filed under the tag the probe wrote, so this is

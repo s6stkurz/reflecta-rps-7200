@@ -15,10 +15,18 @@ SCSI over USB, but not bulk-only transport. Commands and their data go out throu
 
 | direction | mechanism | detail |
 |---|---|---|
-| command out | control, `bmRequestType=0x40`, `bRequest=12` | `wValue=0x0088`, one byte at a time, prefixed by `0xE0` |
-| data out | control, same | `wValue=0x0085` |
+| command out | control, `bmRequestType=0x40`, `bRequest=12` | the IEEE1284 preamble and `0xE0` to `wValue=0x0088`, strobed on `0x0087`; then the six command bytes one at a time to `wValue=0x0085` |
+| data out | control, same | `wValue=0x0085`, one byte at a time |
+| length | control, `bRequest=4`, eight bytes | `wValue=0x0082`: the size of the next bulk read, announced per 32 KB window |
 | data in | bulk IN, endpoint `0x81` | max packet 512 |
-| status | control | polled until the device reports good |
+| status | control, `bmRequestType=0xC0`, `bRequest=12` | `wValue=0x0084`, one byte, polled until the device reports good |
+
+*Corrected 2026-09-25 to what `rps7200/usb_transport.py` sends (`ieee_command`,
+`_send_command`, `_announce_length`, `_control_in`), which works on this
+scanner: this table used to put the command bytes themselves on `0x0088`. That
+port carries the IEEE1284 preamble and the `0xE0` that selects SCSI; the
+command follows on `0x0085`, the same port as its data. These five ports are
+the ones every control transfer in the captures uses.*
 
 A command is six bytes: `opcode 00 00 <size hi> <size lo> 00`. The size is the
 length of the data phase, big-endian, in bytes 3–4.
@@ -287,15 +295,22 @@ is what makes them sub-frame where `NEXT` and `PREV` are not. Calibrated on the
 hardware (§11 has the measurements):
 
 ```
-distance = 0.1057 mm x param + 0.1662 mm      good to ~0.02 mm for param <= 12
+distance = param + 1.84 units     one unit is what one increment of param adds
 sign     = action        0x00 forward, 0x01 backward
 value    = no measurable effect; use 0x04, which the vendor pairs with small params
 
-param    = round((millimetres - 0.1662) / 0.1057)
-
-0.40 mm  ->  00 02 00 04 forward,  01 02 00 04 back
-1.00 mm  ->  00 08 00 04 forward,  01 08 00 04 back
+param 1   ->  2.84 units   00 01 00 04 forward,  01 01 00 04 back
+param 8   ->  9.84 units   00 08 00 04 forward,  01 08 00 04 back
+param 87  -> 88.84 units   the largest single correction (MAX_CORRECTION_PARAM)
 ```
+
+*Corrected 2026-09-25.* This block gave the first fit, `0.1057 mm x param +
+0.1662 mm`, whose second term is 1.57 units. That term was measured again on
+2026-09-22 -- three legs of equal param total over ten, five and one commands,
+corroborated at 1.948 by a ladder with one estimator -- and is 1.84; 1.57 is
+ruled out. The law lives in `rps7200/protocol.py` (`COMMAND_UNITS`), and
+distances are held in these units rather than millimetres (CLAUDE.md). §11 keeps
+the measurements as they were taken, in the millimetres they were taken in.
 
 Three things a caller will otherwise get wrong:
 
@@ -310,8 +325,10 @@ Three things a caller will otherwise get wrong:
   this. Only a prescan can.
 
 The law bends slightly above `param` ~20 and repeatability collapses at the vendor's
-largest, 87 — see §11. None of that matters for registration, which works in the
-0.27-1.0 mm range where the law is accurate.
+largest, 87 — see §11. That was written when registration worked in the 0.27-1.0 mm
+range, `param 1` to about 8. Since revision 5 one correction may carry up to
+`param 87`, chosen as the largest move two prescans can still confirm, so the
+hold loop re-measures after every move rather than trusting the law out there.
 
 #### `param 0` is accepted and is a no-op — *measured*
 
@@ -345,8 +362,8 @@ small move was visible at that moment.
 count: firmware does not execute `param + K` steps, or `param 0` would have
 travelled K. It is a property of the motion itself — an acceleration and
 deceleration ramp that only runs when there are steps to take. So the cost is
-unavoidable and cannot be spent separately, and `param 1` at about 2.6 units is
-genuinely the finest move this transport can make.
+unavoidable and cannot be spent separately, and `param 1` -- 2.84 units under
+the law in force -- is genuinely the finest move this transport can make.
 
 **What it does not settle.** The warm-up was meant to re-anchor the per-command
 cost, and it did not. `param 12` gives 16.67 px, so a cost near 1.4 units;
@@ -354,7 +371,9 @@ the single `param 2` gives 6.00 px, so a cost near 2.8. `register` returns whole
 pixels, so every reading here carries +-0.5 px, and the control is one sample.
 `DirectScanner.OVERHEAD_MM` (1.57 units) and `framing.COMMAND_COST` (1.84) still
 disagree and this did not choose between them. A proper ladder, one estimator,
-several repeats per rung, is what that needs.
+several repeats per rung, is what that needs. *(It ran the same day, stage 15:
+1.948 over twelve confident steps, which rules 1.57 out. `OVERHEAD_MM` now
+derives from `protocol.COMMAND_UNITS`, 1.84, the number `COMMAND_COST` carries.)*
 
 The scanner's physical **Forward/Reverse keys produce no USB traffic at all**. In
 `full_17_strip` the window in which they were pressed carries 117 `READ_STATE` polls
@@ -438,14 +457,17 @@ What CyberView does, in order.
 ```
 INQUIRY
 vendor 0xE7
-SLIDE 00 01 00 04          sub-frame move, +0.27 mm
+SLIDE 00 01 00 04          sub-frame move, param 1: +2.84 units
 READ STATE                 position resets to 0 when a strip is inserted
   [operator aligns the film with the scanner's own keys -- no USB traffic]
 SET SCAN FRAME + MODE 3600 dpi + SCAN        one overview pass
-SLIDE 00 46 00 00          sub-frame move, ~+7.5 mm
+SLIDE 00 46 00 00          sub-frame move, param 70: about +72 units
 SET SCAN FRAME + MODE 600 dpi + SCAN         two preview passes
-SLIDE 01 47 00 03          sub-frame move, ~-7.5 mm
+SLIDE 01 57 00 03          sub-frame move, param 87: about -89 units
 ```
+
+(The last of these read `01 47 00 03` here until the §5 table was recounted: the
+capture holds `01 57 00 03`, param 87. Distances by the law in §5, in units.)
 
 then, per frame, twice:
 
@@ -462,8 +484,11 @@ PARAM                      width / lines / bytes-per-line
 ```
 
 then `SLIDE 04 01 00 01` or `04 01 00 02` to advance, and `READ STATE` polled until
-byte 2 changes. At the end of the roll, `SLIDE 05 01 00 01` once per frame to rewind
-to position 0, then `SLIDE 03 f6 dd 00` to eject.
+byte 2 changes. ~~At the end of the roll, `SLIDE 05 01 00 01` once per frame to
+rewind to position 0, then `SLIDE 03 f6 dd 00` to eject.~~ Nothing of the kind is
+in the captures: §5's recount found neither `05 01 00 01` nor `03 f6 dd 00` in any
+of them, so what CyberView sends at the end of a roll is not recorded. The evidence
+that `SLIDE_PREV` winds back one frame a step is this driver's own measurement.
 
 Measured on the 17-frame roll: **two passes per frame, ~42 s per frame**, and the
 advance value alternates in runs — one, then five `2`s, then six `1`s, then three
@@ -790,7 +815,10 @@ solid part.
 **None of this affects registration work.** Correcting drift uses `param 1` to about
 `8` — 0.27 to 1.0 mm, against 0.49 mm of aperture slack — and the law is accurate to
 ~0.02 mm through that whole range. The bend costs 2-3% around `param 50` and only
-becomes serious at the very top, where nothing needs to go.
+becomes serious at the very top, where nothing needs to go. *(Since revision 5 a
+correction may carry up to `param 87` in one command, and the 0.49 mm of slack has
+not survived: a frame is measured wider than the aperture. The hold loop measures
+where each move landed rather than trusting the law.)*
 
 #### Error does not accumulate — *measured*
 
@@ -807,6 +835,11 @@ per-step drift to compensate**, so a correction loop can issue steps without
 recalibrating between them.
 
 #### Requesting a distance
+
+*Superseded:* the per-command term below is the first fit's 0.1662 mm (1.57
+units); the law in force is `param + 1.84` units (§5, `rps7200/protocol.py`), and
+`DirectScanner.param_for_mm` is the one conversion. Kept as the ladder's own
+arithmetic.
 
 ```
 param = round((millimetres - 0.1662) / 0.1057)
@@ -842,7 +875,10 @@ of the right size, using a command the vendor sends in every session.
   for reverse with the `01 00 04` that steps finely forward — and every individual
   byte is one the vendor sends. But **that combination appears in no capture**, and
   the rule after the `SET_SCAN_HEAD` incident is that invented payloads are not sent.
-  Coarse-back-then-fine-forward reaches anywhere without it, clumsily.
+  Coarse-back-then-fine-forward reaches anywhere without it, clumsily. *(Since
+  sent, routinely: `nudge` issues `01 <param> 00 04` for every backward sub-frame
+  move, `param` from 1 up, and the hold loop and the window's moves go through it.
+  Still in no capture.)*
 - Why the relationship is sub-linear at large `param`, and why repeatability
   collapses at `param 87` (two readings 0.84 mm apart). Both are recorded in §11;
   neither is explained.
@@ -853,10 +889,15 @@ of the right size, using a command the vendor sends in every session.
 
 ## 12. What is still unknown
 
-- MODE SELECT byte 14 entirely. Bit 0 was thought to be scan direction; §11
-  refutes that, and nothing has replaced the explanation.
-- What makes a scan come back mirrored. It is real and reproducible as a pair of
-  groups, but not driven by any byte tried. See §11.
+- ~~MODE SELECT byte 14 entirely. Bit 0 was thought to be scan direction; §11
+  refutes that, and nothing has replaced the explanation.~~ *Answered
+  2026-09-23 (§4, `docs/byte14-plan.md`):* a pass's bit 0 decides whether the
+  carriage waits at the far end after it, and the next pass then reads bottom-up.
+  The upper nibble is still decoration as far as anything measured shows.
+- ~~What makes a scan come back mirrored. It is real and reproducible as a pair of
+  groups, but not driven by any byte tried. See §11.~~ *The same thing, resolved in
+  §11:* a pass read bottom-up. Its own line tags say so, and the decode turns it
+  upright.
 - SLIDE INIT's `param` byte. `0x13`-`0x16` are interchangeable when measured;
   `0x01` produced a differently oriented image once, in a run where orientation
   was varying for other reasons too, so it is not cleared either way.
