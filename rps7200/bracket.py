@@ -39,6 +39,11 @@ merged highlights down by a different amount in every column. So
 :func:`merge_bracket` takes the pixels each pass was corrected from as
 ``sensor_frames`` and judges the rail on those; the corrected values are still
 what gets merged.
+
+Those are all the merge reads of the sensor's pixels -- under the knee or not,
+and how far up the ramp -- so a caller holding a bracket with nothing else
+keeping them can hand over :func:`sensor_rail` instead: a byte a sample, half
+a uint16 pass.
 """
 from __future__ import annotations
 
@@ -137,6 +142,55 @@ def _smoothstep(x: np.ndarray) -> np.ndarray:
 def _clip_weight(x: np.ndarray) -> np.ndarray:
     """One below `CLIP_START`, falling smoothly to zero at `CLIP_END`."""
     return 1.0 - _smoothstep((x - CLIP_START) / max(CLIP_END - CLIP_START, 1e-12))
+
+
+#: Steps a :func:`sensor_rail` puts on the ramp from `CLIP_START` to
+#: `CLIP_END`, codes 1 to 255; code 0 is everything under it.
+RAIL_STEPS = 254
+
+
+def sensor_rail(sensor: np.ndarray) -> np.ndarray:
+    """What the merge reads of a pass's sensor pixels, in a byte a sample.
+
+    Two things. Whether a sample is under `CLIP_START`, which decides whether
+    :func:`solve_relation` fits it: code 0, exactly. And how far above that it
+    sits, which sets :func:`confidence`'s ramp down to `CLIP_END`: codes 1 to
+    255, on `RAIL_STEPS` steps, and 255 for anything at or past the end. A
+    step is 39 DN of a 9830 DN ramp, so the weight it sets is within 0.003 of
+    the one the full sample would have set.
+
+    For a caller that would otherwise hold every pass's sensor pixels only for
+    the merge -- `tools/scan.py` with the library off, where nothing else keeps
+    them and they doubled what a bracket held. That caller runs it between
+    passes with the session open, so it is kept light: only samples at or over
+    the knee are worked in floating point, and in bands of `CHUNK_ROWS`, so
+    even a pass railed throughout never needs a float copy of itself -- about
+    0.3 s for a 3600 dpi pass with a twentieth of it railed, 0.8 s with a
+    fifth.
+    """
+    s = np.asarray(sensor)
+    out = np.zeros(s.shape, dtype=np.uint8)
+    span = np.float32(CLIP_END - CLIP_START)
+    for y0 in range(0, s.shape[0], CHUNK_ROWS):
+        band = s[y0 : y0 + CHUNK_ROWS]
+        hot = band >= CLIP_START
+        if hot.any():
+            up = (band[hot].astype(np.float32) - np.float32(CLIP_START)) / span
+            out[y0 : y0 + CHUNK_ROWS][hot] = 1 + np.rint(
+                np.clip(up, 0, 1) * RAIL_STEPS).astype(np.uint8)
+    return out
+
+
+def _rail_level(rail: np.ndarray) -> np.ndarray:
+    """A level that :func:`sensor_rail`'s code reads the same as the sample did.
+
+    Code 0 comes back as 0: every level under `CLIP_START` is judged alike --
+    fitted, and at full weight -- so which one stands in does not matter.
+    """
+    r = np.asarray(rail, dtype=np.float32)
+    level = np.float32(CLIP_START) + (r - 1) * np.float32(
+        (CLIP_END - CLIP_START) / RAIL_STEPS)
+    return np.where(r == 0, np.float32(0), level)
 
 
 def confidence(sample: np.ndarray, sensor: np.ndarray | None = None) -> np.ndarray:
@@ -306,6 +360,7 @@ def merge_bracket(
     alpha: float = DEFAULT_ALPHA,
     beta: float = DEFAULT_BETA,
     sensor_frames: list[np.ndarray] | None = None,
+    sensor_rails: list[np.ndarray] | None = None,
 ) -> tuple[np.ndarray, MergeStats]:
     """Fuse `frames` into one, weighting each pass by how much it is worth.
 
@@ -319,7 +374,8 @@ def merge_bracket(
     `scan.tif`), and saturation is judged on them -- see the module docstring.
     Give them whenever `frames` are corrected. Leaving them out judges it on
     `frames` themselves, which is right only when those are what the sensor
-    returned.
+    returned. ``sensor_rails`` is the same thing as :func:`sensor_rail` codes,
+    for a caller that has no reason to keep the pixels; give one or the other.
 
     Reduces exactly to the pairwise form at two frames.
     """
@@ -340,19 +396,29 @@ def merge_bracket(
             raise ValueError(
                 f"frame {i} is {np.asarray(f).shape}, frame 0 is {ref.shape}"
             )
-    if sensor_frames is not None:
-        if len(sensor_frames) != len(frames):
+    if sensor_frames is not None and sensor_rails is not None:
+        raise ValueError("sensor_frames or sensor_rails, not both: they are "
+                         "two forms of the same pixels")
+    # Where saturation is judged from, in whichever form it came, and how to
+    # read a level out of it.
+    sensors = sensor_frames if sensor_rails is None else sensor_rails
+
+    def level(sensor: np.ndarray) -> np.ndarray:
+        return np.asarray(sensor) if sensor_rails is None else _rail_level(sensor)
+
+    if sensors is not None:
+        if len(sensors) != len(frames):
             raise ValueError(
-                f"{len(frames)} frames but {len(sensor_frames)} sensor frames"
+                f"{len(frames)} frames but {len(sensors)} sensor frames"
             )
-        for i, s in enumerate(sensor_frames):
+        for i, s in enumerate(sensors):
             if np.asarray(s).shape != ref.shape:
                 raise ValueError(
                     f"sensor frame {i} is {np.asarray(s).shape}, the frames "
                     f"are {ref.shape}: it has to be the pixels frame {i} was "
                     f"corrected from"
                 )
-    sensor_ref = None if sensor_frames is None else np.asarray(sensor_frames[0])
+    sensor_ref = None if sensors is None else np.asarray(sensors[0])
 
     commanded = [float(e) / float(exposures[0]) for e in exposures]
     # Solve each pass against the reference rather than trusting what the
@@ -362,9 +428,9 @@ def merge_bracket(
     for i, (frame, want) in enumerate(zip(frames[1:], commanded[1:]), 1):
         slope, intercept = solve_relation(
             ref[..., 1], np.asarray(frame)[..., 1],
-            ref_sensor=None if sensor_ref is None else sensor_ref[..., 1],
-            other_sensor=(None if sensor_frames is None
-                          else np.asarray(sensor_frames[i])[..., 1]),
+            ref_sensor=None if sensor_ref is None else level(sensor_ref[..., 1]),
+            other_sensor=(None if sensors is None
+                          else level(np.asarray(sensors[i])[..., 1])),
         )
         if not np.isfinite(slope):
             slope, intercept = want, 0.0
@@ -385,8 +451,8 @@ def merge_bracket(
         raws, scaled, confs, weights = [], [], [], []
         for i, (frame, r, off) in enumerate(zip(frames, ratios, offsets)):
             raw = np.asarray(frame[y0:y1], dtype=np.float32)
-            sensor = (None if sensor_frames is None
-                      else np.asarray(sensor_frames[i][y0:y1], dtype=np.float32))
+            sensor = (None if sensors is None
+                      else np.asarray(level(sensors[i][y0:y1]), dtype=np.float32))
             c = confidence(raw, sensor)
             raw = raw - np.float32(off)
             # Variance transforms with the square of the scale, so a long pass

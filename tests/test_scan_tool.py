@@ -308,10 +308,21 @@ class FakeCorrectingScanner(FakeBracketScanner):
         return np.full(image.shape, CORRECTED_LEVEL, np.uint16), meta
 
 
-def run_correcting(tmp_path, monkeypatch, *argv):
+class FakeRailingScanner(FakeCorrectingScanner):
+    """The case the merge is handed the sensor's pixels for: every sample
+    railed on the sensor, and brought back under `CLIP_START` by the
+    correction -- a column gain below one, as the middle of the lamp has."""
+
+    def scan(self, **kw):
+        image, meta = super().scan(**kw)
+        self.last_pixels_raw = np.full(image.shape, 65535, np.uint16)
+        return image, meta
+
+
+def run_correcting(tmp_path, monkeypatch, *argv, scanner=FakeCorrectingScanner):
     created = []
 
-    class Patched(FakeCorrectingScanner):
+    class Patched(scanner):
         def __init__(self, **kw):
             super().__init__()
             created.append(self)
@@ -371,32 +382,87 @@ def test_every_pass_of_a_bracket_is_filed_raw_too(tmp_path, monkeypatch):
         assert int(image.max()) == RAW_LEVEL
 
 
-def test_the_merge_judges_saturation_on_what_the_sensor_returned(tmp_path,
-                                                                 monkeypatch):
-    """`scan()` returns corrected pixels, and the correction hides a railed
-    sample inside the range the merge trusts wherever a column's gain is below
-    one. So the tool hands the merge each pass's raw pixels as well -- with the
-    library on, and with it off, where `hold` keeps nothing."""
+def spy_on_merge(monkeypatch, created=None):
+    """Record what the tool hands `merge_bracket`, and -- given the scanners
+    it creates -- how many passes' sensor pixels are still alive by then."""
     import rps7200.bracket as bracket_module
 
     seen = []
     real = bracket_module.merge_bracket
+    alive = []
 
     def spy(frames, exposures, **kw):
-        seen.append((frames, kw.get("sensor_frames")))
+        seen.append((frames, kw))
+        if created is not None:
+            alive.append(sum(r() is not None for r in created[0].raw_refs))
         return real(frames, exposures, **kw)
 
     monkeypatch.setattr(bracket_module, "merge_bracket", spy)
-    for library_args in ([], ["--no-library"]):
+    return seen, alive
+
+
+def test_the_merge_judges_saturation_on_what_the_sensor_returned(tmp_path,
+                                                                 monkeypatch):
+    """`scan()` returns corrected pixels, and the correction hides a railed
+    sample inside the range the merge trusts wherever a column's gain is below
+    one. So the tool hands the merge what each pass's raw pixels say about the
+    rail -- with the library on, the pixels themselves, and with it off, where
+    `hold` keeps nothing, their rail (see the next test)."""
+    from rps7200.bracket import sensor_rail
+
+    seen, _alive = spy_on_merge(monkeypatch)
+    for library_args, route in (([], "sensor_frames"),
+                                (["--no-library"], "sensor_rails")):
         seen.clear()
         _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3",
-                                        *library_args)
+                                        *library_args,
+                                        scanner=FakeRailingScanner)
         assert code == 0
-        (frames, sensor), = seen
-        assert sensor is not None and len(sensor) == len(frames) == 3, library_args
+        (frames, kw), = seen
+        assert set(kw) == {route}, library_args
+        sensor = kw[route]
+        assert len(sensor) == len(frames) == 3, library_args
         assert all(int(f.max()) == CORRECTED_LEVEL for f in frames)
-        assert all(int(p.max()) == RAW_LEVEL for p in sensor), (
+        railed = np.full(frames[0].shape, 65535, np.uint16)
+        want = railed if route == "sensor_frames" else sensor_rail(railed)
+        assert all(np.array_equal(p, want) for p in sensor), (
             "the merge was handed the corrected pixels as the sensor's")
+
+
+def test_without_the_library_a_bracket_keeps_no_pass_of_sensor_pixels(
+        tmp_path, monkeypatch):
+    """With the library on `pending` holds each pass's raw pixels anyway, and
+    the merge reads those same arrays. With it off nothing did, until the
+    merge's own list kept every one -- doubling the bracket's resident pixels
+    beside the corrected frames, about another gigabyte for nine passes at
+    3600 dpi. Only the scanner's own last pass may still be alive."""
+    import weakref
+
+    created = []
+    seen, alive = spy_on_merge(monkeypatch, created)
+
+    class Remembering(FakeRailingScanner):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.raw_refs = []
+            created.append(self)
+
+        def scan(self, **kw):
+            out = super().scan(**kw)
+            self.raw_refs.append(weakref.ref(self.last_pixels_raw))
+            return out
+
+    for library_args, most in (([], 3), (["--no-library"], 1)):
+        created.clear()
+        alive.clear()
+        _c, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3",
+                                  *library_args, scanner=Remembering)
+        assert code == 0
+        # With the library on, all three: which is what shows this counts
+        # what it says it does.
+        assert alive == [most], (library_args, alive)
+    _frames, kw = seen[-1]
+    assert all(r.dtype == np.uint8 for r in kw["sensor_rails"])
 
 
 def test_every_pass_it_files_is_claimed_from_debug_filing(tmp_path, monkeypatch):
