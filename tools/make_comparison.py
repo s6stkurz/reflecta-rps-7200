@@ -1,58 +1,51 @@
 #!/usr/bin/env python3
-"""Write the three files used to check corrections by eye.
+"""Write the three files used to check corrections by eye, from a library entry.
 
-    1_nothing_done.tif        the scan as it came off the scanner
-    2_corrected.tif           corrections applied, still a linear negative
+    1_nothing_done.tif        the entry's decode, as the scanner sent it
+    2_corrected.tif           what an operator gets from it: library.corrected
     3_corrected_inverted.tif  the corrected one inverted, for viewing
 
-Run after any change to the correction pipeline:
+Run after any change to the scan or correction path:
 
-    uv run python tools/make_comparison.py [scan.tif] [flat.tif]
+    uv run python tools/make_comparison.py <entry id or path>
+    uv run python tools/make_comparison.py 20260911T094114Z_unknown-film_600dpi
+
+**The files are the delivered path, not a model of it.** `1_` is
+`library.load`, the raw decode every entry keeps. `2_` is
+`library.corrected(entry)` -- today's correction code on the entry's own
+reference and CCD mask, the same call the window's Save As makes -- written
+through `export.write`, which is what writes every delivered file. So a change
+to the decode, to `apply_shading` or to the write path shows up here, and
+nothing that the software does not ship can.
+
+It did not use to. This read any TIFF -- by default a `scans/` file that was
+already shading-corrected when it was delivered -- and made `2_corrected.tif`
+with `destripe`, a flat-file column interpolation nothing delivered has ever
+run. After a change to `apply_shading` the three files came out unchanged, and
+the one check Stefan judges by eye could not see the code it was run to check.
+
+The numbers printed are measured from the files as written, read back from
+disk: a recomputed array once looked clean while the shipped file carried a
+40-column colour ramp from the write path.
 
 There is no vignette correction here and none should be added. The ~39% falloff
 across the frame is real but lives entirely in x, which shading already takes to
 1.4%; along y it is 1.1% before any correction. See docs/vignette-plan.md.
 """
+from __future__ import annotations
+
+import argparse
 import sys
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
-from PIL import Image
 
-from rps7200 import preview, tiff
+from rps7200 import export, library, preview, tiff
 from rps7200.console import use_utf8_stdout
-from rps7200.direct import (
-    destripe,
-    find_column_defects,
-    flat_defect_sigma,
-    resample_reference,
-)
 
-Image.MAX_IMAGE_PIXELS = None
-FULL = (0, 0, 10343, 6887)
-SIGMA = float(__import__("os").environ.get("RPS_SIGMA", 3.0))
-
-
-def worst_defect(image: np.ndarray, edge: int = 60) -> tuple[float, float]:
-    """Largest column deviation, in percent, as ``(interior, edge)``.
-
-    Measured over every channel. Looking at green alone understates it badly --
-    this is a trilinear CCD and its worst defects sit in one colour.
-
-    The edge columns are reported, not dropped. Excluding them silently is how a
-    correction that drew a straight line across the film's own border scored an
-    improvement: the damage was entirely inside the first 60 columns, and the
-    number never looked there.
-    """
-    k, pad = 25, 12
-    interior = edge_worst = 0.0
-    for c in range(image.shape[2]):
-        col = np.median(image[..., c].astype(np.float64), axis=0)
-        smooth = np.convolve(np.pad(col, pad, mode="reflect"), np.ones(k) / k, "valid")
-        dev = np.abs(col - smooth) / np.median(col)
-        interior = max(interior, 100 * dev[edge:-edge].max())
-        edge_worst = max(edge_worst, 100 * np.r_[dev[:edge], dev[-edge:]].max())
-    return interior, edge_worst
+NAMES = ("1_nothing_done.tif", "2_corrected.tif", "3_corrected_inverted.tif")
 
 
 def worst_colour(image: np.ndarray, window: int = 25) -> tuple[float, int]:
@@ -62,8 +55,12 @@ def worst_colour(image: np.ndarray, window: int = 25) -> tuple[float, int]:
     "this channel departs from the others". np.abs hides a violet/green pair --
     they cancel -- and a per-channel maximum cannot say a column is tinted, only
     that it is bright.
+
+    Over R, G and B only. An RGBI entry's fourth plane is not a colour, and
+    letting it into the mean across channels tinted every column it differed
+    in.
     """
-    x = image.astype(np.float64)
+    x = image[..., :3].astype(np.float64)
     prof = np.median(x, axis=0)
     k, pad = window | 1, window // 2
     smooth = np.stack([
@@ -71,7 +68,7 @@ def worst_colour(image: np.ndarray, window: int = 25) -> tuple[float, int]:
         for c in range(prof.shape[1])
     ], axis=-1)
     level = float(np.median(prof, axis=0).mean())
-    dev = (prof - smooth) / level
+    dev = (prof - smooth) / max(level, 1e-9)
     colour = dev - dev.mean(axis=1, keepdims=True)
     strength = np.abs(colour).max(axis=1)
     j = int(np.argmax(strength))
@@ -89,54 +86,95 @@ def invert(image: np.ndarray) -> np.ndarray:
     return np.clip((1.0 - x) * 65535, 0, 65535).astype(np.uint16)
 
 
-def main() -> None:
+def find_entry(name: str, root: Path) -> Path | None:
+    """An entry by its path, or by its id under `root`."""
+    for candidate in (Path(name), root / name):
+        if (candidate / "scan.json").is_file():
+            return candidate
+    return None
+
+
+def write_previews(before: np.ndarray, after: np.ndarray, folder: Path) -> list[Path]:
+    """Half-size inverted PNGs of both, for a quick look. Not for judging lines:
+    a downscaled preview cannot show a one-pixel one, the TIFFs can."""
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None
+    # `previews/` is gitignored, so a fresh checkout has none -- and this used
+    # to raise here, after the three TIFFs were already written.
+    folder.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, img in (("cmp_before", before), ("cmp_after", after)):
+        v = (invert(img) / 256).astype(np.uint8)
+        path = folder / f"{name}.png"
+        Image.fromarray(v).resize((max(1, v.shape[1] // 2),
+                                   max(1, v.shape[0] // 2))).save(path)
+        written.append(path)
+    return written
+
+
+def main(argv: list[str] | None = None) -> int:
     use_utf8_stdout()
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
-    scan_path = args[0] if args else "scans/negatives/state_1800dpi.tif"
-    flat_path = args[1] if len(args) > 1 else "scans/flat/flat_clearfilm_3600dpi.tif"
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("entry", help="a library entry: its id, or the path to it")
+    ap.add_argument("--library", default=str(library.DEFAULT_ROOT),
+                    help="where to look up an entry id (default: %(default)s)")
+    ap.add_argument("--out", default=".",
+                    help="where the three files go (default: the current "
+                         "directory -- run from the repo root, as CLAUDE.md asks)")
+    ap.add_argument("--previews", default="previews",
+                    help="where the two half-size PNGs go (default: %(default)s)")
+    args = ap.parse_args(argv)
 
-    raw = tiff.read(scan_path)
-    flat = tiff.read(flat_path)
-    print(f"scan {scan_path}  {raw.shape}")
+    entry = find_entry(args.entry, Path(args.library))
+    if entry is None:
+        ap.error(f"no library entry {args.entry!r}, as a path or under "
+                 f"{args.library}/")
 
-    # Both detectors are thresholded against their own noise rather than a fixed
-    # percentage: a fixed cutoff flagged 453 mostly-noise columns, which dilation
-    # then blew up to 81% of the image for no gain. Both are per-channel, because
-    # this sensor's defects usually sit in one colour only.
-    nc = raw.shape[2]
-    flat_defects = (flat_defect_sigma(flat) > 4.0)[:, :nc]
-    from_flat = resample_reference(
-        flat_defects.astype(float), FULL, raw.shape[1], FULL
-    ) > 0.3
-    from_scan = find_column_defects(raw, sigma=SIGMA)
-    defects = from_flat | from_scan
-    print(f"defects: {from_flat.any(1).sum()} columns from flat, "
-          f"{from_scan.any(1).sum()} from scan, {defects.any(1).sum()} combined "
-          f"({defects.sum()} column-channels)")
+    raw, record = library.load(entry)
+    corrected, info = library.corrected(entry)
+    state = info.get("corrected")
+    if state != "applied":
+        # Refused, not written. With nothing applied the pair would show no
+        # difference and read as "the correction does nothing"; with pixels
+        # corrected before filing, `1_nothing_done` would not be raw at all.
+        # Either way the pair would not show what this code does.
+        print(f"{entry.name}: correction state is {state!r}, not 'applied' -- "
+              f"the pair would not show what today's correction does to this "
+              f"entry. Pick an entry filed with its shading reference.",
+              file=sys.stderr)
+        return 1
 
-    corrected = destripe(raw, defects, margin=12, dilate=5)
-    resolution = int(round(raw.shape[1] * 7200 / (FULL[2] - FULL[0])))
+    dpi = (record.get("scan") or {}).get("resolution_dpi")
+    resolution = int(dpi) if dpi else None
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    print(f"entry {entry.name}  {raw.shape}  {resolution} dpi")
+    report = info.get("shading_report") or {}
+    if report:
+        print(f"shading: {report.get('columns')}/{report.get('width')} columns "
+              f"corrected, {report.get('clipped')} samples clipped")
 
-    tiff.write("1_nothing_done.tif", raw, resolution=resolution)
-    tiff.write("2_corrected.tif", corrected, resolution=resolution)
-    tiff.write("3_corrected_inverted.tif", invert(corrected), resolution=resolution)
+    for name, image in zip(NAMES, (raw, corrected, invert(corrected))):
+        note = export.write(out / name, image, resolution=resolution)
+        if note:
+            print(note)
 
-    raw_in, raw_edge = worst_defect(raw)
-    fix_in, fix_edge = worst_defect(corrected)
-    print(f"worst column defect: interior {raw_in:.2f}% -> {fix_in:.2f}%, "
-          f"edge {raw_edge:.2f}% -> {fix_edge:.2f}%")
-    raw_c, raw_j = worst_colour(raw)
-    fix_c, fix_j = worst_colour(corrected)
+    # What was written, not what was computed.
+    before = tiff.read(str(out / NAMES[0]))
+    after = tiff.read(str(out / NAMES[1]))
+    raw_c, raw_j = worst_colour(before)
+    fix_c, fix_j = worst_colour(after)
     print(f"worst coloured column: {raw_c:.2f}% at {raw_j} -> {fix_c:.2f}% at {fix_j}")
     if fix_c > raw_c * 1.2:
         print("  WARNING: the correction made the colour fringing worse",
               file=sys.stderr)
-    for name, img in (("cmp_before", raw), ("cmp_after", corrected)):
-        v = (invert(img) / 256).astype(np.uint8)
-        Image.fromarray(v).resize((v.shape[1] // 2, v.shape[0] // 2)).save(f"previews/{name}.png")
-    print("wrote 1_nothing_done.tif, 2_corrected.tif, 3_corrected_inverted.tif "
-          "and previews/cmp_before.png, previews/cmp_after.png")
+    previews = write_previews(before, after, Path(args.previews))
+    print(f"wrote {', '.join(str(out / n) for n in NAMES)} and "
+          f"{', '.join(str(p) for p in previews)}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
