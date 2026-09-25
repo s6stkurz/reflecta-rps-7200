@@ -14,19 +14,32 @@ frames rather than inside one.
 
 **Pixels come from the stored raw bytes, not from the TIFF beside them.** The
 TIFF is an output; `raw.bin.gz` is what the scanner actually sent, so decoding
-it here runs the same `_deinterleave` and the same shading correction a real
-pass runs, and `capture_record` can hand the session genuine bytes to file. An
-entry the demo files reconstructs like any other.
+it here runs the driver's own decode. The correction comes *last*, as it does
+in `DirectScanner.scan`: the corrected picture is returned and the pixels
+before it are kept in `last_pixels_raw`, which is what the session files. The
+demo used to correct first and keep nothing, so the session filed corrected
+pixels as raw beside a reference that corrected them a second time -- a branch
+the scanner never takes, which hid the one bug of that shape it did have.
 
-Where a pass cannot be answered with the bytes in hand -- asking a four-channel
-entry for RGB, say -- the bytes are dropped and only the calibration is kept.
-They describe four channels and the image has three, so filing them would make
-an entry whose raw decodes to a different picture, which is the one thing the
-library exists to prevent. The log says when it happens.
+Every pass hands over bytes of its own: its raw pixels as the index-format
+lines the scanner sends, in the order the carriage read them, decoded by the
+driver's `decode_index`. Those, and the calibration that describes *this*
+pass, are what `capture_record` gives the session -- never a previous pass's --
+so an entry the demo files re-decodes to exactly what it holds and corrects to
+exactly what was shown. A pass resized or moved from its stored picture shows
+each column somewhere the stored calibration did not measure it, so it is
+corrected with that calibration read at the columns it now shows
+(`_pass_reference`). The record says which entry it was drawn from.
 
-It refuses what the device refuses: infrared on black and white or Kodachrome.
-A stand-in that accepts what the hardware rejects teaches the window a shape
-that does not exist.
+It refuses what the device refuses, in the driver's own words: infrared on
+black and white or Kodachrome, a corrected pass before any calibration, and a
+pass wider than any reference the device will produce. A stand-in that
+accepts what the hardware rejects teaches the window a shape that does not
+exist. With no film in the transport every pass and every move says so, where
+a transport would.
+
+A roll is the driver's own loop, `DirectScanner.scan_roll`, run on this
+stand-in: only what the film shows is the demo's.
 
     uv run python tools/gui.py --demo
 """
@@ -43,19 +56,21 @@ from typing import Any
 import numpy as np
 
 from . import library, tiff
-from .direct import DirectScanner, RollFrame, supports_infrared
-from .direction import FORWARD, REVERSED, ReadDirection, encode_index, reverse_lines
+from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
+from .direction import encode_index
+from .export import to_8bit
 from .protocol import say_units
-from .framing import (
-    APERTURE_MM,
-    FULL_FRAME,
-    StripWalk,
-    frame_contrast,
-    registration,
+from .framing import APERTURE_MM, FULL_FRAME
+from .protocol import (
+    CHANNEL_ORDER,
+    INDEX_HEADER,
+    ONE_PASS_COLOR,
+    ONE_PASS_RGBI,
+    ScanParameters,
+    Settings,
 )
-from .protocol import ONE_PASS_COLOR, ONE_PASS_RGBI, ScanParameters
 from .session import estimate_seconds
-from .shading import ShadingReference, apply_shading
+from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
 
 #: Wall-clock is divided by this. Slow enough that the progress bar has
@@ -200,13 +215,22 @@ class DemoScanner:
         #: loop running.
         self._no_film = bool(no_film)
         self._by_film: dict[str, Path | None] = {}
-        #: While a roll is on this frame, the entry it shows -- overriding the
-        #: per-film choice above. A roll is the one place showing a single
-        #: picture is wrong: a strip of one picture repeated is a contact sheet
-        #: nobody can read, where a wrong pick looks exactly like a right one.
-        #: It is held across the frame's prescan *and* its scan, so the two are
-        #: still the same photograph, which is what the fixed pair is for.
-        self._frame_source: Path | None = None
+        #: The film of the roll in progress, or None outside one. While it is
+        #: set, each frame shows the strip's entry for where the film is,
+        #: overriding the per-film choice above. A roll is the one place
+        #: showing a single picture is wrong: a strip of one picture repeated
+        #: is a contact sheet nobody can read, where a wrong pick looks exactly
+        #: like a right one. Chosen by position, so a frame's prescan, its
+        #: metering and its scan are one photograph, which is what the fixed
+        #: pair is for.
+        self._rolling: str | None = None
+        #: The film a scan is metering for. The driver's probes are `scan`
+        #: calls with no film -- on the device that changes nothing, and here
+        #: it would change the picture.
+        self._metering: str | None = None
+        #: The last entry decoded, so a frame's metering probes and its scan
+        #: decode it once rather than once each.
+        self._decoded: tuple[Path, dict[str, Any]] | None = None
         #: The strip in the transport, per film: one entry per frame, frame N
         #: showing entry N. What a roll walks. See `_next_strip`.
         self._strips: dict[str, list[Path]] = {}
@@ -219,15 +243,12 @@ class DemoScanner:
         self._rolls = 0
         #: Lays each new strip. Seeded only where a test wants it repeatable.
         self._rng = random.Random(seed)
-        #: The bytes and calibration behind the last pass. Filled in by
-        #: :meth:`_decode`, handed to the session by :meth:`capture_record`.
+        #: The bytes and calibration behind the last pass, and nothing older:
+        #: emptied as each pass starts and filled by :meth:`_take`, handed to
+        #: the session by :meth:`capture_record`.
         self._capture: dict[str, Any] = {
             "reference": None, "ccd_mask": None, "raw": None, "raw_layout": None,
         }
-        #: What the last decode's shading correction did, or None if none ran.
-        self._shading_report: dict[str, Any] | None = None
-        #: The resolution the last decoded entry was taken at.
-        self._source_dpi = 0
         #: What shape the device produces at each resolution, read from the
         #: library rather than derived. See :meth:`_shape_for`.
         self._shapes: dict[int, tuple[int, int] | None] = {}
@@ -250,10 +271,8 @@ class DemoScanner:
         self._last_way = 0
         #: One frame per strip whose transport slips, so `not_converged` and
         #: the end-of-roll warning can be seen rather than taken on trust.
+        #: Keyed on where the film is, and only inside a roll.
         self._slipping_index = 2
-        #: Which frame of the roll is being worked on, so the slip above has
-        #: something to key on. -1 outside a roll.
-        self._index = -1
         self.t = _FakeTransport()
         self.log_hook: Any = None
         self.progress_hook: Any = None
@@ -261,7 +280,15 @@ class DemoScanner:
         self.ccd_mask = None
         self.last_raw = None
         self.last_raw_layout = None
+        #: The last pass's pixels before correction, and its meta: the same
+        #: contract as the real one's. Set on every pass, so neither is ever a
+        #: leftover -- `ScanSession` files `last_pixels_raw`, and a roll copies
+        #: it onto the frame as the pass happens.
+        self.last_pixels_raw: np.ndarray | None = None
         self.last_scan_meta: dict[str, Any] | None = None
+        #: What the last metering measured, left by the driver's own
+        #: `auto_exposure` for the scan that asked for it.
+        self.last_metering: dict[str, Any] | None = None
         #: Where this pretend carriage waits between passes. A pass that
         #: starts at the far end is read bottom-up and ends at home; one that
         #: starts at home is read top-down and stays at the far end when its
@@ -306,6 +333,7 @@ class DemoScanner:
 
     def close(self) -> None:
         self.t.close()
+        self._decoded = None
 
     def __enter__(self) -> DemoScanner:
         return self.open()
@@ -335,6 +363,15 @@ class DemoScanner:
         """
 
     def position(self) -> int | None:
+        """Where the film is, or None where the real one would not say.
+
+        The real one answers None rather than raise when READ STATE fails,
+        and its callers have a branch for that. The failure this stand-in can
+        have is its transport closed under it -- a force abort -- and there
+        the real read fails too, so this says nothing either.
+        """
+        if self.t.closed:
+            return None
         return self._position
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
@@ -344,8 +381,20 @@ class DemoScanner:
             self._log("no advance: treating that as the end of the film")
             return None
         self._position += steps
+        if self._rolling is not None:
+            self._new_frame()
         self._log(f"advanced to position {self._position}")
         return self._position
+
+    def _new_frame(self) -> None:
+        """A roll's next frame starts where the advance left it.
+
+        The offset an operator asked for is what the hold loop then puts in;
+        carrying the last frame's over would hand it a frame already moved.
+        """
+        self._film_mm = 0.0
+        self._owed_mm = 0.0
+        self._last_way = 0
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
@@ -381,7 +430,8 @@ class DemoScanner:
         way = 1 if millimetres >= 0 else -1
 
         delivered = asked
-        if self._index == self._slipping_index:
+        if (self._rolling is not None
+                and self._position == self._slipping_index):
             # A frame whose transport slips. The command is accepted and
             # reports normally -- which is exactly what makes it worth
             # simulating, because that is how the real one fails too.
@@ -411,33 +461,28 @@ class DemoScanner:
                 "requested_mm": round(millimetres, 3), "clamped": clamped,
                 "short_mm": round(short, 4) if clamped else 0.0}
 
-    def _as_positioned(self, image: np.ndarray) -> np.ndarray:
-        """The picture as it sits in the aperture right now.
+    def _shift(self, width: int) -> int:
+        """How many columns the film has moved in the aperture, at this width.
 
         The whole point of moving the film in this stand-in: a pass has to
         come back showing where the film actually is, or a loop that looks
         again after moving learns nothing and the code under test is never
-        really exercised.
+        really exercised. A scan as well as a prescan -- only prescans used
+        to move, so a frame held to its approved position was scanned where
+        it had been before the hold.
         """
-        if not self._film_mm or image is None or image.ndim < 2:
-            return image
-        pixels = int(round(self._film_mm / (APERTURE_MM / max(image.shape[1], 1))))
-        if not pixels:
-            return image
-        return np.roll(image, pixels, axis=1)
-
-    def _drop_raw(self, why: str) -> None:
-        """Keep the calibration, forget the bytes."""
-        if self._capture.get("raw") is not None:
-            self._log(f"raw bytes not filed: {why}")
-        self._capture = dict(self._capture, raw=None, raw_layout=None)
+        if not self._film_mm or width <= 0:
+            return 0
+        return int(round(self._film_mm / (APERTURE_MM / width)))
 
     def capture_record(self) -> dict[str, Any]:
         """The bytes and calibration behind the last pass, as the real one does.
 
-        Not empty any more: the demo decodes stored raw bytes, so it can hand
-        them straight back and the session files a complete entry -- one that
-        `library.reconstruct` can re-decode like any other.
+        This pass's, and no other's. It is emptied as every pass starts, so a
+        prescan served from a stored `prescan.tif` -- which has no bytes and
+        no calibration of its own -- hands over none, where it used to hand
+        over whatever the previous decode had left. What the session files
+        from it re-decodes and corrects like any other entry.
         """
         return dict(self._capture)
 
@@ -462,71 +507,125 @@ class DemoScanner:
         if shading and not getattr(self, "_calibrated", False):
             raise DirectScanner.uncalibrated()
 
+    def _refuse(self, resolution: int, frame: Any, shading: bool) -> None:
+        """Refuse a corrected pass wherever the real one would, before it.
+
+        The driver's own tests and words, in its order: a pass wider than any
+        reference the device will produce (`correctable_at`), then one this
+        session has not calibrated for. The demo used to take 7200 dpi,
+        resize a stored picture to it and file a roll the scanner refuses
+        frame by frame -- after the calibration and metering had been spent.
+        """
+        if shading and not DirectScanner.correctable_at(resolution, frame):
+            raise DirectScanner.uncorrectable(resolution, frame)
+        self._refuse_uncalibrated(shading)
+
+    #: What READ GAIN/OFFSET answers on this device, whatever was written: a
+    #: fixed reference rather than a readback -- across 17 responses in the
+    #: strip capture only the live offsets ever moved. The driver meters every
+    #: scale against it, and reads its exposures as the timer's ceilings, so
+    #: these are the device's own numbers rather than round ones.
+    DEVICE_SETTINGS = Settings(exposure=[9604, 6506, 6506, 7745],
+                               gain=[40, 33, 21, 25], offset=[12, 10, 28, 10])
+
+    def get_gain_offset(self) -> Settings:
+        return self.DEVICE_SETTINGS.scaled(1.0)
+
+    def set_gain_offset(self, settings: Settings, infrared: bool = False) -> None:
+        """Accepted and forgotten, as the device forgets it across a sequence.
+
+        A pass here is a stored picture, which no exposure moves.
+        """
+
+    def auto_exposure(self, *args: Any, film: str = "negative",
+                      **kw: Any) -> list[float]:
+        """The driver's own metering, run on this stand-in's passes.
+
+        Its probes are passes here as they are on the device, so a metered
+        scan or roll costs what metering costs and files what metering
+        measured. They are sent as `scan` calls with no film -- which on the
+        device changes nothing, and here would change the picture -- so they
+        are held to the film being metered. The stored pictures carry the
+        exposure they were taken at: the scales this arrives at change the
+        record, not the pixels.
+        """
+        held, self._metering = self._metering, film
+        try:
+            return self._drivers_metering(*args, film=film, **kw)
+        finally:
+            self._metering = held
+
     def prescan(
         self, resolution: int = 300, frame: Any = None, keep_raw: bool = False,
         film: str = "negative", shading: bool = True,
-    ) -> tuple[np.ndarray, Any]:
-        self._refuse_uncalibrated(shading)
+    ) -> tuple[np.ndarray, ScanParameters]:
+        """A framing pass, as the real one takes it: RGB, 8-bit, whole window.
+
+        At the resolution asked for, which a roll's `prescan_resolution`
+        now reaches; corrected unless ``shading=False``; and refused, like a
+        scan, where there is no film in the transport. An 8-bit pass comes
+        back 8-bit, whatever the stored picture was.
+        """
+        frame = frame or FULL_FRAME
+        self._refuse(resolution, frame, shading)
+        self._need_film("prescan")
+        self._forget_last_pass()
+        started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        started = time.monotonic()
         self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
-        image = self._pair_image("prescan.tif", film, resolution)
-        if image is None:
-            image = self._pixels(channels=3)
         # A framing pass is RGB, always: the real one sets passes=0x80 and
         # 8-bit, so a four-channel prescan is a shape the window would never
         # see from the device.
-        if image.ndim == 3 and image.shape[2] > 3:
-            image = image[..., :3]
-            self._drop_raw("a prescan is three channels")
-        image, read = self._read_as_carriage(self._as_positioned(image),
-                                             ONE_PASS_COLOR)
-        self.last_scan_meta = {
-            "resolution_dpi": resolution, "channels": 3,
-            "channel_order": ["R", "G", "B"], "film": film, "depth": 8,
-            "width": image.shape[1], "height": image.shape[0],
-            "demo": True, **read,
-        }
-        return image, None
+        image, meta = self._take("prescan", film, resolution, channels=3,
+                                 depth=8, shading=shading, keep_raw=keep_raw,
+                                 passes=ONE_PASS_COLOR)
+        meta.update(self._settings_meta(1.0, metered=False, fast=False),
+                    resolution_dpi=resolution, film=film, depth=8,
+                    frame=list(frame), started_utc=started_utc,
+                    duration_s=round(time.monotonic() - started, 1))
+        self.last_scan_meta = dict(meta)
+        return image, ScanParameters(
+            width=meta["width"], lines=meta["height"],
+            bytes_per_line=meta["bytes_per_line"], filter_offset1=0,
+            filter_offset2=0, available_lines=0)
 
-    def _read_as_carriage(self, image: np.ndarray, passes: int
+    def _read_as_carriage(self, raw: np.ndarray, passes: int, keep_raw: bool
                           ) -> tuple[np.ndarray, dict[str, Any]]:
         """This pass, handed over the way the scanner would hand it over.
 
-        Bottom-up when the carriage starts at the far end: the picture is
-        encoded as index-format lines in the order a reversed read sends
-        them, and decoded by the driver's own `decode_index`, which turns it
-        upright and says so. Stored raw bytes are reversed the same way, so
-        what is filed decodes to what is shown and its record agrees with its
-        bytes.
+        Encoded as index-format lines in the order the carriage reads them --
+        bottom-up when it starts at the far end -- and decoded by the driver's
+        own `decode_index`, which turns it upright and says which way it came.
+        Those lines are this pass's bytes, kept as `last_raw` when the pass
+        keeps its bytes, as the real one keeps them: so what is filed decodes
+        to exactly what is held, and its record agrees with its bytes
+        whichever way it was read. Stored bytes used to be reversed instead,
+        which disagreed with the record wherever the stored pass had itself
+        been read bottom-up.
         """
         reversed_now = self._carriage_far
-        a = np.asarray(image)
-        if a.dtype in (np.uint8, np.uint16):
-            channels = a.shape[2] if a.ndim == 3 else 1
-            width = a.shape[1]
-            params = ScanParameters(
-                width=width, lines=a.shape[0],
-                bytes_per_line=width * a.dtype.itemsize, filter_offset1=0,
-                filter_offset2=0, available_lines=0)
-            blob = encode_index(a, reversed=reversed_now)
-            upright, direction = DirectScanner.decode_index(blob, params, channels)
-            upright = upright.reshape(a.shape).astype(a.dtype, copy=False)
-        else:
-            # Not a shape the scanner sends, so not one to encode: the model's
-            # answer is recorded as what it is.
-            upright = a
-            direction = ReadDirection(REVERSED if reversed_now else FORWARD,
-                                      why="modelled; not a scanner pixel type")
+        lines, width, channels = raw.shape
+        per_line = width * raw.dtype.itemsize
+        params = ScanParameters(
+            width=width, lines=lines, bytes_per_line=per_line,
+            filter_offset1=0, filter_offset2=0, available_lines=0)
+        blob = encode_index(raw, reversed=reversed_now)
+        upright, direction = DirectScanner.decode_index(blob, params, channels)
+        upright = upright.reshape(raw.shape).astype(raw.dtype, copy=False)
+        if keep_raw:
+            self.last_raw = blob
+            self.last_raw_layout = {
+                "format": "index",
+                "bytes_per_line": per_line,
+                "line_stride": per_line + INDEX_HEADER,
+                "index_header": INDEX_HEADER,
+                "width": width,
+                "lines": lines,
+                "channels": channels,
+                "byte_order": "little",
+                "lines_received": len(blob) // (per_line + INDEX_HEADER),
+            }
         if reversed_now:
-            raw = self._capture.get("raw")
-            layout = self._capture.get("raw_layout") or {}
-            # Only bytes that describe this very picture: a pass read from a
-            # TIFF has none of its own, and reversing a previous pass's would
-            # file a record that disagrees with its bytes.
-            if (raw is not None and layout.get("line_stride")
-                    and layout.get("width") == a.shape[1]
-                    and layout.get("lines") == a.shape[0]):
-                self._capture = dict(self._capture, raw=reverse_lines(
-                    raw, int(layout["line_stride"])))
             self._log("the carriage started at the far end: read bottom-up, "
                       "turned upright")
             self._carriage_far = False
@@ -548,10 +647,9 @@ class DemoScanner:
         shading: bool = True,
         frame: Any = None,
         keep_raw: bool = False,
+        fast_infrared: bool = True,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        self._need_film("scan")
-        self._refuse_uncalibrated(shading)
         if infrared and not supports_infrared(film):
             # The demo refuses exactly what the device refuses. A stand-in that
             # accepts a combination the hardware will not is worse than no
@@ -562,49 +660,39 @@ class DemoScanner:
                 + " absorbs infrared, so the pass would spend its ~212 s floor "
                 "and hand back the picture rather than the dust. Scan it RGB."
             )
+        frame = frame or FULL_FRAME
+        self._refuse(resolution, frame, shading)
+        self._need_film("scan")
         if auto_exposure:
-            self._log("auto-exposure: probing in RGB")
-            self._work(48.0)
-            self._log("auto-exposure: [1.82, 0.94, 2.11, 1.0]")
-            # The probes are RGB passes, byte-14 bit 0 clear: whichever way the
-            # first of them was read, they leave the carriage at home.
-            self._carriage_far = False
+            self._log(f"auto-exposure: probing in RGB (scan is "
+                      f"{'RGBI' if infrared else 'RGB'})")
+            target = kw.get("exposure_target")
+            exposure_scale = self.auto_exposure(
+                **({"target": target} if target is not None else {}),
+                infrared=infrared, film=film, shading=shading)
+            self._log(f"auto-exposure: {[round(v, 3) for v in exposure_scale]}")
+        self._forget_last_pass()
+        started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
+        fast = bool(fast_infrared and infrared)
         self._work(
-            estimate_seconds(resolution, infrared),
+            estimate_seconds(resolution, infrared, fast),
             lines=int(resolution * 0.957),
         )
-        image = self._pair_image("scan.tif", film, resolution)
-        if image is None:
-            image = self._pixels(channels=4 if infrared else 3)
-        elif not infrared and image.ndim == 3 and image.shape[2] > 3:
-            image = image[..., :3]
-            # The bytes described four channels and this is three, so they no
-            # longer describe what is being returned. Say so by dropping them:
-            # `ScanSession._file` compares the two and would refuse the entry
-            # anyway, and filing raw bytes that decode to a different picture
-            # is the one failure the library exists to make impossible.
-            self._drop_raw("the infrared channel was dropped from this pass")
-        meta = {
-            "resolution_dpi": resolution,
-            "channels": image.shape[2],
-            "channel_order": list("RGBI"[: image.shape[2]]),
-            "film": film,
-            "depth": 16,
-            "width": image.shape[1],
-            "height": image.shape[0],
-            # Only where one actually happened. Claiming a correction that did
-            # not run makes the entry say it is shading-corrected while filing
-            # no reference, and `library.reconstruct` is then right to report
-            # that it cannot be reproduced.
-            "shading": self._shading_report if shading else None,
-            "exposure_scale": exposure_scale,
-            "duration_s": round(time.monotonic() - started, 1),
-            "demo": True,
-        }
-        image, read = self._read_as_carriage(
-            image, ONE_PASS_RGBI if image.shape[2] > 3 else ONE_PASS_COLOR)
-        meta.update(read)
+        # Four planes whenever infrared was asked for, as the device sends:
+        # an RGBI request used to come back three wide from an RGB entry.
+        image, meta = self._take(
+            "scan", film, resolution, channels=4 if infrared else 3, depth=16,
+            shading=shading, keep_raw=keep_raw,
+            passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
+        meta.update(self._settings_meta(exposure_scale, metered=auto_exposure,
+                                        fast=fast),
+                    resolution_dpi=resolution, film=film, depth=16,
+                    frame=list(frame), started_utc=started_utc,
+                    duration_s=round(time.monotonic() - started, 1))
+        # Only for a scan that did its own metering, as on the real one.
+        if auto_exposure and self.last_metering is not None:
+            meta["metering"] = self.last_metering
         self.last_scan_meta = dict(meta)
         return image, meta
 
@@ -613,197 +701,47 @@ class DemoScanner:
         frames: int | None = None,
         resolution: int = 1800,
         infrared: bool = True,
-        dry_run: bool = False,
-        skip: int = 0,
-        only: tuple[int, ...] | None = None,
         film: str = "negative",
-        approved: dict | None = None,
-        reverse_hold: bool = False,
-        correct: bool = False,
-        correct_dry_run: bool = False,
+        only: tuple[int, ...] | None = None,
         first_index: int = 0,
-        should_stop: Any = None,
-        edge_reader: Any = None,
         **kw: Any,
     ):
-        """The roll, walked the way `DirectScanner.scan_roll` walks it.
+        """The roll, walked by the driver's own loop on this stand-in's film.
 
-        From wherever this pretend film is, moved by its own :meth:`advance`,
-        counted from ``first_index`` and ended by the same four things: the
-        frame count, the last chosen frame, a stop, or the strip running out.
-        It used to put the film straight on frame ``skip + i`` whatever it was
-        on, which is how the demo hid a roll that started on frame 11 and
-        called it 1: the real one starts where the film is, and so does this,
-        so `session.seek` above the seam has something true to work against.
+        `DirectScanner.scan_roll` itself, with this stand-in where the scanner
+        would be: its per-frame failures and `max_failures`, its end on a
+        blank frame, its `prescan_resolution`, its metering, the stop it hands
+        the hold and aim loops, and the frames it yields. The demo kept a loop
+        of its own that borrowed the driver's decisions one at a time, and it
+        had drifted in the parts it had not borrowed: one failed frame ended
+        the roll, it prescanned at 300 dpi whatever was asked, and it logged
+        every machine proposal as the operator's.
+
+        What is the demo's own is the film. A roll from the Roll button reads
+        a strip of its own; a roll scanning frames chosen on the contact sheet
+        scans the strip that was walked, or the positions set there would be
+        for other pictures. So does one that starts further along than frame
+        1: that is more of the strip in the transport -- a walk of 11 to the
+        end after one of 1 to 10, added to the same sheet -- and a new strip
+        would put other pictures there. An empty transport refuses a roll
+        before anything moves.
         """
         self._need_film("roll")
-        # Up front, as the real one does: a roll spends minutes calibrating
-        # before the first frame, so this cannot wait until one is taken.
-        if infrared and not supports_infrared(film):
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == "bw" else "cyan layer")
-                + " absorbs infrared, so every frame of this roll would spend "
-                "its ~212 s floor and hand back the picture rather than the "
-                "dust. Scan it RGB."
-            )
-        wanted = frozenset(only) if only is not None else None
-        if wanted is not None and not wanted:
-            self._log("no frames were chosen, so there is nothing to scan")
-            return
-        # A roll from the Roll button reads a strip of its own; a roll scanning
-        # frames chosen on the contact sheet scans the strip that was walked,
-        # or the positions set there would be for other pictures. So does one
-        # that starts further along than frame 1: that is more of the strip in
-        # the transport -- a walk of 11 to the end after one of 1 to 10, added
-        # to the same sheet -- and a new strip would put other pictures there.
-        if only is None and self._rolls and first_index == 0:
-            self._next_strip(film)
-        self._rolls += 1
-        # The driver's own decision, not a copy of it: this line was a retyped
-        # `finished` that had drifted three ways before it was retyped again.
-        finished = self.roll_ends(first_index, skip, frames, wanted)
-
-        def stopping() -> bool:
-            return should_stop is not None and should_stop()
-
-        index = first_index
-        for _ in range(skip):
-            if self.advance() is None:
-                self._log("nothing to skip to: the transport did not move")
-                return
-            index += 1
-
-        holding = True
-        # the driver's own construction: the reader the window hands in, or none
-        walk = (StripWalk(reader=edge_reader(film) if edge_reader else None)
-                if (correct or correct_dry_run) else None)
-        misses = 0
+        if only is None or only:            # an empty choice is the driver's to say
+            if only is None and self._rolls and first_index == 0:
+                self._next_strip(film)
+            self._rolls += 1
+        self._rolling = film
+        self._new_frame()
         try:
-            while not finished(index):
-                if stopping():
-                    self._log("stopping before the next frame, as asked")
-                    return
-                # Numbered by where the film is, as the real loop numbers it.
-                # This film never moves two places for one advance, so inside
-                # a roll it only ever agrees -- but the decision is the
-                # driver's, a caller can start one away from its film, and a
-                # stand-in that skips it cannot show what the driver does.
-                placed, moved = self.place_on_strip(index, self._position,
-                                                    wanted, finished)
-                if moved is not None:
-                    self._log(moved)
-                if placed is None:
-                    return            # past the end, or behind the count
-                index = placed
-                self._index = index
-                # Each frame starts where the advance left it, as the real one
-                # does; the offset an operator asked for is what the loop below
-                # then puts in.
-                self._film_mm = 0.0
-                self._owed_mm = 0.0
-                self._last_way = 0
-                if wanted is not None and index not in wanted:
-                    # Advanced past, not looked at -- the whole point of
-                    # picking frames off a contact sheet.
-                    self._log(f"frame {index + 1}: not chosen, advancing "
-                              "past it")
-                    index += 1
-                    if finished(index) or stopping() or self.advance() is None:
-                        return
-                    continue
-                strip = self._strip_for(film)
-                # Held across both passes of this frame, and dropped at the
-                # end, so the frame's prescan and its scan are one picture and
-                # the next frame is a different one. Chosen by where the film
-                # is, so a frame walked twice is the same picture both times.
-                self._frame_source = (strip[self._position % len(strip)]
-                                      if strip else None)
-                try:
-                    prescan, _ = self.prescan(film=film)
-                    marks = self._marks(prescan)
-                    # In the transport's units, as the real loop says it:
-                    # the two logs are the same software's, and millimetres
-                    # are a conversion away from anything the film did.
-                    self._log(
-                        f"frame {index + 1}: contrast "
-                        f"{marks['contrast']:.3f}, "
-                        f"offset {say_units(marks['offset_mm'])}, "
-                        f"short by "
-                        f"{say_units(marks['shortfall_mm'], signed=False)}"
-                    )
-                    held = (approved or {}).get(index)
-                    if held is not None and holding:
-                        fix = self._hold_to_approved(
-                            index, prescan, 300, held, keep_raw=False,
-                            reverse=reverse_hold,
-                        )
-                        if fix.get("roll_abort"):
-                            holding = False
-                        if fix.get("outcome") != "held":
-                            misses += 1
-                            if misses >= self.HOLD_GIVE_UP_FRAMES:
-                                holding = False
-                                self._log("three frames in a row missed their "
-                                          "position; holding off for this "
-                                          "roll")
-                        else:
-                            misses = 0
-                        if fix.get("prescan") is not None:
-                            prescan = fix["prescan"]
-                            marks = self._marks(prescan)
-                        marks["approved"] = {k: v for k, v in fix.items()
-                                             if k != "prescan"}
-                    elif held is not None:
-                        marks["approved"] = {
-                            "target_mm": round(held.offset_mm, 4),
-                            "outcome": "off",
-                            "reason": "holding was switched off earlier in "
-                                      "this roll",
-                        }
-                    elif walk is not None:
-                        marks["base"] = walk.observe(index, prescan)
-                        fix = self._aim_frame(
-                            index, prescan, 300, walk,
-                            dry_run=correct_dry_run, keep_raw=False,
-                        )
-                        if fix.get("prescan") is not None:
-                            prescan = fix["prescan"]
-                            marks = self._marks(prescan)
-                        marks["correction"] = {k: v for k, v in fix.items()
-                                               if k != "prescan"}
-                    # The frame's last prescan, as it was read -- taken before
-                    # the scan below replaces it.
-                    prescan_meta = dict(self.last_scan_meta or {})
-                    image = meta = None
-                    if not dry_run:
-                        image, meta = self.scan(
-                            resolution=resolution, infrared=infrared,
-                            film=film, keep_raw=True,
-                        )
-                finally:
-                    self._frame_source = None
-                yield RollFrame(
-                    index=index,
-                    position=self._position,
-                    image=image,
-                    meta=meta or {},
-                    prescan=prescan,
-                    registration=marks,
-                    prescan_meta=prescan_meta,
-                )
-                index += 1
-                if finished(index):
-                    break
-                if stopping():
-                    self._log("stopping before the next advance, as asked")
-                    return
-                if self.advance() is None:
-                    return
+            yield from self._drivers_roll(
+                frames=frames, resolution=resolution, infrared=infrared,
+                film=film, only=only, first_index=first_index, **kw)
         finally:
-            # Outside a roll again, so a manual nudge from the window is not
+            # Outside a roll again, so a single pass shows its own film rather
+            # than the last frame's, and a manual nudge from the window is not
             # mistaken for the slipping frame.
-            self._index = -1
+            self._rolling = None
 
     #: The real loop, run against the simulated film above rather than
     #: reimplemented. It only needs `nudge`, `prescan` and `_log`, all of
@@ -812,7 +750,11 @@ class DemoScanner:
     #: check as the scanner would, instead of a hand-written imitation that
     #: cannot disagree with it.
     _hold_to_approved = DirectScanner._hold_to_approved
-    #: Same argument as the line above, for the same reason: the demo runs the
+    #: The roll and the metering, taken the same way: `scan_roll` and
+    #: `auto_exposure` above are these, with only the film chosen around them.
+    _drivers_roll = DirectScanner.scan_roll
+    _drivers_metering = DirectScanner.auto_exposure
+    #: Same argument as the lines above, for the same reason: the demo runs the
     #: real ensemble and the real aiming loop, so a change that breaks either
     #: shows up with no scanner on the bus.
     _aim_frame = DirectScanner._aim_frame
@@ -826,8 +768,9 @@ class DemoScanner:
     # plain function comes back through the class and assigning it here
     # would bind  as its first argument.
     param_for_mm = staticmethod(DirectScanner.param_for_mm)
-    #: When a roll ends and what a frame is numbered, taken for the same
-    #: reason: the loop above is the demo's own, and its decisions are not.
+    #: When a roll ends and what a frame is numbered: the loop that asks is
+    #: the driver's own now, and these stay taken for the tests and the
+    #: window that ask the stand-in directly.
     roll_ends = staticmethod(DirectScanner.roll_ends)
     place_on_strip = staticmethod(DirectScanner.place_on_strip)
     STEP_MM = DirectScanner.STEP_MM
@@ -835,6 +778,190 @@ class DemoScanner:
     MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
+    #: The roll loop ends a roll on a device left mid-scan. Nothing here can
+    #: be: a force abort closes the stand-in's transport and every pass after
+    #: it refuses, which is the failure the loop sees instead.
+    suspect: str | None = None
+
+    # -- one pass ------------------------------------------------------------
+
+    def _forget_last_pass(self) -> None:
+        """Nothing the previous pass left may describe this one."""
+        self._capture = {"reference": None, "ccd_mask": None, "raw": None,
+                         "raw_layout": None}
+        self.last_pixels_raw = None
+        self.last_raw = None
+        self.last_raw_layout = None
+
+    def _settings_meta(self, exposure_scale: Any, metered: bool, fast: bool
+                       ) -> dict[str, Any]:
+        """The exposure part of a pass's meta, as the real one records it."""
+        settings = self.get_gain_offset().scaled(exposure_scale)
+        return {
+            "exposure": settings.exposure,
+            "gain": settings.gain,
+            "offset": settings.offset,
+            "exposure_scale": (exposure_scale
+                               if isinstance(exposure_scale, (int, float))
+                               else list(exposure_scale)),
+            "exposure_metered": bool(metered),
+            "fast_infrared": bool(fast),
+        }
+
+    def _take(self, kind: str, film: str, resolution: int, channels: int,
+              depth: int, shading: bool, keep_raw: bool, passes: int,
+              ) -> tuple[np.ndarray, dict[str, Any]]:
+        """One pass, handed over the way `DirectScanner.scan` hands one over.
+
+        The stored picture fitted to this pass (`_fit`) is its raw read: what
+        `last_pixels_raw` holds, and what the session files. It is corrected
+        *last*, with the calibration that describes these very pixels, and
+        the corrected picture is what comes back -- or the raw one, when
+        ``shading=False`` asked for it. A stored prescan or a test card has
+        no calibration, and nothing to take off, so it comes back as it was
+        read and its record says no correction ran.
+
+        Returns the picture and the part of the meta the pass decides.
+        """
+        source = self._stored(kind, film, channels)
+        raw, reference, mask = self._fit(source, resolution, channels, depth)
+        raw, read = self._read_as_carriage(raw, passes, keep_raw)
+        self._capture = {"reference": reference, "ccd_mask": mask,
+                         "raw": self.last_raw, "raw_layout": self.last_raw_layout}
+        self.last_pixels_raw = raw
+        image, report, skipped = raw, None, None
+        if not shading:
+            skipped = SHADING_SKIPPED_EXPLICIT
+        elif reference is not None:
+            image, report = apply_shading(raw, reference, mask)
+        return image, {
+            "channels": raw.shape[2],
+            "channel_order": list(CHANNEL_ORDER[: raw.shape[2]]),
+            "width": raw.shape[1],
+            "height": raw.shape[0],
+            "bytes_per_line": raw.shape[1] * raw.dtype.itemsize,
+            "shading": report,
+            "shading_skipped": skipped,
+            # Recorded, not left to be inferred: the bytes filed are this
+            # pass's, so nothing was trimmed from their decode.
+            "stagger_realigned": 0,
+            "demo": True,
+            # Which stored picture this pass was drawn from. The pixels and
+            # bytes are the pass's own, so without it a demo entry could not
+            # be traced to the photograph it shows.
+            "demo_source": {"entry": source["entry"], "file": source["file"]},
+            **read,
+        }
+
+    def _fit(self, source: dict[str, Any], resolution: int, channels: int,
+             depth: int) -> tuple[np.ndarray, ShadingReference | None,
+                                  bytes | None]:
+        """The stored picture as this pass reads it, and the calibration for it.
+
+        Sized to what the device produces at this resolution (`_shape_for`):
+        a pass reported as 900 dpi that hands back 1800 dpi pixels is a
+        stand-in lying about the one thing the window sizes everything from,
+        and every readout downstream -- the estimate, the zoom, the crop -- is
+        then off by a factor. Moved to where the film sits (`_shift`). As
+        many planes as the pass has, and at its depth: an RGBI pass is four
+        planes and a prescan is 8-bit, on the device and so here.
+
+        Nearest-neighbour, as a pair of index maps rather than image
+        operations, because the column map is also what says which stored
+        column each column of the pass now shows -- and so which calibration
+        column corrects it.
+        """
+        pixels = np.asarray(source["pixels"])
+        if pixels.ndim == 2:
+            pixels = pixels[..., None]
+        if pixels.shape[2] < 3:
+            pixels = np.repeat(pixels[..., :1], 3, axis=2)
+        height, width, planes = pixels.shape
+        dpi = source.get("dpi")
+        shape = None if dpi == resolution else self._shape_for(resolution)
+        if shape:
+            h, w = shape
+        elif dpi:
+            h = max(1, round(height * resolution / dpi))
+            w = max(1, round(width * resolution / dpi))
+        else:
+            h, w = height, width
+        # Each axis by its own ratio, in integers so the map is exact: a
+        # recorded shape need not be the stored one's aspect to the pixel.
+        rows = (np.arange(h) * height) // h
+        columns = np.roll((np.arange(w) * width) // w, self._shift(w))
+        same_columns = w == width and bool(np.array_equal(columns, np.arange(width)))
+        kept = min(planes, channels)
+        if (h, w) != (height, width):
+            self._log(f"{source['entry'] or source['file']}: "
+                      f"{height}x{width} fitted to {h}x{w} for {resolution} dpi")
+        if h == height and same_columns:
+            raw = pixels[..., :kept]
+        else:
+            raw = pixels[rows[:, None], columns[None, :], :kept]
+        raw = _at_depth(raw, depth)
+        if kept < channels:
+            # A stored picture with no infrared record, asked for RGBI. The
+            # device always sends four planes, so a clear one is added --
+            # film with no dust on it -- rather than a pass one plane short.
+            level = int(CLEAR_INFRARED * np.iinfo(raw.dtype).max)
+            clear = np.full(raw.shape[:2] + (channels - kept,), level, raw.dtype)
+            raw = np.concatenate([raw, clear], axis=2)
+
+        reference, mask = source.get("reference"), source.get("ccd_mask")
+        if reference is None:
+            return raw, None, None
+        added = set(range(kept, channels))
+        if same_columns and not added & set(reference.ref):
+            # Every column is still the one the stored calibration measured.
+            return raw, reference, mask
+        return raw, self._pass_reference(reference, mask, width, columns,
+                                         drop=added), None
+
+    @staticmethod
+    def _pass_reference(reference: ShadingReference, mask: bytes | None,
+                        width: int, columns: np.ndarray,
+                        drop: set[int] | frozenset[int] = frozenset(),
+                        ) -> ShadingReference:
+        """The stored calibration, read at the columns this pass now shows.
+
+        A pass resized or moved from its stored picture shows each stored
+        column somewhere else, or twice, or not at all. The device's mask
+        cannot say that -- it names CCD columns in order, once each -- but a
+        reference as wide as the pass can: its column ``j`` is the stored
+        reference column for whatever column ``j`` now shows, so correcting
+        with it is the stored correction, moved with the picture. Filed
+        beside the pass, it gives `library.corrected` the same picture back.
+
+        A column the stored correction never reached passes through
+        unchanged: a gain of one and no dark floor. Channels in ``drop`` --
+        a plane the stored picture did not have -- are left out, so nothing
+        corrects what no calibration measured.
+        """
+        width = int(width)
+        loc = (build_width_to_loc(bytes(mask), width) if mask is not None
+               else np.arange(min(width, reference.pixels_per_line)))
+        reached = columns < loc.size
+        at = (loc[np.minimum(columns, loc.size - 1)] if loc.size
+              else np.zeros_like(columns))
+        ref: dict[int, np.ndarray] = {}
+        dark: dict[int, np.ndarray] = {}
+        for c in reference.channels:
+            if c in drop:
+                continue
+            light = np.asarray(reference.ref[c], dtype=np.float64)[at]
+            if c in reference.dark:
+                floor = np.asarray(reference.dark[c], dtype=np.float64)[at]
+                light[~reached] = reference.mean[c] - reference.dark_mean[c]
+                floor[~reached] = 0.0
+                dark[c] = floor
+            else:
+                light[~reached] = reference.mean[c]
+            ref[c] = light
+        return ShadingReference(
+            ref=ref, mean={c: reference.mean[c] for c in ref},
+            pixels_per_line=len(columns), dark=dark,
+            dark_mean={c: reference.dark_mean[c] for c in dark})
 
     # -- internals ---------------------------------------------------------
 
@@ -885,9 +1012,15 @@ class DemoScanner:
 
         Falls back to the chosen pair, then to anything at all, so a library
         with no entry of that film still drives the window.
+
+        Inside a roll, the strip's entry for where the film is; and for the
+        film being metered, whatever film the probe was sent with.
         """
-        if self._frame_source is not None:
-            return self._frame_source
+        if self._rolling is not None:
+            strip = self._strip_for(self._rolling)
+            if strip:
+                return strip[self._position % len(strip)]
+        film = self._rolling or self._metering or film
         if film in self._by_film:
             return self._by_film[film]
 
@@ -945,98 +1078,73 @@ class DemoScanner:
         self._shapes[dpi] = found
         return found
 
-    @staticmethod
-    def _rescale(image: np.ndarray, factor: float) -> np.ndarray:
-        """Nearest-neighbour to the size a resolution implies.
-
-        Only so the shape matches the label. A pass reported as 900 dpi that
-        hands back 1800 dpi pixels is a stand-in that lies about the one thing
-        the window sizes everything from, and every readout downstream -- the
-        estimate, the zoom, the crop -- is then off by a factor.
-        """
-        if abs(factor - 1.0) < 1e-9:
-            return image
-        h = max(1, round(image.shape[0] * factor))
-        w = max(1, round(image.shape[1] * factor))
-        return DemoScanner._resample(image, h, w)
-
-    @staticmethod
-    def _resample(image: np.ndarray, h: int, w: int) -> np.ndarray:
-        if image.shape[:2] == (h, w):
-            return image
-        factor = h / image.shape[0]
-        ys = np.clip((np.arange(h) / factor).astype(int), 0, image.shape[0] - 1)
-        xs = np.clip((np.arange(w) / factor).astype(int), 0, image.shape[1] - 1)
-        return image[ys][:, xs]
-
-    def _decode(self, path: Path) -> tuple[np.ndarray, dict[str, Any]] | None:
+    def _decode(self, path: Path) -> dict[str, Any] | None:
         """An entry's pixels from its **raw bytes**, not from its TIFF.
 
         This is the point of the demo being backed by the library. The stored
-        `scan.tif` is an output; `raw.bin.gz` is what the scanner actually sent,
-        and decoding it here runs the same `_deinterleave` and the same shading
-        correction a real pass runs. So the demo exercises the path that can
-        break, and `capture_record` below can hand the session genuine bytes to
-        file -- which a TIFF read could never do.
+        `scan.tif` is an output; `raw.bin.gz` is what the scanner actually
+        sent, and decoding it here runs the driver's own decode
+        (`library.decode_raw`, which replays whatever `scan()` did after it).
+        The pixels come back **uncorrected**, with the entry's reference and
+        mask beside them, to be corrected last as a real pass is (`_take`).
+        Correcting here, first, is what used to leave the session nothing but
+        corrected pixels to file.
 
         An entry filed without its bytes -- older ones, and some a roll filed
         -- has nothing to decode, and its `scan.tif` is then shown instead:
         that is the decode, stored when it was taken, and it is this entry's
         photograph, where falling back to another entry would show a frame's
-        prescan and its scan as two different pictures. Its capture carries
-        no bytes, so nothing filed from it pretends to have any.
+        prescan and its scan as two different pictures. One filed before the
+        library held raw pixels already carries its correction, and comes
+        with no calibration, or it would be corrected twice.
 
-        Returns ``(image, capture)``, or None when neither can be read.
+        The same keys as :meth:`_stored` hands back, or None when neither can
+        be read. Kept for the next pass: a frame's metering probes and its
+        scan are one entry, decoded once.
         """
-        raw = library.read_raw(path)
+        if self._decoded is not None and self._decoded[0] == path:
+            return self._decoded[1]
         try:
             record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-            if raw is None:
+            image = library.decode_raw(path)
+            name = "raw.bin.gz"
+            if image is None:
                 image = tiff.read(str(path / "scan.tif"))
-                layout = None
-            else:
-                layout = (record.get("raw") or {}).get("layout") or {}
-                params = ScanParameters(
-                    width=int(layout["width"]),
-                    lines=int(layout["lines"]),
-                    bytes_per_line=int(layout["bytes_per_line"]),
-                    filter_offset1=0, filter_offset2=0, available_lines=0,
-                )
-                image = DirectScanner._deinterleave(
-                    raw, params, int(layout["channels"])
-                )
+                name = "scan.tif"
         except Exception as exc:                         # noqa: BLE001
             self._log(f"could not decode {path.name}: {exc}")
             return None
 
-        cal = record.get("calibration") or {}
-        reference = mask = None
-        ref_file, mask_file = cal.get("shading"), cal.get("ccd_mask")
-        if ref_file and (path / ref_file).exists():
-            reference = ShadingReference.load(path / ref_file)
-        if mask_file and (path / mask_file).exists():
-            mask = (path / mask_file).read_bytes()
         # Corrected whenever there is a reference to correct with, which is
         # what a real pass does -- the demo shows the picture, not a striped
-        # version of it. It used to correct only when the entry's record said
-        # the *stored pixels* were corrected; entries hold raw pixels now, so
-        # that condition is never true and the demo would have shown every
-        # frame uncorrected.
-        self._shading_report = None
-        if reference is not None and not (record.get("calibration") or {}).get("skipped"):
-            image, self._shading_report = apply_shading(image, reference, mask)
-
-        self._source_dpi = int(
-            (record.get("scan") or {}).get("resolution_dpi") or 0
-        )
+        # version of it -- unless it was taken raw, or its stored pixels
+        # already carry the correction.
+        cal = record.get("calibration") or {}
+        applied = (record.get("image") or {}).get("corrections_applied") or []
+        reference = mask = None
+        if not cal.get("skipped") and not (name == "scan.tif"
+                                           and "shading" in applied):
+            ref_file, mask_file = cal.get("shading"), cal.get("ccd_mask")
+            try:
+                if ref_file and (path / ref_file).exists():
+                    reference = ShadingReference.load(path / ref_file)
+                if mask_file and (path / mask_file).exists():
+                    mask = (path / mask_file).read_bytes()
+            except Exception as exc:                     # noqa: BLE001
+                self._log(f"could not read {path.name}'s calibration: {exc}")
+                reference = mask = None
         self._log(f"{path.name}: "
-                  + (f"{len(raw) / 1e6:.1f} MB of raw bytes" if raw is not None
+                  + ("its raw bytes" if name == "raw.bin.gz"
                      else "no raw bytes, its stored scan.tif")
                   + f" -> {image.shape}")
-        return image, {
+        got = {
+            "pixels": image,
+            "dpi": int((record.get("scan") or {}).get("resolution_dpi") or 0) or None,
             "reference": reference, "ccd_mask": mask,
-            "raw": raw, "raw_layout": layout,
+            "entry": path.name, "file": name,
         }
+        self._decoded = (path, got)
+        return got
 
     def _strip_for(self, film: str) -> list[Path]:
         """The entries the strip in the transport shows, one per frame.
@@ -1160,63 +1268,38 @@ class DemoScanner:
         self._pools[film] = matching if len(matching) >= 2 else any_prescan
         return self._pools[film]
 
-    def _marks(self, prescan: np.ndarray) -> dict[str, Any]:
-        """Measure the frame the way the driver does, not with made-up numbers.
+    def _stored(self, kind: str, film: str, channels: int) -> dict[str, Any]:
+        """The stored picture a pass is drawn from, and what is known of it.
 
-        `registration` and `frame_contrast` are the real ones. That is what
-        makes a contact sheet's captions worth reading here: they differ
-        because the pictures differ, and they are computed by the code that
-        will compute them on the hardware.
-        """
-        try:
-            marks = dict(registration(prescan, FULL_FRAME))
-            marks["contrast"] = round(float(frame_contrast(prescan)), 4)
-            return marks
-        except Exception as exc:                         # noqa: BLE001
-            # A stored prescan of an unexpected shape costs this frame's
-            # numbers, not the run.
-            self._log(f"could not measure this frame: {exc}")
-            return {"offset_mm": 0.0, "shortfall_mm": 0.0, "contrast": 0.0}
+        A prescan uses the entry's stored `prescan.tif` where there is one,
+        and otherwise the entry's own scan -- a framing pass and a scan are
+        the same photograph, and showing the right film matters more here
+        than showing the right resolution. A stored prescan is the picture as
+        it was shown, which no calibration describes, so it comes with none.
 
-    def _pair_image(self, name: str, film: str = "negative",
-                    dpi: int = 0) -> np.ndarray | None:
-        """The picture for this film: its prescan, or its scan.
-
-        A prescan uses the entry's stored `prescan.tif` where there is one, and
-        otherwise the entry's own scan -- a framing pass and a scan are the same
-        photograph, and showing the right film matters more here than showing
-        the right resolution.
+        Keys: ``pixels``; ``dpi``, None where unknown; ``reference`` and
+        ``ccd_mask``, None where nothing describes the pixels; and ``entry``
+        and ``file``, which stored picture it is.
         """
         source = self._source_for(film)
-        if source is None:
-            return None
-        if name.startswith("prescan"):
-            tif = source / name
+        if source is not None and kind == "prescan":
+            tif = source / "prescan.tif"
             if tif.exists():
                 try:
                     image = tiff.read(str(tif))
-                    self._log(f"{name} from {source.name}  {image.shape}")
-                    return image
+                    self._log(f"prescan.tif from {source.name}  {image.shape}")
+                    return {"pixels": image, "dpi": None, "reference": None,
+                            "ccd_mask": None, "entry": source.name,
+                            "file": "prescan.tif"}
                 except Exception as exc:                 # noqa: BLE001
                     self._log(f"could not read {tif.name}: {exc}")
+        if source is not None:
+            got = self._decode(source)
+            if got is not None:
+                return got
+        return self._pixels(channels)
 
-        got = self._decode(source)
-        if got is None:
-            return None
-        image, capture = got
-        self._capture = capture
-        if dpi and self._source_dpi and dpi != self._source_dpi:
-            shape = self._shape_for(dpi)
-            image = (self._resample(image, *shape) if shape
-                     else self._rescale(image, dpi / self._source_dpi))
-            # The bytes were taken at another resolution, so they no longer
-            # describe these pixels.
-            self._drop_raw(
-                f"resized from {self._source_dpi} dpi to {dpi}"
-            )
-        return image
-
-    def _pixels(self, channels: int) -> np.ndarray:
+    def _pixels(self, channels: int) -> dict[str, Any]:
         """Real pixels from the library where there are any, else a test card."""
         wanted = [
             p for p in self._entries
@@ -1227,18 +1310,36 @@ class DemoScanner:
             self._next += 1
             got = self._decode(path)
             if got is not None:
-                image, capture = got
-                self._capture = capture
                 self._log(f"demo frame from {path.name}")
-                if image.ndim == 3 and image.shape[2] > channels:
-                    image = image[..., :channels]
-                    self._drop_raw(
-                        f"this entry has {capture['raw_layout'].get('channels')} "
-                        f"channels and the pass wants {channels}"
-                    )
-                return image
+                return got
         self._next += 1
-        return _test_card(channels, self._next)
+        return {"pixels": _test_card(channels, self._next), "dpi": None,
+                "reference": None, "ccd_mask": None, "entry": None,
+                "file": "test card"}
+
+
+#: The infrared plane of clear film: what a stored picture with no infrared
+#: record is given when an RGBI pass is asked of it. Film with no dust on it
+#: is flat in infrared; the level is the test card's.
+CLEAR_INFRARED = 0.85
+
+
+def _at_depth(image: np.ndarray, depth: int) -> np.ndarray:
+    """``image`` as a pass at this depth delivers it: 8 or 16 bits a sample.
+
+    The same reduction the driver's own exports make (`export.to_8bit`), so
+    an 8-bit pass drawn from a 16-bit stored picture is that picture, not a
+    stretched one.
+    """
+    if depth == 8:
+        if image.dtype in (np.uint8, np.uint16):
+            return to_8bit(image)
+        return np.clip(image, 0, 255).astype(np.uint8)
+    if image.dtype == np.uint16:
+        return image
+    if image.dtype == np.uint8:
+        return image.astype(np.uint16) * 257
+    return np.clip(image, 0, 65535).astype(np.uint16)
 
 
 def best_pair(root: Path) -> Path | None:

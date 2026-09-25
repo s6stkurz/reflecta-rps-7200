@@ -232,10 +232,12 @@ def test_without_a_reader_the_strip_detector_is_unchanged():
 
 
 def test_the_demo_and_the_session_pass_the_reader_on():
-    """The demo is the real software: it builds its walk the driver's way."""
+    """The demo is the real software: it builds its walk the driver's way,
+    because the loop it runs is the driver's own."""
     from rps7200 import demo, direct, session
 
-    assert "StripWalk(reader=edge_reader(film)" in inspect.getsource(demo.DemoScanner.scan_roll)
+    assert demo.DemoScanner._drivers_roll is direct.DirectScanner.scan_roll
+    assert "self._drivers_roll(" in inspect.getsource(demo.DemoScanner.scan_roll)
     assert "StripWalk(reader=edge_reader(film)" in inspect.getsource(
         direct.DirectScanner.scan_roll)
     assert "edge_reader=self.edge_reader" in inspect.getsource(session)
