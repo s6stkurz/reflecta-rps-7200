@@ -888,6 +888,40 @@ def test_scanning_chosen_frames_scans_the_strip_that_was_walked(tmp_path):
     assert [f.prescan.tobytes() for f in chosen] == [walked[1], walked[3]]
 
 
+def test_a_roll_the_driver_refuses_lays_no_strip(tmp_path):
+    """The driver's loop refuses infrared on film blind to it, and an unknown
+    meter mode, on its first step. The demo had laid a new strip and counted
+    the roll before that step, so a refused roll used up a strip: frames then
+    chosen on the sheet were scanned from pictures nobody walked, and the
+    roll after the operator fixed his settings showed a third set."""
+    for n in range(8):
+        _walkable(tmp_path, f"e{n}", seed=n + 1)
+
+    def session(refuse):
+        with DemoScanner(root=tmp_path, speed=100000.0, seed=3) as s:
+            s.LAST_POSITION = 3                # a four-frame strip of eight
+            first = _shown(s.scan_roll(frames=4, dry_run=True))
+            for _ in range(4):
+                s.retreat()
+            if refuse:
+                rolls, strips = s._rolls, dict(s._strips)
+                with pytest.raises(ValueError, match="infrared is blind"):
+                    list(s.scan_roll(frames=4, dry_run=True, infrared=True,
+                                     film="bw"))
+                with pytest.raises(ValueError, match="unknown meter mode"):
+                    list(s.scan_roll(frames=4, dry_run=True, meter="sometimes"))
+                assert (s._rolls, s._strips) == (rolls, strips)
+            chosen = _shown(s.scan_roll(frames=4, only=(1, 3), dry_run=True))
+            for _ in range(3):
+                s.retreat()
+            second = _shown(s.scan_roll(frames=4, dry_run=True))
+        return first, chosen, second
+
+    first, chosen, second = session(refuse=True)
+    assert chosen == [first[1], first[3]], "the strip that was walked"
+    assert second == session(refuse=False)[2], "the second set, not a third"
+
+
 # -- the pictures a later roll can draw on: every library, one per photograph -
 
 
@@ -1098,22 +1132,76 @@ def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
 def test_a_prescan_from_a_stored_tiff_carries_nothing_of_the_pass_before(tmp_path):
     """A stored prescan has no bytes and no calibration of its own. It used
     to hand over whatever the previous decode had left: that pass's bytes,
-    reference and mask, filed beside pixels they do not describe."""
+    reference and mask, filed beside pixels they do not describe. And it is
+    the picture as it was shown, corrected when it was taken, so it has no
+    raw pixels to hand over either: it used to be passed off as a raw read."""
     rng = np.random.default_rng(8)
     stored = rng.integers(0, 255, (6, 9, 3), dtype=np.uint8)
-    calibrated_entry(tmp_path, prescan=stored)
+    calibrated_entry(tmp_path)                        # the pass before: negative
+    entry(tmp_path, film="bw", prescan=stored)        # no reference: its prescan.tif
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
     s.scan(resolution=900, infrared=False, keep_raw=True)
-    image, _ = s.prescan(keep_raw=True)
+    assert s.capture_record()["reference"] is not None, "the pass before had one"
+    image, _ = s.prescan(keep_raw=True, film="bw")
     capture = s.capture_record()
     s.close()
     assert np.array_equal(image, stored)
-    assert np.array_equal(s.last_pixels_raw, image), "nothing to take off"
-    assert capture["reference"] is None and capture["ccd_mask"] is None
-    layout = capture["raw_layout"]
-    assert (layout["lines"], layout["width"], layout["channels"]) == (6, 9, 3)
-    assert s.last_scan_meta["shading"] is None, "no correction ran"
+    assert s.last_pixels_raw is None, "corrected when kept: no raw pixels behind it"
+    assert capture == {"reference": None, "ccd_mask": None, "raw": None,
+                       "raw_layout": None}
+    meta = s.last_scan_meta
+    # The report says a correction ran -- which is what makes the session
+    # file these pixels labelled corrected -- and nothing says one was missed.
+    assert meta["shading"] and meta["shading_skipped"] is None
+    assert meta["demo_source"]["file"] == "prescan.tif"
+
+
+def test_a_prescan_is_drawn_from_the_raw_bytes_where_they_can_be_corrected(
+        tmp_path):
+    """The demo's commonest prescan: an entry with a stored prescan, raw bytes
+    and a reference. The stored `prescan.tif` is corrected already, and was
+    served as this pass's raw read -- filed as raw pixels that were not. The
+    scan's raw bytes, fitted to the framing pass and corrected last, are a raw
+    read like any other."""
+    stored = np.random.default_rng(8).integers(0, 255, (6, 9, 3), dtype=np.uint8)
+    source, truth, reference, mask = calibrated_entry(tmp_path, prescan=stored)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, _ = s.prescan(keep_raw=True)
+    meta, capture = s.last_scan_meta, s.capture_record()
+    s.close()
+    assert meta["demo_source"] == {"entry": source.name, "file": "raw.bin.gz"}
+    assert capture["reference"] is not None and capture["raw"] is not None
+    assert meta["shading"] is not None and meta["shading_skipped"] is None
+    assert image.dtype == np.uint8 and image.shape == (3, 4, 3)
+    assert not np.array_equal(s.last_pixels_raw, image), "a correction ran"
+    out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
+                       film=FilmNotes(), **capture)
+    assert library.reconstruct(out)[1].startswith("identical")
+    assert np.array_equal(library.corrected(out)[0], image)
+
+
+def test_a_pass_nothing_calibrates_says_it_went_uncorrected(tmp_path):
+    """A shading=True pass from an entry filed without a reference comes back
+    uncorrected. It used to say neither that it was corrected nor why not --
+    the record of a pass that needed no correction, which the real one never
+    hands back: it refuses instead."""
+    from rps7200.direct import SHADING_SKIPPED_EXPLICIT
+
+    _, truth = entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, meta = s.scan(resolution=900, infrared=False, keep_raw=True)
+    capture = s.capture_record()
+    s.close()
+    assert np.array_equal(image, truth)
+    assert meta["shading"] is None
+    assert meta["shading_skipped"], "why it went uncorrected"
+    assert meta["shading_skipped"] != SHADING_SKIPPED_EXPLICIT, "not by choice"
+    out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
+                       film=FilmNotes(), **capture)
+    assert library.corrected(out)[1]["corrected"] == "raw -- correction was asked for"
 
 
 def test_what_a_demo_session_files_is_raw_and_reconstructs(tmp_path):
@@ -1164,6 +1252,76 @@ def test_what_a_demo_session_files_is_raw_and_reconstructs(tmp_path):
         assert record["extra"]["demo"] is True
         assert record["extra"]["demo_source"]["entry"] == source.name
     assert any(r["metering"] for r in records), "the RGBI scan metered itself"
+
+
+def _through_a_session(demo, root, jobs):
+    """Run ``jobs`` through the real session with ``demo`` at the seam; the
+    events, once it has closed."""
+    import time
+
+    from rps7200.session import ScanSession
+
+    session = ScanSession(root=str(root / "demo-library"),
+                          rolls=str(root / "rolls"),
+                          reference=str(root / "shading.npz"),
+                          open_scanner=lambda: demo, verbose=False)
+    session.start()
+    for job in jobs:
+        session.submit(job)
+    session.shutdown()
+    events = []
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        batch = session.poll()
+        events += batch
+        if any(e.kind == "closed" for e in batch):
+            break
+        time.sleep(0.01)
+    session.join(timeout=5)
+    return events
+
+
+def test_a_demo_prescan_is_filed_as_what_it_is(tmp_path):
+    """Through the session, as the window files one. An entry with a stored
+    prescan and a reference used to have its corrected `prescan.tif` filed as
+    raw pixels with no correction recorded -- CLAUDE.md's 26 prescans, rebuilt
+    for every demo prescan and walk frame. Now it is a raw read with its
+    reference, and verify finds nothing; a `prescan.tif` with nothing to
+    correct behind it is filed as the corrected picture it is."""
+    from pathlib import Path
+
+    from rps7200.session import Prescan
+
+    stored = np.random.default_rng(8).integers(0, 255, (6, 9, 3), dtype=np.uint8)
+    calibrated_entry(tmp_path / "lib", prescan=stored)
+    entry(tmp_path / "lib", film="bw", prescan=stored)   # raw, no reference
+    events = _through_a_session(
+        DemoScanner(tmp_path / "lib", speed=1e9), tmp_path,
+        [Prescan(film="negative"), Prescan(film="bw")])
+    assert not [e.text for e in events if e.kind == "failed"]
+    shown = {e.result.seq: e.result.image for e in events if e.kind == "result"}
+    filed = {e.done: Path(e.text) for e in events if e.kind == "filed"}
+    assert len(filed) == 2
+    raw_read, kept = filed[min(filed)], filed[max(filed)]
+
+    record = json.loads((raw_read / "scan.json").read_text(encoding="utf-8"))
+    assert record["extra"]["demo_source"]["file"] == "raw.bin.gz"
+    assert record["image"]["corrections_applied"] == []
+    assert record["calibration"]["shading"] == "shading.npz"
+    assert library.reconstruct(raw_read)[1].startswith("identical")
+    assert np.array_equal(library.corrected(raw_read)[0], shown[min(filed)])
+
+    record = json.loads((kept / "scan.json").read_text(encoding="utf-8"))
+    assert record["extra"]["demo_source"]["file"] == "prescan.tif"
+    assert record["image"]["corrections_applied"] == ["shading"]
+    assert record["raw"]["file"] is None, "no bytes stand behind it"
+    image, said = library.corrected(kept)
+    assert said["corrected"] == "already"
+    assert np.array_equal(image, shown[max(filed)])
+
+    # The raw read is clean; the kept picture says only what is true of it.
+    assert library.verify(tmp_path / "demo-library") == [
+        f"{kept.name}: no raw bytes, so it cannot be re-decoded"]
 
 
 # -- what the demo refuses, and how it answers ---------------------------------
@@ -1321,6 +1479,40 @@ def test_an_empty_transport_refuses_a_framing_pass(tmp_path):
                  lambda: empty.scan(resolution=900, infrared=False)):
         with pytest.raises(UsbError, match="no film in the transport"):
             call()
+    empty.close()
+
+
+def test_an_empty_uncalibrated_transport_is_refused_in_the_drivers_order(
+        tmp_path, monkeypatch):
+    """Uncalibrated, the driver refuses a corrected pass before a command
+    reaches the transport, so an empty one is never asked. The stand-in's
+    empty transport answers where a transport would -- after the driver's
+    own refusal, not ahead of it. (The window never gets this far: it asks
+    for a calibration first, and asks whether the film is in.)"""
+    from conftest import FakeTransport
+
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import ShadingUnavailable
+    from rps7200.usb_transport import UsbError
+
+    real = DirectScanner(transport=FakeTransport())
+    real.verbose = False
+    with pytest.raises(ShadingUnavailable) as refused:
+        real.scan(resolution=900, infrared=False)
+    assert real.t.sent == [], "refused before anything reached the transport"
+
+    monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
+    entry(tmp_path)
+    empty = DemoScanner(tmp_path, no_film=True, speed=1e9)
+    empty.open()
+    for call in (empty.prescan,
+                 lambda: empty.scan(resolution=900, infrared=False)):
+        with pytest.raises(ShadingUnavailable) as also:
+            call()
+        assert str(also.value) == str(refused.value)
+    # raw on purpose needs no calibration, so it reaches the transport
+    with pytest.raises(UsbError, match="no film in the transport"):
+        empty.scan(resolution=900, infrared=False, shading=False)
     empty.close()
 
 

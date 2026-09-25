@@ -20,16 +20,21 @@ before it are kept in `last_pixels_raw`, which is what the session files. The
 demo used to correct first and keep nothing, so the session filed corrected
 pixels as raw beside a reference that corrected them a second time -- a branch
 the scanner never takes, which hid the one bug of that shape it did have.
+A prescan is drawn from the raw bytes too, not from the `prescan.tif` beside
+them: that is the picture as it was shown, corrected when it was taken, and
+serving it as a raw read filed every demo prescan as raw pixels that were not.
+It is the fallback for an entry with nothing to correct, and is handed over as
+the corrected picture it is.
 
-Every pass hands over bytes of its own: its raw pixels as the index-format
-lines the scanner sends, in the order the carriage read them, decoded by the
-driver's `decode_index`. Those, and the calibration that describes *this*
-pass, are what `capture_record` gives the session -- never a previous pass's --
-so an entry the demo files re-decodes to exactly what it holds and corrects to
-exactly what was shown. A pass resized or moved from its stored picture shows
-each column somewhere the stored calibration did not measure it, so it is
-corrected with that calibration read at the columns it now shows
-(`_pass_reference`). The record says which entry it was drawn from.
+Every pass drawn from raw pixels hands over bytes of its own: those pixels as
+the index-format lines the scanner sends, in the order the carriage read
+them, decoded by the driver's `decode_index`. Those, and the calibration that
+describes *this* pass, are what `capture_record` gives the session -- never a
+previous pass's -- so an entry the demo files re-decodes to exactly what it
+holds and corrects to exactly what was shown. A pass resized or moved from
+its stored picture shows each column somewhere the stored calibration did not
+measure it, so it is corrected with that calibration read at the columns it
+now shows (`_pass_reference`). The record says which entry it was drawn from.
 
 It refuses what the device refuses, in the driver's own words: infrared on
 black and white or Kodachrome, a corrected pass before any calibration, and a
@@ -241,6 +246,9 @@ class DemoScanner:
         #: Rolls run this session. The first walks the strip as it always has;
         #: each one after it started from the Roll button gets a new strip.
         self._rolls = 0
+        #: The roll `scan_roll` has been asked for and `_begin_roll` has not
+        #: yet counted: its film, and whether it reads a new strip.
+        self._starting: tuple[str, bool] | None = None
         #: Lays each new strip. Seeded only where a test wants it repeatable.
         self._rng = random.Random(seed)
         #: The bytes and calibration behind the last pass, and nothing older:
@@ -319,7 +327,7 @@ class DemoScanner:
             self.pair = best_pair(self.root)
         if self.pair is not None:
             self._log(f"demo mode: showing {self.pair.name}")
-            self._log("its own prescan answers Prescan, its scan answers Scan "
+            self._log("a prescan and a scan are drawn from the one entry "
                       "-- the same picture, as if you had just taken both")
         elif self._entries:
             self._log(f"demo mode: {len(self._entries)} stored entries to draw on")
@@ -482,7 +490,8 @@ class DemoScanner:
         prescan served from a stored `prescan.tif` -- which has no bytes and
         no calibration of its own -- hands over none, where it used to hand
         over whatever the previous decode had left. What the session files
-        from it re-decodes and corrects like any other entry.
+        from a raw read re-decodes and corrects like any other entry; what it
+        files from a stored `prescan.tif` is labelled corrected, and is.
         """
         return dict(self._capture)
 
@@ -567,6 +576,9 @@ class DemoScanner:
         back 8-bit, whatever the stored picture was.
         """
         frame = frame or FULL_FRAME
+        # The driver's refusals, then the transport's, in that order: the
+        # real one refuses an uncalibrated pass before a command reaches the
+        # transport, so an empty transport is never asked.
         self._refuse(resolution, frame, shading)
         self._need_film("prescan")
         self._forget_last_pass()
@@ -661,6 +673,7 @@ class DemoScanner:
                 "and hand back the picture rather than the dust. Scan it RGB."
             )
         frame = frame or FULL_FRAME
+        # The driver's refusals before the transport's, as in `prescan`.
         self._refuse(resolution, frame, shading)
         self._need_film("scan")
         if auto_exposure:
@@ -725,12 +738,13 @@ class DemoScanner:
         end after one of 1 to 10, added to the same sheet -- and a new strip
         would put other pictures there. An empty transport refuses a roll
         before anything moves.
+
+        The roll is counted, and a new strip laid, at its first pass
+        (`_begin_roll`), not here: the driver's loop makes its own refusals
+        on its first step, and a roll it refuses has walked nothing.
         """
         self._need_film("roll")
-        if only is None or only:            # an empty choice is the driver's to say
-            if only is None and self._rolls and first_index == 0:
-                self._next_strip(film)
-            self._rolls += 1
+        self._starting = (film, only is None and first_index == 0)
         self._rolling = film
         self._new_frame()
         try:
@@ -742,6 +756,27 @@ class DemoScanner:
             # than the last frame's, and a manual nudge from the window is not
             # mistaken for the slipping frame.
             self._rolling = None
+            self._starting = None
+
+    def _begin_roll(self) -> None:
+        """Count the roll in progress, and lay its strip, at its first pass.
+
+        Not as `scan_roll` is called. The driver's loop refuses infrared on
+        film blind to it, an unknown film or an unknown meter mode on its
+        first step, before any pass -- and a roll it refused used to have
+        laid a strip and been counted already. The roll after the operator
+        fixed his settings then showed a third set of pictures rather than
+        the second, and frames chosen on the sheet were scanned from a strip
+        nobody had walked. A roll that ends before its first pass for any
+        reason -- an empty choice, a stop -- walked nothing either.
+        """
+        if self._starting is None:
+            return
+        film, fresh = self._starting
+        self._starting = None
+        if fresh and self._rolls:
+            self._next_strip(film)
+        self._rolls += 1
 
     #: The real loop, run against the simulated film above rather than
     #: reimplemented. It only needs `nudge`, `prescan` and `_log`, all of
@@ -817,23 +852,43 @@ class DemoScanner:
         `last_pixels_raw` holds, and what the session files. It is corrected
         *last*, with the calibration that describes these very pixels, and
         the corrected picture is what comes back -- or the raw one, when
-        ``shading=False`` asked for it. A stored prescan or a test card has
-        no calibration, and nothing to take off, so it comes back as it was
-        read and its record says no correction ran.
+        ``shading=False`` asked for it.
+
+        Two stored pictures are not a raw read. A test card, or an entry
+        filed without a reference, has no calibration: it comes back as it
+        was read, and a pass that asked for correction records why it got
+        none (`UNCALIBRATED_SOURCE`), where the real one would have refused.
+        A picture corrected before it was stored -- a `prescan.tif`, a
+        legacy `scan.tif` -- has no raw pixels to give: it comes back with no
+        `last_pixels_raw` and no bytes, its report saying the correction ran
+        (`CORRECTED_WHEN_STORED`), so the session files it labelled
+        corrected. Handing it over as raw is what filed every demo prescan
+        as raw pixels that were not.
 
         Returns the picture and the part of the meta the pass decides.
         """
         source = self._stored(kind, film, channels)
         raw, reference, mask = self._fit(source, resolution, channels, depth)
-        raw, read = self._read_as_carriage(raw, passes, keep_raw)
-        self._capture = {"reference": reference, "ccd_mask": mask,
-                         "raw": self.last_raw, "raw_layout": self.last_raw_layout}
-        self.last_pixels_raw = raw
+        finished = bool(source.get("corrected"))
+        raw, read = self._read_as_carriage(raw, passes,
+                                           keep_raw and not finished)
         image, report, skipped = raw, None, None
-        if not shading:
-            skipped = SHADING_SKIPPED_EXPLICIT
-        elif reference is not None:
-            image, report = apply_shading(raw, reference, mask)
+        if finished:
+            if not shading:
+                self._log(f"{source['file']} was corrected when it was kept; "
+                          "there are no raw pixels behind it to hand over")
+            report = {"applied": CORRECTED_WHEN_STORED, "file": source["file"]}
+        else:
+            self._capture = {"reference": reference, "ccd_mask": mask,
+                             "raw": self.last_raw,
+                             "raw_layout": self.last_raw_layout}
+            self.last_pixels_raw = raw
+            if not shading:
+                skipped = SHADING_SKIPPED_EXPLICIT
+            elif reference is not None:
+                image, report = apply_shading(raw, reference, mask)
+            else:
+                skipped = UNCALIBRATED_SOURCE
         return image, {
             "channels": raw.shape[2],
             "channel_order": list(CHANNEL_ORDER[: raw.shape[2]]),
@@ -1017,6 +1072,7 @@ class DemoScanner:
         film being metered, whatever film the probe was sent with.
         """
         if self._rolling is not None:
+            self._begin_roll()
             strip = self._strip_for(self._rolling)
             if strip:
                 return strip[self._position % len(strip)]
@@ -1096,7 +1152,8 @@ class DemoScanner:
         photograph, where falling back to another entry would show a frame's
         prescan and its scan as two different pictures. One filed before the
         library held raw pixels already carries its correction, and comes
-        with no calibration, or it would be corrected twice.
+        with no calibration, or it would be corrected twice -- marked
+        ``corrected``, so a pass drawn from it is not passed off as raw.
 
         The same keys as :meth:`_stored` hands back, or None when neither can
         be read. Kept for the next pass: a frame's metering probes and its
@@ -1142,6 +1199,9 @@ class DemoScanner:
             "dpi": int((record.get("scan") or {}).get("resolution_dpi") or 0) or None,
             "reference": reference, "ccd_mask": mask,
             "entry": path.name, "file": name,
+            # A legacy `scan.tif` that carries its correction is handed over
+            # as corrected pixels, not as a raw read with nothing to take off.
+            "corrected": name == "scan.tif" and "shading" in applied,
         }
         self._decoded = (path, got)
         return got
@@ -1271,18 +1331,28 @@ class DemoScanner:
     def _stored(self, kind: str, film: str, channels: int) -> dict[str, Any]:
         """The stored picture a pass is drawn from, and what is known of it.
 
-        A prescan uses the entry's stored `prescan.tif` where there is one,
-        and otherwise the entry's own scan -- a framing pass and a scan are
-        the same photograph, and showing the right film matters more here
-        than showing the right resolution. A stored prescan is the picture as
-        it was shown, which no calibration describes, so it comes with none.
+        A prescan is drawn from the entry's own scan -- its raw bytes, fitted
+        to the framing pass and corrected last like any other pass -- because
+        a framing pass and a scan are the same photograph, and showing the
+        right film matters more here than showing the right resolution.
+
+        The entry's stored `prescan.tif` is the fallback, for an entry with
+        no raw bytes or no reference to correct them. It is the picture as
+        the operator was shown it, **corrected** when it was taken, and it
+        used to be served as though it were this pass's raw read: every demo
+        prescan and walk frame was then filed as raw pixels that were not,
+        the failure CLAUDE.md records of 26 prescans. It is handed over as
+        what it is (``corrected``), so the session files it labelled so.
 
         Keys: ``pixels``; ``dpi``, None where unknown; ``reference`` and
-        ``ccd_mask``, None where nothing describes the pixels; and ``entry``
-        and ``file``, which stored picture it is.
+        ``ccd_mask``, None where nothing describes the pixels; ``entry``
+        and ``file``, which stored picture it is; and ``corrected``, true
+        where the pixels already carry their correction.
         """
         source = self._source_for(film)
-        if source is not None and kind == "prescan":
+        if source is None:
+            return self._pixels(channels)
+        if kind == "prescan" and not _correctable(source):
             tif = source / "prescan.tif"
             if tif.exists():
                 try:
@@ -1290,14 +1360,11 @@ class DemoScanner:
                     self._log(f"prescan.tif from {source.name}  {image.shape}")
                     return {"pixels": image, "dpi": None, "reference": None,
                             "ccd_mask": None, "entry": source.name,
-                            "file": "prescan.tif"}
+                            "file": "prescan.tif", "corrected": True}
                 except Exception as exc:                 # noqa: BLE001
                     self._log(f"could not read {tif.name}: {exc}")
-        if source is not None:
-            got = self._decode(source)
-            if got is not None:
-                return got
-        return self._pixels(channels)
+        got = self._decode(source)
+        return got if got is not None else self._pixels(channels)
 
     def _pixels(self, channels: int) -> dict[str, Any]:
         """Real pixels from the library where there are any, else a test card."""
@@ -1316,6 +1383,21 @@ class DemoScanner:
         return {"pixels": _test_card(channels, self._next), "dpi": None,
                 "reference": None, "ccd_mask": None, "entry": None,
                 "file": "test card"}
+
+
+#: Why a demo pass that asked to be corrected was not: nothing describes the
+#: stored picture it was drawn from -- a test card, or an entry filed without
+#: a reference. Not `SHADING_SKIPPED_EXPLICIT`, which says the caller chose
+#: raw pixels; this pass asked for a correction there was none to give, and
+#: its record says so rather than passing for one that needed none.
+UNCALIBRATED_SOURCE = ("demo: no calibration describes the stored picture "
+                       "this pass was drawn from")
+
+#: What a pass drawn from a picture corrected before it was stored reports
+#: as its correction: that one ran, and when. Truthy, as a real report is, so
+#: the session files the pixels labelled corrected (its "no raw pixels came
+#: with this pass" branch) rather than as raw.
+CORRECTED_WHEN_STORED = "before the stored picture was kept"
 
 
 #: The infrared plane of clear film: what a stored picture with no infrared
@@ -1364,6 +1446,24 @@ def best_pair(root: Path) -> Path | None:
         if dpi > best_dpi:
             best, best_dpi = entry, dpi
     return best
+
+
+def _correctable(path: Path) -> bool:
+    """Whether an entry holds raw bytes and a reference that corrects them.
+
+    Read from its record, without decoding it: a walk asks this of every
+    frame's entry before deciding whether its prescan can be drawn from the
+    raw bytes. The same test `_decode` makes before it loads a reference.
+    """
+    try:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    cal = record.get("calibration") or {}
+    ref_file = cal.get("shading")
+    return bool(not cal.get("skipped") and ref_file and (path / ref_file).exists()
+                and ((path / library.RAW_FILE).exists()
+                     or (path / library.RAW_PLAIN).exists()))
 
 
 def _entry_channels(path: Path) -> int:
