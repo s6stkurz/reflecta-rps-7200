@@ -63,6 +63,7 @@ from rps7200.session import (
     RollManifest,
     earlier_manifest,
     keep_first_numbering,
+    manifest_settings,
     plan_nudges,
     prescan_arrangement,
     recorded_roll_name,
@@ -117,13 +118,17 @@ def build_parser() -> argparse.ArgumentParser:
                          "the same thing; here it is for setting a strip "
                          "deliberately badly, to see the correction work "
                          "against something worth correcting.")
-    ap.add_argument("--prescan-dpi", type=int, default=300,
-                    help="resolution of the survey prescan (default 300). A "
+    ap.add_argument("--prescan-dpi", type=int, default=None,
+                    help="resolution of the survey prescan (default 300; with "
+                         "--approved, the one its walk was made at, and "
+                         "another is refused). A "
                          "commissioned scan must use the same one its "
                          "positions were set on: `measure_shift_mm` resamples "
                          "a mismatched reference at about half the "
                          "confidence, under the floor, so every frame would "
-                         "read unverified and nothing would move.")
+                         "read unverified and nothing would move. Frame edges "
+                         "are read at 300 dpi only, so --correct is refused "
+                         "at any other on a film they are read on.")
     ap.add_argument("--approved", type=Path, default=None,
                     help="a roll folder from an earlier --dry-run walk. Its "
                          "prescans are re-read, positions proposed for the "
@@ -268,8 +273,19 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
         raise SystemExit(f"{folder}'s walk lists no prescans that are still "
                          "there, so there is nothing to propose positions from")
 
-    film = (manifest.get("film") or (manifest.get("settings") or {}).get("film")
-            or FILM_NEGATIVE)
+    # The walk's settings as the window reads them (`manifest_settings`): the
+    # window writes them at the top level and inside `settings`, this tool
+    # inside `settings` only. `prescan_resolution` is the one that matters:
+    # the roll prescans at it, so a fresh pass correlates against these
+    # references at their own scale. `--prescan-dpi` was used instead, 300
+    # unless told, and a walk made at 600 dpi in the window was held against
+    # 300 dpi passes -- every frame unverified, nothing moved, exit 0.
+    settings = manifest_settings(manifest)
+    film = settings.get("film") or FILM_NEGATIVE
+    try:
+        walked_at = int(settings["prescan_resolution"])
+    except (KeyError, TypeError, ValueError):
+        walked_at = None            # a walk from before it was recorded
     offsets, notes = frame_edges.propose_centred(frames, film=film)
     held = {
         n: Approved(number=n, offset_mm=float(offsets[n]), reference=im,
@@ -279,7 +295,8 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     return held, {"offsets": {n: round(v, 4) for n, v in offsets.items()},
                   "sources": {n: (notes.get(n) or {}).get("source")
                               for n in offsets},
-                  "walked": len(frames), "from": str(folder)}
+                  "walked": len(frames), "from": str(folder),
+                  "prescan_resolution": walked_at}
 
 
 def main() -> int:
@@ -299,7 +316,7 @@ def main() -> int:
     # roll calibrates and meters before its first frame, and a refusal after
     # that has spent minutes on what these lines say at once.
     for flag, value in (("--dpi", args.dpi), ("--prescan-dpi", args.prescan_dpi)):
-        if value <= 0:
+        if value is not None and value <= 0:
             ap.error(f"{flag} must be positive, got {value}")
     if args.frames is not None and args.frames < 0:
         ap.error(f"--frames must not be negative, got {args.frames}")
@@ -319,12 +336,43 @@ def main() -> int:
         # Before the device is opened: a folder that cannot be read should cost
         # nothing, and the scanner should never be left open waiting on a file.
         held, held_note = hold_from_walk(args.approved)
+        # Its prescans are the references, so the roll prescans at their
+        # resolution -- the pin the window's `_survey_predpi` holds a
+        # commissioned scan to. A different one asked for is refused rather
+        # than obeyed: it is the run that ends with every frame unverified.
+        walked_at = held_note.get("prescan_resolution")
+        if walked_at is not None:
+            if args.prescan_dpi is not None and args.prescan_dpi != walked_at:
+                ap.error(
+                    f"--prescan-dpi {args.prescan_dpi} with --approved "
+                    f"{args.approved}: its walk was prescanned at {walked_at} "
+                    "dpi, and its prescans are what each frame is held to. At "
+                    "another resolution `measure_shift_mm` reads them at about "
+                    "half the confidence, under its floor, so every frame "
+                    "would read unverified and nothing would move. Leave "
+                    f"--prescan-dpi out, or give {walked_at}.")
+            args.prescan_dpi = walked_at
+            print(f"prescanning at {walked_at} dpi, as the walk in "
+                  f"{args.approved} was")
         counts: dict[str, int] = {}
         for source in held_note["sources"].values():
             counts[source] = counts.get(source, 0) + 1
         print(f"holding {len(held)} frame(s) to positions from "
               f"{args.approved}: "
               + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+    if args.prescan_dpi is None:
+        args.prescan_dpi = 300
+    # Said before the device opens, not frame by frame after: at a prescan
+    # resolution the frame-edge detector cannot read, every frame is refused
+    # and the roll looks centred without being so. `--correct` is refused --
+    # it would correct nothing, and an unattended roll is exactly where
+    # nobody reads the per-frame "left as it came". A walk is only warned
+    # about: its prescans are still a survey of the strip.
+    unread = frame_edges.unread_at(args.prescan_dpi, args.film)
+    if unread and args.correct:
+        ap.error(f"--correct with --prescan-dpi {args.prescan_dpi}: {unread}")
+    if unread and (args.dry_run or args.correct_dry_run or args.approved):
+        print(f"warning: {unread}", file=sys.stderr)
 
     # The folder the window's rolls use for the same name (`roll_dir`): made
     # safe to be one folder, and a new name of its own when none is given.

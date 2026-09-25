@@ -4793,6 +4793,38 @@ def test_a_sheet_walked_another_way_is_not_added_to(window, monkeypatch):
     assert app.survey == [], "a new sheet, as OK said"
 
 
+@pytest.mark.parametrize(("dry", "correct", "predpi", "warned"), [
+    (True, False, "600", True),        # the sheet's positions come from it
+    (True, False, "300", False),
+    (False, True, "900", True),        # "correct" reads edges as it goes
+    (False, False, "600", False),      # nothing reads edges on this roll
+])
+def test_a_prescan_the_edges_are_not_read_at_is_said_before_the_walk(
+        window, monkeypatch, dry, correct, predpi, warned):
+    """At 600 or 900 dpi the device's prescans are 860 and 1292 columns and
+    the detector refuses every frame: the edge light went green, every
+    caption said refused, and a roll with "correct" on looked centred and
+    was not. Said in the question that starts it, and in the log -- and
+    still started, since the walk is a survey of the strip either way."""
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(dry)
+    app.v_correct.set(correct)
+    app.v_film.set("negative")
+    app.v_predpi.set(predpi)
+    app.v_startat.set("1")
+    app.v_last.set("2")
+    asked, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    app.on_roll()
+    said = f"not read at a {predpi} dpi prescan"
+    assert (said in asked[0]) is warned, asked[0]
+    assert (said in app.log.get("1.0", "end")) is warned
+    assert [job.prescan_resolution for job in jobs] == [int(predpi)]
+
+
 def test_a_fresh_walk_closes_the_sheet_of_the_last_one(window, monkeypatch):
     """It used to stay open, and the end of the new walk raised it again --
     showing the old frames, and filing them under the new roll on close."""

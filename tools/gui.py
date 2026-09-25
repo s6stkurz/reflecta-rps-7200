@@ -81,6 +81,7 @@ from rps7200.session import (                              # noqa: E402
     INFRARED_TIE_CROSSOVER_DPI,
     LAST_PLAUSIBLE_POSITION,
     NUMBERING,
+    SETTING_ALIASES,
     Approved,
     Calibrate,
     Move,
@@ -95,6 +96,7 @@ from rps7200.session import (                              # noqa: E402
     earlier_manifest,
     estimate_seconds,
     legacy_shift,
+    manifest_settings,
     plan_nudges,
     plausible,
     prescan_arrangement,
@@ -2214,6 +2216,17 @@ class ScannerGui:
             f"{' with infrared' if self.v_ir.get() and not dry else ''}.\n\n"
             f"{move}\n\n"
             f"{cost}")
+        # Said here, before the walk, and not only frame by frame after it: at
+        # a prescan resolution the frame-edge detector cannot read, every
+        # frame is refused, the sheet's light still goes green and "correct"
+        # leaves each frame as it came -- a roll that looks centred and is
+        # not. A warning rather than a refusal: the walk's prescans are still
+        # a survey of the strip, and that may be what he wants from it.
+        unread = (frame_edges.unread_at(predpi, self.v_film.get())
+                  if dry or self.v_correct.get() or self.v_correct_dry.get()
+                  else None)
+        if unread:
+            question += unread + "\n\n"
         # Where it goes, decided before anything is asked so the question can
         # say it: a new roll's own name, or the folder he named -- and what is
         # in that folder already, since a walk into it replaces its walk.
@@ -2303,6 +2316,9 @@ class ScannerGui:
         self._roll_frames_done = 0
         self._roll_seconds_per_frame = per
         self._update_roll_eta()
+        if unread:
+            # In the log too, where a frame's "refused" is read afterwards.
+            self._say(unread)
         self.session.submit(Roll(
             frames=frames, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
@@ -5055,46 +5071,6 @@ def aim_millimetres(fraction: float) -> float:
     """
     target = 0.0 if fraction < 0.5 else 1.0
     return -(fraction - target) * APERTURE_MM
-
-
-#: What a manifest's `settings` block calls a key, where the top level calls it
-#: something else. Only `dpi` differs: `scan_roll` writes the scan resolution
-#: under the name the driver uses, the window under the name it shows.
-SETTING_ALIASES = {"resolution": "dpi"}
-
-
-def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
-    """One view of a roll's settings, whichever tool wrote it.
-
-    The window writes the settings it restores at the **top level** of
-    `survey.json` and again inside `settings`; `tools/scan_roll.py` writes them
-    only inside `settings`, and calls the scan resolution `dpi`. So a walk made
-    on the command line opened in the window with `prescan_resolution` reading
-    `None` -- and that is not cosmetic. It becomes `_survey_predpi`, which is
-    what pins a commissioned scan's prescan to the resolution its positions
-    were decided at. Unpinned, the reference is resampled and
-    `measure_shift_mm` reads it at about half the confidence: 93.5 falls to
-    47.4 against a floor of 55, so **every frame reads `unverified` and nothing
-    moves**. A roll that costs hours, delivers no correction, and says nothing.
-
-    Read side rather than write side deliberately. Fixing `scan_roll` would
-    help folders that do not exist yet; the eleven already on disk --
-    `registration-D` through `registration-M` -- are the evidence this whole
-    feature was built on, and only the reader recovers them.
-    """
-    out: dict = {}
-    # Least specific first. A `settings` block is what the run was configured
-    # with; the top level is what the window itself wrote and meant; a resumed
-    # roll's progress file is more recent than the survey beside it.
-    for layer in (manifest.get("settings"), manifest,
-                  (progress or {}).get("settings"), progress or {}):
-        for key, value in (layer or {}).items():
-            if key != "settings" and value is not None:
-                out[key] = value
-    for name, alias in SETTING_ALIASES.items():
-        if out.get(name) is None and out.get(alias) is not None:
-            out[name] = out[alias]
-    return out
 
 
 #: Sequence numbers for reopened frames: negative, so never a live pass's --

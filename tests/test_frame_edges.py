@@ -196,6 +196,28 @@ def test_a_600_dpi_prescan_is_read_at_the_prescan_scale_and_scaled_back():
     assert odd.left.state == REFUSE and "not a multiple" in odd.left.note
 
 
+@pytest.mark.parametrize("width", [860, 862, 1292])
+def test_the_devices_own_600_and_900_dpi_widths_are_refused(width):
+    """The kron test above uses 856 columns, a width the device never
+    returns. What it does return at 600 and 900 dpi is refused, frame by
+    frame -- which is why a walk at them is warned about before it starts."""
+    img = negative_prescan(12.0, seed=13, width=width)
+    res = frame_edges.detect(img, film="negative")
+    assert res.left.state == res.right.state == REFUSE
+    assert "not a multiple" in res.left.note
+
+
+def test_a_walk_the_edges_will_not_be_read_on_is_said_before_it_starts():
+    assert frame_edges.READ_AT_DPI == (300,)
+    assert frame_edges.unread_at(300, "negative") is None
+    for dpi, film in ((600, "negative"), (900, "bw"), (150, None)):
+        why = frame_edges.unread_at(dpi, film)
+        assert why and f"{dpi} dpi" in why and "refused" in why, (dpi, film)
+    # slides are not read at any resolution, which is another sentence
+    assert frame_edges.unread_at(600, "positive") is None
+    assert frame_edges.unread_at(None, "negative") is None
+
+
 # --- the walk: rps7200 is handed the reader --------------------------------
 
 def test_the_walk_reader_answers_through_strip_walk():
