@@ -669,6 +669,23 @@ def walked_prescans(folder, manifest: dict,
     return out
 
 
+def prescan_arrangement(manifest: dict, record: dict) -> tuple[int, bool]:
+    """How a walk's `prescanNN.tif` was turned and mirrored when it was written.
+
+    Its record's own pair where it has one, the manifest's otherwise -- a walk
+    from before records carried one was turned by the file's one pair. One
+    reading for the window's `read_survey` and the roll tool's `--approved`,
+    which both have to un-turn the file into the film's own orientation before
+    it is a reference; the tool used it as it lay on disk.
+    """
+    turn = record.get("prescan_rotation")
+    turn = int(manifest.get("rotation") or 0) if turn is None else int(turn)
+    mirrored = record.get("prescan_flipped")
+    mirrored = (bool(manifest.get("flipped")) if mirrored is None
+                else bool(mirrored))
+    return turn % 360, mirrored
+
+
 def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
                        meta: dict[str, Any] | None = None) -> dict[str, tuple]:
     """Where raw bytes laid out like this cannot be the pass with this shape.
@@ -2284,6 +2301,9 @@ class ScanSession:
         try:
             for rf in frames:
                 number = rf.index + 1
+                #: How this frame's walked prescan file was arranged, as
+                #: `_file` wrote it; a walk's only.
+                walked_as: tuple[int, bool] | None = None
                 if rf.position is not None and plausible(rf.position):
                     # Already read for this frame, so the readout follows the
                     # roll without asking the device anything more.
@@ -2311,7 +2331,7 @@ class ScanSession:
                         # it is only ~370 KB, but nothing local happens on the
                         # scanning thread with the device open.
                         surveyed = out / f"prescan{number:02d}.tif"
-                        self._file(
+                        walked_as = self._file(
                             seq, number, rf.prescan,
                             # The pass's own meta. A hand-built one here is
                             # what filed 26 prescans describing themselves as
@@ -2353,6 +2373,8 @@ class ScanSession:
                 # because `record` is written for a dry run too, where there is
                 # no scan and no exposure to record.
                 scanned: dict[str, Any] | None = None
+                #: How this frame's file was arranged, as `_file` wrote it.
+                arranged: tuple[int, bool] | None = None
                 if rf.error:
                     self._emit("log", text=f"frame {number}: {rf.error}")
                 elif rf.image is not None:
@@ -2379,7 +2401,7 @@ class ScanSession:
                     # which gave a whole roll one library signature and made
                     # its entries unfindable from the roll.
                     notes = replace(job.notes, frame=roll_frame_label(name, number))
-                    self._file(
+                    arranged = self._file(
                         seq, number, rf.image,
                         dict(frame_meta, roll_membership=roll_membership(
                             name, number, "frame", out)),
@@ -2418,14 +2440,26 @@ class ScanSession:
                     for key in ("exposure", "gain", "offset"):
                         if scanned.get(key) is not None:
                             record[key] = scanned[key]
+                if arranged is not None:
+                    # How frameNN.tif was arranged, as it was written -- any
+                    # reversal the scanner made necessary included. The
+                    # manifest's one `rotation` is the session's at the start,
+                    # and a turn made in the window while the roll runs
+                    # reaches the frames written after it; Export re-makes
+                    # each frame from its entry with this.
+                    record["rotation"], record["flipped"] = arranged
                 if job.dry_run and rf.prescan is not None:
                     record["prescan"] = f"prescan{number:02d}.tif"
-                    # How that file was turned, per frame. The manifest's one
-                    # `rotation` said it for a walk made in one go, but a walk
-                    # that adds to another can be made after "rotate all" has
-                    # moved the session's, and one pair then un-turned half
-                    # the prescans wrong. See `read_survey`.
-                    turn, mirrored = self._orientation_for(number, "prescan")
+                    # How that file was turned, per frame, as it was written:
+                    # the pair `_file` applied, not the session's asked for
+                    # again afterwards. The manifest's one `rotation` is the
+                    # session's at the start of the walk, and a turn made in
+                    # the window while it runs reaches every prescan written
+                    # after it -- so one pair un-turned those wrong on reopen
+                    # and in `scan_roll --approved`. See `read_survey`.
+                    turn, mirrored = (walked_as if walked_as is not None
+                                      else self._orientation_for(number,
+                                                                 "prescan"))
                     record["prescan_rotation"] = turn
                     record["prescan_flipped"] = mirrored
                 # This frame's record replaces any earlier attempt's, so a
@@ -2515,11 +2549,12 @@ class ScanSession:
         and `preview.orient` takes them together.
 
         **Prescans are exempt, deliberately.** `prescanNN.tif` is a reference
-        rather than a deliverable: `read_survey` un-orients it by the single
-        pair the manifest carries, and a per-frame answer here would make that
-        arithmetic wrong -- the reference would come back arranged a way the
-        film was never in, and it would no longer correlate against a fresh
-        pass of the same frame.
+        rather than a deliverable: `read_survey` un-orients it by the pair
+        recorded with it (`prescan_arrangement`), which is the session's, and
+        a sheet's per-frame answer here would make that arithmetic wrong --
+        the reference would come back arranged a way the film was never in,
+        and it would no longer correlate against a fresh pass of the same
+        frame.
         """
         if kind != "prescan":
             turn = self._frame_rotation.get(number)
@@ -2545,7 +2580,7 @@ class ScanSession:
         mono_channel: str = MONO_CHANNEL,
         file_entry: bool = True,
         on_filed: Callable[..., Any] | None = None,
-    ) -> None:
+    ) -> tuple[int, bool]:
         """Write this picture, and unless told otherwise file it in the library.
 
         ``file_entry=False`` writes the file and no entry. It exists for the
@@ -2562,9 +2597,14 @@ class ScanSession:
         ``on_filed(entry, error, written)`` is called on the writer thread
         once the picture has been filed, or has failed to be; see
         `RollManifest`.
+
+        Returns the turn and mirror the delivered files are written with, so
+        a manifest records the arrangement each file really got rather than
+        asking the session again, whose answer a turn in the window can have
+        moved in between.
         """
         if self._writer is None:
-            return
+            return self._orientation_for(number, kind)
         # A roll frame has its own place in the roll directory *and* wants a
         # copy wherever the operator asked for one. Setting `path` used to skip
         # the output folder entirely, so a whole roll went missing from it.
@@ -2639,6 +2679,7 @@ class ScanSession:
             mono_channel=mono_channel,
             on_filed=on_filed,
         )
+        return turn, flip
 
     def _out_name(
         self, number: int, meta: dict[str, Any], roll: str

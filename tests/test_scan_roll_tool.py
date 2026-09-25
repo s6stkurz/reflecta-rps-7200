@@ -696,6 +696,38 @@ def _prescans(folder, numbers):
                    np.full((4, 6, 3), 40 + n, np.uint8))
 
 
+def test_a_turned_walk_is_held_to_references_the_way_the_film_sits(
+        tmp_path, monkeypatch):
+    """The window writes a walk's prescans arranged the way the screen had
+    them, each record saying how. Read as they lay on disk, a walk made turned
+    handed the detector and the hold sideways references."""
+    from rps7200 import preview, tiff
+
+    folder = tmp_path / "turned-walk"
+    folder.mkdir()
+    film = np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3)
+    records = []
+    for n, (turn, flip) in ((1, (0, False)), (2, (90, True))):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   preview.orient(film, turn, flip))
+        records.append({"number": n, "prescan": f"prescan{n:02d}.tif",
+                        "prescan_rotation": turn, "prescan_flipped": flip})
+    (folder / "survey.json").write_text(json.dumps(
+        {"numbering": "strip", "rotation": 0, "frames": records}),
+        encoding="utf-8")
+    seen = {}
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: (seen.update(frames) or
+                                   {n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"}
+                                    for n, _ in frames}))
+    held, _note = scan_roll.hold_from_walk(folder)
+    for n in (1, 2):
+        assert np.array_equal(seen[n], film), f"frame {n} read as it lay"
+        assert np.array_equal(held[n].reference, film)
+
+
 def test_a_walk_with_only_its_roll_json_is_held_from_that(tmp_path,
                                                           monkeypatch):
     """A walk made before walks had a file of their own wrote `roll.json`.

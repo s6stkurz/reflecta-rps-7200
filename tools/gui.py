@@ -96,6 +96,7 @@ from rps7200.session import (                              # noqa: E402
     legacy_shift,
     plan_nudges,
     plausible,
+    prescan_arrangement,
     read_manifest,
     recorded_roll_name,
     renumbered,
@@ -3726,6 +3727,14 @@ class ScannerGui:
                     result.supersedes = earlier.seq
                     superseded = earlier
                     break
+        if self._surveying and result.kind == "prescan" and result.number:
+            # Here, where a walked prescan arrives, and nowhere else. It was
+            # done in `remember_arrangement`, which a turn or a flip also
+            # calls -- so turning a prescan while the walk ran put it in the
+            # survey a second time, and turning an older walk's put that one
+            # into this walk.
+            self._into_survey(result)
+            self.edge_watch.add(result.number, result.image)
         self._arrange(result, superseded)
         self.results.append(result)
 
@@ -3765,8 +3774,11 @@ class ScannerGui:
 
         Only a frame the sheet already held is replaced: the walk adding to it
         took that frame again, and one frame is one cell. Anything else is
-        appended, as every walk's prescans always were.
+        appended, as every walk's prescans always were -- once: a result the
+        survey already holds is left where it is.
         """
+        if any(r is result for r in self.survey):
+            return
         number = int(result.number)
         if number in self._kept_walk:
             for i, earlier in enumerate(self.survey):
@@ -3781,9 +3793,6 @@ class ScannerGui:
         key = picture_of(result)
         if key is not None:
             self.orientations[key] = (result.rotation, result.flipped)
-        if self._surveying and result.kind == "prescan" and result.number:
-            self._into_survey(result)
-            self.edge_watch.add(result.number, result.image)
         # Through the same filter the session's readout reports use, so a
         # counter no strip can have never becomes a forecast either.
         if plausible(result.position):
@@ -5013,12 +5022,10 @@ def read_survey(folder, say=None) -> dict:
     for number, path, record in walked_prescans(folder, manifest):
         image = tiff.read(str(path))
         # Each file as it was written. A walk that added to another may have
-        # been made after "rotate all", so its frames need not share the
-        # manifest's pair; a record from before that was recorded has only it.
-        own = record.get("prescan_rotation")
-        own = turn if own is None else int(own)
-        own_flip = record.get("prescan_flipped")
-        own_flip = mirrored if own_flip is None else bool(own_flip)
+        # been made after "rotate all", or turned in the window while it ran,
+        # so its frames need not share the manifest's pair; a record from
+        # before that was recorded has only it.
+        own, own_flip = prescan_arrangement(manifest, record)
         result = Result(
             seq=-number,                     # negative: never a live pass's seq
             kind="prescan",
@@ -5183,15 +5190,21 @@ def roll_exports(summary: dict) -> list:
     settings = summary.get("settings") or {}
     turn = int(settings.get("rotation") or 0)
     mirrored = bool(settings.get("flipped"))
+    arranged = summary.get("arranged") or {}
     channels = 4 if settings.get("infrared") else 3
     out = []
     for number in sorted(summary.get("entries") or {}):
+        # What its frameNN.tif was written with, where the roll recorded it:
+        # a turn made in the window while the roll ran reached the frames
+        # written after it, and the roll's one `rotation` is the one it began
+        # with. Otherwise the frame's own decision where it made one, the
+        # roll's where not -- the precedence `_orientation_for` uses on the
+        # way out.
+        own = arranged.get(number)
         out.append(SimpleNamespace(
             entry=Path(summary["entries"][number]),
-            # The frame's own decision where it made one, the roll's otherwise --
-            # the same precedence `_orientation_for` uses on the way out.
-            rotation=rotations.get(number, turn),
-            flipped=flips.get(number, mirrored),
+            rotation=own[0] if own else rotations.get(number, turn),
+            flipped=own[1] if own else flips.get(number, mirrored),
             image=None,
             kind="frame",
             number=number,
@@ -5397,6 +5410,16 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     settings = progress.get("settings") or manifest.get("settings") or {}
     wanted = wanted_frames(manifest, progress)
     done = scanned_frames(progress)
+    # How each scanned frame's file was arranged, where the roll said.
+    arranged = {}
+    for record in progress.get("frames") or ():
+        try:
+            number = int(record["number"])
+            if record.get("rotation") is not None:
+                arranged[number] = (int(record["rotation"]) % 360,
+                                    bool(record.get("flipped")))
+        except (KeyError, TypeError, ValueError):
+            continue
     # `stat` only, no pixels: a roll directory can hold 38 frames at 142 MB, and
     # the whole point of this function is that listing a shelf of them is cheap.
     sizes, newest = 0, 0.0
@@ -5434,6 +5457,7 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         "wanted": wanted,
         "done": sorted(done),
         "remaining": [n for n in wanted if n not in done],
+        "arranged": arranged,
     }
 
 

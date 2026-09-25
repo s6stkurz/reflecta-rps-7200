@@ -3143,6 +3143,60 @@ def test_an_export_plan_holds_each_frames_own_arrangement(tmp_path):
     assert plan[1].meta["channels"] == 4, "the roll was infrared"
 
 
+def test_an_export_is_arranged_the_way_each_frame_file_was_written():
+    """A turn made in the window while a roll ran reached the frames written
+    after it; the roll's one `rotation` is the one it began with. The frame's
+    own record says what its file got, and wins."""
+    summary = {"folder": "/nowhere", "settings": {"rotation": 0},
+               "entries": {1: "e1", 2: "e2", 3: "e3"},
+               "arranged": {2: (90, True)}}
+    plan = {item.number: item for item in gui.roll_exports(summary)}
+    assert (plan[1].rotation, plan[1].flipped) == (0, False)
+    assert (plan[2].rotation, plan[2].flipped) == (90, True)
+
+
+def test_a_roll_summary_says_how_each_frame_file_was_arranged(tmp_path):
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    (folder / "roll.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": 1, "done": True},
+            {"number": 2, "done": True, "rotation": 450, "flipped": True}]}),
+        encoding="utf-8")
+    assert gui.roll_summary(folder)["arranged"] == {2: (90, True)}
+
+
+def test_turning_a_walked_prescan_does_not_walk_it_twice():
+    """A turn or a flip calls `remember_arrangement`, which added a walked
+    prescan to the survey: turning one while the walk ran put it on the sheet
+    twice, and turning an older walk's put it into this walk."""
+    import types
+
+    added = []
+    stub = types.SimpleNamespace(
+        rotation=0, flip=False, orientations={}, results=[], survey=[],
+        _surveying=True, _transport=None, _kept_walk=set(), _rewalked=set(),
+        edge_watch=types.SimpleNamespace(add=lambda n, im: added.append(n)),
+        _show=lambda _r: None, _redraw_strip=lambda: None)
+    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    stub._into_survey = lambda r: gui.ScannerGui._into_survey(stub, r)
+    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
+        stub, r)
+
+    def prescan(number, seq):
+        return types.SimpleNamespace(kind="prescan", number=number, seq=seq,
+                                     image=None, position=number - 1, meta={})
+
+    older = prescan(7, 1)          # from a walk before this one, not in it
+    first = prescan(1, 2)
+    gui.ScannerGui._add_result(stub, first)
+    first.rotation = 90
+    stub.remember_arrangement(first)
+    older.rotation, older.flipped = 180, False
+    stub.remember_arrangement(older)
+    assert stub.survey == [first] and added == [1]
+
+
 def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):
     """Export re-corrects from the entries, so a frame without one cannot be
     exported at all. Left out here; the window counts the difference against

@@ -40,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import tiff
+from rps7200 import preview, tiff
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
@@ -64,6 +64,7 @@ from rps7200.session import (
     earlier_manifest,
     keep_first_numbering,
     plan_nudges,
+    prescan_arrangement,
     recorded_roll_name,
     renumbered,
     roll_dir,
@@ -253,9 +254,16 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
             except (OSError, ValueError) as exc:
                 raise SystemExit(f"{folder / name} cannot be read: {exc}")
             break
-    frames = [(number, tiff.read(str(path)))
-              for number, path, _ in walked_prescans(folder, manifest,
-                                                     say=print)]
+    # Each un-turned into the film's own orientation first, by the pair its
+    # file was written with, as the window's `read_survey` does. The window
+    # writes a walk's prescans arranged the way the screen had them, and they
+    # were used here as they lay on disk -- a walk made turned or mirrored was
+    # handed to the detector, and to the hold as references, the wrong way
+    # round.
+    frames = [(number, preview.unorient(tiff.read(str(path)),
+                                        *prescan_arrangement(manifest, record)))
+              for number, path, record in walked_prescans(folder, manifest,
+                                                          say=print)]
     if not frames:
         raise SystemExit(f"{folder}'s walk lists no prescans that are still "
                          "there, so there is nothing to propose positions from")

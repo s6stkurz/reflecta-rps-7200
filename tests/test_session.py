@@ -1654,6 +1654,48 @@ def test_a_walk_records_how_each_prescan_was_turned(tmp_path):
             for f in manifest["frames"]] == [(90, True), (90, True)]
 
 
+def _turned_after_the_first(tmp_path, job):
+    """Run `job`, turning the session a quarter while its second frame is
+    taken -- what the window does when a prescan is turned as it lands."""
+    held = {}
+
+    def turn(i):
+        if i == 1:
+            held["session"].rotation = 90
+
+    def keep(s, _scanner):
+        held["session"] = s
+
+    run(job, tmp_path, scanner=FakeScanner(frames=3, on_yield=turn),
+        extra=keep)
+    folder = tmp_path / "rolls" / job.name
+    manifest = folder / ("survey.json" if job.dry_run else "roll.json")
+    return folder, json.loads(manifest.read_text(encoding="utf-8"))
+
+
+def test_a_turn_made_while_a_walk_runs_is_recorded_with_what_it_reached(
+        tmp_path):
+    """The walk's one `rotation` is the session's at the start, and a turn
+    made in the window while it runs reaches every prescan written after it.
+    Reopened, those were un-turned by the start's pair."""
+    folder, manifest = _turned_after_the_first(
+        tmp_path, Roll(frames=3, dry_run=True, name="walk"))
+    assert manifest["rotation"] == 0
+    assert [(f["number"], f["prescan_rotation"]) for f in manifest["frames"]] \
+        == [(1, 0), (2, 90), (3, 90)]
+    assert tiff.read(str(folder / "prescan01.tif")).shape[:2] == (24, 36)
+    assert tiff.read(str(folder / "prescan02.tif")).shape[:2] == (36, 24)
+
+
+def test_a_turn_made_while_a_roll_runs_is_recorded_with_its_frames(tmp_path):
+    folder, manifest = _turned_after_the_first(
+        tmp_path, Roll(frames=3, resolution=600, name="roll"))
+    assert [(f["number"], f["rotation"], f["flipped"])
+            for f in manifest["frames"]] == [(1, 0, False), (2, 90, False),
+                                             (3, 90, False)]
+    assert tiff.read(str(folder / "frame02.tif")).shape[:2] == (36, 24)
+
+
 def test_an_older_walk_added_to_keeps_the_turn_its_prescans_were_written_at(
         tmp_path):
     """A walk written before records carried their own turn relied on the
