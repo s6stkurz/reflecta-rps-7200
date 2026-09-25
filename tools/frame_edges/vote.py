@@ -3,8 +3,10 @@
 From `research/frame-edge/algos/ensemble.py` (the vote) and
 `research/frame-edge/algos/ensemble_v2.py` (its round-2 members and the one
 rule it adds), commit 32a98e5. The logic is the study's, line for line; only
-the imports changed. `tests/test_frame_edges_parity.py` holds it to the
-study's stored answers.
+the imports changed, and a member that raises abstains (`_member`) where the
+study's run would have stopped -- which changes no answer the study stored,
+since on its frames none raised. `tests/test_frame_edges_parity.py` holds it
+to the study's stored answers.
 
 The members were chosen by one measurement, not by their scores alone: on the
 dev frames **no two of them are wrong on the same side**, so a vote can
@@ -109,17 +111,45 @@ def vote_v2(sides: dict[str, Side]) -> Side:
     return lone_gap(sides) or v
 
 
+def _member(role: str, module: Any, image: np.ndarray,
+            ctx: dict[str, Any]) -> tuple[EdgeResult, str | None]:
+    """One member's answer -- or, when it raises, its abstention and why.
+
+    A member that fails refuses both sides, which is what a vote already
+    does with a member that cannot see: it is left out, and the others are
+    counted as they would be without it. Contained here, per member, because
+    one member's arithmetic cost the whole frame otherwise, and on the roll
+    path the whole roll. `gapmodel` divides by a base level that is 0 on a
+    near-black 8-bit prescan -- fogged leader, an opaque strip end, sparse
+    1-count noise -- and its ZeroDivisionError left `direct.scan_roll`'s
+    net, which catches the device's failures and ValueError only, so the roll
+    ended there, sometimes with the film already moved.
+    """
+    try:
+        return module.detect(image, ctx), None
+    except Exception as exc:                                  # noqa: BLE001
+        why = f"{role} failed: {type(exc).__name__}: {exc}"
+        return EdgeResult(Side(REFUSE, note=why), Side(REFUSE, note=why)), why
+
+
 def detect(image: np.ndarray, ctx: dict[str, Any]) -> EdgeResult:
     """Every member on one prescan, then the vote per side.
 
     ``image`` is float ``(H, W, 3)`` in the counts of the file it came from.
     ``ctx`` carries ``film_type`` (``c41``/``bw``/``unknown``), ``dtype`` (of
     the source pixels) and ``roll`` (`roll.Summary` records of the *other*
-    frames of the walk; may be empty).
+    frames of the walk; may be empty). A member that raises abstains, and
+    says so in ``debug["members"]``; see `_member`.
     """
-    results = {role: module.detect(image, ctx) for role, module in MEMBERS.items()}
+    answers = {role: _member(role, module, image, ctx)
+               for role, module in MEMBERS.items()}
+    results = {role: result for role, (result, _why) in answers.items()}
     left = vote_v2({k: r.left for k, r in results.items()})
     right = vote_v2({k: r.right for k, r in results.items()})
-    debug = {k: {"left": [r.left.state, r.left.x], "right": [r.right.state, r.right.x]}
-             for k, r in results.items()}
+    debug: dict[str, dict[str, Any]] = {
+        k: {"left": [r.left.state, r.left.x], "right": [r.right.state, r.right.x]}
+        for k, r in results.items()}
+    for k, (_result, why) in answers.items():
+        if why is not None:
+            debug[k]["failed"] = why
     return EdgeResult(left, right, {"members": debug})
