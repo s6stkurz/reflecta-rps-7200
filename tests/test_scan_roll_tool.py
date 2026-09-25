@@ -409,6 +409,62 @@ def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
         encoding="utf-8")) == walk
 
 
+def test_the_advice_to_resume_names_the_roll_it_resumes(tmp_path, monkeypatch,
+                                                        capsys):
+    """An unnamed run's folder is new every run, so "--start-at N" alone,
+    followed as printed, started another roll beside this one and never read
+    the manifest that says what this one has done -- one roll, two folders."""
+    class OneBad(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index == 1:
+                    yield type(frame)(
+                        index=frame.index, position=frame.position,
+                        image=None, meta={}, prescan=frame.prescan,
+                        registration={}, error="the read timed out")
+                else:
+                    yield frame
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: OneBad(frames=3))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
+                                      "--no-shading", "--frames", "3"])
+    assert scan_roll.main() == 1
+    (folder,) = (tmp_path / "rolls").iterdir()
+    (advice,) = [line for line in capsys.readouterr().err.splitlines()
+                 if "resume a failed picture" in line]
+    assert advice.endswith(f"with --roll {folder.name} --start-at N")
+
+    # Followed as printed, it finishes that roll.
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
+                                      "--no-shading", "--frames", "1",
+                                      "--roll", folder.name, "--start-at", "2"])
+    assert scan_roll.main() == 0
+    assert list((tmp_path / "rolls").iterdir()) == [folder]
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert {f["number"]: f["done"] for f in manifest["frames"]} == {
+        1: True, 2: True, 3: True}
+
+
+def test_the_advice_to_resume_quotes_a_folder_a_shell_would_split(
+        tmp_path, monkeypatch, capsys):
+    def full_disk(self, job):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    monkeypatch.setattr(scan_roll.FrameWriter, "_write", full_disk)
+    out = tmp_path / "Gold 200"
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
+                                      "--no-shading", "--frames", "1",
+                                      "--out", str(out)])
+    assert scan_roll.main() == 1
+    assert f'with --out "{out}" --start-at N' in capsys.readouterr().err
+
+
 def test_a_manifest_the_disk_refuses_does_not_stop_the_roll(tmp_path,
                                                             monkeypatch,
                                                             capsys):
