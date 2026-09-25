@@ -731,13 +731,14 @@ def test_a_turned_walk_is_held_to_references_the_way_the_film_sits(
         assert np.array_equal(held[n].reference, film)
 
 
-def _walked_at(tmp_path, monkeypatch, dpi, *, top_level=True):
+def _walked_at(tmp_path, monkeypatch, dpi, *, top_level=True,
+               film="negative"):
     """A walk folder whose manifest says it was prescanned at ``dpi``: the
     window's shape (top level and `settings`), or this tool's (`settings`)."""
-    folder = tmp_path / f"walk-{dpi}"
+    folder = tmp_path / f"walk-{dpi}-{film}"
     _prescans(folder, (1, 2))
     manifest = {"roll": folder.name, "numbering": "strip",
-                "settings": {"prescan_resolution": dpi, "film": "negative"},
+                "settings": {"prescan_resolution": dpi, "film": film},
                 "frames": [{"number": n, "transport_position": n - 1,
                             "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}
     if top_level:
@@ -829,6 +830,36 @@ def test_a_walk_at_a_prescan_the_edges_are_not_read_at_is_warned_about(
     scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1")
     assert code == 0
     assert "not read" not in capsys.readouterr().err
+
+
+def test_approved_is_warned_about_on_the_film_its_walk_was_read_on(
+        tmp_path, monkeypatch, capsys):
+    """The walk --approved names was read on its own film, and was judged on
+    --film, which is negative unless told: a slide walk at 600 dpi was warned
+    about though slides never reach the detector, and a negative walk run
+    with --film positive was not, though every frame of it was refused."""
+    slides = _walked_at(tmp_path, monkeypatch, 600, film="positive")
+    assert scan_roll.hold_from_walk(slides)[1]["film"] == "positive"
+    capsys.readouterr()
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(slides),
+                         "--frames", "1")
+    assert code == 0
+    assert "not read" not in capsys.readouterr().err
+
+    negatives = _walked_at(tmp_path, monkeypatch, 600)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(negatives),
+                         "--film", "positive", "--frames", "1")
+    assert code == 0
+    assert "not read at a 600 dpi prescan" in capsys.readouterr().err
+
+    # --correct reads this roll's own prescans, which are --film's whatever
+    # the walk was, so its refusal stays judged on --film.
+    opened: list = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--approved", str(slides), "--correct",
+            "--frames", "1", opened=opened)
+    assert refused.value.code == 2
+    assert opened == []
 
 
 def test_correct_on_a_film_the_edges_are_not_read_on_is_not_refused(
