@@ -13,15 +13,19 @@ protocol header that says type, request, value, index and length -- and it
 reads payloads only for a device the caller has named. It never returns an
 interrupt-endpoint payload, which is where keystrokes live.
 
-That is not a comment, it is what `setups` and `scanner_devices` actually
-do, and `tests/test_usbpcap.py` puts a keystroke on a synthetic bus and
-asserts it never comes back.
+That is not a comment, it is what every public function here does --
+`packets` included, which is why it takes the devices and has no default for
+them. The iterator that reads every record on the bus is `_records`, private,
+and nothing outside this module calls it. `tests/test_usbpcap.py` puts a
+keystroke on a synthetic bus, asks every public function for everything it
+will give, the keyboard's own address named, and asserts the keystroke never
+comes back.
 """
 from __future__ import annotations
 
 import struct
 from pathlib import Path
-from typing import Iterator, NamedTuple
+from typing import Iterable, Iterator, NamedTuple
 
 #: pcapng block types.
 _SHB = 0x0A0D0D0A
@@ -30,6 +34,13 @@ _BYTE_ORDER_MAGIC = 0x1A2B3C4D
 
 #: USBPcap transfer kinds, as its pseudo-header numbers them.
 ISOCHRONOUS, INTERRUPT, CONTROL, BULK = 0, 1, 2, 3
+
+#: The only transfers whose payloads `packets` hands back. This scanner speaks
+#: control and bulk and nothing else; interrupt is where a keyboard's reports
+#: are, and isochronous is where a microphone's or a camera's would be -- a
+#: whole-bus capture holds whatever else was plugged in, so what may leave is
+#: listed rather than what may not.
+_PAYLOAD_TRANSFERS = frozenset({CONTROL, BULK})
 
 #: Control transfer stages, for captures that record them.
 STAGE_SETUP = 0
@@ -100,8 +111,15 @@ class Packet(NamedTuple):
     payload: bytes
 
 
-def packets(raw: bytes) -> Iterator[Packet]:
-    """Every USBPcap record in the file.
+def _records(raw: bytes) -> Iterator[Packet]:
+    """Every USBPcap record in the file -- the keyboard's included.
+
+    Private, and it has to stay so. This was the public `packets()`, and it
+    handed back every payload on the bus: a "dump everything" diagnostic
+    written against it would have printed the capture machine's keystrokes,
+    while the docstring above and CLAUDE.md both said nothing here could.
+    The public functions below read through it and let out only what their
+    own docstrings name.
 
     The pseudo-header is 27 bytes, or 28 when a control transfer's stage is
     recorded. Anything shorter is not one and is skipped rather than guessed at.
@@ -127,6 +145,21 @@ def packets(raw: bytes) -> Iterator[Packet]:
         )
 
 
+def packets(raw: bytes, devices: Iterable[int]) -> Iterator[Packet]:
+    """The control and bulk records of the devices named, and nothing else.
+
+    ``devices`` has no default on purpose: the caller says which addresses it
+    wants -- `scanner_devices` is how to find the scanner's -- and a record from
+    any other address is not returned at all. An interrupt or isochronous
+    record is not returned even from a named one, so naming the keyboard's
+    address by mistake still yields none of its keystrokes.
+    """
+    named = frozenset(int(d) for d in devices)
+    for packet in _records(raw):
+        if packet.device in named and packet.transfer in _PAYLOAD_TRANSFERS:
+            yield packet
+
+
 def setups(path: Path | str, device: int | None = None) -> Iterator[Setup]:
     """Every control setup packet, optionally for one device only.
 
@@ -136,7 +169,7 @@ def setups(path: Path | str, device: int | None = None) -> Iterator[Setup]:
     here at all.
     """
     raw = Path(path).read_bytes()
-    for packet in packets(raw):
+    for packet in _records(raw):
         if packet.transfer != CONTROL or len(packet.payload) < 8:
             continue
         if packet.stage not in (None, STAGE_SETUP):
@@ -166,7 +199,7 @@ def scanner_devices(path: Path | str, vendor: int, product: int) -> set[int]:
     raw = Path(path).read_bytes()
     found: set[int] = set()
     asked: dict[int, bool] = {}
-    for packet in packets(raw):
+    for packet in _records(raw):
         if packet.transfer != CONTROL or len(packet.payload) < 8:
             continue
         if packet.stage in (None, STAGE_SETUP):

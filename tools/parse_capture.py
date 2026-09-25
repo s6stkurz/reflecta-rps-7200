@@ -66,8 +66,10 @@ def stream(path):
             f"no {VENDOR_ID:#06x}:{PRODUCT_ID:#06x} in {path} -- is this a "
             "capture of the scanner?")
     out = bytearray()
-    for packet in packets(raw):
-        if packet.device not in devices or packet.transfer != CONTROL:
+    # Named, because `packets` returns nothing from an address nobody named:
+    # the keyboard on the same bus never reaches this loop at all.
+    for packet in packets(raw, devices):
+        if packet.transfer != CONTROL:
             continue
         if packet.stage not in (None, STAGE_SETUP) or len(packet.payload) < 8:
             continue
