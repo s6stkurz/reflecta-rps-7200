@@ -728,6 +728,116 @@ def test_a_turned_walk_is_held_to_references_the_way_the_film_sits(
         assert np.array_equal(held[n].reference, film)
 
 
+def _walked_at(tmp_path, monkeypatch, dpi, *, top_level=True):
+    """A walk folder whose manifest says it was prescanned at ``dpi``: the
+    window's shape (top level and `settings`), or this tool's (`settings`)."""
+    folder = tmp_path / f"walk-{dpi}"
+    _prescans(folder, (1, 2))
+    manifest = {"roll": folder.name, "numbering": "strip",
+                "settings": {"prescan_resolution": dpi, "film": "negative"},
+                "frames": [{"number": n, "transport_position": n - 1,
+                            "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}
+    if top_level:
+        manifest["prescan_resolution"] = dpi
+    (folder / "survey.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"} for n, _ in frames}))
+    return folder
+
+
+@pytest.mark.parametrize("top_level", [True, False])
+def test_approved_prescans_at_the_resolution_its_walk_was_made_at(
+        tmp_path, monkeypatch, top_level):
+    """It took `--prescan-dpi`, 300 unless told, and so held a walk made at
+    600 dpi in the window against 300 dpi passes: every frame unverified,
+    nothing moved, exit 0. The walk's own resolution is the roll's now, read
+    as the window reads it whichever tool wrote the walk."""
+    folder = _walked_at(tmp_path, monkeypatch, 600, top_level=top_level)
+    _held, note = scan_roll.hold_from_walk(folder)
+    assert note["prescan_resolution"] == 600
+
+    scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                        "--dry-run", "--frames", "1")
+    assert code == 0
+    assert scanner.asked["prescan_resolution"] == 600
+    written = json.loads((tmp_path / "roll" / "survey.json").read_text(
+        encoding="utf-8"))
+    assert written["settings"]["prescan_resolution"] == 600
+
+
+def test_approved_with_another_prescan_dpi_is_refused_before_opening(
+        tmp_path, monkeypatch):
+    folder = _walked_at(tmp_path, monkeypatch, 600)
+    scanner, code = None, None
+    with pytest.raises(SystemExit) as refused:
+        scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                            "--prescan-dpi", "300", "--frames", "1")
+    assert refused.value.code == 2
+    assert scanner is None
+
+
+def test_approved_from_a_walk_that_never_said_keeps_300(tmp_path, monkeypatch):
+    """A walk from before the resolution was recorded: the tool's default,
+    as it was, and an explicit one is taken as given."""
+    folder = tmp_path / "old-walk"
+    _prescans(folder, (1, 2))
+    (folder / "survey.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n - 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}), encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"} for n, _ in frames}))
+    scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                        "--dry-run", "--frames", "1")
+    assert code == 0 and scanner.asked["prescan_resolution"] == 300
+
+
+# --- a prescan resolution the frame-edge detector cannot read ----------------
+
+
+def test_correct_at_a_prescan_the_edges_are_not_read_at_is_refused(
+        tmp_path, monkeypatch, capsys):
+    """The device's 600 and 900 dpi prescans are 860 and 1292 columns, which
+    the detector refuses, so --correct would correct nothing -- one "left as
+    it came" per frame of an unattended roll. Refused before the device
+    opens, and the reason names the resolution."""
+    scanner = None
+    with pytest.raises(SystemExit) as refused:
+        scanner, _code = run(tmp_path, monkeypatch, "--correct",
+                             "--prescan-dpi", "600", "--frames", "1")
+    assert refused.value.code == 2
+    assert scanner is None
+    assert "not read at a 600 dpi prescan" in capsys.readouterr().err
+
+
+def test_a_walk_at_a_prescan_the_edges_are_not_read_at_is_warned_about(
+        tmp_path, monkeypatch, capsys):
+    """Warned, not refused: a walk's prescans are still a survey of the
+    strip. Said before the device opens, which is when anyone is watching."""
+    scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1",
+                        "--prescan-dpi", "900")
+    assert code == 0
+    assert scanner.asked["prescan_resolution"] == 900
+    assert "not read at a 900 dpi prescan" in capsys.readouterr().err
+
+    scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1")
+    assert code == 0
+    assert "not read" not in capsys.readouterr().err
+
+
+def test_correct_on_a_film_the_edges_are_not_read_on_is_not_refused(
+        tmp_path, monkeypatch, capsys):
+    """Slides go to the strip detector, not to the frame-edge one, so the
+    resolution the frame-edge detector reads is not theirs to be held to."""
+    scanner, code = run(tmp_path, monkeypatch, "--correct", "--film",
+                        "positive", "--prescan-dpi", "600", "--frames", "1")
+    assert code == 0 and scanner.asked["correct"] is True
+    assert "not read" not in capsys.readouterr().err
+
+
 def test_a_walk_with_only_its_roll_json_is_held_from_that(tmp_path,
                                                           monkeypatch):
     """A walk made before walks had a file of their own wrote `roll.json`.

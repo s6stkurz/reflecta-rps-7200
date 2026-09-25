@@ -686,6 +686,51 @@ def prescan_arrangement(manifest: dict, record: dict) -> tuple[int, bool]:
     return turn % 360, mirrored
 
 
+#: What a manifest's `settings` block calls a key, where the top level calls it
+#: something else. Only `dpi` differs: `scan_roll` writes the scan resolution
+#: under the name the driver uses, the window under the name it shows.
+SETTING_ALIASES = {"resolution": "dpi"}
+
+
+def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
+    """One view of a roll's settings, whichever tool wrote it.
+
+    The window writes the settings it restores at the **top level** of
+    `survey.json` and again inside `settings`; `tools/scan_roll.py` writes them
+    only inside `settings`, and calls the scan resolution `dpi`. So a walk made
+    on the command line opened in the window with `prescan_resolution` reading
+    `None` -- and that is not cosmetic. It becomes `_survey_predpi`, which is
+    what pins a commissioned scan's prescan to the resolution its positions
+    were decided at. Unpinned, the reference is resampled and
+    `measure_shift_mm` reads it at about half the confidence: 93.5 falls to
+    47.4 against a floor of 55, so **every frame reads `unverified` and nothing
+    moves**. A roll that costs hours, delivers no correction, and says nothing.
+
+    Read side rather than write side deliberately. Fixing `scan_roll` would
+    help folders that do not exist yet; the eleven already on disk --
+    `registration-D` through `registration-M` -- are the evidence this whole
+    feature was built on, and only the reader recovers them.
+
+    Here rather than in the window since `tools/scan_roll.py --approved` pins
+    its prescans with it too. It took `--prescan-dpi`, 300 unless told, and so
+    held a walk prescanned at 600 dpi against 300 dpi passes -- the same
+    unverified roll, from the other side.
+    """
+    out: dict = {}
+    # Least specific first. A `settings` block is what the run was configured
+    # with; the top level is what the window itself wrote and meant; a resumed
+    # roll's progress file is more recent than the survey beside it.
+    for layer in (manifest.get("settings"), manifest,
+                  (progress or {}).get("settings"), progress or {}):
+        for key, value in (layer or {}).items():
+            if key != "settings" and value is not None:
+                out[key] = value
+    for name, alias in SETTING_ALIASES.items():
+        if out.get(name) is None and out.get(alias) is not None:
+            out[name] = out[alias]
+    return out
+
+
 def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
                        meta: dict[str, Any] | None = None) -> dict[str, tuple]:
     """Where raw bytes laid out like this cannot be the pass with this shape.

@@ -196,6 +196,28 @@ def test_a_600_dpi_prescan_is_read_at_the_prescan_scale_and_scaled_back():
     assert odd.left.state == REFUSE and "not a multiple" in odd.left.note
 
 
+@pytest.mark.parametrize("width", [860, 862, 1292])
+def test_the_devices_own_600_and_900_dpi_widths_are_refused(width):
+    """The kron test above uses 856 columns, a width the device never
+    returns. What it does return at 600 and 900 dpi is refused, frame by
+    frame -- which is why a walk at them is warned about before it starts."""
+    img = negative_prescan(12.0, seed=13, width=width)
+    res = frame_edges.detect(img, film="negative")
+    assert res.left.state == res.right.state == REFUSE
+    assert "not a multiple" in res.left.note
+
+
+def test_a_walk_the_edges_will_not_be_read_on_is_said_before_it_starts():
+    assert frame_edges.READ_AT_DPI == (300,)
+    assert frame_edges.unread_at(300, "negative") is None
+    for dpi, film in ((600, "negative"), (900, "bw"), (150, None)):
+        why = frame_edges.unread_at(dpi, film)
+        assert why and f"{dpi} dpi" in why and "refused" in why, (dpi, film)
+    # slides are not read at any resolution, which is another sentence
+    assert frame_edges.unread_at(600, "positive") is None
+    assert frame_edges.unread_at(None, "negative") is None
+
+
 # --- the walk: rps7200 is handed the reader --------------------------------
 
 def test_the_walk_reader_answers_through_strip_walk():
@@ -210,6 +232,65 @@ def test_the_walk_reader_answers_through_strip_walk():
     assert detail["source"] == "measured" and detail["members"] == []
     # the second look reads the same frame again, the same way
     assert reader.reread(1, frames[0][1]) == pytest.approx(mm)
+
+
+def _near_black(seed=1, density=0.01):
+    """Fogged leader, or an opaque strip end, as an 8-bit corrected prescan:
+    almost all 0, with sparse 1-count noise. Its relative contrast is high,
+    so it is read as a frame; `gapmodel` then divides by a base level of 0."""
+    rng = np.random.default_rng(seed)
+    img = np.zeros((286, 428, 3), np.uint8)
+    img[rng.random(img.shape) < density] = 1
+    return img
+
+
+def test_a_member_that_raises_abstains_and_the_others_still_vote(monkeypatch):
+    """What a raising member leaves is exactly what a refusing one would:
+    the other three vote as they would without it, and the frame is read."""
+    import types
+
+    img = negative_prescan(12.0, seed=3)
+
+    def refuses(image, ctx):
+        return EdgeResult(Side(REFUSE, note="stub"), Side(REFUSE, note="stub"))
+
+    def raises(image, ctx):
+        raise ZeroDivisionError("float division by zero")
+
+    monkeypatch.setitem(vote.MEMBERS, "gapmodel", types.SimpleNamespace(detect=refuses))
+    without = frame_edges.detect(img, film="negative")
+    monkeypatch.setitem(vote.MEMBERS, "gapmodel", types.SimpleNamespace(detect=raises))
+    failed = frame_edges.detect(img, film="negative")
+    assert (failed.left, failed.right) == (without.left, without.right)
+    assert failed.left.state == EDGE, "the frame was still read"
+    why = failed.debug["members"]["gapmodel"]["failed"]
+    assert "ZeroDivisionError" in why
+    assert "failed" not in failed.debug["members"]["changepoint"]
+
+
+def test_a_near_black_frame_costs_nothing_on_the_roll_path():
+    """It passes the blank check, so a roll with correction on judges it --
+    and `gapmodel`'s ZeroDivisionError was not in `scan_roll`'s net, so the
+    roll ended there, with the film sometimes already moved. Now it is a
+    frame the detector cannot place: left as it came, and the walk goes on."""
+    frames = _walk()
+    dark = _near_black()
+    walk = StripWalk(reader=frame_edges.walk_reader("negative"))
+    for n, im in frames:
+        walk.observe(n, im)
+    walk.observe(5, dark)
+    mm, detail = walk.judge(5, dark)
+    assert mm is None
+    assert detail["source"] in ("refused", "none")
+    # the driver's second look, after a move onto leader, abstains the same way
+    assert walk.reader.reread(5, dark) is None
+    # and the frames around it are still read, before it and after it
+    assert walk.judge(1, frames[0][1])[0] is not None
+
+    offsets, notes = frame_edges.propose_centred([*frames, (5, dark)],
+                                                 film="negative")
+    assert 5 not in offsets or notes[5]["source"] == "neighbours"
+    assert offsets[1] < 0
 
 
 def test_the_drivers_second_look_uses_the_reader():

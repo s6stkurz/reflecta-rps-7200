@@ -12,9 +12,13 @@ Two callers, one detector:
 
 Each frame is read with the other frames of its walk as context (`roll.py`),
 and centred with the measured frame width (`centre.py`). Positions are
-decided on a 428-column prescan: a pass whose width is a whole multiple of it
-(600, 900 dpi) is averaged down first and its positions scaled back; any
-other width is refused, because nothing here was validated on it.
+decided on a 428-column prescan, the width the device returns at 300 dpi: a
+pass whose width is a whole multiple of it is averaged down first and its
+positions scaled back; any other width is refused, because nothing here was
+validated on it. That makes 300 dpi the only walk the detector reads. This
+said 600 and 900 dpi were averaged down, and the device's own passes there
+are 860 (or 862) and 1292 columns -- neither a multiple -- so every frame of
+such a walk was refused, and nothing said why; see `unread_at`.
 """
 
 from __future__ import annotations
@@ -43,9 +47,39 @@ SCALE = int(PRESCAN_COLUMNS)
 _LONE = "gap with neighbour, one vote"
 
 
+#: The prescan resolutions a walk's frames are read at: only where the device
+#: is known to return a width `_downscaled` takes. 300 dpi is 428 columns; at
+#: 600 dpi it returns 860 or 862 and at 900 dpi 1292, neither a multiple of
+#: 428. A resolution belongs here once a pass at it has been read, not by
+#: arithmetic -- the device rounds its widths its own way (see
+#: `DemoScanner._shape_for`), so a width predicted from the dpi is a guess.
+READ_AT_DPI = (300,)
+
+
 def film_type(film: str | None) -> str | None:
     """The members' name for ``film``, or None when edges are not read on it."""
     return FILM_TYPES.get(str(film or FILM_NEGATIVE))
+
+
+def unread_at(dpi: int | None, film: str | None) -> str | None:
+    """Why a walk prescanned at ``dpi`` will have no frame edges read, or None.
+
+    For saying so *before* the walk: at a resolution the detector cannot read
+    every frame is refused one at a time, the sheet's light still goes green,
+    and "correct" leaves every frame as it came -- a roll that looked centred
+    and was not, with the reason only in each frame's caption. None as well
+    for a film the detector does not read at any resolution: that is a
+    different sentence (`not_read`), and not a matter of the resolution.
+    """
+    if film_type(film) is None or dpi is None or int(dpi) in READ_AT_DPI:
+        return None
+    read = " or ".join(f"{d} dpi" for d in READ_AT_DPI)
+    return (f"Frame edges are not read at a {int(dpi)} dpi prescan. The "
+            f"detector reads {SCALE}-column prescans -- the scanner's width at "
+            f"{read} -- and at {int(dpi)} dpi the width is not a whole "
+            f"multiple of that (860 at 600 dpi, 1292 at 900), so every frame "
+            f"of this walk will be refused: no positions proposed, and "
+            f"\"correct\" will move nothing. Prescan at {read} for those.")
 
 
 def _downscaled(image: np.ndarray) -> tuple[np.ndarray, int] | None:
