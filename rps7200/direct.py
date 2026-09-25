@@ -618,6 +618,27 @@ class DirectScanner:
         return needed <= cls.MAX_SHADING_COLUMNS
 
     @classmethod
+    def uncorrectable(cls, resolution: int,
+                      frame: tuple[int, int, int, int] | None = None
+                      ) -> ShadingUnavailable:
+        """The refusal a corrected pass gets where `correctable_at` says no.
+
+        A class method for the reason `uncalibrated` is a static one: the
+        demo refuses a 7200 dpi pass with these words rather than a retyped
+        copy of them. It used to accept one, resample a stored picture and
+        file a roll the scanner would refuse frame by frame.
+        """
+        needed = cls._shading_columns_needed(frame or FULL_FRAME, resolution)
+        return ShadingUnavailable(
+            f"a {resolution} dpi pass over this frame is {needed} "
+            f"columns, and this scanner's calibration will not produce "
+            f"a reference wider than {cls.MAX_SHADING_COLUMNS} at any "
+            f"resolution -- so it cannot be corrected at all, and no "
+            f"calibration will change that. Scan at 3600 dpi or below, "
+            f"or pass shading=False to accept raw pixels deliberately."
+        )
+
+    @classmethod
     def read_idle_s(cls, infrared: bool, fast_infrared: bool) -> float:
         """How long this pass's read may go without data before giving up."""
         if infrared and not fast_infrared:
@@ -2906,18 +2927,11 @@ class DirectScanner:
             # out afterwards spends 5.5 minutes at 7200 dpi to learn what is
             # knowable here.
             needed = self._shading_columns_needed(frame, resolution)
-            if needed > self.MAX_SHADING_COLUMNS:
+            if not self.correctable_at(resolution, frame):
                 # No resolution argument can widen the reference past this --
                 # measured on the device, see MAX_SHADING_COLUMNS. Calibrating
                 # would cost two minutes and return the same 5172 columns.
-                raise ShadingUnavailable(
-                    f"a {resolution} dpi pass over this frame is {needed} "
-                    f"columns, and this scanner's calibration will not produce "
-                    f"a reference wider than {self.MAX_SHADING_COLUMNS} at any "
-                    f"resolution -- so it cannot be corrected at all, and no "
-                    f"calibration will change that. Scan at 3600 dpi or below, "
-                    f"or pass shading=False to accept raw pixels deliberately."
-                )
+                raise self.uncorrectable(resolution, frame)
             if self._shading is None or needed > self._shading.pixels_per_line:
                 reason = (
                     "no shading reference in this session" if self._shading is None
