@@ -1482,6 +1482,40 @@ def test_an_empty_transport_refuses_a_framing_pass(tmp_path):
     empty.close()
 
 
+def test_an_empty_uncalibrated_transport_is_refused_in_the_drivers_order(
+        tmp_path, monkeypatch):
+    """Uncalibrated, the driver refuses a corrected pass before a command
+    reaches the transport, so an empty one is never asked. The stand-in's
+    empty transport answers where a transport would -- after the driver's
+    own refusal, not ahead of it. (The window never gets this far: it asks
+    for a calibration first, and asks whether the film is in.)"""
+    from conftest import FakeTransport
+
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import ShadingUnavailable
+    from rps7200.usb_transport import UsbError
+
+    real = DirectScanner(transport=FakeTransport())
+    real.verbose = False
+    with pytest.raises(ShadingUnavailable) as refused:
+        real.scan(resolution=900, infrared=False)
+    assert real.t.sent == [], "refused before anything reached the transport"
+
+    monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
+    entry(tmp_path)
+    empty = DemoScanner(tmp_path, no_film=True, speed=1e9)
+    empty.open()
+    for call in (empty.prescan,
+                 lambda: empty.scan(resolution=900, infrared=False)):
+        with pytest.raises(ShadingUnavailable) as also:
+            call()
+        assert str(also.value) == str(refused.value)
+    # raw on purpose needs no calibration, so it reaches the transport
+    with pytest.raises(UsbError, match="no film in the transport"):
+        empty.scan(resolution=900, infrared=False, shading=False)
+    empty.close()
+
+
 # -- the roll is the driver's own loop ------------------------------------------
 #
 # The demo's roll was a loop of its own that borrowed the driver's decisions

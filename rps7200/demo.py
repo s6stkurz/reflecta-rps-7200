@@ -576,6 +576,9 @@ class DemoScanner:
         back 8-bit, whatever the stored picture was.
         """
         frame = frame or FULL_FRAME
+        # The driver's refusals, then the transport's, in that order: the
+        # real one refuses an uncalibrated pass before a command reaches the
+        # transport, so an empty transport is never asked.
         self._refuse(resolution, frame, shading)
         self._need_film("prescan")
         self._forget_last_pass()
@@ -670,6 +673,7 @@ class DemoScanner:
                 "and hand back the picture rather than the dust. Scan it RGB."
             )
         frame = frame or FULL_FRAME
+        # The driver's refusals before the transport's, as in `prescan`.
         self._refuse(resolution, frame, shading)
         self._need_film("scan")
         if auto_exposure:
