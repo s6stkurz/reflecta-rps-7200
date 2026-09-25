@@ -4448,15 +4448,18 @@ class ScannerGui:
     def on_delete(self, result) -> None:
         entry = result.entry
         question = f"Remove {result.label} from this session?"
-        if entry and entry.exists() and self.demo and not _within(
-                entry, self.session.root):
+        if entry and entry.exists() and not _within(entry,
+                                                     self.session.root):
             # A reopened roll's frames carry the entry their walk filed, and
-            # `make run-sheet` opens a real walk -- so this was a real entry,
-            # raw bytes and all, one "No" away from rmtree under the one mode
-            # promised to touch nothing real. The demo only ever removes what
-            # the demo filed; this frame leaves the window and nothing else.
-            question += (f"\n\nIts library entry {entry.name} is not the "
-                         "demo's own, and the demo leaves it alone.")
+            # `make run-sheet` opens a real walk -- so under the demo this was
+            # a real entry, raw bytes and all, one "No" away from rmtree under
+            # the one mode promised to touch nothing real. Not a demo branch:
+            # the window only ever removes an entry from the library it files
+            # into, and a demo files into its own. Outside the demo that is
+            # every entry it shows, bar a roll opened from another library,
+            # which this leaves to that library too.
+            question += (f"\n\nIts library entry {entry.name} is not in "
+                         "this session's library, and is left where it is.")
             entry = None
         if entry and entry.exists():
             question += (f"\n\nIts library entry {entry.name} holds the raw "

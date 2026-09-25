@@ -5007,12 +5007,17 @@ def _reopened_with_entry(app, entry):
     return result
 
 
+@pytest.mark.parametrize("demo", [True, False])
 def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
-                                                           monkeypatch):
+                                                           monkeypatch, demo):
     """`make run-sheet` opens a real walk, whose frames carry the entries it
     filed. Delete on one, and No to "keep the entry?", removed a real entry's
-    raw bytes under the one mode promised to touch nothing real."""
+    raw bytes under the one mode promised to touch nothing real.
+
+    And the same without the demo: the refusal is the window's rule about
+    its own library, not an `if demo:` -- the demo exercises what runs."""
     app, root = window
+    app.demo = demo
     entry = tmp_path / "real-library" / "an-entry"
     entry.mkdir(parents=True)
     (entry / "scan.tif").write_bytes(b"raw")
@@ -5024,7 +5029,7 @@ def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
                         lambda *a, **k: pytest.fail("offered to delete it"))
     app.on_delete(result)
     assert (entry / "scan.tif").exists()
-    assert "not the demo's own" in said[0]
+    assert "not in this session's library" in said[0]
     assert result not in app.results, "it still leaves the window"
 
 
