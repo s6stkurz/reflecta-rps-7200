@@ -2806,6 +2806,11 @@ class ScannerGui:
                       f"{len(remaining)} left, no sheet")
             return
 
+        # The sheet open now is the outgoing roll's. Closed the way its own
+        # Close button closes it, so what was decided in it is kept -- under
+        # its own roll, which `_sheet_roll` still names until below. It was
+        # destroyed, and twenty minutes of positions went with it.
+        self._close_sheet()
         self.survey = out["results"]
         self._survey_predpi = out["prescan_resolution"]
         self._survey_film = out.get("film")
@@ -2823,11 +2828,6 @@ class ScannerGui:
                      if any(out["flips"].values()) else "")
                   + (f", settings restored: {', '.join(sorted(restored))}"
                      if restored else ""))
-        if self.sheet is not None and self.sheet.alive():
-            # Destroyed rather than dismissed: `_loaded_roll` already names the
-            # roll being opened, so keeping the old sheet's decisions here
-            # would file the outgoing roll's positions under the incoming one.
-            self.sheet.top.destroy()
         self._sheet_done = {int(n) for n in done}
         self._sheet_roll = folder
         # The manifest is the record for this roll, so it replaces whatever
@@ -3185,12 +3185,18 @@ class ScannerGui:
                 # this was numbered the way its walk was. See `read_approved`.
                 "numbering": NUMBERING,
                 "frames": sorted(kept + [
-                    {"number": a.number,
-                     "offset_mm": round(a.offset_mm, 4),
-                     "rotation": int(a.rotation),
-                     "flipped": bool(a.flipped),
-                     "reference_entry": str(a.reference_entry or ""),
-                     "source": str(a.source or "operator")}
+                    dict({"number": a.number,
+                          "offset_mm": round(a.offset_mm, 4),
+                          "rotation": int(a.rotation),
+                          "flipped": bool(a.flipped),
+                          "reference_entry": str(a.reference_entry or ""),
+                          "source": str(a.source or "operator")},
+                         # His "as surveyed", said as one: a zero is otherwise
+                         # what every untouched ticked frame carries, and
+                         # older files called those his too.
+                         **({"as_walked": True}
+                            if a.source == "operator" and not a.offset_mm
+                            else {}))
                     for a in approved], key=lambda r: int(r["number"])),
             }, keep_previous=True)
         except Exception as exc:                          # noqa: BLE001
@@ -3285,6 +3291,11 @@ class ScannerGui:
             return
         self.closing = True
         self.v_state.set("closing ...")
+        # Every way out of the sheet keeps what was decided in it, and quitting
+        # with it open is one: for a walk not yet commissioned its state is the
+        # only record of the ticks, positions and turns. Before `_remember`,
+        # which is what writes them.
+        self._close_sheet()
         self._remember()
         self.session.shutdown()
         self._wait_to_quit()
@@ -5292,8 +5303,14 @@ def read_approved(folder, legacy: int = 0, say=None):
             number = int(record["number"]) + shift
         except (KeyError, TypeError, ValueError):
             continue
-        if record.get("offset_mm"):
-            offsets[number] = float(record["offset_mm"])
+        # A zero only where it says it was his: every ticked frame is written
+        # with a position, and an untouched one's zero is no decision at all.
+        # His "as surveyed" is, and read as absent the detector's number took
+        # its place on reopen. Who decided goes with the position, so an
+        # untouched frame's `source` is not read as his either.
+        placed = bool(record.get("offset_mm")) or bool(record.get("as_walked"))
+        if placed:
+            offsets[number] = float(record.get("offset_mm") or 0.0)
         # `is not None` rather than truthiness: an explicit zero is a decision
         # here, and a file written before this existed has no key at all rather
         # than a zero.
@@ -5303,7 +5320,7 @@ def read_approved(folder, legacy: int = 0, say=None):
             flips[number] = bool(record["flipped"])
         if record.get("reference_entry"):
             entries[number] = record["reference_entry"]
-        if record.get("source"):
+        if record.get("source") and placed:
             sources[number] = str(record["source"])
     return offsets, rotations, flips, entries, sources
 
@@ -5910,6 +5927,13 @@ def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[di
     than kept, so today's reading replaces it; see `_propose_positions`.
     """
     known = remembered or {}
+    # His "as surveyed" as well, which a sheet saved before zeros were kept
+    # recorded as his with no position at all.
+    theirs = {int(n) for n, source in known.items() if source == "operator"}
+    kept = dict(kept)
+    for n in theirs:
+        if all(int(k) != n for k in kept):
+            kept[n] = 0.0
     for number, value in kept.items():
         n = int(number)
         fresh = notes.get(n) or {}
@@ -6133,6 +6157,11 @@ def frame_caption(offset, source, done=False, contrast=0.0, read=False):
         said = f"{say_units(offset)} ({source})" if offset else f"in place ({source})"
     elif offset:
         said = f"moved {say_units(offset)}"
+    elif source == "operator":
+        # His "as surveyed". It read "contrast 0.42", the same as a frame
+        # nobody had touched, so the one decision that keeps the detector off
+        # a frame could not be seen on the sheet.
+        said = "as walked (yours)"
     elif read:
         said = "in place"
     else:
@@ -6203,8 +6232,10 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
 
     `sources` says where each number came from -- the sheet's own per-frame
     note, keyed by frame number. Defaulted, so the records still build without
-    it, and absent means `operator`: that is what an approval used to mean
-    before the sheet pre-filled a position for every frame it could read. It is
+    it; a frame with no note is `none`, since nothing has decided it -- not
+    `operator`, which is what an approval meant before the sheet pre-filled a
+    position for every frame it could read, and which then claimed his
+    decision for every frame the reader had not reached yet. It is
     carried so the driver's log can say `measured` where a detector decided,
     which is what `_hold_to_approved`'s `source` exists for.
     """
@@ -6225,7 +6256,11 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
             # and a Path here reaches json.dumps in _write_approved and
             # raises -- which used to take the whole commission down with it.
             reference_entry=str(getattr(result, "entry", "") or ""),
-            source=(labels.get(number) or {}).get("source") or "operator",
+            # "none" for a frame nothing has placed: not read yet and not
+            # touched. It was "operator", so a roll commissioned while the
+            # edge light was still blue logged his decision for frames he
+            # never touched -- and filed their zeros as his "as surveyed".
+            source=(labels.get(number) or {}).get("source") or "none",
         ))
     return tuple(out)
 
@@ -6998,9 +7033,13 @@ class _FrameAdjuster:
         self._drag_from: float | None = None
         self._drag_base = 0.0
 
-        self.top = tk.Toplevel(gui.root)
+        # A child of the sheet's window, so it closes with the sheet however
+        # the sheet is closed. A child of the main window, it outlived the
+        # sheet, and every position set in it afterwards went into a sheet
+        # that no longer existed -- redrawn here as if accepted, and lost.
+        self.top = tk.Toplevel(sheet.top)
         self.top.title("Frame position")
-        self.top.transient(gui.root)
+        self.top.transient(sheet.top)
         self.top.geometry(f"{self.WIDTH}x{self.HEIGHT}")
 
         outer = ttk.Frame(self.top, padding=10)
@@ -7165,11 +7204,11 @@ class _FrameAdjuster:
         badge, and the confirm dialog went on counting it as measured. It is
         his the moment he moves it.
         """
-        value = snap_offset(millimetres)
-        if value:
-            self.sheet.offsets[self.number] = value
-        else:
-            self.sheet.offsets.pop(self.number, None)
+        # Zero is kept, not dropped: "as walked" is his answer as much as any
+        # other, and an absent entry is where the detector's goes. Dropped,
+        # it survived only as long as this sheet did -- reopened, the detector's
+        # number came back in its place and the roll moved the frame.
+        self.sheet.offsets[self.number] = snap_offset(millimetres)
         self.sheet.proposals[self.number] = {"source": "operator",
                                              "reason": "you set this one"}
         self._refresh()
@@ -7631,9 +7670,10 @@ class _ContactSheet:
         #: resume exists to not spend twice. Ticking one anyway rescans it,
         #: which is the right escape hatch for a frame that came out wrong.
         self.done: set[int] = {int(n) for n in (done or ())}
-        #: Where the operator says each frame should sit, in mm, relative to
-        #: where it was surveyed. Absent means "as surveyed" -- an explicit
-        #: zero never lands here, because snap_offset returns it as absent.
+        #: Where each frame should sit, in mm, relative to where it was
+        #: surveyed. Absent means no decision: as surveyed until the detector
+        #: says otherwise. A zero is his "as surveyed" (`_FrameAdjuster._set`)
+        #: and its note says so; the detector's in-place frames are absent.
         self.offsets: dict[int, float] = dict(offsets or {})
         #: Where each proposed offset came from, so a caption can say whether
         #: a number was measured, read by one detector and uncorroborated, or
@@ -8341,12 +8381,13 @@ class _ContactSheet:
         and a sheet rebuilt without them comes back with the whole strip
         ticked, which is the opposite of what was decided.
 
-        The three per-frame maps keep their own conventions rather than being
-        flattened together. `offsets` treats an absent entry and an explicit
-        zero as the same thing; `rotations` and `flips` must not, because
-        "rotate all" moves the session default and a frame straightened by
-        hand would fall back to it and be scanned sideways. That happened on
-        the first strip this was driven on.
+        In none of the three per-frame maps is an explicit zero the same as an
+        absent entry. `rotations` and `flips` because "rotate all" moves the
+        session default and a frame straightened by hand would fall back to
+        it and be scanned sideways -- that happened on the first strip this
+        was driven on. `offsets` because an absent position is the
+        detector's to fill, and his "as surveyed" was replaced by its number
+        on the next reopen.
         """
         return {
             "ticks": {int(n): bool(v.get()) for n, v in self.ticks.items()},
@@ -8382,6 +8423,8 @@ class _ContactSheet:
             # Remembering is never allowed to stop the window closing. A sheet
             # that will not close is worse than one that forgets.
             self.gui._say(f"could not keep the contact sheet settings: {exc}")
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster.top.destroy()
         self.top.destroy()
 
     # -- picking -----------------------------------------------------------

@@ -4214,6 +4214,111 @@ def test_a_reading_that_arrives_late_fills_the_sheet_and_leaves_his_alone(
     sheet.top.destroy()
 
 
+def test_his_as_surveyed_is_still_his_when_the_sheet_is_reopened(window,
+                                                                 tmp_path):
+    """Centre on a frame the detector wanted to move: an explicit zero. It
+    was dropped from the offsets, so on the next reopen the detector's number
+    came back labelled measured, and the roll moved the frame."""
+    app, root = window
+    sheet, offsets, notes = _sheet_with_readings(app, tmp_path)
+    sheet.take_readings(offsets, notes)
+    assert sheet.offsets.get(1), "the detector proposes a move for frame 1"
+    sheet.adjust(0)
+    root.update()
+    sheet._adjuster._centre()
+    assert sheet.offsets[1] == 0.0 and sheet.proposals[1]["source"] == "operator"
+    assert sheet._captions[1].cget("text") == "as walked (yours)"
+    state = json.loads(json.dumps(sheet.state()))       # through the settings
+    frames = sheet.frames
+    sheet.top.destroy()
+
+    kept = gui.ScannerGui._clean_sheet_state(state)
+    mine, mine_notes = gui._merge_kept({}, {}, kept["offsets"], kept["sources"])
+    again = gui._ContactSheet(app, frames, offsets=mine, proposals=mine_notes,
+                              readings=(offsets, notes))
+    assert again.offsets[1] == 0.0
+    assert again.proposals[1]["source"] == "operator"
+    again.top.destroy()
+
+
+def test_a_sheet_saved_before_zeros_were_kept_still_keeps_his_centre():
+    """Those recorded him as the source of a frame with no position at all."""
+    out, notes = gui._merge_kept({1: 0.5116}, {1: {"source": "measured"}},
+                                 {}, {1: "operator", 2: "measured"})
+    assert out[1] == 0.0 and notes[1]["source"] == "operator"
+    assert 2 not in out
+
+
+def test_his_as_surveyed_goes_into_approved_json_as_his(tmp_path):
+    """Every ticked frame is written with a position, so a zero alone says
+    nothing -- an untouched frame's zero is no decision, and older files
+    labelled those `operator` too. His is marked."""
+    class R:
+        def __init__(self, number):
+            self.number, self.image, self.entry = number, None, ""
+
+    approved = gui.approved_from_sheet(
+        [R(1), R(2), R(3)], (1, 2, 3), {1: 0.0, 3: 0.5116},
+        {1: {"source": "operator"}, 3: {"source": "measured"}})
+    assert [a.source for a in approved] == ["operator", "none", "measured"]
+    folder = tmp_path / "roll"
+    gui.ScannerGui._write_approved(_approving(), approved, folder)
+    offsets, _r, _f, _e, sources = gui.read_approved(folder)
+    assert offsets == {1: 0.0, 3: pytest.approx(0.5116)}
+    assert sources == {1: "operator", 3: "measured"}
+
+    older = tmp_path / "older"
+    older.mkdir()
+    (older / "approved.json").write_text(json.dumps({"numbering": "strip",
+        "frames": [{"number": 4, "offset_mm": 0.0, "source": "operator"}]}),
+        encoding="utf-8")
+    offsets, _r, _f, _e, sources = gui.read_approved(older)
+    assert offsets == {} and sources == {}, "an untouched frame, as it was"
+
+
+def test_the_frame_position_window_closes_with_its_sheet(window, tmp_path):
+    """It was the main window's child, outlived the sheet, and every position
+    set in it afterwards went into a sheet that no longer existed."""
+    app, root = window
+    sheet, _offsets, _notes = _sheet_with_readings(app, tmp_path)
+    sheet.adjust(0)
+    root.update()
+    adjuster = sheet._adjuster
+    assert adjuster.alive()
+    sheet._dismiss()
+    root.update()
+    assert not adjuster.alive()
+
+
+def test_opening_another_roll_keeps_what_the_open_sheet_held(window, tmp_path,
+                                                            monkeypatch):
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    first = _walked_folder(tmp_path, count=3).rename(tmp_path / "first")
+    second = _walked_folder(tmp_path, count=3)
+    app.open_roll(first)
+    app.sheet._rotate(2, 90)
+    app.open_roll(second)
+    assert app.remembered["sheet"]["first"]["rotations"][2] == 90
+    app.sheet.top.destroy()
+
+
+def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
+                                                 monkeypatch):
+    """For a walk not yet commissioned the sheet is the only record of the
+    ticks, positions and turns, and quitting with it open lost them."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    sheet = app.sheet
+    sheet._rotate(3, 180)
+    app.on_close()
+    assert not sheet.alive()
+    assert app.remembered["sheet"]["walk"]["rotations"][3] == 180
+
+
 def test_reset_in_the_big_view_puts_that_frame_back_and_no_other(window, tmp_path):
     app, root = window
     sheet, offsets, notes = _sheet_with_readings(app, tmp_path)
