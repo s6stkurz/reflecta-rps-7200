@@ -37,6 +37,7 @@ class FakeBracketScanner(DirectScanner):
         self.last_raw = None
         self.last_raw_layout = None
         self.scans = []
+        self.scales = []
         self.kwargs = []
 
     def __enter__(self):
@@ -65,6 +66,8 @@ class FakeBracketScanner(DirectScanner):
         n = 4 if infrared else 3
         k = exposure_scale[0] if isinstance(exposure_scale, list) else exposure_scale
         self.scans.append(float(k))
+        self.scales.append(list(exposure_scale) if isinstance(exposure_scale, list)
+                           else [exposure_scale] * 3)
         # Everything else the tool passed, for tests about wiring rather than
         # about pixels -- a flag dropped between the parser and the device is
         # invisible to a fake that only records exposures.
@@ -240,33 +243,45 @@ def test_an_rgb_run_with_fast_ir_typed_explicitly_still_sends_nothing(
     assert s.kwargs[-1]["fast_infrared"] is False
 
 
-def test_a_bracket_ties_its_infrared_pass_like_any_other(tmp_path, monkeypatch):
-    """A bracket takes one RGBI pass and the rest RGB, so the default has to
-    reach that one pass too -- otherwise `--bracket --ir` quietly costs the
-    ~220 s floor that every other path stopped paying."""
-    s, code = run(tmp_path, monkeypatch, "--ir", "--bracket", "3")
-    assert code == 0
-    assert s.kwargs, "no pass was taken"
-    assert all(k["fast_infrared"] is True for k in s.kwargs), s.kwargs
+@pytest.mark.parametrize("extra", [[], ["--no-fast-ir"]])
+def test_a_bracket_with_infrared_is_refused_not_merged(tmp_path, monkeypatch,
+                                                       extra):
+    """It used to run, and deliver a wrong file with a normal summary.
 
+    One RGBI pass among RGB ones: metering aimed blue low for the RGBI pass
+    and every RGB pass inherited it, and the merge fitted one relation on green
+    and applied it to all three channels -- so the RGBI pass's blue, about five
+    times brighter, entered five times too high, from the pass with the most
+    weight. Refused before the device opens rather than half-fixed.
 
-def test_no_fast_ir_reaches_the_brackets_infrared_pass(tmp_path, monkeypatch):
-    """It did not. `scan_bracket` had no `fast_infrared` parameter and the
-    tool's bracket call passed none, so the flag was parsed, stored, and
-    dropped -- the pass ran tied whatever was typed, with nothing said.
-
-    Worth a test of its own rather than trusting the single-pass one beside it:
-    the two call sites are fourteen lines apart in `tools/scan.py` and only one
-    of them had it.
+    Two tests here used to check that `--fast-ir` reached that pass. It still
+    reaches `scan_bracket` -- `test_fast_infrared.py` holds that -- but no tool
+    path takes an infrared bracket any more.
     """
-    s, code = run(tmp_path, monkeypatch, "--ir", "--bracket", "3",
-                  "--no-fast-ir")
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out.tif"), "--library",
+         str(tmp_path / "lib"), "--no-shading", "--ir", "--bracket", "3",
+         *extra],
+    )
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    assert created == [], "the scanner was opened for a bracket that cannot merge"
+
+
+def test_a_brackets_channel_balance_reaches_every_pass(tmp_path, monkeypatch):
+    """Three values are the one form a bracket takes, and all three arrive.
+
+    The ladder scales every channel by the same factor per pass, so what
+    survives of `--exposure-scale` is the ratio between R, G and B."""
+    s, code = run(tmp_path, monkeypatch, "--bracket", "3",
+                  "--exposure-scale", "1.0,1.2,0.8")
     assert code == 0
-    assert s.kwargs, "no pass was taken"
-    # Subscripted, not `.get()`: before this was wired the key was simply
-    # absent, and an absent flag reads as False to any default-tolerant check.
-    # That is exactly the bug, so the test has to fail on absence.
-    assert all(k["fast_infrared"] is False for k in s.kwargs), s.kwargs
+    assert len(s.scales) == 3
+    for scale in s.scales:
+        assert [v / scale[0] for v in scale] == pytest.approx([1.0, 1.2, 0.8])
 
 
 # --- what actually lands in the library -----------------------------------
@@ -356,6 +371,34 @@ def test_every_pass_of_a_bracket_is_filed_raw_too(tmp_path, monkeypatch):
         assert int(image.max()) == RAW_LEVEL
 
 
+def test_the_merge_judges_saturation_on_what_the_sensor_returned(tmp_path,
+                                                                 monkeypatch):
+    """`scan()` returns corrected pixels, and the correction hides a railed
+    sample inside the range the merge trusts wherever a column's gain is below
+    one. So the tool hands the merge each pass's raw pixels as well -- with the
+    library on, and with it off, where `hold` keeps nothing."""
+    import rps7200.bracket as bracket_module
+
+    seen = []
+    real = bracket_module.merge_bracket
+
+    def spy(frames, exposures, **kw):
+        seen.append((frames, kw.get("sensor_frames")))
+        return real(frames, exposures, **kw)
+
+    monkeypatch.setattr(bracket_module, "merge_bracket", spy)
+    for library_args in ([], ["--no-library"]):
+        seen.clear()
+        _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3",
+                                        *library_args)
+        assert code == 0
+        (frames, sensor), = seen
+        assert sensor is not None and len(sensor) == len(frames) == 3, library_args
+        assert all(int(f.max()) == CORRECTED_LEVEL for f in frames)
+        assert all(int(p.max()) == RAW_LEVEL for p in sensor), (
+            "the merge was handed the corrected pixels as the sensor's")
+
+
 def test_every_pass_it_files_is_claimed_from_debug_filing(tmp_path, monkeypatch):
     """RPS7200_DEBUG=1 files what this tool does not keep -- metering probes --
     and not what it does, which would write every pass twice. Claiming each
@@ -392,6 +435,11 @@ def test_both_capture_tools_file_the_raw_pixels(tmp_path):
     ["--dpi", "7200"],            # cannot be shading-corrected at all
     ["--dpi", "0"],
     ["--out", "scan.png"],        # no such format; used to fail after the scan
+    # A bracket's exposure is R,G,B or nothing. One value was dropped without a
+    # word and the passes ran around the device's own settings, metering off.
+    ["--bracket", "3", "--exposure-scale", "1.5"],
+    ["--bracket", "3", "--exposure-scale", "1.0,1.2"],
+    ["--bracket", "3", "--exposure-scale", "1.0,1.2,0.8,1.0"],
 ])
 def test_what_cannot_work_is_refused_before_the_scanner_opens(tmp_path,
                                                               monkeypatch, argv):

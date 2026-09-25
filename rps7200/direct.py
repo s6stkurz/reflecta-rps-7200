@@ -2754,6 +2754,11 @@ class DirectScanner:
         constant the vendor never meters, so bracketing it would multiply the
         scan time for nothing. With ``infrared`` set, one pass -- the brightest,
         which carries the most signal -- is taken as RGBI and the rest as RGB.
+        Nothing merges such a bracket yet: metering aims blue low for the RGBI
+        pass and every RGB pass inherits it, and `rps7200.bracket` fits one
+        relation on green for all three channels, so the RGBI pass's blue --
+        about five times brighter -- would enter five times too high.
+        `tools/scan.py` refuses ``--bracket`` with ``--ir`` for that reason.
 
         ``fast_infrared`` reaches that one pass and is inert on the others,
         which :meth:`scan` gates on ``infrared`` for itself. It is here because

@@ -5,12 +5,39 @@ the shading and multi-exposure work. They are here so the next measurement
 starts from the version that was right rather than from memory.
 
 Everything works on shading-corrected linear samples, `(H, W, C)` uint16.
+The shape and the depth are checked (:func:`_check`); whether the samples were
+corrected cannot be, so say which they were wherever a number is quoted.
 """
 from __future__ import annotations
 
 import numpy as np
 
 FULL_SCALE = 65535.0
+
+
+def _check(image: np.ndarray, name: str = "image") -> None:
+    """Refuse what these metrics cannot mean anything on.
+
+    ``(H, W, C)`` with at least R, G and B: a single plane used to fail deep
+    inside with an AxisError. And nothing narrower than 16 bits: the noise
+    floor, the clip gate and the noise model below are all in 16-bit counts,
+    so on an 8-bit prescan every sample sits under the floor and every
+    rail-clipped one counts as usable. Floats are allowed -- an average or a
+    merge of 16-bit passes is on the same scale.
+    """
+    a = np.asarray(image)
+    if a.ndim != 3 or a.shape[2] < 3:
+        raise ValueError(f"{name} must be (H, W, C) with at least R, G, B; "
+                         f"got shape {a.shape}")
+    if np.issubdtype(a.dtype, np.integer) and a.dtype.itemsize < 2:
+        raise ValueError(f"{name} is {a.dtype}: these metrics are in 16-bit "
+                         f"counts, and an 8-bit pass means nothing to them")
+
+
+def _odd(window: int) -> int:
+    """An odd box width, as `rps7200.defects` forces: an even one made the
+    'valid' convolution one sample longer than the profile, and it raised."""
+    return max(3, int(window) | 1)
 
 
 def dark_mask(image: np.ndarray, percentile: float = 10.0) -> np.ndarray:
@@ -20,6 +47,7 @@ def dark_mask(image: np.ndarray, percentile: float = 10.0) -> np.ndarray:
     -- and then reuse the same mask for every candidate, so they are compared on
     identical pixels rather than each on its own idea of "dark".
     """
+    _check(image)
     lum = image.astype(np.float64)[..., :3].mean(axis=2)
     return lum < np.percentile(lum, percentile)
 
@@ -40,6 +68,7 @@ def relative_noise(image: np.ndarray, mask: np.ndarray, scale: float = 1.0) -> f
     Relative so that scans taken at different exposures compare directly; a
     figure in DN would just say which one was brighter.
     """
+    _check(image)
     a = image.astype(np.float64)[..., :3] / scale
     out = []
     for c in range(3):
@@ -59,6 +88,8 @@ def noise_split(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
 
     Returns ``(random_sigma, total_sigma, random_share)`` in DN.
     """
+    _check(a, "a")
+    _check(b, "b")
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
     random_sigma = float(np.std((x - y)[mask]) / np.sqrt(2))
@@ -72,14 +103,28 @@ def ceiling(random_sigma: float, total_sigma: float, passes: int) -> float:
     Averaging divides only the random part; the fixed part is untouched however
     many passes are taken. Compute this *before* booking scanner time -- on a
     slide here it came to -3.5% for nine passes, which is not worth 25 minutes.
+
+    A random part as large as the total is refused rather than answered. It
+    cannot be true of a real pair -- the random part is a share of the total --
+    and it is what a pair that was not registered, or not matched in gain,
+    measures: grain and detail leak into the difference. Clamping the fixed
+    part to zero there turned the worst measurement into the most optimistic
+    ceiling -- a share of 1.12 came out at -63% for nine passes, against the
+    -3.5% above.
     """
-    fixed = np.sqrt(max(total_sigma**2 - random_sigma**2, 0.0))
+    if random_sigma >= total_sigma:
+        raise ValueError(
+            f"random {random_sigma:.1f} DN is not less than the total "
+            f"{total_sigma:.1f} DN: no split to take a ceiling from. Register "
+            f"the pair and match its gain before trusting noise_split.")
+    fixed = np.sqrt(total_sigma**2 - random_sigma**2)
     reached = np.sqrt((random_sigma / np.sqrt(passes)) ** 2 + fixed**2)
     return float(reached / max(total_sigma, 1e-9) - 1.0)
 
 
 def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
-                channel: int = 1, alpha: float = 1.0, beta: float = 4096.0) -> float:
+                channel: int = 1, alpha: float | None = None,
+                beta: float | None = None) -> float:
     """Median |z| between two scans, once put on a common scale.
 
     The scale is fitted from the pixels, never taken from the commanded
@@ -88,9 +133,17 @@ def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     Two repeats at one exposure give about 1.03, and that is the baseline any
     pair must reach to be called consistent -- not 1.0, because the noise model
     slightly understates the truth, equally for every comparison.
-    """
-    from rps7200.bracket import solve_relation
 
+    ``alpha`` and ``beta`` default to `rps7200.bracket`'s constants, taken from
+    there rather than typed again here: a second copy is a second home, and the
+    two drift.
+    """
+    from rps7200.bracket import DEFAULT_ALPHA, DEFAULT_BETA, solve_relation
+
+    _check(a, "a")
+    _check(b, "b")
+    alpha = DEFAULT_ALPHA if alpha is None else alpha
+    beta = DEFAULT_BETA if beta is None else beta
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
     slope, intercept = solve_relation(a[..., channel], b[..., channel])
@@ -113,6 +166,8 @@ def colour_deviation(image: np.ndarray, window: int = 25) -> np.ndarray:
 
     Returns ``(3, W)`` in percent.
     """
+    _check(image)
+    window = _odd(window)
     pad = window // 2
     dev = []
     for c in range(3):
@@ -133,6 +188,8 @@ def fixed_pattern(image: np.ndarray, channel: int, window: int = 25) -> float:
     reasons that have nothing to do with the sensor -- prefer comparing two
     different film positions when a second frame exists.
     """
+    _check(image)
+    window = _odd(window)
     h = image.shape[0]
     pad = window // 2
 

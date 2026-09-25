@@ -9,12 +9,14 @@ import numpy as np
 import pytest
 
 from rps7200.bracket import (
+    CLIP_START,
     DEFAULT_ALPHA,
     DEFAULT_BETA,
     FULL_SCALE,
     confidence,
     fit_noise_params,
     merge_bracket,
+    solve_relation,
 )
 
 RNG = np.random.default_rng(20260830)
@@ -153,6 +155,89 @@ def test_an_empty_pass_is_ignored():
     dead = np.zeros_like(good)
     merged, _ = merge_bracket([good, dead], [2.0, 4.0])
     assert rms_vs_truth(merged, truth, 2.0) < rms_vs_truth(good, truth, 2.0) * 1.5
+
+
+def shaded_bracket(exposures, rng):
+    """A bracket as `scan()` returns it: raw from the sensor, then flat-fielded.
+
+    The right-hand columns see 1.3x the light of the rest, as the middle of the
+    lamp does, so the correction's gain there is 1/1.3. A sample the sensor
+    rails at 65535 comes back from that correction at 50412, under
+    `CLIP_START` -- inside the range the merge treats as linear.
+    """
+    truth = scene()
+    response = np.ones(truth.shape[1])
+    response[60:] = 1.3
+    raws, corrected = [], []
+    for e in exposures:
+        raw = expose(truth * response[None, :, None], e, rng=rng)
+        shaded = np.floor(raw.astype(np.float64) / response[None, :, None] + 0.5)
+        raws.append(raw)
+        corrected.append(np.clip(shaded, 0, FULL_SCALE).astype(np.uint16))
+    return truth, raws, corrected
+
+
+def test_saturation_is_judged_on_the_sensor_not_the_corrected_value():
+    """A railed sample must not vote, whatever the correction made of it.
+
+    Judged on corrected values the railed long pass kept full confidence in
+    every column whose gain is below one: the fit took it for linear -- a
+    requested x8 came out x3.9 with a 6600 DN intercept -- and the merge
+    carried it into the highlights. Given the sensor's own pixels the merge
+    leaves it out, and the railed pixels are exactly as good as the short pass
+    that alone resolved them.
+    """
+    rng = np.random.default_rng(1)
+    exposures = [1.0, 8.0]
+    truth, raws, corrected = shaded_bracket(exposures, rng)
+    railed = raws[1] >= FULL_SCALE
+    assert railed.any() and not (corrected[1][railed] >= CLIP_START).any(), (
+        "the fixture must hide the rail under CLIP_START, or it tests nothing")
+
+    def error(image):
+        return float(np.sqrt(np.mean(
+            (image[railed].astype(np.float64) - truth[railed]) ** 2)))
+
+    blind, _ = merge_bracket(corrected, exposures)
+    judged, _ = merge_bracket(corrected, exposures, sensor_frames=raws)
+    short_alone = error(corrected[0])
+    assert error(judged) < short_alone * 1.1, (
+        f"railed pixels merged to {error(judged):.0f} DN rms; the short pass "
+        f"alone gives {short_alone:.0f}")
+    assert error(blind) > error(judged) * 3, (
+        "the fixture no longer shows the defect this guards against")
+
+
+def test_the_relation_is_not_fitted_through_a_hidden_rail():
+    rng = np.random.default_rng(1)
+    _, raws, corrected = shaded_bracket([1.0, 8.0], rng)
+    blind = solve_relation(corrected[0][..., 1], corrected[1][..., 1])
+    slope, _ = solve_relation(corrected[0][..., 1], corrected[1][..., 1],
+                              ref_sensor=raws[0][..., 1],
+                              other_sensor=raws[1][..., 1])
+    assert slope == pytest.approx(8.0, rel=0.02)
+    assert blind[0] < 7.0, "the fixture no longer bends the blind fit"
+
+
+def test_an_uncorrected_bracket_is_its_own_sensor():
+    """Where the frames are what the sensor returned, handing them over again
+    as `sensor_frames` must change nothing: one judgement, two routes to it."""
+    truth = scene()
+    frames = [expose(truth, e) for e in (1.5, 6.0)]
+    alone, _ = merge_bracket(frames, [1.5, 6.0])
+    again, _ = merge_bracket(frames, [1.5, 6.0], sensor_frames=frames)
+    assert np.array_equal(alone, again)
+
+
+@pytest.mark.parametrize("sensor,match", [
+    ([np.zeros((4, 4, 3), np.uint16)], "sensor frames"),
+    ([np.zeros((4, 4, 3), np.uint16), np.zeros((4, 5, 3), np.uint16)],
+     "corrected from"),
+])
+def test_sensor_frames_that_do_not_match_are_refused(sensor, match):
+    f = [np.zeros((4, 4, 3), np.uint16)] * 2
+    with pytest.raises(ValueError, match=match):
+        merge_bracket(f, [1.0, 2.0], sensor_frames=sensor)
 
 
 @pytest.mark.parametrize("frames,exposures,match", [

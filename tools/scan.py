@@ -100,7 +100,7 @@ def main() -> int:
     ap.add_argument("--bracket", type=int, default=0, metavar="N",
                     help="scan N exposures of this frame (2-9) and merge them by "
                          "inverse-variance weighting, for lower shadow noise. "
-                         "Infrared is not bracketed: one pass carries it. "
+                         "RGB only: refused with --ir. "
                          "0, the default, takes a single pass")
     ap.add_argument("--stops", type=float, default=2.0,
                     help="how far the bracket spans, in stops (default 2). The "
@@ -109,7 +109,10 @@ def main() -> int:
     ap.add_argument("--exposure-scale", default=None, metavar="X|R,G,B[,I]",
                     help="hold exposure at this multiple of the scanner's own "
                          "settings instead of metering. One value, or one per "
-                         "channel. Needed whenever several passes have to be "
+                         "channel -- and with --bracket exactly R,G,B, since "
+                         "the ladder sets the level and only the balance "
+                         "between channels is yours. Needed whenever several "
+                         "passes have to be "
                          "comparable: SET GAIN OFFSET does not persist across a "
                          "scan sequence, so every pass sets it afresh, and two "
                          "passes metered independently are not the same "
@@ -190,11 +193,38 @@ def main() -> int:
                  f"be one of {', '.join(sorted(export.FORMATS))}")
     if args.bracket and args.stops <= 0:
         ap.error(f"--stops must be positive, got {args.stops:g}")
+    if args.bracket and args.ir:
+        # Refused rather than merged wrong. Metering for an RGBI scan aims blue
+        # low by blue_rgbi_headroom, and the bracket reuses those scales on
+        # every RGB pass, so their blue sits 2.4 stops under on a negative and
+        # more on anything else. The one
+        # RGBI pass then returns blue about five times brighter, and the merge
+        # scales every channel by a relation fitted on green alone -- so blue
+        # entered five times too high, from the pass carrying the most weight,
+        # and the summary looked normal. Scan the bracket, then a separate
+        # --ir pass for the plane.
+        ap.error("--bracket with --ir: a bracket is RGB only. One RGBI pass "
+                 "among RGB ones cannot be merged -- its blue comes back about "
+                 "five times brighter, and the merge fits one relation on "
+                 "green for all three channels. Drop --ir, and take the "
+                 "infrared plane in a pass of its own.")
 
     exposure_scale: float | list[float] = 1.0
     if args.exposure_scale:
         parts = [float(v) for v in args.exposure_scale.replace(",", " ").split()]
         exposure_scale = parts[0] if len(parts) == 1 else parts
+        if args.bracket and len(parts) != 3:
+            # A bracket multiplies one scale per visible channel, and a lone
+            # value was dropped without a word: the passes ran around the
+            # device's own settings, metering off, while the help promised the
+            # value was held. Nor would repeating it mean anything -- the
+            # ladder pins its top to the timer ceiling, so a common factor
+            # cancels and only the balance between R, G and B survives.
+            ap.error(
+                f"--exposure-scale {args.exposure_scale} with --bracket: give "
+                f"one value per channel, R,G,B. The ladder sets the level "
+                f"itself, so only the ratio between the channels reaches the "
+                f"scanner -- a single value would say nothing.")
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
     if not args.ir:
@@ -222,6 +252,10 @@ def main() -> int:
     interrupt = DeferredInterrupt()
     trouble: BaseException | None = None
     pending: list[dict] = []
+    # Each bracket pass as the sensor returned it, for the merge to judge
+    # saturation on -- see rps7200/bracket.py. With the library on, these are
+    # the same arrays `pending` files, not copies.
+    sensor: list[np.ndarray] = []
     try:
         with interrupt:
             with DirectScanner(verbose=args.verbose, debug=None) as s:
@@ -275,6 +309,14 @@ def main() -> int:
                     # on the scanner -- last_raw is overwritten by the pass after it --
                     # so waiting for the return value would file the last and lose the
                     # rest, which is the whole point of taking a bracket.
+                    def on_pass(i, image, meta, capture) -> None:
+                        # Read now, for the same reason `hold` does: the next
+                        # pass rebinds it. None where the pass was not
+                        # corrected, and then the pass is its own sensor.
+                        raw = getattr(s, "last_pixels_raw", None)
+                        sensor.append(image if raw is None else raw)
+                        hold(image, meta, capture)
+
                     bracket = s.scan_bracket(
                         passes=args.bracket,
                         stops=args.stops,
@@ -289,7 +331,7 @@ def main() -> int:
                         keep_raw=args.library is not None,
                         shading=not args.no_shading,
                         fast_infrared=args.fast_ir,
-                        on_pass=lambda i, image, meta, capture: hold(image, meta, capture),
+                        on_pass=on_pass,
                     )
                     image, meta = bracket[0][-1], bracket[2][-1]
                 else:
@@ -332,15 +374,12 @@ def main() -> int:
         from rps7200.bracket import merge_bracket
 
         frames, ratios, metas = bracket
-        # Merge the visible channels only: with --ir the brightest pass is RGBI
-        # and the rest RGB, so the frames do not share a channel count.
-        merged, stats = merge_bracket([f[..., :3] for f in frames], ratios)
+        # Merged corrected, judged raw: a railed sample in a column whose
+        # gain is below one comes back from the correction inside the range
+        # the merge trusts. Every pass is RGB -- --ir is refused above.
+        merged, stats = merge_bracket(frames, ratios, sensor_frames=sensor)
         print(f"bracket: {stats.describe()}")
-        if args.ir and frames[-1].shape[2] == 4:
-            # The infrared pass is the brightest; carry its plane through.
-            image = np.dstack([merged, frames[-1][..., 3]])
-        else:
-            image = merged
+        image = merged
         meta = dict(metas[-1])
         meta["bracket"] = {
             "passes": len(frames), "ratios": ratios,

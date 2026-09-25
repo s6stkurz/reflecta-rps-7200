@@ -21,6 +21,19 @@ pass, so registration cannot reach it.
 
 No scanner. Everything comes from stored entries, which is the point of keeping
 the raw bytes: when shading changes and the floor drops, re-run this.
+
+**Every rung in one domain, or none.** The rungs are loaded corrected by
+default (`library.corrected`, today's correction on each entry's own
+reference) or raw with `--domain raw` (`library.load`), and a series that does
+not come back all one way is refused before anything is measured. It used to
+load everything through `library.corrected` and never look at what came back:
+a full-width 7200 dpi pass cannot be corrected at all, so the reference that B
+divides by, A's crop and C's residuals were raw -- the column pattern shading
+removes still in them -- while every lower rung was flat-fielded. Each entry's
+state is printed in the series table and written to results.json.
+
+`--entries` names the rungs outright. The time window is the other way in, and
+takes whatever was filed inside it -- another frame, a prescan, a demo entry.
 """
 from __future__ import annotations
 
@@ -43,13 +56,33 @@ MM_PER_INCH = 25.4
 CHANNELS = ("red", "green", "blue")
 
 
-def ladder(root: Path, after: str, before: str) -> list[dict]:
-    """The RGB passes of the series, plus whatever RGBI exists for timing."""
+#: What a rung may come back as in each domain. "already" is an entry whose
+#: pixels were corrected before they were filed: corrected, by older code.
+DOMAINS = {
+    "corrected": ("applied", "already"),
+    "raw": ("raw",),
+}
+
+
+def ladder(root: Path, after: str, before: str,
+           ids: list[str] | None = None) -> list[dict]:
+    """The RGB passes of the series, plus whatever RGBI exists for timing.
+
+    ``ids`` picks the entries by name and the window is ignored; an id that is
+    not in ``root`` raises rather than quietly shortening the series.
+    """
     out = []
+    if ids:
+        missing = [i for i in ids if not (root / i / "scan.json").is_file()]
+        if missing:
+            raise FileNotFoundError(f"no such entries under {root}: {missing}")
     for meta in sorted(root.glob("*/scan.json")):
         d = json.loads(meta.read_text(encoding="utf-8"))
         s = d.get("scan") or {}
-        if not (after <= d["created"] <= before):
+        if ids:
+            if meta.parent.name not in ids:
+                continue
+        elif not (after <= d["created"] <= before):
             continue
         if s.get("resolution_dpi") is None or s.get("channels") is None:
             continue
@@ -66,10 +99,34 @@ def ladder(root: Path, after: str, before: str) -> list[dict]:
     return out
 
 
-def plane(entry: dict, channel: int) -> np.ndarray:
-    """One channel, read back from the delivered file."""
-    a, _ = library.corrected(entry["dir"])
-    return a[:, :, channel].astype(np.float64)
+def pixels(entry: dict, domain: str) -> np.ndarray:
+    """An entry's pixels in ``domain``, noting in ``entry["state"]`` how they came.
+
+    Corrected is `library.corrected` -- a recomputation from the entry's raw
+    pixels and reference, not a delivered file read back -- and its own word
+    for what happened. Raw is `library.load`, and "raw" unless the entry holds
+    pixels that were corrected before filing.
+    """
+    if domain == "raw":
+        image, record = library.load(entry["dir"])
+        applied = (record.get("image") or {}).get("corrections_applied") or []
+        entry["state"] = "already" if "shading" in applied else "raw"
+    else:
+        image, record = library.corrected(entry["dir"])
+        entry["state"] = record.get("corrected")
+    return image
+
+
+def out_of_domain(entries: list[dict], domain: str) -> list[dict]:
+    """The entries that did not come back in ``domain``. Loads each one."""
+    for e in entries:
+        pixels(e, domain)
+    return [e for e in entries if e["state"] not in DOMAINS[domain]]
+
+
+def plane(entry: dict, channel: int, domain: str = "corrected") -> np.ndarray:
+    """One channel, in the series' one domain."""
+    return pixels(entry, domain)[:, :, channel].astype(np.float64)
 
 
 def radial_spectrum(p: np.ndarray, dpi: int) -> tuple[np.ndarray, np.ndarray]:
@@ -118,14 +175,35 @@ def main() -> int:
     ap.add_argument("--out", default="probe/dpi")
     ap.add_argument("--crop", type=int, default=1024,
                     help="side of the detailed crop taken from the 7200 dpi pass")
+    ap.add_argument("--entries", nargs="+", default=None, metavar="ID",
+                    help="the rungs, by entry id; the time window is then ignored")
+    ap.add_argument("--domain", choices=sorted(DOMAINS), default="corrected",
+                    help="compare every rung corrected (default) or every rung "
+                         "raw. A series that is not all one is refused")
     args = ap.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    series = ladder(Path(args.root), args.after, args.before)
+    try:
+        series = ladder(Path(args.root), args.after, args.before, args.entries)
+    except FileNotFoundError as exc:
+        print(exc)
+        return 1
     rgb = [e for e in series if e["channels"] == 3]
     if len(rgb) < 3:
         print(f"only {len(rgb)} RGB passes found -- nothing to compare")
+        return 1
+    domain = args.domain
+    # Before any measurement, not during: a ratio against a reference in the
+    # other domain is not a smaller or larger answer, it is no answer.
+    off = out_of_domain(rgb, domain)
+    if off:
+        print(f"refused: not every rung comes back {domain} -- a mixed series "
+              f"compares the correction, not the resolution:")
+        for e in off:
+            print(f"  {e['dir'].name}  {e['dpi']} dpi  {e['state']}")
+        print("--domain raw compares raw with raw throughout, or --entries can "
+              "leave these out.")
         return 1
 
     top = max(rgb, key=lambda e: e["dpi"])
@@ -134,13 +212,15 @@ def main() -> int:
     print("=" * 72)
     print("the series")
     print("=" * 72)
-    print(f"{'dpi':>6} {'ch':>3} {'pixels':>13} {'seconds':>8} {'MB':>7}  exposure R,G,B")
+    print(f"{'dpi':>6} {'ch':>3} {'pixels':>13} {'seconds':>8} {'MB':>7}  "
+          f"{'state':>8}  exposure R,G,B")
     for e in series:
-        px = (library.corrected(e["dir"])[0].shape if e["dpi"] <= 600 else None)
+        px = (pixels(e, domain).shape if e["dpi"] <= 600 else None)
         shape = f"{px[1]}x{px[0]}" if px else ""
         exp = e["exposure"][:3] if e["exposure"] else None
         print(f"{e['dpi']:6d} {e['channels']:3d} {shape:>13} "
-              f"{str(e['seconds']):>8} {e['bytes']/1e6:7.1f}  {exp}")
+              f"{str(e['seconds']):>8} {e['bytes']/1e6:7.1f}  "
+              f"{e.get('state', '--'):>8}  {exp}")
 
     # ---- the noise floor, from the repeat pair ---------------------------
     print()
@@ -149,8 +229,8 @@ def main() -> int:
     print("=" * 72)
     floors = {}
     if len(repeats) >= 2:
-        a, _ = library.corrected(repeats[0]["dir"])
-        b, _ = library.corrected(repeats[1]["dir"])
+        a = pixels(repeats[0], domain)
+        b = pixels(repeats[1], domain)
         mask = dark_mask(a)
         for c, name in enumerate(CHANNELS):
             rnd, total, share = noise_split(a, b, mask, channel=c)
@@ -173,12 +253,12 @@ def main() -> int:
     # which also made four correct lines look like defects.
     results: dict[str, dict[int, dict[str, float]]] = {}
     for c, name in enumerate(CHANNELS):
-        ref_f, ref_p = radial_spectrum(plane(top, c), top["dpi"])
+        ref_f, ref_p = radial_spectrum(plane(top, c, domain), top["dpi"])
         results[name] = {}
         for e in rgb:
             if e["dpi"] == top["dpi"]:
                 continue
-            f, p = radial_spectrum(plane(e, c), e["dpi"])
+            f, p = radial_spectrum(plane(e, c, domain), e["dpi"])
             nyq = e["dpi"] / (2 * MM_PER_INCH)            # cycles/mm
 
             # Sanity: well below Nyquist both passes resolve the same picture, so
@@ -213,7 +293,7 @@ def main() -> int:
     print("A  where real detail meets the noise floor (from the 7200 dpi pass)")
     print("=" * 72)
     absolute = {}
-    full, _ = library.corrected(top["dir"])
+    full = pixels(top, domain)
     h, w, _ = full.shape
     half = args.crop // 2
     cy, cx = h // 2, w // 2
@@ -267,7 +347,8 @@ def main() -> int:
     print("  larger than the noise -- real information. Below 1, it is noise.")
 
     (out / "results.json").write_text(json.dumps(
-        {"aliasing": results, "noise_floor_dn": floors,
+        {"domain": domain,
+         "aliasing": results, "noise_floor_dn": floors,
          "absolute": absolute, "steps": steps,
          "series": [{k: (str(v) if isinstance(v, Path) else v)
                      for k, v in e.items()} for e in series]}, indent=2),
