@@ -193,6 +193,14 @@ byte. `command_for` returns what the integer actually buys, so a caller carries
 the difference rather than pretending it asked for what it got, and it refuses
 a distance beyond what one command can deliver and still be checked.
 
+*What moves the film is not that yet (checked 2026-09-25).* `command_for` is
+built and tested, and only `describe_command` calls it, which nothing calls.
+Moves still go through `DirectScanner.param_for_mm` and `nudge`, in millimetres,
+chained by `session.plan_nudges` for the window's manual moves and
+`tools/scan_roll.py --nudge`; one hold correction is one command up to
+`MAX_CORRECTION_PARAM` (87). `measure_shift_mm` still scales by
+`APERTURE_MM / width` rather than `units_per_column`.
+
 ### Done: finding the edge (2026-09-23, `tools/frame_edges`)
 
 What this section asked for was built offline, from stored prescans only, in

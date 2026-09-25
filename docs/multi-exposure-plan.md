@@ -144,7 +144,10 @@ slope 3.828, intercept 1279):
 exposure give 1.03, which is the baseline any pair must beat to be called
 consistent. (It exceeds the ideal ~0.67 because the noise model slightly
 understates the true noise; that bias applies equally to every row, so the
-comparison between them stands.)
+comparison between them stands. *Corrected 2026-09-25 (audit MSQ-04):* not
+slightly -- 1.03 against an ideal 0.674 is sigma understated about 1.5x, and the
+median also runs over pixels the fit excluded. Re-deriving the baseline is in
+TODO.md, "Decisions for Stefan".)
 
 **The merge itself** (`merge_bracket()`), for each pass i with fitted scale r_i
 and offset o_i:
@@ -154,6 +157,14 @@ and offset o_i:
     v_i = (alpha * raw_i + beta) / r_i^2             # variance transforms with r^2
     w_i = c_i / v_i
     merged = sum(w_i * x_i) / sum(w_i)
+
+*As built:* `confidence` judged the shading-corrected value until 2026-09-24,
+where the correction's per-column gain moved railed samples back under the knee
+at full confidence; since 52be760 (audit P29) `merge_bracket` takes each pass's
+sensor pixels (`sensor_frames`) and judges the rail on them, as the formula says.
+One relation, fitted on green, still scales all three channels, and `alpha` and
+`beta` are `bracket.py`'s fallback constants -- `fit_noise_params` is never
+called. Both are in TODO.md, "Decisions for Stefan".
 
 Variance carrying `1 / r^2` is the whole mechanism: a longer pass divided down
 brings proportionally less variance with it, so it earns more weight -- which is
@@ -318,6 +329,15 @@ meters it), so it is unaffected by the visible ladder anyway.
 Our modes are RGB (`0x80`) or RGBI (`0x90`) with no infrared-only mode, so
 **one pass of the bracket is taken as RGBI and the rest as RGB** — that pass
 yields the infrared plane *and* serves as a bracket member.
+
+*Refused since 2026-09-24 (52be760, audit P29):* `tools/scan.py` rejects
+`--bracket` with `--ir` before the device opens. Metering aimed blue low for the
+one RGBI pass and every RGB pass inherited it, and the merge fitted one relation
+on green for all three channels, so the RGBI pass's blue -- about five times
+brighter -- entered five times too high. A bracket is RGB only; take the
+infrared plane in a pass of its own. (An infrared pass costs its floor only
+untied; tied to the resolution, the default since 2026-09-16, it tracks the
+line count.)
 
 ```
 at 1800 dpi        RGB only     one pass RGBI

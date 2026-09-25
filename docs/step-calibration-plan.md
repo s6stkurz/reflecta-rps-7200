@@ -52,6 +52,10 @@ ever checked whether commands compose the way the law says.
 The last line is what makes this readable: the prescan resolves about four
 fifths of a unit, finer than the smallest move the transport can make.
 
+*(The code as it stood before this experiment. Since: a command costs 1.84, so
+`param 1` is 2.84 units; one correction may use up to `param 87`, 88.8 units;
+and the frame is measured at 350.6 units -- CLAUDE.md has the current figures.)*
+
 `param` is not limited to 8. That is our registration ceiling, not the
 hardware's — the vendor sends `SLIDE 00 46 00 00`, **param 70**. §11 calls the
 law good to param 12, bending above about 20, and repeatability collapsing at
@@ -190,6 +194,14 @@ with no extrapolation:
 | **the camera frame** | **418** | **326** |
 | slack, aperture less frame | 10 | **8** |
 
+*Superseded by later measurement.* The frame-edge study measured the camera
+frame on 39 pairs of prescans of one frame, with no pitch assumed: **350.6
+units**, 435.6 columns (`framing.FRAME_WIDTH_UNITS`) -- wider than the aperture,
+so there is no slack and a centred frame shows no base. The pitch in use is
+`framing.PITCH_UNITS`, 366.5, tracked across twelve commands on walk K
+(`docs/frame-measurement-plan.md`). The table and the section below stand as
+what this session read; `tools/frame_edges` centres with the newer numbers.
+
 ## Why frames come out with black at the right
 
 The slack is **8 units**, not the 4.6 the code derives from its assumed frame.
@@ -205,7 +217,10 @@ Aiming at **4 units**, half the measured slack, splits it evenly.
 ## What follows
 
 * `STEP` and `OVERHEAD` are both low. Correcting them changes what
-  `param_for_mm` returns, so `PROTOCOL_REVISION` moves.
+  `param_for_mm` returns, so `PROTOCOL_REVISION` moves. *(It did not: the ramp
+  went 1.572 -> 1.84 on 2026-09-22 with the revision left where it was; 5 came
+  the same day for the param cap. Whether a change to this law moves the
+  revision is open -- TODO.md, "Decisions for Stefan".)*
 * **Splitting a move is not free.** Each command costs 1.84 units before it
   moves at all, so `plan_nudges` should prefer one large command to several
   small ones wherever the lattice allows.

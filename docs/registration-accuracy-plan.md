@@ -9,7 +9,7 @@
 A fifteen-frame roll was scanned at 600 dpi with every frame held to a position
 proposed from its own prescan walk. The software called fourteen of fifteen
 `held` with a median residual under one unit. Stefan looked at the files and
-gave a per-frame verdict, recorded verbatim in `rolls/stefan-judgement.json`:
+gave a per-frame verdict, recorded verbatim in `docs/stefan-judgement.json`:
 
     good        : 3, 5, 6, 7, 8, 12, 14
     a bit RIGHT : 1, 4, 11, 13, 15    black shows at the right; it should have
@@ -57,6 +57,15 @@ to one is not scatter. Something is systematically placing frames short.
   **316 to 336 units, median 334**, against the **340.6** the code assumes.
   `TARGET_GAP` is derived from that assumption, so every proposal ever made
   carries the error.
+
+  *Measured since, and the other way:* the frame-edge study
+  (`research/frame-edge`) measured the frame on 39 pairs of prescans of one
+  frame, no pitch assumed -- **350.6 units** (`framing.FRAME_WIDTH_UNITS`),
+  wider than the aperture. The 316-336 above is the picture visible between
+  bands of base, not the frame, and the leading explanation below rests on it.
+  `tools/frame_edges` centres with 350.6 on the window's and
+  `tools/scan_roll.py`'s rolls; `TARGET_GAP` still derives from 36.0 mm for a
+  roll with no edge reader.
 
 ## The leading explanation
 
@@ -143,8 +152,9 @@ base" columns labelled by something other than the detector under test.
 ## How it gets verified
 
 Offline, against the stored walks, before any scanner time: replay
-`propose_offsets` over `rolls/registration-{A,D,E,G,I,J,K}` with and without
-each change, and score the result against `rolls/stefan-judgement.json`. A
+`propose_offsets` (now `frame_edges.propose_centred`, which the window and
+`tools/scan_roll.py` use) over `rolls/registration-{A,D,E,G,I,J,K}` with and without
+each change, and score the result against `docs/stefan-judgement.json`. A
 change that does not move frames toward his verdicts is not an improvement
 whatever the metric says.
 

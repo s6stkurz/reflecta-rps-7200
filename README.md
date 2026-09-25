@@ -156,7 +156,7 @@ one either.
 | `--film` | metering | infrared | delivered |
 |---|---|---|---|
 | `negative` | per channel — takes the orange mask off before the ADC | allowed | 3 or 4 channels |
-| `bw` | per channel — silver halide has no colour record to protect | **refused** | one channel, the average of R, G and B (`--mono G` for a single one) |
+| `bw` | per channel — silver halide has no colour record to protect | **refused** | one channel, the average of R, G and B (`--mono-channel G` for a single one) |
 | `positive` | locked — the cast *is* the picture | allowed | 3 or 4 channels |
 | `kodachrome` | locked | **refused** | 3 channels |
 
@@ -184,7 +184,10 @@ uv run python tools/scan_roll.py --dpi 1800 --ir --frames 6 \
 
 Every scan is filed in `library/` by default, with the raw bytes the scanner sent, the
 session's shading reference and that pass's CCD mask. None of those can be recovered from
-a TIFF, and without them a scan can never be re-decoded or re-corrected:
+a TIFF, and without them a scan can never be re-decoded or re-corrected. A walk's
+prescans are filed the same way, from `--dry-run` as from the window. Each calibration's
+own bytes are kept too, in `calibration/<UTC time>/` beside the cached reference, because
+the reference is a reduction of them:
 
 ```sh
 uv run python tools/library.py list          # what is stored
@@ -192,11 +195,22 @@ uv run python tools/library.py verify        # checksums and completeness
 uv run python tools/library.py reconstruct   # re-decode every scan with current code
 uv run python tools/library.py duplicates    # what is redundant, and why
 
-uv run python tools/make_comparison.py scan.tif flat.tif   # raw / corrected / inverted
+uv run python tools/make_comparison.py <entry id or path>   # raw / corrected / inverted
 ```
 
-`make_comparison.py` needs Pillow (`uv sync --extra jpeg`, or the dev group) and takes its
-two files as arguments.
+`duplicates --delete` removes an entry only when its raw bytes (or pixels) are identical
+to one kept: a shared description of what the scanner was asked is not enough, because
+two different photographs with empty film notes share one. `verify` checks every file of
+an entry against its recorded checksum, names an entry a crash or a full disk cut short
+(it still holds an `INCOMPLETE` marker), and leaves out scans taken raw on purpose;
+`tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks an older one that was.
+
+`make_comparison.py` writes `1_nothing_done.tif`, `2_corrected.tif` and
+`3_corrected_inverted.tif` from one library entry, through the path every delivered file
+takes: the raw decode, `library.corrected(entry)` — what Save As delivers — and its
+inversion. It refuses an entry whose correction state is not "applied", and needs Pillow
+(`uv sync --extra jpeg`, or the dev group) for the two preview PNGs it writes to
+`previews/`.
 
 From Python:
 
@@ -204,10 +218,16 @@ From Python:
 from rps7200.direct import DirectScanner
 
 with DirectScanner() as s:
-    s.calibrate_shading()                        # once per power-on
+    s.ensure_shading("calibration/shading.npz")  # once per power-on, film loaded
     image, meta = s.scan(resolution=1800, infrared=True)
     rgb, ir = image[..., :3], image[..., 3]      # (H,W,3) and (H,W), uint16
 ```
+
+`scan()` refuses a corrected pass that no calibration covers rather than calibrating
+inside it, and `shading=False` asks for raw pixels on purpose. A script like this files
+nothing by itself; run it with `RPS7200_DEBUG=1` (see
+[Filing every scan automatically](#filing-every-scan-automatically)) and each pass is filed
+with its own raw bytes once the session closes.
 
 ## The window
 
@@ -218,11 +238,21 @@ make run-sheet                  # no scanner, no film: the contact sheet on a
                                 # stored walk, re-measured on every launch
 ```
 
+`make run-sheet` opens `rolls/aligned-strip` with `--demo --look-only`. `rolls/` is
+gitignored, so that walk exists only on the machine that walked it; `--open-roll` names
+another. `--look-only` needs `--demo`: only the stand-in can be told there is no film.
+
 The demo decodes each entry's **raw bytes**, not the TIFF beside them, so it runs the same
-deinterleave and the same shading correction a real pass runs. It picks its picture by
-film type, answers at the resolution asked for, refuses what the device refuses, and where
-it cannot honour a request with the bytes in hand it drops them and says so rather than
-filing raw that decodes to a different photograph. Its output goes under `demo/`.
+deinterleave a real pass runs, and corrects last with the calibration that describes the
+pass, as `DirectScanner.scan` does. It picks its picture by film type, answers at the
+resolution asked for, and refuses what the device refuses, in the driver's own words:
+infrared on black and white or Kodachrome, a corrected pass before any calibration, a pass
+wider than any reference. Every pass hands the session raw pixels and bytes of its own, so
+an entry it files re-decodes to what it holds and corrects to what was shown; a stored
+prescan or a test card is a finished picture with no calibration, and comes back as read.
+A roll is the driver's own `DirectScanner.scan_roll`, run on the stand-in. Its output goes
+under `demo/`, and Delete on a filmstrip frame leaves alone a library entry that is not
+the demo's own.
 
 The first roll in a demo session walks the same strip it always has. Every roll started
 from the Roll button after that loads another strip. It is drawn from every library next
@@ -247,8 +277,11 @@ counter (`READ_STATE`) for the readout, and nothing else: no calibration, no lam
 nothing moves until a button is pressed. Nothing is asked either, and every setting can be
 changed before calibrating. The first button that would take a picture — prescan, scan,
 a roll or a walk, the contact sheet's scan, or one of their keys — says that without a
-calibration no picture can be scanned and offers *Calibrate now*; once one is started,
-nothing asks again.
+calibration no picture can be scanned and offers *Calibrate now*; the Calibrate button
+opens the same prompt. It asks you to tick *The film is in the transport* first, every
+time it opens, because only you can see it: *Calibrate now*, or Return, starts nothing
+until the tick is set. Loading the cached reference moves nothing and needs no tick. Once
+a calibration is started, nothing asks again.
 
 **The contact sheet.** A dry run walks the strip prescanning and advancing only — about 20
 seconds a frame — and opens every picture it found in a grid with its frame number and its
@@ -261,6 +294,21 @@ its ~7 s advance instead of the minutes a scan would. Seventeen frames at 3600 d
 is about an hour and a half, and a strip with four keepers should not cost the same as
 one with seventeen. The walk writes `survey.json` and a `prescanNN.tif` per frame,
 so a strip can be looked at again tomorrow instead of walked again.
+
+**Every walk and roll has a folder of its own** under `rolls/`, named from the Film
+panel's roll box. With the box empty it is the date and time to the second
+(`2026-09-25-143012`), new for every strip and put into the box, so two unnamed strips of
+one day never share a folder; a fresh walk with the window's own generated name still in
+the box gets another, and only a name you typed reuses a folder. The question before a
+walk or a roll says which folder it goes to and what is in it already. Beside the walk's
+files the folder holds the roll's `roll.json` and `frameNN.tif`, and `approved.json`, the
+sheet's decisions. Each manifest is written beside and renamed over; a run's first write
+keeps the file it replaces as `<name>.bak`, one that cannot be read is set aside as
+`<name>.unreadable` and said, and one numbered before frames were places on the strip is
+kept once as `<name>.legacy` before a resume renumbers it. In `roll.json` a frame is
+`done` only once it is filed — with its library `entry`, or a `filing_error` — and
+records the `rotation` and `flipped` its file was written with. A frame you put back
+where the walk had it stays yours: `approved.json` marks it `as_walked`.
 
 The Roll panel takes a range, *first frame* to *last frame*, both included: 1 to 20 is
 twenty frames. Leave *last frame* empty to go to the end of the strip. Walking again
@@ -289,17 +337,25 @@ in amber, and so is one whose library entries have gone, because that is the one
 cannot be exported. A selection can be **exported** (every frame re-corrected from the
 library at full resolution with today's correction code, not a copy of what was written at
 the time), **duplicated** to the next free `-2`, **renamed**, revealed in the file manager,
-or **deleted**. Delete removes the roll folder and never touches `library/`: the raw bytes
-stay and the frames can be rebuilt, and the only thing that goes for good is
+or **deleted**. Delete removes the roll folder — its manifests, prescans, frames and
+`approved.json` — and never touches `library/`: the frames' and the walk's entries stay
+there with their raw bytes, each recording its roll and frame number
+(`roll_membership`), though nothing in the window rebuilds a roll folder from them. (A
+`tools/scan_roll.py --dry-run` walk from before 2026-09-24 filed no prescans; its folder
+holds the only copies.) The positions and turns set by hand live only in
 `approved.json`. It refuses while the scanner is working or while that roll is open.
 
 Opening a roll with frames left brings back its contact sheet and approvals, marks what is
 already scanned, and restores **the roll's own settings** from its manifest rather than the
 window's: resolution and prescan resolution, film, infrared and infrared-at-scan-
-resolution, metering, the mono channel, and the frame count and start-at. A year later the
-window has moved on to other film and the manifest still describes that roll. It
-calibrates again first — a reference describes the sensor at the exposure and gain that
-measured it, and months on neither is the same — though a saved one can be loaded instead.
+resolution, metering, the mono channel, the registration options, and the first frame.
+A year later the window has moved on to other film and the manifest still describes that
+roll. Its name goes into the roll box, so the Roll button continues it in its own folder.
+No exposure is restored: a roll meters as its metering setting says. A window that has
+not calibrated since it opened asks for a calibration before the first frame, as for any
+scan; one that already has uses it — a reference describes the sensor at the exposure and
+gain that measured it, so after a gap of months *Calibrate again* is worth pressing — and
+a saved one can be loaded instead.
 
 **Hover the picture for the numbers under the pointer**, every channel's value including
 infrared. The histogram answers "is anything against the ceiling"; this answers "what is
@@ -330,8 +386,9 @@ it. A setting you cannot see the state of is worse than a dead control you can.
 **Everything has a key, and the keys are yours.** ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R
 turn the picture, ⌘M flips it, ⌘0 straightens it, ⌘F fits it, ⌘1 shows one scanned pixel
 per screen pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves and ⌘⇧S saves all. The
-arrows are bare — they walk the filmstrip, move between contact-sheet frames and step the
-film in the position window, where Space ticks a frame and Return keeps it and moves on.
+arrows are bare — they walk the filmstrip, move between contact-sheet frames and step a
+frame's position in the position window (the position the roll will hold it to; nothing
+moves until it is scanned), where Space ticks a frame and Return keeps it and moves on.
 Every right-click menu shows its key as it is *now* rather than as it shipped, and
 **Shortcuts …** lists them all: click a key to change it, × to clear, ↺ to restore. Only
 what you changed is written to `gui-settings.json`, so a default improved later still
@@ -340,8 +397,9 @@ reaches you.
 **No key submits without asking.** Prescan (⌘Return), scan (⌘⇧Return) and a whole roll
 (⌘B) all have keys, and every one of them confirms first and says what the run will cost,
 because a slip on a keyboard is not a decision to spend minutes of hardware. Moving film
-and calibrating have no key at all: there is no undo for a moved negative. Escape stops
-after the current pass.
+and calibrating have no key of their own — the calibration prompt's Return starts nothing
+until the film is ticked as loaded — because there is no undo for a moved negative.
+Escape stops after the current pass.
 
 **Stopping.** A pass in flight cannot be interrupted safely, and an abandoned read is what
 costs a power cycle. *Stop* is cooperative — it ends a roll after the frame in flight and
@@ -349,6 +407,15 @@ a single scan after the pass finishes — and says which it will do. *Force abor
 the transport out from under the read, which is the only thing that actually unblocks it;
 the frame is lost and the scanner will almost certainly need a power cycle at its own
 switch. It asks you to type ABORT first.
+
+*Stop* also drops whatever was queued behind the running job, and while the scanner
+works the roll key, aim clicks and fine moves are refused rather than queued. A roll that
+cannot file a frame — a full disk, a folder gone — stops after the frame in flight
+instead of scanning on and discarding the rest. Quitting while the scanner works offers
+to stop after the frame in flight as well as to let everything finish, and waits for
+*Save all* and *Export* to finish writing. After a read that was abandoned — a timeout, a
+refused read — the driver sends nothing more that could drive the device, status queries
+aside, until it has been power-cycled and a new session opened.
 
 **Right-click arranges a picture wherever it is shown**, and **the arrangement belongs to
 the photograph, not to the window**: turn a frame in the contact sheet and the preview
@@ -358,13 +425,13 @@ a portrait among landscapes comes out right; the turn reaches the files you get 
 the library entry, whose pixels have to keep matching the raw bytes beside them. Turns
 survive closing the window, in `approved.json`.
 
-**A pass that comes back the wrong way up is turned to match its prescan.** The scanner
-does this with nothing to say it has — `MODE SELECT` byte 14 bit 0 skips the re-home for
-bidirectional speed, and a pass following another bit-0 pass reads reversed with no status
-bit and no sense condition. The only evidence is that the picture does not match the
-framing pass of the same frame, so that is what it is judged against. It refuses far more
-readily than it corrects: being wrong stands a photograph on its head, so a frame with
-nothing to correlate is left exactly as it came.
+**A pass that comes back the wrong way up is turned upright**, from its own line tags,
+as it is decoded (above). The scanner does this with nothing else to say it has — a
+pass's `MODE SELECT` byte 14 bit 0 leaves the carriage at the far end, and the pass after
+it reads bottom-up with no status bit and no sense condition. Only a pass whose tags
+cannot decide is judged against the framing pass of the same frame instead, and that
+refuses far more readily than it corrects: being wrong stands a photograph on its head,
+so a frame with nothing to correlate is left exactly as it came.
 
 The resolution box offers 300, 600, 900, 1200, 1800, 3600 and 7200, and accepts any whole
 number from 25 to 7200 typed in; the device refuses what it dislikes with sense
@@ -376,18 +443,20 @@ pay — though `tools/scan.py` still has `--bracket` and `--stops` behind it.
 go, the window size and the pane widths, from `gui-settings.json` beside the library
 (`RPS7200_SETTINGS` moves it, `--settings` overrides it). Scan settings can be saved as
 named presets. A missing or corrupt file opens the window on its defaults rather than not
-opening it. What is deliberately *not* remembered is the roll name, frame, subject and
-notes: those describe one shot, and a stale value would file today's scan under
-yesterday's name.
+opening it, and a corrupt one is moved aside (`gui-settings.json.unreadable-<time>`)
+before anything is saved over it; a save that fails is said in the window. What is
+deliberately *not* remembered is the roll name, frame, subject and notes: those describe
+one shot, and a stale value would file today's scan under yesterday's name.
 
 **Files are named by roll and frame**, because NegPy reads them next:
 
     2026-09-09-gold200_frame03_3600dpi_ir.tif
 
-with prescans in a `prescans/` subdirectory. A frame rescanned after a failure gets a
-suffix rather than overwriting the first attempt — the better of the two is not always the
-second. The library entry keeps its own timestamped id, which is what makes it findable
-years later.
+with prescans in a `prescans/` subdirectory. In that output folder a frame rescanned after
+a failure gets a suffix rather than overwriting the first attempt — the better of the two
+is not always the second. The roll's own `frameNN.tif` and `prescanNN.tif` in `rolls/`
+are replaced by the newer pass; every attempt keeps its own library entry, with its own
+timestamped id, which is what makes it findable years later.
 
 ## How scans are corrected
 
@@ -406,7 +475,13 @@ worst column defect from 13.01% to 1.44%. Blue has no fixed column pattern to re
 entry is the decode alone with `shading.npz` beside it, and `library.corrected(entry)` is
 what computes the usable image — with *today's* correction code rather than whatever ran
 that day. A corrected file cannot be un-corrected, so storing one would foreclose every
-later improvement on every scan ever taken.
+later improvement on every scan ever taken. A roll's own `frameNN.tif` in `rolls/` is the
+exception that is written once: corrected as it is scanned, by that day's code. Export
+re-corrects from the library.
+
+The **infrared plane is not corrected**. The calibration pass is RGB, so the reference
+has no infrared channel and the delivered plane keeps its column pattern; the pass's shading report counts it as `uncorrected`. The raw bytes are kept, so
+it can be corrected later if an infrared reference is ever acquired.
 
 There is **no vignette and no vignette correction**, which was measured rather than
 assumed: the ~39% falloff across the frame lives entirely in x, where shading already
@@ -453,19 +528,25 @@ of scale is **−0.6% to −0.8%**, not the 1.5–1.9% long quoted for it. See
 
 | dpi | pixels | RGB | RGBI | driven |
 |---|---|---|---|---|
-| 300 | 431 × 287 | ~22 s | ~25 s | yes |
-| 600 | 862 × 574 | ~34 s | ~44 s | yes |
-| 1800 | 2586 × 1722 | ~85 s | ~110 s | yes |
+| 300 | 428 × 287 | ~22 s | ~25 s | yes |
+| 600 | 860 × 574 | ~34 s | ~44 s | yes |
+| 1800 | 2584 × 1722 | ~85 s | ~110 s | yes |
 | 3600 | 5172 × 3444 | ~138 s | ~214 s | yes |
-| 7200 | 10344 × 6887 | ~314 s | — | yes, and not worth it |
+| 7200 | 10344 × 6884 | ~314 s | — | yes, and not worth it |
+
+The widths are what the device returns, which is not a fixed multiple of the dpi — at
+600 dpi it has returned 862 as well as 860. At 7200 dpi it reads 6888 lines, and the
+column-stagger realignment trims four of them.
 
 **Scan time tracks line count, and exposure moves it.** Roughly `8 + 0.036 × lines` for
-RGB; an infrared pass tied to the resolution adds `7.5 s + 59.9 ms/line`. It used to look
-flat in resolution, and that was the *untied* infrared floor — a flat ~220 s whatever was
-asked for — which `--fast-ir` removes and which is no longer the default. Untied, a 300
-dpi RGBI pass cost 219 s; tied, it costs 25 s. At 3600 dpi the saving is only 3.4%, so the
-switch matters most where the pass is cheapest. (212 s survives in the code as the
-conservative end of that range, because it guards a timeout rather than describing a cost.)
+RGB; an RGBI pass with infrared tied to the resolution costs `7.5 s + 59.9 ms/line` in
+all. It used to look flat in resolution, and that was the *untied* infrared floor — a
+flat ~220 s whatever was asked for — which `--fast-ir` removes and which is no longer the
+default. Untied, a 300 dpi RGBI pass cost 219 s; tied, it costs 25 s. At 3600 dpi the
+saving is only 3.4%, so the switch matters most where the pass is cheapest. (212 s
+survives in the code as `INFRARED_FLOOR_S`, the conservative end of that range. The read
+of an untied pass waits up to 287 s for data — the range's 227 s top plus a minute —
+where any other gives up after 120 s, because giving up early is the abandoned read.)
 
 **7200 dpi has been driven and is not recommended**: softer than 3600, twice the time and
 four times the bytes. It also **cannot be shading-corrected** — the device caps its
@@ -480,9 +561,11 @@ The device accepts far more rates than the window lists; a dpi probe has driven 
 
 16-bit TIFF by default, RGB or RGBI, written by `rps7200/tiff.py` or by `tifffile` when it
 is installed — held to identical behaviour by `tests/test_tiff.py`, which runs every
-write/read pairing of the two against each other. Writes are deflate-compressed with a
-horizontal predictor, which is lossless and 8–18% smaller (13.4% on average, RGBI best);
-`docs/tiff-compression-plan.md` verified the pixels come back identical.
+write/read pairing of the two against each other. Where `tifffile` is installed, writes
+are deflate-compressed with a horizontal predictor, which is lossless and 8–18% smaller
+(13.4% on average, RGBI best); `docs/tiff-compression-plan.md` verified the pixels come
+back identical. The built-in writer writes uncompressed, with the same pixels, and both
+readers read either.
 
 JPEG output needs Pillow (`uv sync --extra jpeg`) and falls back to TIFF with a note
 rather than losing the scan. A DNG companion can be written beside the TIFF with the same
@@ -494,9 +577,11 @@ plane survive a round trip through readers that would otherwise treat it as alph
 
 ## Filing every scan automatically
 
-`tools/scan.py` and `tools/scan_roll.py` file in `library/` by default. Anything else —
-an ad-hoc script, a probe — files too if `RPS7200_DEBUG=1` is set, which is worth doing
-for anything whose result might matter later:
+`tools/scan.py`, `tools/scan_roll.py` and the window file in `library/` by default: every
+frame and every walked prescan. Anything else — an ad-hoc script, a probe, and the passes
+those three do not keep, such as metering probes and hold and aim prescans — files too if
+`RPS7200_DEBUG=1` is set, which is worth doing for anything whose result might matter
+later. The three claim what they file themselves, so nothing is filed twice:
 
 ```sh
 RPS7200_DEBUG=1 uv run python your_script.py          # macOS, Linux
@@ -510,13 +595,21 @@ Each scan is spooled to a temporary file as it is taken — a plain sequential w
 the entries are assembled and gzipped **after the device is closed**, because gzipping one
 with the scanner open and idle preceded a wedge. It is spooled rather than held in memory
 because a 7200 dpi RGBI frame is 570 MB of pixels and about as much again of raw bytes, so
-a seventeen-frame roll in RAM would want 19 GB.
+a seventeen-frame roll in RAM would want 19 GB. A spool that could not be filed — a full
+disk, a crash before the session closed — is kept, with each pass's record, mask and
+reference beside its pixels, and the log says where.
+
+The window holds the device open for as long as it runs, so it files a single scan or
+prescan plain — `raw.bin` and uncompressed TIFFs — and gzips it once the device has
+closed. A roll's frames are the exception: they are gzipped on their own thread while
+the next frame scans, with the device busy rather than idle, which
+`tools/filing_load_test.py` exists to measure.
 
 ### What a roll costs on disk
 
 Film grain barely compresses — the median `raw.bin.gz` across the library is about 94% of
 the raw size — so a library entry is close to twice the pixel size. A 38-frame roll, with
-deflate-compressed TIFFs:
+deflate-compressed TIFFs (so with `tifffile` installed; without it they are larger):
 
 | dpi | entry | 38 frames |
 |---|---|---|
@@ -555,16 +648,26 @@ logged too.
 
 `--start-at` resumes a roll that stopped, `--max-failures 3` gives up after three bad
 frames rather than grinding through a whole strip, and a resumed roll carries forward what
-the earlier session already did instead of overwriting its manifest.
+the earlier session already did instead of overwriting its manifest. Name the roll again
+with `--roll` (or `--out`) to resume it: a run given no name gets a new folder, the date
+and time to the second. A frame is recorded done only once the writer has filed it, so a
+frame lost to a full disk or a crash is scanned again rather than skipped. Everything
+knowable before the device opens is refused there — a resolution shading cannot correct,
+`--start-at 0`, a negative `--frames`, `--correct` at a prescan resolution whose edges
+are not read — rather than after a calibration has spent minutes.
 
 ### What drives the transport
 
 Whole-frame moves are `SLIDE_NEXT` and `SLIDE_PREV` (`04 01 00 01` / `05 01 00 01`),
 measured and safe. Sub-frame positioning also works and was calibrated from the host:
-`SLIDE 00 <param> 00 04` forward and `01 <param> 00 04` back move `0.1057 × param +
-0.1662` mm, to ±0.02 mm. It ships as `nudge()` and the hold loop behind
-`scan_roll.py --correct`, which is **off by default** — the vendor does not reposition
-during a roll either, so drift is reported and only corrected when asked.
+`SLIDE 00 <param> 00 04` forward and `01 <param> 00 04` back travel `param + 1.84` units,
+one unit being what one increment of `param` adds and the 1.84 a ramp paid once per
+command. `param 1`, 2.84 units, is the smallest move there is — `param 0` is accepted
+and does nothing — and one correction goes up to `param 87`, 88.8 units. The window says
+distances in these units (`rps7200/protocol.py`); `tools/scan_roll.py`'s `--nudge` and
+its registration lines are still in millimetres. It ships as `nudge()` and the hold loop
+behind `scan_roll.py --correct`, which is **off by default** — the vendor does not
+reposition during a roll either, so drift is reported and only corrected when asked.
 
 **`SET_SCAN_HEAD` (0xD2) is never sent by anything here**, and should not be. It drives a
 mechanism with a step count whose unit is unknown and reports nothing at all: no error, no
@@ -582,8 +685,11 @@ driver reports it and lets the scanner refuse rather than gating on it.
 `film_bounds()` finds the frame in the aperture by looking for the bright clear gap beside
 it, using the same contrast the metering crop relies on. Across 3850 pairs no wrong match
 ever beat a confidence of 55, and the weakest right match scored 54.9, which is where the
-floor sits. Seventeen slides showed no drift at all: every reading fell inside the
-aperture's own 0.49 mm of slack. See `docs/registration-confidence-plan.md`.
+floor sits. Seventeen slides showed no drift at all: every reading fell inside the 4.6
+units of slack a 36 mm frame would leave in the aperture. That slack has not survived
+measurement — a frame is 350.6 units wide against the aperture's 344.5, so a centred one
+shows no base at all — and on negatives the position is now proposed by
+`tools/frame_edges` (above). See `docs/registration-confidence-plan.md`.
 
 ## Scanner details
 
@@ -626,7 +732,7 @@ before proposing it again.
 | `multi-exposure-plan.md` | N-exposure bracketing and inverse-variance merge, built and measured | **rejected** |
 | `analog-gain-plan.md` | Is the gain field analog? A five-rung blue ladder answers | **rejected** |
 | `vignette-plan.md` | Whether this scanner has a vignette, measured by rotating an IT8 | **rejected** |
-| `byte14-plan.md` | Does MODE SELECT byte 14 change the line rate? And the silent row reversal | **rejected** |
+| `byte14-plan.md` | Does MODE SELECT byte 14 change the line rate? And the silent row reversal, now read from each pass's own tags | **rejected** |
 
 ## Development
 

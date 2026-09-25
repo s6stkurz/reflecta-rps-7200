@@ -81,6 +81,11 @@ Byte 8, which this driver reports as `busy`, is `0` in every state ever observed
 `0x40` of byte 6, which it reports as `media_loaded`, is never set — including with film
 demonstrably loaded. Neither is usable. Byte 2 is.
 
+*Since measured (`docs/protocol.md` §11):* byte 8 is the media flag, inverted -- 1 with
+an empty transport, 0 with film, changed with one variable -- and is 0 in every capture
+because every capture was taken with film loaded. `State.media_loaded` reads it now, not
+byte 6.
+
 ## The per-frame cycle
 
 From the strip capture, per picture:
@@ -242,7 +247,9 @@ device default and CyberView never touches it.
 "Always probes in RGB, never in infrared … `infrared` therefore does not change how the
 probe is taken." The flag says the *scan* will be RGBI, and what it buys is blue's
 headroom: blue returns several times brighter in RGBI than in RGB at the same exposure, so
-`aims[2]` and `targets[2]` are divided by `infrared_blue_headroom` (4.0).
+`aims[2]` and `targets[2]` are divided by `infrared_blue_headroom` (4.0). *(Since per
+film: `blue_rgbi_headroom(film)`, 5.2 on colour negative and 11.0 on anything not
+measured.)*
 
 Passing `infrared=False` from `scan_roll` therefore saved nothing — the probe was already
 three-channel — and silently removed that headroom. Measured on the roll it broke: metering
@@ -303,7 +310,8 @@ RGBI scan because "the channels, blue especially, behave differently with and wi
 infrared". The capture says the vendor does precisely that. The mechanism is plain once the
 payloads are decoded: infrared is a *separate exposure field* that is not being metered at
 all, so there is nothing for the probe to mispredict. `scan(auto_exposure=True)` still
-probes in RGBI and has not been changed.
+probes in RGBI and has not been changed. *(It has since: `auto_exposure` probes in RGB
+only, whatever the scan will be, and `infrared` only lowers blue's aim.)*
 
 ## Measured: `full_17_strip`, a whole roll driven by CyberView
 
@@ -516,11 +524,15 @@ Both survivable on one frame, neither over thirty-six.
 `base × scales` — a contract `tests/test_metering.py` pins deliberately. `scan()` then did
 `get_gain_offset().scaled(exposure_scale)`, applying the same scales to the already-metered
 device, so the pass ran at `base × scales²`. `scan()` now restores the base first.
+*(Reverted -- see "Exposure cannot compound" above. `get_gain_offset()` returns a fixed
+reference, so `scan()` scales that and there was never a square; it restores nothing.)*
 
 **Exposure persisting between frames.** `SET GAIN OFFSET` persists on the device, so frame
 *N*'s exposure is frame *N+1*'s starting point. `scan_roll` reads the settings once at the
 start and writes them back before each frame's metering, so a roll cannot walk steadily
-brighter.
+brighter. *(Whether it persists is stated both ways in this repository -- CLAUDE.md says
+it does not. What is measured is that `READ GAIN/OFFSET` hands back a fixed reference;
+the roll's write-back is correct either way.)*
 
 **Shading on an 8-bit prescan.** `prescan()` asked for shading correction on an 8-bit pass,
 with a reference measured in 16-bit units — subtracting its dark half drove every pixel to

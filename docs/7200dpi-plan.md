@@ -63,6 +63,15 @@ this whenever `resolution == 7200`, after the pass is read and before shading
 is applied (row alignment and per-column shading are independent, so order
 does not matter to the result).
 
+*Since 2026-09-24 (8b01894, audit P06):* the realignment is recorded. A pass
+records the rows it trimmed as `stagger_realigned` -- 4 here, 0 when none ran --
+the library keeps it as `scan.stagger_realigned`, and `library.decode_raw` and
+`reconstruct` replay it, so a 7200 dpi entry reconstructs as identical instead
+of reading "decode CHANGED" for ever. Entries filed before the field existed
+are recognised by their resolution and a shortfall of exactly those rows. The
+two entries of 2026-09-11 predate the fix itself and hold the zigzag in their
+stored pixels.
+
 Tests: `tests/test_decode.py` -- a synthetic frame with a known stagger,
 checked that realigning recovers it; zero lines is a no-op; a frame shorter
 than the stagger is refused rather than producing something silently wrong.
@@ -106,6 +115,15 @@ been worse.
   first one in a session pays for a wider calibration, every later one in the
   same session reuses it, the same shape as the vendor's own once-per-power-on
   pattern.
+
+  *Superseded twice.* After the hardware answered (below), `scan()` calibrated
+  at the default 3600 dpi rather than the pass's own resolution. And since
+  2026-09-24 (1492d2c, audit P15) it never calibrates at all: calibrating inside
+  a pass is the path measured twice as stalling the device. A pass wider than
+  any reference the device will produce -- 7200 dpi -- is refused with
+  `DirectScanner.uncorrectable`, and a corrected pass no reference covers with
+  `DirectScanner.uncalibrated`, both before anything is sent, metering
+  included. A calibration is `ensure_shading`'s, at 3600 dpi.
 - If shading was asked for and still cannot be honoured after calibrating --
   the device refuses, or the new resolution's calibration itself comes back
   unusable, both unverified for anything but 3600 dpi -- `scan()` raises

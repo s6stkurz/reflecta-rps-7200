@@ -243,9 +243,10 @@ high-frequency content is 10-35%, in line with the 21-27% measured on the slide.
 That is fifteen repeat pairs, not the four the ladder frames provide, and it is
 the *filing rule* that produced the other eleven: `auto_exposure`'s second probe
 round lands on the scales it returns, so the metering probe and the metered pass
-are the same commanded exposure, and both are filed. The rule that says file
-every scan, including the throwaway ones, is what let the null below be measured
-on every frame rather than a quarter of them.
+are the same commanded exposure, and both are filed (the probe because the run had
+`RPS7200_DEBUG=1` on -- without it nothing files a metering probe). The rule that
+says file every scan, including the throwaway ones, is what let the null below be
+measured on every frame rather than a quarter of them.
 
 ### Linearity: real, consistent, and about half what was recorded
 
@@ -331,4 +332,6 @@ it is the first time the spread has been known.
 justification. The linearity claim in `rps7200/direct.py` and `TODO.md` should be
 corrected to -0.6/-0.8% and re-attributed; that is a separate change, because
 those two also state the clipping figures and the whole passage wants rewriting
-against this run rather than patching.
+against this run rather than patching. *(2026-09-25: `TODO.md` now carries the
+correction; the comment on `EXPOSURE_TARGET` still quotes 1.5-1.9%, and is listed
+there as a code change to make.)*

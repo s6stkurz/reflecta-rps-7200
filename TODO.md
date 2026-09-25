@@ -53,9 +53,15 @@ bit is not evidence, not a new problem.
   takes: `tools/scan.py` or the window, with `fast_infrared=True` arriving as a
   default rather than as an argument.
 
+  *Updated 2026-09-25:* it has moved twice more since, to 5 when
+  `MAX_CORRECTION_PARAM` went from 8 to 87 (df7d4e6, 2026-09-22) and to 6 when a
+  roll first asks the transport where the film is and goes there (2b394b0,
+  2026-09-23). The constant lives in `rps7200/protocol.py`; `rps7200/direct.py`
+  only re-exports it.
+
   So the next scan anybody takes is the first exercise of it. Worth doing
   deliberately -- one RGB pass and one RGBI pass, filed with `RPS7200_DEBUG=1`,
-  checking that the entries read `protocol_revision: 4` and that the RGB one
+  checking that the entries read `protocol_revision: 6` and that the RGB one
   carries no fast-infrared bit -- rather than finding out in the middle of a
   roll. Two of the entries below are the kind of thing that hides in an
   unexercised default: both were found by reading, not by scanning, and both
@@ -75,18 +81,28 @@ bit is not evidence, not a new problem.
   red is a check nobody reads, and this is the one that would catch a real
   regression in the library.
 
-  There is no way to mark an entry as deliberately uncalibrated. `blue-clipped`
+  ~~There is no way to mark an entry as deliberately uncalibrated. `blue-clipped`
   and `not-a-reference` already mark the other deliberate failures, so the
   mechanism exists and `verify` simply does not consult it. Not fixed here --
   recorded so that a red `verify` is known to mean these sixteen and nothing
-  else, until someone makes it green.
+  else, until someone makes it green.~~ **The check is fixed; the sixteen are not
+  tagged yet (2026-09-24, db9466b).** `verify` no longer reports a scan taken raw
+  on purpose (`SHADING_SKIPPED_EXPLICIT`), a demo entry built from a finished
+  picture, or an entry tagged `uncalibrated-on-purpose`, which
+  `tools/library.py tag ENTRY... --add uncalibrated-on-purpose` sets. What is
+  left needs the library: tag the sixteen and see `make verify` go green. It
+  now checks more than it did -- every file's checksum, entries still holding
+  an `INCOMPLETE` marker, directories with no `scan.json` -- so anything else it
+  reports after that is new.
 
 - ~~**`library.corrected()` calls a shortfall a choice, and tells the operator
   so.**~~ **Fixed 2026-09-19.** It treated *any* non-empty
   `calibration.skipped` as a deliberate `shading=False`, where `verify` reads
   the identical field and correctly splits it: a `skipped` reason other than an
-  explicit request is "a thing that went wrong". The two read one field with
-  opposite meanings, and the wrong one was what Save As printed.
+  explicit request is "a thing that went wrong". (*2026-09-25:* `verify` did not
+  split it either, until db9466b -- it said "correction was asked for" about
+  the sentinel that says it was not. See the entry above.) The two read one
+  field with opposite meanings, and the wrong one was what Save As printed.
 
   For anything scanned today they agree -- `scan()` can only ever write
   `"shading=False (explicit)"`, because it raises `ShadingUnavailable`
@@ -124,6 +140,18 @@ bit is not evidence, not a new problem.
   RGBI pass, and auto-detecting the tag-lead signature adds a decode-time
   guess to every scan. Neither is worth it to save a flip.
 
+  **Superseded 2026-09-23 (622aa5a), and the won't-fix with it: every pass is
+  now read upright from its own line tags.** `rps7200/direction.py` reads which
+  way the carriage went -- R first and B last is top-down, the reverse is
+  bottom-up -- and `DirectScanner.decode_index` turns a bottom-up pass upright,
+  so the driver, the demo, `reconstruct` and the tools all deliver it upright;
+  the raw bytes are untouched. Each entry records `scan.read_direction`, and
+  `tools/library.py migrate-direction` brought the older ones up to date. The
+  mechanism below is also corrected there: a pass's bit 0 leaves the carriage at
+  the far end, and the *next* pass reads bottom-up whatever its own bit. See
+  `docs/byte14-plan.md`. What follows is the record as it was written; the
+  `tools/scan.py` example no longer files every second frame upside down.
+
   If this is ever reopened, the thing to check first is whether anything
   *automated* depends on orientation -- roll framing and `gap_edges` read the
   picture's position -- because a human flipping a delivered file is not the
@@ -153,7 +181,7 @@ bit is not evidence, not a new problem.
   nothing enforces that, and it has never been a designed protection.
   `docs/byte14-plan.md` holds the candidate fixes, kept for the record
   rather than as a plan: both change what is sent to the device, so either
-  would move `PROTOCOL_REVISION` in `rps7200/direct.py`.
+  would move `PROTOCOL_REVISION` in `rps7200/protocol.py`.
 
   **There is a third path, and it does not avoid the trigger: `tools/scan.py`.**
   Without `--auto-exposure` it takes a single `s.scan(...)` and no RGB pass at
@@ -194,7 +222,8 @@ bit is not evidence, not a new problem.
   payloads this file once called unidentified turned out to move the film
   *without* touching the frame counter -- `00 <param> 00 04` forward,
   `01 <param> 00 04` backward, `0.1057 x param + 0.1662` mm, repeatable to
-  ±0.02 mm. So sub-frame positioning does exist over USB, contrary to what
+  ±0.02 mm (the first fit; the law in force is `param + 1.84` units, see
+  CLAUDE.md). So sub-frame positioning does exist over USB, contrary to what
   this entry used to say, and `scan_roll(correct=True)` uses it. It is
   insurance for a roll that drifts for some other reason, not a fix for a
   problem that turned out not to exist. See `docs/whole-roll-plan.md`'s
@@ -216,6 +245,15 @@ bit is not evidence, not a new problem.
   held to 0.66-0.71% across two strips -- plus the rule that no single detector
   may move film. `combine` requires two members that agree in millimetres. See
   `tests/test_ensemble.py`.
+
+  **That rule does not hold on the paths an operator uses (audit, 2026-09-24,
+  P31).** The window and `tools/scan_roll.py` hand `StripWalk` the
+  `tools/frame_edges` reader, so `combine` never runs there. Its vote accepts
+  `lone_gap` -- one member's gap with the neighbour, at confidence 0.3, sourced
+  `unconfirmed` -- and `_aim_frame` moves the film on any decision within its
+  tolerance and budget without looking at the source; `scan_roll --approved`
+  holds `unconfirmed` and `neighbours` proposals too. Whether that stands is in
+  *Decisions for Stefan* below.
 - **The gain register is a digital multiplier** (measured 2026-09-10, closed).
   It was the only lever left for blue in plain RGB, where the exposure timer
   runs out with blue still ~30% below red and green. It is honoured, and not
@@ -239,9 +277,12 @@ bit is not evidence, not a new problem.
 
   `GET PARAMETERS` returns `filter_offset1` and `filter_offset2` -- both 12 in
   `captures/bw.pcapng` -- and this driver reads them, records them in `meta`,
-  and never applies them. `library.save` then drops them on the floor, the same
-  way it was dropping `metering`, so no filed entry has them either. Start
-  there.
+  and never applies them. ~~`library.save` then drops them on the floor, the
+  same way it was dropping `metering`, so no filed entry has them either.~~ It
+  no longer does (checked 2026-09-25): every entry filed since 2026-09-11 keeps
+  `scan.filter_offsets`, and all of them read `[12, 12]` (two entries down). The
+  decode still aligns the planes by index and applies neither; the raw bytes
+  are kept, so a correction here stays re-runnable offline. Start there.
 
 - **Black and white is now delivered as one channel** (done). NegPy classifies
   by minimum channel correlation, `> 0.99` meaning monochrome. Measured across
@@ -323,9 +364,11 @@ bit is not evidence, not a new problem.
   (`bw.pcapng`). **Constant rules it out as the explanation**, not in: a fixed
   number cannot be why two passes of the *same* frame sometimes shift by 16
   columns and sometimes by 0. The suspect has an alibi; the offset itself is
-  still unexplained. (Prescans do not carry the field yet -- `_prescan`'s meta
+  still unexplained. ~~(Prescans do not carry the field yet -- `_prescan`'s meta
   in `rps7200/session.py` does not pass it through -- but prescans are framing
-  aids, not the pixels this mystery is about.)
+  aids, not the pixels this mystery is about.)~~ They do now (checked
+  2026-09-25): a prescan is filed with the pass's own meta, `filter_offsets`
+  included.
 - **Some library entries are deliberately kept as records of failure.**
   `20260828T010052Z` has blue saturated on 2.07% of pixels from a metering
   error, and `strip6-01..03` are tagged blue-clipped / not-a-reference. Their
@@ -380,8 +423,13 @@ bit is not evidence, not a new problem.
   to any default-tolerant check -- which is how it went unnoticed, and which
   made a first version of the test pass against the unfixed code.
 
-- **`tools/scan.py` and `tools/scan_roll.py` both write the three comparison
-  TIFFs to the repo root**, so running them together clobbers one another.
+- ~~**`tools/scan.py` and `tools/scan_roll.py` both write the three comparison
+  TIFFs to the repo root**, so running them together clobbers one another.~~
+  **Not so, checked 2026-09-25:** neither writes them. Only
+  `tools/make_comparison.py` does, and since ceb9081 (2026-09-24, audit P30) it
+  builds them from one library entry through `library.corrected` and
+  `export.write`, into the directory `--out` names. It used to apply `destripe`
+  to whatever TIFF it was given, which no delivered file has ever had.
 
 - ~~**`calibrate_shading(exposure_scale=...)` is a no-op.**~~ **Deleted
   2026-09-13.** The device self-meters the calibration pass: writing
@@ -412,10 +460,238 @@ bit is not evidence, not a new problem.
   through to a real calibration -- which is why this is recorded rather than
   urgent. The next run that writes the cache re-arms it.
 
+  **Half closed 2026-09-24 (f64671f, 2e04b01):** the evidence now exists. Every
+  entry says where its reference came from, in `extra.shading_origin`: measured
+  this session (when, at what width, and the `calibration/<UTC time>/` archive
+  of its bytes) or loaded (which file, modified when, loaded when). The window
+  already warns by the file's age. Still open: `tools/scan.py` and
+  `tools/scan_roll.py` print "reusing ..." and nothing more, and the `.npz`
+  itself carries no timestamp.
+
 - **`apply_shading` silently leaves trailing columns uncorrected** when the CCD
   mask yields fewer used pixels than the image width — it writes only
   `out[:, :loc.size, c]`. `scan()`'s guard catches the gross 7200 dpi case only.
   Latent, not active: at 600 dpi width and columns both came back 860.
+  *Updated 2026-09-25:* not only latent. At 600 dpi the device has returned 862
+  columns as well as 860 (7c5c185), and the vignette study met a mask of 860
+  against a width of 862 (`docs/vignette-plan.md`), so such a pass goes out with
+  its last two columns uncorrected and the report's `columns < width` is all
+  that says so. The guard `docs/shading-calibration-plan.md` specified --
+  compare the width with the mask's used count -- was never built.
+
+- **Millimetres are still held, stored and printed for transport distances**,
+  against CLAUDE.md's rule (found by the 2026-09 audit: FU-10, D12, GUI2-A5,
+  CLI-21). `approved.json` stores `offset_mm`, `Approved.offset_mm`,
+  `param_for_mm`, `nudge` and `plan_nudges` take millimetres, `framing.SEARCH_MM`
+  bounds the correlation, and `tools/scan_roll.py`'s `--nudge` and its
+  registration lines ("offset ... mm", "SHORT BY ... mm") are what an operator
+  reads. The window already says units everywhere (`protocol.say_units`). A
+  stored offset re-snapped under a corrected law is the right behaviour, so the
+  change is to the unit held, not to what is stored.
+
+- **Two of the window's dialogs promise what the code does not.** Deleting a
+  roll says "the frames can be rebuilt from them" and counts only the
+  `approved.json` files holding turns or flips (`on_delete_rolls`); nothing
+  rebuilds a roll folder, and its manifests, prescans and hand-set positions go
+  with it. Reopening one says "It will calibrate again first" (`open_roll`); a
+  window that already calibrated this session does not. README says what
+  happens. (Audit D15, GUI2-30, GUI1-34.)
+
+- **Comments and messages in the code that the docs now contradict**, left for a
+  code branch because this pass changed documentation only:
+  `EXPOSURE_TARGET`'s comment in `rps7200/direct.py` still cites 1.5-1.9%
+  compression above 75% of scale (measured since at -0.6 to -0.8%,
+  `docs/exposure-negative-plan.md`); `auto_exposure` says `SET GAIN OFFSET`
+  persists, where `scan_roll`'s own comments and CLAUDE.md say it does not;
+  `protocol.units_for_param` says `param 1` travels 2.57 (it returns 2.84) and
+  the comment above it gives the superseded `0.1662 mm` law; `plan_nudges`
+  describes a param 1..8 lattice clamped at 8 (the cap is
+  `MAX_CORRECTION_PARAM`, 87); fourteen refusals and docstrings quote "the
+  ~212 s floor" for any infrared pass, where a tied one costs ~25 s at 300 dpi;
+  and the adjuster's shortcuts are labelled "Move the film one step" when they
+  only set an offset.
+
+## Decisions for Stefan (from the 2026-09 audit)
+
+The fixes for `audit/problems/P01`-`P32` landed 2026-09-24/25. These are what
+their authors left alone because the answer changes a measured conclusion,
+what moves film, what Delete means, or what is sent to the device -- each with
+the proposal as it was made. None is started.
+
+### Framing and the transport
+
+- **Can one detector member move film?** With an edge reader -- the window,
+  `tools/scan_roll.py` -- `lone_gap` goes through `decide()` to
+  `WalkReader.judge`, `StripWalk` skips `combine`, `_aim_frame` never checks the
+  decision's `source`, and `scan_roll --approved` holds `unconfirmed` and
+  `neighbours` proposals without review (see the `registration()` entry above).
+  It changes the study-validated voting rule and what moves film in normal
+  use. *Proposal:* in `_aim_frame`, abstain unless `detail["source"] ==
+  "measured"`, or have `WalkReader.judge` return None for `unconfirmed`; in
+  `hold_from_walk`, hold only `measured` positions unless a flag says
+  otherwise, and print each frame's source before the device opens.
+- **Retire the 36 mm frame model.** `framing.FRAME_WIDTH_MM = 36.0`,
+  `TARGET_GAP_MM`, `NOMINAL_FRAME_WIDTH`, `right_gap_closure(frame_mm=36.0)` and
+  the `MAX_CORRECTION_MM` derived from them still aim every roll with no edge
+  reader -- positives, Kodachrome, any caller of `DirectScanner.scan_roll`
+  without one -- while `tools/frame_edges` centres on the measured 350.6
+  units. It changes fitted, hardware-validated aiming, and tests pin both.
+  *Proposal:* make `FRAME_WIDTH_UNITS` the one geometry source for the legacy
+  aim point, validate with a walk of a positive strip, then remove the mm
+  constants and update `tests/test_frame_position.py` and
+  `tests/test_ensemble.py`.
+- **`SEARCH_MM` is narrower than the largest move.** Its 9.0 mm is about 85
+  units, 105 px at 300 dpi; `param 87`, 88.8 units, is about 110 px, so a hold
+  of that size can never verify. Widening the search changes `measure_shift_mm`'s false-peak
+  behaviour. *Proposal:* derive the window from `(MAX_CORRECTION_PARAM +
+  COMMAND_UNITS)` plus a margin through `units_per_column`, then run holds at
+  `param 80-87` on the hardware and check confidence stays above the floor.
+- **Before any resolution joins `frame_edges.READ_AT_DPI`** (FE-04):
+  `propose.centring` hands `decide()` the 428-column scale while a wider pass's
+  edges are in its own columns. Harmless while only 300 dpi is read.
+  *Proposal:* decide on the downscaled result, scale the columns by k, and add
+  a test that runs `centring` on an 856-column frame.
+- **Does a change to the sub-frame law move `PROTOCOL_REVISION`?** Revision 5
+  was bumped for the param cap, but `COMMAND_UNITS` 1.572 -> 1.84 (2026-09-22)
+  changed the params `param_for_mm` sends without a bump, so an entry's
+  revision cannot say which ramp its hold moves used, and
+  `docs/step-calibration-plan.md` said it would move. *Proposal:* decide, write
+  the rule beside the revision history in `rps7200/protocol.py`, and either bump
+  or record the law in each pass's meta.
+
+### Calibration
+
+- **The command-line tools calibrate without asking** (P17 remainder).
+  `tools/scan.py` calibrates straight after INQUIRY; `tools/uniformity.py` tells
+  the operator to empty the transport and then calibrates; the media flag is
+  never recorded at calibration time. Only the window's prompt was in scope.
+  *Proposal:* before a measuring `ensure_shading` in `tools/scan.py` and
+  `tools/scan_roll.py`, ask with `input()`, with a `--film-loaded` flag to skip
+  it (not for `--reuse` with a cache, nor `--no-shading`); in `uniformity.py`,
+  drop the empty-transport metering or put it behind `--empty-transport` with a
+  warning, and ask for film before `calibrate_shading`; record
+  `State.no_media` from the READ STATE `calibrate_shading` already sends into
+  the calibration archive -- host side, no new command.
+
+### Rolls and the contact sheet
+
+- **Continuing a reopened roll that has no walk** (P25, GUI1-25/GUI2-20). The
+  plain Roll button runs from the first remaining frame to the original last
+  one and rescans the done frames between, because it cannot pass `only`. A
+  UI decision. *Proposal:* in `open_roll`'s no-sheet path set the last frame to
+  the last remaining one, and when the roll box still names the loaded roll
+  have `on_roll` pass `only` = the remaining frames in range; or add a
+  "Continue this roll" button that submits `Roll(only=remaining, out=folder)`.
+- **Delete moves a library entry to a trash rather than removing it?** Deleting
+  a frame from the filmstrip still `rmtree`s its entry (outside the demo, after
+  asking). Soft delete changes what Delete means for the library. *Proposal:*
+  `library.trash(entry)` moving it to `<root>/.trash/<id>` and reindexing, used
+  by the window's Delete and by `tools/library.py duplicates --delete`, with a
+  purge command.
+- **Save the sheet's decisions on every change** (P22). They are kept on Close,
+  quit, opening another roll and commissioning; a crash with the sheet open
+  still loses them, and `_store_sheet_state` rewrites the whole settings file.
+  *Proposal:* from `_changed`, `_FrameAdjuster._set` and `_orient`, schedule
+  `_store_sheet_state(self.state())` through `gui._later(500, ...)`, cancelling
+  any pending call so rapid edits write once.
+- **`--demo` with an explicit `--rolls`, `--library` or `--settings`** still
+  points at the real folders (P18, DP-05). An explicit operator choice, made
+  less dangerous now that the confirmation names the folder and `_roll_folder`
+  never writes back into one opened from outside `session.rolls`. *Proposal:*
+  under `--demo`, refuse such paths outside `demo/` unless a new
+  `--demo-writes-real` is given, or print one warning line at start-up.
+
+### The demo
+
+- **Should the demo refuse a calibration under `--look-only`?** The scanner
+  does not refuse one with no film -- it carries it out, and that is the state
+  that preceded a wedge -- so a refusing demo would teach the window an answer
+  the hardware never gives. `--look-only` is demo-only now, so no real scanner
+  can be calibrated through it. *Proposal, if wanted:* in
+  `DemoScanner.ensure_shading`, call `self._need_film("calibrate")` before the
+  work unless skipping; the window's failed-job path reports it, and
+  `test_gui`'s empty-transport test can add `ensure_shading`.
+- ~~**Should `verify` report demo entries' missing reference?**~~ **Settled in
+  code 2026-09-24 (4b7ad6d):** a demo entry built from a stored prescan or a
+  test card is a finished picture with no calibration, and `verify` leaves it
+  out, as it does a scan taken raw on purpose.
+
+### Brackets and the measurement tools
+
+These change a number already quoted -- a merged pixel, a skill's shares, a
+documented series -- so each wants re-measuring from stored bytes and Stefan's
+eye, not a patch.
+
+- **One relation for three channels, and an assumed noise model** (OUT-05,
+  OUT-19). `merge_bracket` fits one slope and intercept on green and applies
+  them to R, G and B although their dark levels differ, and weighs with
+  `bracket.py`'s fallback alpha/beta; `fit_noise_params` is never called.
+  *Proposal:* `solve_relation` per channel, on the sensor frames, each channel
+  scaled by its own; alpha/beta per channel from library flats, both recorded
+  in `meta["bracket"]`; compare old and new merges of the 2026-09-11 600 dpi
+  bracket by eye.
+- **`--bracket` with `--no-shading`** merges uncorrected passes and fuses each
+  pass's column pattern, which `bracket.py` says must not happen. Refusing it
+  moves the test harness too (`tests/test_scan_tool.py`'s `run()` passes
+  `--no-shading` to every bracket test). *Proposal:* `ap.error` for the pair in
+  `tools/scan.py`, and the bracket tests on the correcting fake
+  (`run_correcting`).
+- **A bracket is held in RAM** (P29.4, CLI-16): every pass's corrected frame,
+  raw pixels and raw bytes; with `--no-library` the raw pixels are now held for
+  the merge too, about 1 GB more for nine passes at 3600 dpi. *Proposal:* spool
+  each pass plainly in `on_pass`, as `_debug_capture` does, call
+  `scan_bracket(retain=False)`, and after `close()` memory-map the spool into
+  `merge_bracket`, which already works in `CHUNK_ROWS` bands. Check on the
+  hardware that a session held open while spooling stays well.
+- **`noise_split` measures random noise unregistered and unfiltered** (MSQ-01).
+  `total` is high-passed and `random` is not, so pure white noise reads a
+  share of 1.118 -- and `ceiling()` now refuses a share at or above one, which
+  a registered, gain-matched pair dominated by random noise can reach.
+  *Proposal:* register rows and columns (`rps7200.uniformity.register`), fit
+  gain and offset with `solve_relation`, take `random = std(hp(x) - hp(y)) /
+  sqrt(2)`, re-run a stored repeat pair and update the shares in the skill (21%
+  at 300 dpi, 27% at 1800, and the -3.5% ceiling built on them).
+- **`agreement_z`'s baseline** (MSQ-04, MSQ-05). The ideal median `|z|` is
+  0.674, so the 1.03 two-repeat baseline means the noise model understates
+  sigma about 1.5x; the median also runs over pixels the fit excluded, and the
+  rail is judged on whatever domain it is fed. *Proposal:* give it the raw
+  arrays for `solve_relation`'s `ref_sensor`/`other_sensor`, take the median
+  over the usable mask, report ratios to 0.674, and re-derive the baseline and
+  the "agreement holds to x1.7" finding from a stored repeat pair.
+- **`tools/exposure_headroom.py` models every film's blue as colour negative's**
+  (`MEASURED_BLUE_RATIO` 4.98, `BLUE_RGBI_HEADROOM` 5.2) while the driver meters
+  with `blue_rgbi_headroom(film)`. No RGBI ratio is measured for slides or
+  Kodachrome. *Proposal:* take the headroom from the record's film, store the
+  measured ratios per film (negative 4.98-5.02, B&W ~9.6), and refuse or flag
+  RGBI entries of films with none.
+- **The dpi series itself** (PA-14, MSQ-02/03). 7200 dpi entries filed before
+  2026-09-13 keep the stagger zigzag, which `--domain raw` still compares; the
+  default time window drops the last minute by comparing `10:45` against
+  `10:45:SS` as text; rungs are not checked to be one frame and film. Each fix
+  can change which entries make up the documented series. *Proposal:* replay
+  the realignment on those entries when loading raw, compare `created` as
+  datetimes, warn when rungs differ in frame or film notes, and re-run with
+  `--entries` naming the six ids.
+- **Two registration tools validate differently from the driver** (PA-08).
+  `tools/registration_margin.py` and `tools/transport_truth.py` read upright
+  only, with a differently rounded reach, where `measure_shift_mm` takes the
+  better of upright and row-flipped; `transport_truth` retypes 106 and 55.
+  Their result decides whether `CONFIDENCE_FLOOR` holds. *Proposal:* factor
+  `framing.shift_readings(reference, now, width)` returning confidence, dy, dx
+  and `row_reversed` from both readings with `measure_shift_mm`'s reach, call
+  it from both tools, and import `CONFIDENCE_FLOOR`.
+- **`tools/exposure_probe.py` reads delivered levels from a region re-detected on
+  the metered pass**, not the one metering used (PA-11). *Proposal:*
+  `auto_exposure` stores its slice bounds in `last_metering["region"]`, the
+  probe applies them, and a test puts film at about 0.8 of full scale beside a
+  clear aperture. It re-interprets stored probe results.
+- **What `tools/filing_load_test.py` measures, and its line.** 300 dpi 8-bit
+  passes, whole-pass times rather than read-loop stalls, a 32 MB gzip -- and
+  the 5% line was chosen, not measured. Running at the roll's settings changes
+  what is sent to the device. *Proposal:* `--dpi`/`--ir`/`--depth` defaulting to
+  the roll's settings, the longest gap between chunks and NoDataYet streaks
+  recorded per pass, real-sized payloads (140-570 MB); Stefan to confirm or
+  replace the 5%.
 
 ## Untested
 
@@ -449,25 +725,47 @@ bit is not evidence, not a new problem.
   flight; the docstring already calls that undefined. macOS survives it. Do not
   find out casually what WinUSB does -- a wedge costs a power cycle.
 
+- **The 2026-09-24/25 audit fixes have not run on the scanner.** Every one is
+  tested offline and in the demo, and ordinary passes send what they sent
+  before, so `PROTOCOL_REVISION` did not move. What differs on the device side,
+  and so wants watching the first time: after a pass or calibration stops
+  before its last line nothing more that drives the device is sent
+  (`DeviceSuspect`); a corrected pass no calibration covers is refused before
+  anything is sent, metering included, instead of calibrating inside it; the
+  read of an untied infrared pass waits up to 287 s for data where it gave up
+  at 120; a calibration writes its 1.7 MB of bytes to `calibration/<UTC time>/`
+  with the device open, a plain write; the window files single scans
+  uncompressed and gzips them after closing; every pass records its commands
+  through `_CommandLog` around the transport. `tools/filing_load_test.py`'s new
+  verdict has not been run either.
+
 - **Resuming a roll has never been driven on the scanner.** A roll that dies
   part-way can now be reopened from *Rolls ...*, which brings back its contact
   sheet, marks what is scanned, and restores the roll's own settings from its
-  manifest -- resolution, film, infrared, metering, and the exposure/gain/offset
-  the scanner was asked for. The remaining frames then go through the ordinary
-  *Scan chosen frames* path, which rewinds and advances by `SLIDE_NEXT` exactly
-  as a fresh roll does.
+  manifest -- resolution, film, infrared, metering, ~~and the
+  exposure/gain/offset the scanner was asked for~~ the mono channel, the
+  registration options and the first frame. *Corrected 2026-09-25:* no exposure, gain or offset is restored,
+  and a `Roll` cannot carry one -- it meters as its metering setting says, so a
+  resumed `once` roll meters again on its first new frame. The remaining frames
+  then go through the ordinary *Scan chosen frames* path, which winds back with
+  `SLIDE_PREV` and advances by `SLIDE_NEXT` exactly as a fresh roll does, into
+  the roll's own folder (its name is put back in the roll box).
 
   Every part is tested offline against synthetic manifests and driven in the
   demo window, and **no real roll has ever been resumed** -- for the same reason
   nothing else about rolls has: a commissioned multi-frame roll on real hardware
-  has still never run. The two things a real run would settle: whether the
-  restored exposure is still the right *request* a year on, and whether the
-  rewind lands where the walk's frame numbers assume when the strip has been
-  taken out and put back.
+  has still never run. The two things a real run would settle: whether
+  re-metering keeps the resumed half consistent with the first a year on, and
+  whether the rewind lands where the walk's frame numbers assume when the strip
+  has been taken out and put back.
 
-  A resumed roll measures a new shading reference rather than inheriting one.
-  That is a choice, not a limit -- `load_shading` and `--reuse` exist, and every
-  library entry keeps the reference it would be corrected with. But a reference
+  A resumed roll ~~measures a new shading reference rather than inheriting
+  one~~ uses the window's calibration: one that has not calibrated since it
+  opened asks first, as for any scan, and one that has uses what it measured
+  (*corrected 2026-09-25*; the reopening dialog still says "It will calibrate
+  again first"). Not inheriting the roll's old reference is a choice, not a
+  limit -- `load_shading` and `--reuse` exist, and every library entry keeps
+  the reference it would be corrected with. But a reference
   describes the sensor at the exposure and gain of the pass that measured it, so
   the one a roll started with is the wrong thing to hand a resume months later.
   Calibrate set to "reuse" still loads a saved one for anyone who wants to skip
@@ -545,6 +843,16 @@ bit is not evidence, not a new problem.
   on a quiet host and one gzipping in the background, so warm-up cannot look
   like an effect. ~5 minutes, nothing touches the transport.
 
+  *Updated 2026-09-25:* its verdict could not say "unsafe" -- it called any
+  difference under twice the spread of all passes pooled "no measurable
+  effect", and that spread contains the difference itself. Since 8fa4d73 it
+  judges the paired differences against a stated line, 5% of a quiet pass
+  unless `--limit` moves it: safe, unsafe or inconclusive, and only "safe" says
+  to overlap. What it still does not measure is in *Decisions for Stefan*. The
+  window's single scans no longer compress with the device open at all
+  (0bb498f): they are filed plain and gzipped after it closes, so the roll's
+  overlap is the one exception left.
+
 - **~~Calibrating at 7200 dpi~~ -- answered on the hardware 2026-09-13, and
   the answer is no.** The device declares the same shading descriptor at
   7200 dpi as at 3600 -- `pixels_per_line=10344` *bytes*, so 5172 columns --
@@ -598,9 +906,11 @@ bit is not evidence, not a new problem.
   memory.
 - ~~**The dpi trade-off measurement**~~ — **answered 2026-09-13**, see the
   "Results" section of `docs/dpi-tradeoff-plan.md`. **RGB: 3600 dpi for
-  quality, 1800 dpi when time matters. RGBI: 3600 dpi, because there
+  quality, 1800 dpi when time matters.** ~~**RGBI: 3600 dpi, because there
   resolution is nearly free** — the ~250 s infrared floor dominates, and a
-  twelve-fold resolution increase costs about six seconds.
+  twelve-fold resolution increase costs about six seconds.~~ *Retracted there:*
+  that was true of the untied infrared pass. Tied to the resolution, the default
+  since 2026-09-16, RGBI has the same trade-off as RGB.
 
   The old guess in this entry — "~1340 dpi to sample, 2400 as the sweet spot"
   — was not what the measurement found, and is superseded. 3600 dpi is the
@@ -613,7 +923,13 @@ bit is not evidence, not a new problem.
   `docs/7200dpi-plan.md` — the two agree without sharing an argument.
 
   Re-runnable with no scanner: `tools/dpi_analysis.py` rebuilds it from stored
-  raw bytes. Worth re-running when the noise floor changes.
+  raw bytes. Worth re-running when the noise floor changes. *Updated
+  2026-09-25:* since 3f5cce0 it loads every rung in one domain or refuses the
+  series, and it refuses this one in its default, corrected domain: the 7200 dpi
+  top rung cannot be corrected, so the recorded figures compared a raw
+  reference against corrected rungs. `--domain raw` re-runs the whole series
+  raw and gives different numbers; the recommendation has not been re-derived
+  from them yet.
 
 ## Improvements identified but not applied
 
@@ -624,10 +940,19 @@ driver for Nikon Coolscans:
   measurement rather than by copying pieusb. `tools/exposure_headroom.py`
   simulates a higher exposure on stored raw bytes and runs the real shading
   correction over it: clipping permits well past 0.90 (worst case 0.001% of blue
-  at 0.80 over six entries and four frames), but the sensor compresses 1.5-1.9%
-  above 75% of scale, so linearity binds before clipping does. 0.80 also matches
-  `bracket.py`'s `CLIP_START`, so metering no longer aims where another module
-  declines to follow. See `EXPOSURE_TARGET` in `rps7200/direct.py`.
+  at 0.80 over six entries and four frames), but ~~the sensor compresses
+  1.5-1.9% above 75% of scale, so linearity binds before clipping does~~ -- see
+  the correction below. 0.80 also matches `bracket.py`'s `CLIP_START`, so
+  metering no longer aims where another module declines to follow. See
+  `EXPOSURE_TARGET` in `rps7200/direct.py`.
+
+  *Corrected 2026-09-20* (`docs/exposure-negative-plan.md`, fifteen colour
+  negatives): the 1.5-1.9% does not reproduce. The sensor departs about -0.6% to
+  -0.8% above 70% of scale, on negative and slide alike -- the recorded figure
+  was the slide ladder's saturation read on corrected pixels. 0.80 stays, on a
+  measured reason instead: metering's own frame-to-frame spread (green 0.788 to
+  0.813) leaves too little headroom at 0.90. The comment on `EXPOSURE_TARGET`
+  still quotes the old figure (see *Known problems*).
 
   What that change *cost*, and is worth remembering: the acceptance band was
   `abs(level - target) <= 0.08`, which at 0.70 topped out at 0.78 and was
@@ -697,7 +1022,7 @@ driver for Nikon Coolscans:
 
 - **Nothing bounds a roll's total sub-frame travel on the approved path.**
   `framing.ROLL_TRAVEL_LIMIT_MM` is enforced through `StripWalk`, which only
-  exists when `correct` or `correct_dry_run` is set (`rps7200/direct.py:3162`).
+  exists when `correct` or `correct_dry_run` is set (`DirectScanner.scan_roll`).
   A roll driven from contact-sheet positions has only `hold_plan`'s per-frame
   budget, `|target| + HOLD_HEADROOM_MM`, which nothing sums across frames. A
   nudge does not touch the frame counter, so nothing downstream would notice
@@ -705,8 +1030,14 @@ driver for Nikon Coolscans:
   peak cumulative displacement is 0.86 mm against a 12 mm limit -- but the
   path is genuinely unguarded.
 
-- **A dry run through `tools/scan_roll.py` files nothing in the library**
-  unless `RPS7200_DEBUG=1`. The tool no longer forces `debug=False` (it claims
+- ~~**A dry run through `tools/scan_roll.py` files nothing in the library**
+  unless `RPS7200_DEBUG=1`.~~ **Fixed 2026-09-24 (8061a86, audit P08/P21):**
+  `--dry-run` files each walk prescan with its raw pixels and bytes, as the
+  window does, labelled `<roll>-<NN>` and recording its `roll_membership`; the
+  raw-byte guard both writers use is one function now
+  (`session.raw_bytes_disagree`). The entry as it was:
+
+  The tool no longer forces `debug=False` (it claims
   the frames it files itself, `DirectScanner.debug_claim`), so with debug on
   the walk's prescans, probes and holds are filed -- but by default the tool
   files its own entries only in the real-scan branch.
@@ -768,7 +1099,7 @@ driver for Nikon Coolscans:
   mirrored"*, margin **0.40** against a `REVERSAL_MARGIN` of 0.25 -- confidently
   wrong, which is what every detector written for this scanner has been at
   least once. `ScanSession.match_prescan` is `True` by default
-  (`rps7200/session.py:570`) and `_note_reversal` writes `reversal=[180, True]`
+  (`rps7200/session.py`) and `_note_reversal` writes `reversal=[180, True]`
   into the meta, and by its own docstring *"every file that leaves is turned by
   it"*. So a correct frame would be delivered 180 degrees rotated and mirrored,
   in both the TIFF and the JPEG.
@@ -800,7 +1131,10 @@ driver for Nikon Coolscans:
   eleven held frames, the worst being 0.18 mm. The loop delivered what it said.
 
   The tempting change -- deadband to half the smallest move, 0.136 -- is wrong
-  on four counts, all measured:
+  on four counts, all measured. (*2026-09-25:* the millimetre figures here are
+  under the 1.57-unit ramp. Under 1.84 the smallest move is 2.84 units --
+  `HOLD_TOLERANCE_MM` holds exactly that -- half of it is 1.42 units, and
+  `param_for_mm` stops rounding below 2.34. The arguments stand.)
 
   * **The constant has five roles, not one.** It is also the roll-wide
     `wrong_way` abort (`direct.py`), `AGREE_MM` (the ensemble's agreement
@@ -845,12 +1179,14 @@ driver for Nikon Coolscans:
   two passes each actually cover, given a 300 dpi prescan comes back 428 px
   where the aperture is 431.
 
-- **`strip_offsets` can never propose a positive offset.** `want` is
+- ~~**`strip_offsets` can never propose a positive offset.** `want` is
   `TARGET_GAP_MM / mm_px` = 2.88 px and `picture_start` cannot report a start
   below `GAP_MIN_MM` = 3 px, so every proposal is at most -0.010 mm. The
   detector is structurally one-sided: it can say "the frame is too far along"
   and never "not far enough". Harmless while every strip measured drifts the
-  same way, and a trap the first time one does not.
+  same way, and a trap the first time one does not.~~ **No longer so, checked
+  2026-09-25 (audit DOC-23):** `strip_offsets` takes its starts from
+  `picture_span`, whose right-edge reading can put a start below `want`.
 
 - **`CORRECTION_DEADBAND_MM = 0.15` is defined and never read.**
   `rps7200/direct.py`, one occurrence in the repo. Left over from the one-shot
@@ -879,6 +1215,17 @@ driver for Nikon Coolscans:
   that counter.
 
 - **The frame is about 35.3 mm across, not the 36.0 `FRAME_WIDTH_MM` assumes.**
+  *Superseded 2026-09-23 -- do not lower `FRAME_WIDTH_MM` to 35.3 on the
+  strength of this.* The frame-edge study measured the frame directly, on 39
+  pairs of prescans of one frame with no pitch assumed: **350.6 units** (435.6
+  columns, `framing.FRAME_WIDTH_UNITS`), wider than the 344.5-unit aperture and
+  the opposite direction from this entry. The two readings disagree by some
+  sixteen units; the later one, with 39 pairs and no pitch assumed, is the one
+  the code uses, and the two clusters below remain unexplained.
+  `tools/frame_edges` centres with 350.6; the in-package strip detector still
+  aims on 36.0 mm, and retiring that is in *Decisions for Stefan*. The entry as
+  it was:
+
   Measured 2026-09-21 from film already on disk, at no scanner cost. Fifteen
   frames across six separate walks show unexposed base at **both** edges, which
   gives the picture width directly: **34.62 to 35.47 mm, median 35.30**.
@@ -1091,7 +1438,9 @@ driven**, which is a new way for a green board to mean less than it looks
   lines against `direct.py`'s 3,229. Twelve plan docs cover decisions as small
   as the gain register being a digital multiplier; none covers the window, and
   the three that mention it do so in passing. Its 2,007-line test file is the
-  only specification of what it is supposed to do.
+  only specification of what it is supposed to do. (*2026-09-25:* 8,857 lines
+  against `direct.py`'s 4,165, and a 5,196-line test file; still no design
+  doc.)
 
   Not documentation for its own sake: it is why the two window-only divergences
   in "Known problems" above went unnoticed. Nothing states what the window
@@ -1102,6 +1451,8 @@ driven**, which is a new way for a green board to mean less than it looks
   except `analysis/film-edge-study` is merged into `main`. Harmless in itself,
   and it is how the film-edge harness got stranded: the one branch carrying
   unmerged work is invisible in a list of twenty-eight.
+  (`analysis/film-edge-study` was merged 2026-09-24, so that harness is on
+  `main` now as `tools/film_edge_study.py`.)
 
 ## Do not lose
 
@@ -1123,6 +1474,14 @@ into `demo/library`, which now holds 274 entries — more than the real library'
 entry's raw bytes. The .gitignore comment says the demo "leaves no trace",
 which is true of git and reads as "costs nothing". Nothing prunes it and
 nothing caps it.
+
+**Since 2026-09-24 (2e04b01) `calibration/` is back in the first class, for a
+different reason.** Every calibration now keeps its own bytes in
+`calibration/<UTC time>/` -- `data.bin`, every line as read, and
+`calibration.json`, every command and answer -- and those exist nowhere else: an
+entry names its archive in `extra.shading_origin` but does not copy it, and
+`shading.npz` is only the reduction. The cache beside them is still just a
+cache. Back `calibration/` up with `library/`.
 
 ## Process
 

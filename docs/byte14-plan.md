@@ -292,8 +292,10 @@ measurement one:
   bidirectional scanning was buying and never seeing the case at all; (c)
   leave it, now that it is documented and `scan_roll`'s own structure already
   avoids it in the common path. Whichever is chosen changes what the device
-  is sent, so `PROTOCOL_REVISION` in `rps7200/direct.py` moves with it and
-  `tools/library.py reconstruct` has to be re-run.
+  is sent, so `PROTOCOL_REVISION` in `rps7200/protocol.py` moves with it and
+  `tools/library.py reconstruct` has to be re-run. *(Decided 2026-09-23: (a),
+  read at decode from each pass's own tags -- see the status at the top. Done
+  that way it sends nothing different, so the revision did not move.)*
 - **Given the mechanism, more of the ladder is not obviously worth running.**
   A third consecutive bit-0-set pass, or trying this at a resolution other
   than 600, would sharpen the picture but the core finding -- reversal,

@@ -207,7 +207,10 @@ both of which shape the tooling:
 
 **The measurement point is the fully-corrected linear image** — the
 `2_corrected.tif` stage in `tools/make_comparison.py`: shading applied, defect
-interpolation applied, whatever else the pipeline grows.
+interpolation applied, whatever else the pipeline grows. *(Since 2026-09-24 that
+stage is `library.corrected(entry)`, what Save As delivers: shading from the entry's
+own reference and mask, and no defect interpolation -- `destripe` is on no delivered
+path. Before, the tool ran `destripe` on whatever TIFF it was given.)*
 
 **Not** `3_corrected_inverted.tif`. `invert()` in `tools/make_comparison.py` is a
 per-channel *percentile stretch*, computed independently per image. It is non-linear,
@@ -295,7 +298,7 @@ Two extra passes to rule that out, and the IT8 is already loaded.
 
 ### Trap: at 600 dpi the last columns come back uncorrected
 
-`apply_shading` writes only `out[:, :loc.size, c]` (`rps7200/shading.py:252`). At
+`apply_shading` writes only `out[:, :loc.size, c]` (`rps7200/shading.py`). At
 600 dpi the CCD mask marks 860 used pixels while `get_parameters()` reports a width
 of 862, so the trailing columns are silently left **unshaded** — right at the frame
 edge, which is exactly where a vignette is largest. The `width > pixels_per_line`
@@ -320,11 +323,14 @@ rescanning.
 
 ### Trap: orientation must go in `subject`, not `tags`
 
-`library.signature()` (`rps7200/library.py:308`) keys on
+`library.signature()` (`rps7200/library.py`) keys on
 `(stock, frame, subject, dpi, channels, frame, depth, film, protocol_revision)` and
 deliberately excludes tags, notes, and exposure. Six IT8 passes that differ only by
 orientation would share a signature, so `duplicates()` would call them redundant and
-`prunable()` would offer to delete five of them.
+`prunable()` would offer to delete five of them. *(Since 2026-09-24, 338970a:
+`prunable()` offers an entry only when its raw bytes, or pixels, are identical to one
+kept, so different passes are never offered for deletion. The subject is still what
+tells them apart in a `duplicates` listing.)*
 
 Put the orientation in `--subject` — `"IT8 180"`, `"IT8 turned-over"`, `"IT8 as-is rep1"` —
 and use `--tag vignette-study` for selection.

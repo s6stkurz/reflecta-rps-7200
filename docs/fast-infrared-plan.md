@@ -58,6 +58,10 @@ Both runs also found something about the hardware that outlives this question:
 **the carriage start moves between passes**, and the flag itself moves it. Every
 comparison here is aligned pair by pair for that reason.
 
+*Superseded by the status at the top: adopted as the default 2026-09-16, with
+the ladder below 1800 dpi waived by Stefan. The paragraph is the reasoning as it
+stood before that.*
+
 **Still not adopted as a default**, for one reason that is worth stating
 precisely: the resolution where quality was properly tested and the flag
 actually *does* something is 1800 dpi, and that one is clean. At 3600 the "no
@@ -112,6 +116,13 @@ in I.
   difference" has measured nothing at all.
 
 ## `PROTOCOL_REVISION` is deliberately **not** bumped
+
+*Superseded 2026-09-16, as the last paragraph of this section says it would
+be.* Once the bit became the default the default payload moved, and the
+revision went to 3; it went to 4 when `scan()` stopped sending the bit on RGB
+passes. `fast_infrared` now defaults to True in `scan`, `scan_bracket`,
+`scan_roll` and the window's `Scan` and `Roll`, gated on `infrared`. What
+follows is the reasoning while it was opt-in.
 
 CLAUDE.md asks for a bump "when the commands sent to the device change", and at
 first reading this qualifies. It does not, and the distinction is worth keeping.
@@ -476,7 +487,8 @@ spends most of its time. At 1800 dpi -- the resolution `docs/dpi-tradeoff-plan.m
 recommends when time matters -- an infrared pass goes from 220 s to 110 s, and a
 38-frame roll from about 2.3 hours of floor to 1.2. At 900 dpi it is 73% off.
 
-What is still missing before it becomes the default, and it is one ladder:
+What was still missing before it became the default -- both since closed, on
+2026-09-16: Stefan waived the ladder, and the revision moved to 3:
 
 - **Quality below 1800 dpi is untested.** The two quality ladders ran at 1800
   (clean, and the flag halved the pass there) and 3600 (clean, but the flag

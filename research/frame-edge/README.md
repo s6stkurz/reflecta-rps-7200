@@ -5,11 +5,47 @@ one unknown: **where the exposed picture ends and the unexposed film base
 begins** on a 300 dpi prescan. On the negative, base is the *brightest* thing
 on the film; in the positive it is the black strip Stefan sees at a frame's
 edge. This folder finds it offline, with nothing from `rps7200/` in the
-detectors, against a baseline labelled by eye. Integration into the software
-is a separate, later step.
+detectors, against a baseline labelled by eye. ~~Integration into the software
+is a separate, later step.~~
 
 No scanner is touched anywhere here. Everything runs from stored library
 entries.
+
+## In the software (since 2026-09-23)
+
+The winning detector, `ensemble_v2` -- four numpy-only members voting per side
+-- is in the software as a copy, `tools/frame_edges`, not moved into
+`rps7200/framing.py` as `REPORT.md`'s "Moving it into the software" section
+proposed. It lives in `tools/` by Stefan's choice and `rps7200` never imports
+it: the window and `tools/scan_roll.py` hand it to the driver as the roll's
+edge reader (`walk_reader`, `session.edge_reader`) and ask it for a sheet's
+positions (`propose_centred`); the window reads a walk in the background with
+`EdgeWatch`, to the same answer.
+
+- **Held to this study.** `FRAME_EDGE_PARITY=1 uv run pytest
+  tests/test_frame_edges_parity.py` checks the copy's vote (`vote.detect`)
+  against the answers stored here, frames and their mirror images, and runs
+  only where these frames are on disk. It does not reach `propose.centring`,
+  which turns the vote into a move. Run it after any change under
+  `tools/frame_edges`.
+- **One departure, on purpose.** `vote.detect` asks each member through
+  `_member`, so a member that raises abstains on both sides instead of failing
+  the frame -- `gapmodel` divided by a base level of 0 on a near-black strip
+  end. No answer stored here changes: on these frames no member raised.
+- **The frame width it centres with** is `framing.FRAME_WIDTH_UNITS`, 350.6
+  units (435.6 columns), measured on 39 pairs of prescans of one frame -- not
+  the 425 (36 mm) the old code assumed, nor the ~440 read off the dev gaps in
+  `REPORT.md`.
+- **What it reads.** Colour negative and black and white (`FILM_TYPES`); a
+  positive or Kodachrome gets no reader, and such a roll still aims on the
+  older 36.0 mm model in `rps7200/framing.py`. Only 300 dpi prescans are read
+  (`READ_AT_DPI`): the device returns 860-862 columns at 600 dpi and 1292 at
+  900, and a walk at either is refused frame by frame -- the window says so
+  before it starts, and `tools/scan_roll.py` refuses `--correct` there.
+- **Units.** `decide` is `common.py`'s, copied: it works in columns and param
+  units, and what a person reads is in units. The hold loop is handed
+  `offset_mm`, `columns * APERTURE_MM / width` (`centre.columns_to_mm`), the
+  scale `framing.measure_shift_mm` verifies a move in.
 
 ## Steps
 
