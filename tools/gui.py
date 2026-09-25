@@ -3316,7 +3316,10 @@ class ScannerGui:
             # and it did once -- a Path where a str was expected raised inside
             # json.dumps, took the Tk callback with it, and the operator saw
             # a button that did nothing at all.
-            self._say(f"could not write approved.json ({exc}); scanning anyway")
+            # The folder is named here, not left to the exception: on Windows
+            # a folder that cannot be made is reported by its parent's name.
+            self._say(f"could not write approved.json in {folder} ({exc}); "
+                      "scanning anyway")
             return
         told = ", ".join(f"{a.number}:{say_units(a.offset_mm)}"
                          for a in approved if a.offset_mm) or "none moved"

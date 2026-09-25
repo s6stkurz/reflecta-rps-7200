@@ -531,3 +531,34 @@ def negative_prescan(left: float = 0.0, right: float = 0.0, *, seed: int = 0,
         img = img * (1 - f) + base * f
     img = img + rng.normal(0.0, noise, img.shape)
     return np.clip(np.round(img), 0, 255).astype(np.uint8)
+
+
+def windows_mkdir(monkeypatch):
+    """Make `os.mkdir` answer as Windows does, on any runner.
+
+    Under a *file*, Windows reports a missing folder as FileNotFoundError, and
+    `Path.mkdir(parents=True)` then fails on the file with FileExistsError --
+    naming the file, for a folder that does not exist. Linux says
+    NotADirectoryError about the folder itself. Code tested only on Linux
+    never meets the Windows answer, and it hung CI there once. Returns the
+    list of paths asked for, and refuses to be asked without end.
+    """
+    from pathlib import Path
+
+    real_mkdir = os.mkdir
+    calls = []
+
+    def mkdir(path, *args, **kwargs):
+        calls.append(path)
+        assert len(calls) < 50, "mkdir retried without end"
+        p = Path(path)
+        if any(parent.is_file() for parent in p.parents):
+            raise FileNotFoundError(2, "The system cannot find the path "
+                                    "specified", str(path))
+        if p.is_file():
+            raise FileExistsError(183, "Cannot create a file when that file "
+                                  "already exists", str(path))
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", mkdir)
+    return calls

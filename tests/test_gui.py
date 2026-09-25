@@ -1876,10 +1876,18 @@ def test_a_filed_prescans_entry_survives_as_a_string():
     assert unfiled[0].reference_entry == ""
 
 
-def test_failing_to_write_the_note_never_costs_the_scan(tmp_path):
+@pytest.mark.parametrize("platform", ["here", "windows"])
+def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
+                                                        platform):
     """approved.json records what was asked for. The scan is the work. A
-    bookkeeping failure must not stop it -- which is exactly what happened."""
+    bookkeeping failure must not stop it -- which is exactly what happened.
+    And it says which roll: Windows names the file in the way, not the
+    folder that could not be made."""
     import types
+
+    if platform == "windows":
+        from conftest import windows_mkdir
+        windows_mkdir(monkeypatch)
 
     said = []
     stub = types.SimpleNamespace(_say=said.append)

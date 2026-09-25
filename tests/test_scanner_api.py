@@ -294,22 +294,9 @@ def test_a_parent_in_the_way_fails_the_archive_once(tmp_path, monkeypatch):
     that does not exist, and a retry-the-next-name loop took that as a name
     collision and never ended -- inside a calibration, with the device open.
     Windows' answer is reproduced here so the loop is caught on any runner."""
-    import os
+    from conftest import windows_mkdir
 
-    real_mkdir = os.mkdir
-    calls = []
-
-    def windows_mkdir(path, *args, **kwargs):
-        calls.append(path)
-        assert len(calls) < 50, "mkdir retried without end"
-        p = Path(path)
-        if any(parent.is_file() for parent in p.parents):
-            raise FileNotFoundError(path)
-        if p.is_file():
-            raise FileExistsError(path)
-        return real_mkdir(path, *args, **kwargs)
-
-    monkeypatch.setattr(os, "mkdir", windows_mkdir)
+    calls = windows_mkdir(monkeypatch)
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("", encoding="utf-8")
     s = scanner()
