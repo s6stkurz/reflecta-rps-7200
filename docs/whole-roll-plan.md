@@ -380,6 +380,8 @@ Action `0x03` is new, seen once, and is the last command of the session.
 - `SLIDE_INIT` is `10 16 00 00` throughout, the value this driver already sends.
 - The session-start pair is `00 01 00 04` and `00 46 00 00`, with `01 47 00 03` before the
   first frame — the same shape as the earlier captures, one param byte apart (`47` vs `57`).
+  *(2026-09-25: protocol.md §5 recounted the captures and finds `01 57 00 03`, param 87,
+  where this reads `01 47`; the two disagree until a capture is read again.)*
 - Every frame gets two full-window 300 dpi RGB prescans, `0,0 -> 10343,6887` and
   `0,1 -> 10343,6888`, before its advance. Unchanged from the earlier captures.
 

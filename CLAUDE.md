@@ -321,11 +321,12 @@ doing it once preceded a wedge.
 `READ_STATE` is not a substitute for asking. Byte 6's `0x40` "media present" bit
 once tracked the film here -- `0x0d` empty, `0x4d` loaded, one variable changed --
 but it is clear throughout the vendor's power-on capture and has read clear with
-film demonstrably loaded. The flag the driver reads now is byte 8, inverted
-(`State.media_loaded`: 1 empty, 0 loaded), also measured with one variable
+film demonstrably loaded, so a set bit there is evidence and a clear one is not.
+The flag the driver reads now is byte 8, inverted -- 1 empty, 0 loaded
+(`State.media_loaded` is its negation) -- also measured with one variable
 changed; the captures cannot corroborate it, because every one of them was taken
-with film in. Either reading is evidence, not a view of the transport. Only
-Stefan can see the transport. Ask him.
+with film in. Neither is a view of the transport. Only Stefan can see the
+transport. Ask him.
 
 ## Ask before driving the scanner
 

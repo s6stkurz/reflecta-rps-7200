@@ -744,12 +744,13 @@ eye, not a patch.
   sheet, marks what is scanned, and restores the roll's own settings from its
   manifest -- resolution, film, infrared, metering, ~~and the
   exposure/gain/offset the scanner was asked for~~ the mono channel, the
-  registration options and the first frame. *Corrected 2026-09-25:* no exposure, gain or offset is restored,
-  and a `Roll` cannot carry one -- it meters as its metering setting says, so a
-  resumed `once` roll meters again on its first new frame. The remaining frames
-  then go through the ordinary *Scan chosen frames* path, which winds back with
-  `SLIDE_PREV` and advances by `SLIDE_NEXT` exactly as a fresh roll does, into
-  the roll's own folder (its name is put back in the roll box).
+  registration options and the first and last frame. *Corrected 2026-09-25:*
+  no exposure, gain or offset is restored, and a `Roll` cannot carry one -- it
+  meters as its metering setting says, so a resumed `once` roll meters again on
+  its first new frame. The remaining frames then go through the ordinary *Scan
+  chosen frames* path, which winds back with `SLIDE_PREV` and advances by
+  `SLIDE_NEXT` exactly as a fresh roll does, into the roll's own folder (its
+  name is put back in the roll box).
 
   Every part is tested offline against synthetic manifests and driven in the
   demo window, and **no real roll has ever been resumed** -- for the same reason

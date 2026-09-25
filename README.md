@@ -304,10 +304,11 @@ walk or a roll says which folder it goes to and what is in it already. Beside th
 files the folder holds the roll's `roll.json` and `frameNN.tif`, and `approved.json`, the
 sheet's decisions. Each manifest is written beside and renamed over; a run's first write
 keeps the file it replaces as `<name>.bak`, one that cannot be read is set aside as
-`<name>.unreadable` and said, and one numbered before frames were places on the strip is
+`<name>.unreadable` and said, and one numbered before frames were placed on the strip is
 kept once as `<name>.legacy` before a resume renumbers it. In `roll.json` a frame is
-`done` only once it is filed — with its library `entry`, or a `filing_error` — and
-records the `rotation` and `flipped` its file was written with. A frame you put back
+`done` only once it is filed, with its library `entry`; one that could not be filed stays
+not done and records a `filing_error`. Each frame records the `rotation` and `flipped`
+its file was written with. A frame you put back
 where the walk had it stays yours: `approved.json` marks it `as_walked`.
 
 The Roll panel takes a range, *first frame* to *last frame*, both included: 1 to 20 is
@@ -348,7 +349,8 @@ holds the only copies.) The positions and turns set by hand live only in
 Opening a roll with frames left brings back its contact sheet and approvals, marks what is
 already scanned, and restores **the roll's own settings** from its manifest rather than the
 window's: resolution and prescan resolution, film, infrared and infrared-at-scan-
-resolution, metering, the mono channel, the registration options, and the first frame.
+resolution, metering, the mono channel, the registration options, and the first and last
+frame.
 A year later the window has moved on to other film and the manifest still describes that
 roll. Its name goes into the roll box, so the Roll button continues it in its own folder.
 No exposure is restored: a roll meters as its metering setting says. A window that has
@@ -480,8 +482,9 @@ exception that is written once: corrected as it is scanned, by that day's code. 
 re-corrects from the library.
 
 The **infrared plane is not corrected**. The calibration pass is RGB, so the reference
-has no infrared channel and the delivered plane keeps its column pattern; the pass's shading report counts it as `uncorrected`. The raw bytes are kept, so
-it can be corrected later if an infrared reference is ever acquired.
+has no infrared channel and the delivered plane keeps its column pattern; the pass's
+shading report counts it as `uncorrected`. The raw bytes are kept, so it can be corrected
+later if an infrared reference is ever acquired.
 
 There is **no vignette and no vignette correction**, which was measured rather than
 assumed: the ~39% falloff across the frame lives entirely in x, where shading already
