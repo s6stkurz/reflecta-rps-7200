@@ -1193,6 +1193,34 @@ def _prompt_button(app, text):
     raise AssertionError(f"no {text!r} button in the prompt")
 
 
+def _prompt_tick(app, text="The film is in the transport"):
+    """The prompt's checkbox with this label, found the same way."""
+    for widget in gui._descendants(app._calibrate_prompt):
+        if widget.winfo_class() == "TCheckbutton" and widget.cget("text") == text:
+            return widget
+    raise AssertionError(f"no {text!r} tick in the prompt")
+
+
+def _press(top, key="<Return>"):
+    """Fire what ``top`` binds to ``key``, as pressing it would.
+
+    Not `event_generate`: a generated key goes to the window with the focus,
+    and a prompt over the tests' withdrawn window is never mapped, so it has
+    none and the key is dropped -- a test of the binding that passes because
+    nothing happened. This calls the bound command by its Tcl name instead,
+    with the nineteen fields a key event carries (tkinter's `_subst_format`).
+    """
+    script = top.bind(key)
+    assert script, f"nothing is bound to {key}"
+    name = script.split("[", 1)[1].split()[0]
+    fields = ["0"] * 19
+    fields[10] = ""                                    # %A, the character
+    fields[12] = key.strip("<>")                       # %K, the keysym
+    fields[14] = str(top)                              # %W, the window
+    fields[15] = "2"                                   # %T, KeyPress
+    top.tk.call(name, *fields)
+
+
 def _never_confirm(*_a, **_k):
     raise AssertionError("asked about the scan before the calibration")
 
@@ -1257,6 +1285,7 @@ def test_calibrate_now_starts_one_closes_the_prompt_and_scans_next_time(
     jobs = []
     monkeypatch.setattr(app.session, "submit", jobs.append)
     app.on_prescan()
+    _prompt_tick(app).invoke()
     _prompt_button(app, "Calibrate now").invoke()
     root.update()
     assert [type(j) for j in jobs] == [Calibrate]
@@ -1268,16 +1297,161 @@ def test_calibrate_now_starts_one_closes_the_prompt_and_scans_next_time(
     assert [type(j) for j in jobs] == [Calibrate, Prescan]
 
 
-def test_the_panels_calibrate_button_answers_the_prompt_too(window, monkeypatch):
+# The film is confirmed before a calibration starts. Only Stefan can see the
+# transport, and an empty one calibrated preceded a wedge; the button used to
+# start one on the spot, and a bare Return in the prompt did too.
+
+
+def _no_cache(app, tmp_path):
+    """A session whose cached reference is not there, so nothing can reuse."""
+    app.session.reference = str(tmp_path / "calibration" / "shading.npz")
+
+
+def _a_cache(app, tmp_path):
+    """A session with a cached reference on disk, from some other power-on."""
+    path = tmp_path / "calibration" / "shading.npz"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"a reference")
+    app.session.reference = str(path)
+
+
+@pytest.mark.parametrize("ask", ["the Calibrate button", "a scan"])
+def test_calibrate_now_asks_for_the_film_before_it_starts_anything(
+        window, monkeypatch, tmp_path, ask):
     app, root = window
     jobs = []
     monkeypatch.setattr(app.session, "submit", jobs.append)
+    _no_cache(app, tmp_path)
+    (app.b_calibrate.invoke if ask == "the Calibrate button"
+     else app.on_prescan)()
+    root.update()
+    assert app._calibrate_prompt is not None
+    assert jobs == [], "calibrated without asking what is in the transport"
+    tick = _prompt_tick(app)
+    assert "selected" not in tick.state()
+    _prompt_button(app, "Calibrate now").invoke()
+    root.update()
+    assert jobs == [] and app.calibrated is False
+    assert app._calibrate_prompt is not None, "refused by closing the question"
+    tick.invoke()
+    _prompt_button(app, "Calibrate now").invoke()
+    root.update()
+    assert [j.mode for j in jobs] == ["measure"]
+    assert app._calibrate_prompt is None and not _toplevels(root)
+
+
+def test_a_bare_return_does_not_calibrate(window, monkeypatch, tmp_path):
+    """Return was bound to "Calibrate now" -- the answer with the scanner
+    time and the wedge behind it -- so one keystroke meant for something
+    else started a calibration. It asks for the tick now, and Return then."""
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _no_cache(app, tmp_path)
+    app.on_scan()
+    top = app._calibrate_prompt
+    _press(top, "<Return>")
+    root.update()
+    assert jobs == []
+    assert app._calibrate_prompt is top and top.winfo_exists()
+    notes = [w.cget("text") for w in gui._descendants(top)
+             if w.winfo_class() == "TLabel"]
+    assert any("Nothing started" in str(n) for n in notes), notes
+    _prompt_tick(app).invoke()
+    _press(top, "<Return>")
+    root.update()
+    assert [j.mode for j in jobs] == ["measure"]
+    assert app._calibrate_prompt is None
+
+
+def test_the_tick_is_asked_again_every_time(window, monkeypatch, tmp_path):
+    """Not remembered from the last calibration: a strip taken out since then
+    is exactly the case the question is for."""
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _no_cache(app, tmp_path)
+    app.b_calibrate.invoke()
+    _prompt_tick(app).invoke()
+    _prompt_button(app, "Calibrate now").invoke()
+    root.update()
+    assert len(jobs) == 1
+    app.b_calibrate.invoke()                            # "Calibrate again"
+    root.update()
+    assert "selected" not in _prompt_tick(app).state()
+    _prompt_button(app, "Calibrate now").invoke()
+    assert len(jobs) == 1
+
+
+def test_the_panels_calibrate_button_raises_the_prompt_it_does_not_answer_it(
+        window, monkeypatch, tmp_path):
+    """With the "calibrate first" prompt open, the panel's button used to
+    calibrate past it. It raises the one prompt, which then does the asking."""
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _no_cache(app, tmp_path)
     app.on_scan()
     assert app._calibrate_prompt is not None
     app.b_calibrate.invoke()
     root.update()
+    assert jobs == []
+    assert len(_toplevels(root)) == 1
+    _prompt_tick(app).invoke()
+    _prompt_button(app, "Calibrate now").invoke()
+    root.update()
     assert len(jobs) == 1
     assert app._calibrate_prompt is None and not _toplevels(root)
+
+
+def test_the_cached_reference_loads_without_the_question(window, monkeypatch,
+                                                       tmp_path):
+    """Loading a file moves nothing, so neither the prompt's "Use the cached
+    one" nor the panel set to reuse waits for the tick."""
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _a_cache(app, tmp_path)
+    app.on_prescan()
+    _prompt_button(app, "Use the cached one").invoke()
+    root.update()
+    assert [j.mode for j in jobs] == ["reuse"]
+    assert app._calibrate_prompt is None
+
+    app.v_shading.set("reuse")
+    app.b_calibrate.invoke()
+    root.update()
+    assert [j.mode for j in jobs] == ["reuse", "reuse"]
+    assert not _toplevels(root)
+
+
+def test_reuse_with_nothing_cached_is_a_calibration_and_asks(
+        window, monkeypatch, tmp_path):
+    """`ensure_shading` measures when there is no file to reuse, so "reuse"
+    with nothing cached moves the carriage like any calibration."""
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _no_cache(app, tmp_path)
+    app.v_shading.set("reuse")
+    app.b_calibrate.invoke()
+    root.update()
+    assert jobs == []
+    assert app._calibrate_prompt is not None
+
+
+def test_the_prompts_other_answers_do_not_calibrate(window, monkeypatch,
+                                                   tmp_path):
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _no_cache(app, tmp_path)
+    app.b_calibrate.invoke()
+    _prompt_tick(app).invoke()
+    _press(app._calibrate_prompt, "<Escape>")
+    root.update()
+    assert jobs == [] and app._calibrate_prompt is None
+    assert not _toplevels(root)
 
 
 def test_not_now_leaves_it_to_be_asked_again(window, monkeypatch):

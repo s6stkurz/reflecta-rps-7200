@@ -1440,7 +1440,7 @@ class ScannerGui:
             ttk.Radiobutton(box, text=text, value=value,
                             variable=self.v_shading).pack(anchor="w")
         self.b_calibrate = ttk.Button(box, text="Calibrate",
-                                      command=self.on_calibrate)
+                                      command=self.on_calibrate_pressed)
         self.b_calibrate.pack(fill="x", pady=(6, 2))
         self.b_prescan = ttk.Button(box, text="Prescan", command=self.on_prescan)
         self.b_prescan.pack(fill="x", pady=2)
@@ -1962,7 +1962,39 @@ class ScannerGui:
         if path:
             self._set_outdir(path)
 
+    def on_calibrate_pressed(self) -> None:
+        """The panel's Calibrate button: asks what is in the transport first.
+
+        It used to submit the calibration the moment it was pressed. A
+        measurement runs the carriage over the calibration frame, and only
+        Stefan can see whether the strip is in: calibrating an empty
+        transport is a state the vendor never creates, and the one time it
+        was done here it preceded a wedge. So the button opens the prompt a
+        scan without a calibration opens, where the film is confirmed before
+        anything starts. Loading the cached reference reads a file and moves
+        nothing, so that is not asked about.
+        """
+        if self.v_shading.get() == "reuse" and self._cached_reference():
+            self.on_calibrate("reuse")
+            return
+        self.ask_to_calibrate(for_scan=False)
+
+    def _cached_reference(self) -> bool:
+        """Whether "reuse" would load a file rather than measure.
+
+        `ensure_shading` measures when the cached reference is not there, so a
+        "reuse" with nothing cached is a calibration like any other, and asks
+        like one.
+        """
+        return Path(self.session.reference).exists()
+
     def on_calibrate(self, mode: str | None = None) -> None:
+        """Start the calibration: the answer to the prompt, never a control.
+
+        Reached once the film has been confirmed in the transport, or for a
+        cached reference, which moves nothing. Nothing else calls it, and no
+        key does (`shortcuts.NEVER_BOUND`).
+        """
         self.session.submit(Calibrate(mode=mode or self.v_shading.get(),
                                       reference=self.session.reference))
         self.calibrated = True
@@ -1993,13 +2025,24 @@ class ScannerGui:
         self.ask_to_calibrate(parent)
         return True
 
-    def ask_to_calibrate(self, parent=None) -> None:
-        """Say that a scan needs a calibration, and offer to start one.
+    def ask_to_calibrate(self, parent=None, *, for_scan: bool = True) -> None:
+        """Offer a calibration, and start one only once the film is confirmed.
 
-        The reference belongs to the power-on that measured it, so a session
-        that scans before calibrating is a session whose corrections describe
-        some other day's sensor. Not a modal: a modal here sits inside the event
-        pump and stops it. Pressed twice, it raises the one already open.
+        Two ways in: a scan that has none (``for_scan``), and the panel's
+        Calibrate button. The reference belongs to the power-on that measured
+        it, so a session that scans before calibrating is a session whose
+        corrections describe some other day's sensor.
+
+        **It asks what is in the transport, every time.** Only Stefan can see
+        it, and `READ_STATE`'s media bit has read clear with film loaded, so
+        it cannot answer for him. A measurement waits for the tick; a bare
+        Return, which used to start one from here, says so instead. The tick
+        is never remembered: a strip taken out since the last calibration is
+        exactly the case it exists for. The cached reference loads without
+        it, since loading moves nothing.
+
+        Not a modal: a modal here sits inside the event pump and stops it.
+        Pressed twice, it raises the one already open.
         """
         if self._calibrate_prompt is not None:
             try:
@@ -2011,13 +2054,14 @@ class ScannerGui:
         parent = parent or self.root
         top = tk.Toplevel(parent)
         self._calibrate_prompt = top
-        top.title("Calibrate first")
+        top.title("Calibrate first" if for_scan else "Calibrate")
         top.transient(parent)
         top.resizable(False, False)
         frame = ttk.Frame(top, padding=16)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, font=_font(13, bold=True),
-                  text="Without a calibration no picture can be scanned"
+                  text=("Without a calibration no picture can be scanned"
+                        if for_scan else "Calibrate with the film loaded")
                   ).pack(anchor="w")
         ttk.Label(
             frame, wraplength=430, justify="left", padding=(0, 8),
@@ -2028,9 +2072,11 @@ class ScannerGui:
                   "it is done once per session -- and with the film loaded, "
                   "which is what the vendor software does. The calibration "
                   "frame is the lower part of the transport, which the film "
-                  "does not cover, so the sensor is measured either way.\n\n"
-                  "Nothing is scanned now. Press the scan button again once "
-                  "the calibration has finished.")
+                  "does not cover, so the sensor is measured with the strip "
+                  "still in. Calibrating an empty transport is a state the "
+                  "vendor never creates, and once it preceded a wedge."
+                  + ("\n\nNothing is scanned now. Press the scan button again "
+                     "once the calibration has finished." if for_scan else ""))
         ).pack(anchor="w")
         cached = Path(self.session.reference)
         if cached.exists():
@@ -2042,11 +2088,29 @@ class ScannerGui:
             note = "There is no cached reference."
         ttk.Label(frame, foreground="#777", text=note).pack(anchor="w")
 
+        # Unticked every time the prompt opens; see the docstring.
+        loaded = tk.BooleanVar(master=top, value=False)
+        check = ttk.Checkbutton(frame, variable=loaded,
+                                text="The film is in the transport")
+        check.pack(anchor="w", pady=(12, 0))
+        refused = ttk.Label(frame, foreground="#e0605a", wraplength=430,
+                            justify="left")
+        refused.pack(anchor="w")
+
         buttons = ttk.Frame(frame)
         buttons.pack(fill="x", pady=(14, 0))
 
         def choose(mode: str | None) -> None:
             if mode:
+                # "reuse" measures after all when the file has gone since
+                # this opened, so it is held to the same question then.
+                measures = mode != "reuse" or not self._cached_reference()
+                if measures and not loaded.get():
+                    refused.configure(
+                        text="Nothing started. Tick that the film is in the "
+                             "transport first -- only you can see it.")
+                    check.focus_set()
+                    return
                 self.v_shading.set(mode)
                 self.on_calibrate(mode)          # closes this prompt
                 return
@@ -2062,7 +2126,9 @@ class ScannerGui:
         start = ttk.Button(buttons, text="Calibrate now",
                            command=lambda: choose("measure"))
         start.pack(side="right")
-        start.focus_set()
+        # The tick first, so the keyboard's way through is Space, then Return
+        # -- and Return alone is refused rather than taken as the answer.
+        check.focus_set()
         top.bind("<Return>", lambda _e: choose("measure"))
         top.bind("<Escape>", lambda _e: choose(None))
         top.update_idletasks()
