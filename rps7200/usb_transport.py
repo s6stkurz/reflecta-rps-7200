@@ -202,7 +202,7 @@ def _how_to_install() -> str:
 class _LazyLib:
     """Loads the shared library on first use, not on import.
 
-    Host-side work -- decoding a stored scan, merging a bracket, writing a
+    Host-side work -- decoding a stored scan, correcting it, writing a
     TIFF -- touches no device, and used to be impossible on a machine
     without libusb because importing this module loaded it.
 

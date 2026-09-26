@@ -78,6 +78,39 @@ def ceiling(random_sigma: float, total_sigma: float, passes: int) -> float:
     return float(reached / max(total_sigma, 1e-9) - 1.0)
 
 
+def solve_relation(ref: np.ndarray, other: np.ndarray,
+                   mask: np.ndarray | None = None) -> tuple[float, float]:
+    """Fit ``other = slope * ref + intercept`` on the pixels both resolve.
+
+    The commanded exposure ratio is not the relationship between two passes: at
+    a requested x4.000 the slope was 3.828 with a 1279 DN intercept. Fit it per
+    channel, too -- at x4 green gave 3.84 / 377 and blue 3.90 / 168. Only pixels
+    clear of both the noise floor (0.2% of full scale) and the sensor's knee
+    (`rps7200.direct.CLIP_START`) are fitted.
+
+    Kept here since the bracket merge it came from was archived
+    (docs/multi-exposure/). Returns ``(nan, 0)`` when there is nothing to fit.
+    """
+    from rps7200.direct import CLIP_START, FULL_SCALE
+
+    floor = 0.002 * FULL_SCALE
+    x = np.asarray(ref, dtype=np.float64).reshape(-1)
+    y = np.asarray(other, dtype=np.float64).reshape(-1)
+    usable = (x > floor) & (x < CLIP_START) & (y > floor) & (y < CLIP_START)
+    if mask is not None:
+        usable &= np.asarray(mask, dtype=bool).reshape(-1)
+    if usable.sum() < 64:
+        return float("nan"), 0.0
+    x, y = x[usable], y[usable]
+    if x.size > 200_000:
+        step = x.size // 200_000 + 1
+        x, y = x[::step], y[::step]
+    slope, intercept = np.polyfit(x, y, 1)
+    if not np.isfinite(slope) or slope <= 0:
+        return float("nan"), 0.0
+    return float(slope), float(intercept)
+
+
 def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
                 channel: int = 1, alpha: float = 1.0, beta: float = 4096.0) -> float:
     """Median |z| between two scans, once put on a common scale.
@@ -89,8 +122,6 @@ def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     pair must reach to be called consistent -- not 1.0, because the noise model
     slightly understates the truth, equally for every comparison.
     """
-    from rps7200.bracket import solve_relation
-
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
     slope, intercept = solve_relation(a[..., channel], b[..., channel])

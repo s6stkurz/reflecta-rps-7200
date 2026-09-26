@@ -58,10 +58,14 @@ ROOT = Path(__file__).resolve().parent
 #: scripts, which two tools import through a runtime `sys.path` insertion the
 #: checker cannot see), and 28 more in gui.py of which several want design
 #: changes, not annotations. See TODO.md.
+#:
+#: `docs/` is excluded because nothing there is the driver: `docs/multi-exposure/`
+#: is an archived study whose modules import each other as plain files.
 TY_ARGS = [
     "check",
     "--exclude", "tests/",
     "--exclude", "tools/",
+    "--exclude", "docs/",
 ]
 
 #: Build output and caches. Everything here is regenerated, so `clean` may

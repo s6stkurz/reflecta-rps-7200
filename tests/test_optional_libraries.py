@@ -1,6 +1,6 @@
 """Host-side work must not need libusb.
 
-Decoding a stored scan, merging a bracket, writing a TIFF and reading the
+Decoding a stored scan, correcting it, writing a TIFF and reading the
 library all touch no hardware, and the library keeps every scan's raw bytes so
 that work can be re-run anywhere. None of it was possible on a machine without
 libusb, because the module loaded it at import.
@@ -73,7 +73,7 @@ def test_the_package_imports_without_libusb(root):
 
 @pytest.mark.parametrize(
     "module",
-    ["rps7200.tiff", "rps7200.library", "rps7200.bracket", "rps7200.shading",
+    ["rps7200.tiff", "rps7200.library", "rps7200.shading",
      "rps7200.defects", "rps7200.framing", "rps7200.protocol", "rps7200.direct"],
 )
 def test_every_host_side_module_imports(root, module):
@@ -90,22 +90,6 @@ def test_a_tiff_round_trips_without_libusb(root):
         path = os.path.join(tempfile.mkdtemp(), "x.tif")
         tiff.write(path, img)
         assert np.array_equal(tiff.read(path), img)
-        print('ok')
-        """,
-        root,
-    )
-    assert out.returncode == 0, out.stderr
-
-
-def test_a_bracket_merges_without_libusb(root):
-    out = run(
-        """
-        import numpy as np
-        from rps7200.bracket import merge_bracket
-        a = np.full((8, 8, 3), 1000, np.uint16)
-        b = np.full((8, 8, 3), 4000, np.uint16)
-        out, stats = merge_bracket([a, b], [1.0, 4.0])
-        assert out.shape == (8, 8, 3) and stats.passes == 2
         print('ok')
         """,
         root,

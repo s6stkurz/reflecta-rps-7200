@@ -333,49 +333,6 @@ def channel_report(image: np.ndarray, signature: OrientationSignature,
 # -- registration -----------------------------------------------------------
 
 
-def phase_surface(fa: np.ndarray, fb: np.ndarray, *, drop_axes: bool = False) -> np.ndarray:
-    """The whole phase-correlation surface of two equal-sized planes.
-
-    Circular, ``(h, w)``, with the peak at ``(dy % h, dx % w)`` in the sign
-    convention of :func:`register`. Shared by `register`, the sub-pixel pass
-    registration in `rps7200.passes`, and `tools/registration_margin.py`, so
-    the three cannot drift apart.
-    """
-    return np.fft.irfft2(cross_power(fa, fb, drop_axes=drop_axes), s=fa.shape)
-
-
-def cross_power(fa: np.ndarray, fb: np.ndarray, *, drop_axes: bool = False) -> np.ndarray:
-    """The normalised cross-power spectrum behind :func:`phase_surface`.
-
-    Half-spectrum (``rfft2`` layout). Exposed because a sub-pixel peak is found
-    by evaluating this spectrum's inverse at fractional positions, which the
-    sampled surface cannot give.
-
-    ``drop_axes`` zeroes the spatial frequencies within one bin of either axis
-    before normalising. Two passes through one sensor share its residual
-    column pattern -- constant down the frame, so all of its energy sits on
-    the ``ky = 0`` line (and ``ky = +-1`` once the window has spread it) -- and
-    that shared pattern is a copy of itself at zero shift, which pulls the peak
-    toward ``dx = 0`` whatever the film did. Off by default: `register`'s
-    callers were measured without it.
-    """
-    h, w = fa.shape
-    fa = fa - fa.mean()
-    fb = fb - fb.mean()
-
-    # Hann window: the FFT treats the frame as periodic, so an un-windowed
-    # frame's opposite edges act like a hard seam and can outrank the target.
-    win = np.hanning(h)[:, None] * np.hanning(w)[None, :]
-    A = np.fft.rfft2(fa * win)
-    B = np.fft.rfft2(fb * win)
-    cross = A * np.conj(B)
-    if drop_axes:
-        cross[[0, 1, -1], :] = 0.0             # ky = 0, +-1: column pattern
-        cross[:, :2] = 0.0                     # kx = 0, 1: row pattern
-    mag = np.abs(cross)
-    return cross / np.where(mag > 0, mag, 1.0)
-
-
 def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64) -> tuple[int, int, float]:
     """Integer-pixel shift taking ``b`` onto ``a``, by phase correlation.
 
@@ -405,7 +362,18 @@ def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64) -> tuple[int, in
     fa, fb = luminance(a), luminance(b)
     h = min(fa.shape[0], fb.shape[0])
     w = min(fa.shape[1], fb.shape[1])
-    surface = phase_surface(fa[:h, :w], fb[:h, :w])
+    fa, fb = fa[:h, :w], fb[:h, :w]
+    fa = fa - fa.mean()
+    fb = fb - fb.mean()
+
+    # Hann window: the FFT treats the frame as periodic, so an un-windowed
+    # frame's opposite edges act like a hard seam and can outrank the target.
+    win = np.hanning(h)[:, None] * np.hanning(w)[None, :]
+    A = np.fft.rfft2(fa * win)
+    B = np.fft.rfft2(fb * win)
+    cross = A * np.conj(B)
+    mag = np.abs(cross)
+    surface = np.fft.irfft2(cross / np.where(mag > 0, mag, 1.0), s=(h, w))
 
     reach_y = min(max_shift, h // 2)
     reach_x = min(max_shift, w // 2)

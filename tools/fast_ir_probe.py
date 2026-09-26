@@ -55,7 +55,7 @@ a protocol change; the floor is the whole point of asking.
 **Do R, G and B survive?** The bit is documented as affecting the infrared plane
 but it sits in a field that governs the whole pass. `agreement_z` on an off/off
 pair is the control, the same pair-at-one-exposure comparison that gives 1.03 in
-`docs/multi-exposure-plan.md`; `agreement_z` on an off/on pair is the test. If
+`docs/multi-exposure/plan.md`; `agreement_z` on an off/on pair is the test. If
 the picture degrades at all, the answer is no and nothing else matters.
 
 **Does the dust survive?** Not "is the plane noisier" but "can the specks still

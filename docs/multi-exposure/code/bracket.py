@@ -28,7 +28,7 @@ its own reference and CCD mask first (`rps7200.shading`), because the passes
 carry different masks and an uncorrected bracket fuses the sensor's column
 pattern along with the picture.
 
-And **register the passes first** (`rps7200.passes.register_passes`), passing
+And **register the passes first** (`passes.register_passes`, beside this file), passing
 its masks as `valid`. The carriage lands somewhere slightly different for every
 pass -- 2.4 lines across the nine-pass bracket in the library -- and a merge of
 unregistered passes is a merge of different places on the film. Unregistered,
@@ -338,7 +338,7 @@ def merge_bracket(
     than drifting to some average of the bracket's.
 
     `valid`, one ``(H, W)`` bool mask per pass, marks where a pass has data of
-    its own -- :func:`rps7200.passes.register_passes` returns them. A pass
+    its own -- :func:`passes.register_passes` returns them. A pass
     carries no weight where its mask is False, so the rows a shift uncovered
     never enter the blend. The reference has to be valid everywhere: it is what
     a pixel no pass can speak for falls back to.

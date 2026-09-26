@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from conftest import settings
-from rps7200.bracket import CLIP_START, FULL_SCALE
+from rps7200.direct import CLIP_START, FULL_SCALE
 from rps7200.direct import (
     BLUE_RGBI_HEADROOM,
     BLUE_RGBI_HEADROOM_UNMEASURED,
@@ -301,8 +301,8 @@ def _blue_level_after_metering(headroom, target=EXPOSURE_TARGET):
 def test_the_shipped_blue_headroom_keeps_blue_out_of_the_clipping_knee():
     """The reason the constant moved from 4.0 to 5.2.
 
-    A CCD goes non-linear before it saturates, which is why bracket.py stops
-    trusting a sample at CLIP_START (0.80 of full scale). Metering must land
+    A CCD goes non-linear before it saturates, which is why a sample is not
+    trusted above CLIP_START (0.80 of full scale). Metering must land
     blue below that in the scan it is metering *for*, not merely in the probe.
     """
     landed = _blue_level_after_metering(BLUE_RGBI_HEADROOM)
@@ -435,9 +435,9 @@ def test_blue_lands_just_below_the_others_at_any_target():
 def test_the_shipped_target_is_the_measured_one():
     """Pinned so a change to it is a deliberate act with evidence behind it."""
     assert EXPOSURE_TARGET == 0.80
-    from rps7200.bracket import CLIP_START, FULL_SCALE
+    from rps7200.direct import CLIP_START, FULL_SCALE
     assert EXPOSURE_TARGET <= CLIP_START / FULL_SCALE, (
-        "metering must not aim above the level bracket.py stops trusting"
+        "metering must not aim above the level a sample stops being trusted"
     )
 
 
@@ -528,7 +528,7 @@ def test_a_bw_scan_no_longer_blows_its_blue_channel():
     landed = min(1.0, 6506 * scales[2] / 65535.0 * 0.58) * measured_bw_ratio
     assert landed < 1.0, f"blue still clips, landing at {landed:.0%}"
     assert landed < CLIP_START / FULL_SCALE, (
-        f"blue lands at {landed:.0%}, past the knee bracket.py stops trusting"
+        f"blue lands at {landed:.0%}, past the knee at CLIP_START"
     )
 
 
@@ -578,7 +578,7 @@ def test_metering_will_not_stop_above_the_target():
 
     This was `abs(level - target) <= tolerance`. At the old target of 0.70 that
     accepted 0.78 and was harmless; raising the target to 0.80 moved the top of
-    the band to 0.88, past the knee bracket.py stops trusting -- and a real B&W
+    the band to 0.88, past the knee at CLIP_START -- and a real B&W
     frame landed at 87% with samples at the rail.
     """
     # A film bright enough that one proportional step overshoots.
@@ -593,7 +593,7 @@ def test_metering_will_not_stop_above_the_target():
 
 
 def test_the_band_above_the_target_stays_under_the_knee():
-    from rps7200.bracket import CLIP_START, FULL_SCALE
+    from rps7200.direct import CLIP_START, FULL_SCALE
     assert EXPOSURE_TARGET + OVER_TARGET_TOLERANCE <= CLIP_START / FULL_SCALE + 0.02
     assert OVER_TARGET_TOLERANCE < 0.08, (
         "the band above the target must be tighter than the one below it"

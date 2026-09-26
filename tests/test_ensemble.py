@@ -85,9 +85,10 @@ def test_two_members_that_disagree_move_nothing():
 
 
 def test_an_agreeing_pair_is_never_averaged():
-    """`bracket.py:355` settled this for exposures: where sources conflict, the
-    single most-trusted one wins and nothing is blended. The mean of 0.30 and
-    0.45 is 0.375, a distance neither detector measured."""
+    """The bracket merge (archived, docs/multi-exposure/) settled this for
+    exposures: where sources conflict, the single most-trusted one wins and
+    nothing is blended. The mean of 0.30 and 0.45 is 0.375, a distance neither
+    detector measured."""
     decision, _d = combine([reading(0.30, 0.9), reading(0.45, 0.4, "prior")])
     assert decision == pytest.approx(0.30)
 

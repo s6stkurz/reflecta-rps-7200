@@ -235,7 +235,7 @@ B move. This scanner's own power-on baseline reads `9604-6506-6506-7745`: 7745 i
 device default and CyberView never touches it.
 
 (B swinging 65151 → 4872 between passes is the 16-bit timer wrapping, which
-`multi-exposure-plan.md` already documents.)
+`multi-exposure/plan.md` already documents.)
 
 `auto_exposure` already did all of this, and reading it carelessly cost a roll. Its
 `infrared` parameter does **not** choose the probe — the docstring says so outright:

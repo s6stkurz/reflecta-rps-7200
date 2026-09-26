@@ -51,9 +51,9 @@ correlates too -- so prefer the cross-frame test when a second frame exists.
 
 **Only the random part.** Two scans at one exposure differ solely by what is
 random per pass; grain, detail and fixed pattern cancel -- **once the two are
-registered** (`rps7200.passes.register_passes`). Unregistered, the difference
-also holds the grain shifted against itself, and "random" comes out inflated:
-a x4 repeat pair 2.3 lines apart read a random share of 334%.
+registered** (`docs/multi-exposure/code/passes.py`, archived). Unregistered,
+the difference also holds the grain shifted against itself, and "random" comes
+out inflated: a x4 repeat pair 2.3 lines apart read a random share of 334%.
 
     rnd, total, share = noise_split(repeat_a, repeat_b, mask)
 
@@ -67,14 +67,16 @@ scanner time**, because it decides whether the experiment can succeed at all:
     ceiling(rnd, total, n_passes)     # -3.5% at 1800 dpi, -13 to -22% at 3600
 
 A 25-minute bracket was run to confirm a ceiling a 4-minute repeat pair had
-already given.
+already given. And a ceiling is not a verdict: the -3% to -7% that registered
+merging actually reached at 3600 dpi was invisible side by side at 100%, which
+is why the whole study is archived (`docs/multi-exposure/`).
 
 ## Comparing scans taken at different exposures
 
 **Solve the relation from the pixels; never trust the commanded exposure.** At a
 requested x4.000 the fitted slope was 3.828 with a 1279 DN intercept.
 
-    slope, intercept = solve_relation(a, b)    # from rps7200.bracket
+    slope, intercept = solve_relation(a, b)    # metrics.py, per channel
 
 Then agreement in sigma, not DN -- an absolute threshold means different things
 at different exposures:
@@ -86,8 +88,8 @@ passes before comparing them.** This file used to say agreement "holds to about
 x1.7 and collapses by x3.7" -- it was the carriage, not the exposure. The
 bracket was shot in ascending order and the passes drifted 2.4 lines over it;
 registered, its x3.84 pass agrees at 1.30 where unregistered it read 5.65, and
-the x4 pass of a three-pass run sits 0.1 line from its first. `tools/library.py
-merge` prints both, before and after.
+the x4 pass of a three-pass run sits 0.1 line from its first.
+`docs/multi-exposure/analysis/merge_library.py` prints both, before and after.
 
 And compare noise **on one scale**. `relative_noise` divides by the mean, and a
 longer pass's mean carries the offset `solve_relation` finds (377 DN in green at

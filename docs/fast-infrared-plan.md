@@ -201,7 +201,7 @@ protocol change; the floor is the whole point.
 **Do R, G and B survive?** The bit is documented as affecting the infrared plane,
 but it lives in a field that governs the whole pass. `agreement_z` on an off/off
 pair is the control — the same pair-at-one-exposure comparison that gives **1.03**
-in `docs/multi-exposure-plan.md` — and `agreement_z` on an off/on pair is the
+in `docs/multi-exposure/plan.md` — and `agreement_z` on an off/on pair is the
 test. If the picture degrades at all, the answer is no and nothing else matters.
 This driver does not trade delivered image quality for time.
 

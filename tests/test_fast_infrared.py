@@ -172,7 +172,7 @@ def metered_transport() -> FakeTransport:
     """A fake that can answer `get_gain_offset`, which every real pass reads.
 
     The exposures are the device's own reference values, descending per channel
-    so that a bracket's ceiling calculation has something to bind on.
+    so that a ceiling calculation has something to bind on.
     """
     blob = bytearray(123)
     for i, offset in enumerate((60, 62, 64, 66)):
@@ -234,42 +234,3 @@ def test_asking_for_the_untied_pass_is_still_honoured():
     quality = quality_scan_sends(resolution=600, infrared=True,
                                  fast_infrared=False)
     assert not quality & QUALITY_FAST_INFRARED
-
-
-def test_the_bracket_can_be_told_which_infrared_pass_to_take():
-    """`scan_bracket` had no `fast_infrared` parameter at all, so
-    `tools/scan.py` parsed `--no-fast-ir`, set it, and then did not pass it on
-    this path -- the bracket ran tied whatever was asked for, silently.
-
-    It matters more than a dropped flag usually would: below 1800 dpi the tied
-    pass's quality is waived rather than measured, which makes the flag the
-    escape hatch from a waiver.
-    """
-    import inspect
-
-    parameter = inspect.signature(DirectScanner.scan_bracket).parameters
-    assert "fast_infrared" in parameter, "the flag cannot reach the bracket"
-    assert parameter["fast_infrared"].default is True
-
-    seen = []
-
-    class Stop(Exception):
-        pass
-
-    s = DirectScanner(transport=metered_transport())
-    s.verbose = False
-
-    def spy(**kw):
-        seen.append(kw.get("fast_infrared"))
-        raise Stop
-
-    s.scan = spy
-    for asked in (True, False):
-        seen.clear()
-        try:
-            s.scan_bracket(passes=3, resolution=600, infrared=True,
-                           auto_exposure=False, exposure_scale=[1.0, 1.0, 1.0],
-                           fast_infrared=asked)
-        except Stop:
-            pass
-        assert seen == [asked], f"asked {asked}, forwarded {seen}"

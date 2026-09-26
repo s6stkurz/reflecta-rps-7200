@@ -20,7 +20,8 @@ bit is not evidence, not a new problem.
   clipped), which is expected -- it is pinned at the exposure ceiling by
   design -- and the merge fell back to a lower pass for 32% of pixels rather
   than trusting a clipped sample, which is `bracket.py`'s confidence gate
-  doing its job, not a fault.
+  doing its job, not a fault. (Bracketing was archived on 2026-09-26, with
+  `--bracket`: `docs/multi-exposure/`.)
 - **`tools/scan_roll.py --frames 3 --dpi 600`.** 3 scanned, 0 failed, 5.0 min.
   Confirmed the async writer genuinely overlaps scanning rather than only
   claiming to: the three library entries carry `created` timestamps 93 s and
@@ -539,14 +540,13 @@ bit is not evidence, not a new problem.
   **It cost the multi-exposure study too, the same way.** The nine-pass 3600
   dpi bracket walked 2.4 lines and 0.6 columns from first pass to last, and
   because the ladder is shot in ascending order the drift read as an exposure
-  effect -- "passes stop agreeing as the bracket widens". Registration now
-  exists: `rps7200/passes.py`, sub-pixel and rigid, used by `tools/scan.py
-  --bracket` and `tools/library.py merge`. What a rigid shift leaves is the
-  open part: on that bracket the top and bottom bands still sit -0.25 and +0.17
-  lines off after registering, and a x4 repeat pair -0.31 at the bottom. If
-  that turns out to matter in a merge, the next step is a shift that varies
-  down the frame (pyopticfilm fits one line across row bands); `merge` prints
-  the band residuals that would justify it.
+  effect -- "passes stop agreeing as the bracket widens". Sub-pixel
+  registration was built for it and works; with it, merging passes gains
+  2-7% shadow noise, which is not visible, so the whole study was archived in
+  `docs/multi-exposure/` (code, tests, analysis scripts). What a rigid shift
+  leaves is still worth knowing if anything ever compares passes pixel by pixel
+  again: the top and bottom bands of that bracket sit -0.25 and +0.17 lines off
+  after registering, and a x4 repeat pair -0.31 at the bottom.
 
 - **Filing a roll compresses while the device is open.** `FrameWriter` gzips
   each frame on its own thread while the next one scans, which is what keeps a
@@ -637,9 +637,9 @@ driver for Nikon Coolscans:
   simulates a higher exposure on stored raw bytes and runs the real shading
   correction over it: clipping permits well past 0.90 (worst case 0.001% of blue
   at 0.80 over six entries and four frames), but the sensor compresses 1.5-1.9%
-  above 75% of scale, so linearity binds before clipping does. 0.80 also matches
-  `bracket.py`'s `CLIP_START`, so metering no longer aims where another module
-  declines to follow. See `EXPOSURE_TARGET` in `rps7200/direct.py`.
+  above 75% of scale, so linearity binds before clipping does. 0.80 is also
+  `CLIP_START`, the knee above which a sample is not trusted as linear. See
+  `EXPOSURE_TARGET` and `CLIP_START` in `rps7200/direct.py`.
 
   What that change *cost*, and is worth remembering: the acceptance band was
   `abs(level - target) <= 0.08`, which at 0.70 topped out at 0.78 and was

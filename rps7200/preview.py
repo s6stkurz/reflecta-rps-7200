@@ -458,8 +458,8 @@ def _step(height: int, width: int, max_side: int) -> int:
 def downscale(image: np.ndarray, max_side: int) -> np.ndarray:
     """Strided decimation to a bounded long side, aspect preserved.
 
-    Plain `[::s, ::s]`, as `rps7200.bracket._subsample` already does for its
-    statistics. Not an area average: this is for looking at, and a decimated
+    Plain `[::s, ::s]`, as the archived bracket merge's `_subsample` did for
+    its statistics (docs/multi-exposure/). Not an area average: this is for looking at, and a decimated
     view that aliases is honest about grain where a smoothed one invents a
     cleanliness the file does not have.
     """

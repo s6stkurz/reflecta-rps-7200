@@ -7,10 +7,16 @@ round the edge and fight the window, which is why `test_uniformity.py` builds
 its shifts from overlapping crops; this builds them from the coordinates.
 """
 
-import numpy as np
-import pytest
+import sys
+from pathlib import Path
 
-from rps7200.passes import (
+# The archived modules are files beside this folder, not a package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "code"))
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+
+from passes import (  # noqa: E402
     EDGE_MARGIN_PX,
     SEARCH_PX,
     band_residuals,
@@ -18,7 +24,7 @@ from rps7200.passes import (
     register_subpixel,
     shift_image,
 )
-from rps7200.uniformity import register
+from rps7200.uniformity import register  # noqa: E402
 
 H, W = 256, 320
 

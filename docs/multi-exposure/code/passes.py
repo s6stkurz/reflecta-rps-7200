@@ -20,7 +20,7 @@ Two decisions carry the design:
 - **Sub-pixel, by evaluating the phase-correlation spectrum between its
   samples** (:func:`register_subpixel`), not by fitting a parabola to the
   sampled peak, which biases toward whole pixels. The integer peak comes from
-  the same surface :func:`rps7200.uniformity.register` searches.
+  the same kind of surface :func:`rps7200.uniformity.register` searches.
 - **Shift by the Fourier theorem, never by interpolation** (:func:`shift_image`).
   A phase ramp moves every frequency and attenuates none, so a shifted pass
   keeps exactly the noise it had. Bilinear or cubic resampling smooths noise,
@@ -45,8 +45,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .bracket import CLIP_START, SNR_FLOOR
-from .uniformity import cross_power
+from bracket import CLIP_START, SNR_FLOOR
 
 #: Furthest a pass is searched from its reference, in pixels, either axis. The
 #: largest pass-to-pass offset recorded here is 16 columns at 3600 dpi; this
@@ -84,6 +83,35 @@ CONFIDENCE_FLOOR = 12.0
 #: against a median of 4 -- and one shift is about half a round trip. Inside
 #: this margin a merged frame speaks with the reference's voice alone.
 EDGE_MARGIN_PX = 32
+
+
+def cross_power(fa: np.ndarray, fb: np.ndarray, *, drop_axes: bool = False) -> np.ndarray:
+    """The normalised cross-power spectrum of two equal-sized planes.
+
+    Half-spectrum (``rfft2`` layout), in the sign convention of
+    `rps7200.uniformity.register`, whose FFT core this repeats. A sub-pixel
+    peak is found by evaluating this spectrum's inverse at fractional
+    positions, which a sampled surface cannot give.
+
+    ``drop_axes`` zeroes the spatial frequencies within one bin of either axis
+    before normalising. Two passes through one sensor share its residual
+    column pattern -- constant down the frame, so all of its energy sits on
+    the ``ky = 0`` line (and ``ky = +-1`` once the window has spread it) -- and
+    that shared pattern is a copy of itself at zero shift, which pulls the peak
+    toward ``dx = 0`` whatever the film did.
+    """
+    h, w = fa.shape
+    fa = fa - fa.mean()
+    fb = fb - fb.mean()
+    # Hann window: the FFT treats the frame as periodic, so an un-windowed
+    # frame's opposite edges act like a hard seam and can outrank the target.
+    win = np.hanning(h)[:, None] * np.hanning(w)[None, :]
+    cross = np.fft.rfft2(fa * win) * np.conj(np.fft.rfft2(fb * win))
+    if drop_axes:
+        cross[[0, 1, -1], :] = 0.0             # ky = 0, +-1: column pattern
+        cross[:, :2] = 0.0                     # kx = 0, 1: row pattern
+    mag = np.abs(cross)
+    return cross / np.where(mag > 0, mag, 1.0)
 
 
 @dataclass(frozen=True)
