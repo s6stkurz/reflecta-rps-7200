@@ -108,7 +108,7 @@ except ImportError:  # pragma: no cover
 #: sixth of the height still owns two bands.
 N_BANDS = 12
 
-#: A gap is at most this many columns wide. `docs/frame-measurement-plan.md`:
+#: A gap is at most this many columns wide. The old frame-measurement-plan.md:
 #: the gap must exceed 21.7 units (27 columns) for the frame to fit, flat core
 #: 15.2 units (19 columns). 34 leaves room for tilt and a soft edge; a base-level
 #: run from the border wider than this is not all base.

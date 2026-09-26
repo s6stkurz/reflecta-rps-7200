@@ -877,7 +877,7 @@ SEARCH_MM = 9.0
 #: spectrum rather than the look of the texture. The failure mode is a
 #: collapse, not a lie: as content fades the score falls smoothly past this
 #: floor while the answer is still right, so a wrong-and-confident match has
-#: no regime to live in. See `docs/registration-confidence-plan.md`, and
+#: no regime to live in. See `docs/frame-adjustment-findings.md`, and
 #: re-run `tools/registration_margin.py` after any change to `register`, the
 #: prescan resolution or :data:`SEARCH_MM` -- each moves the scale.
 CONFIDENCE_FLOOR = 55.0
@@ -1943,7 +1943,7 @@ PRESCAN_COLUMNS = 428.0
 
 #: Gap to gap along the strip, in units: tracked across twelve commands and
 #: four gaps entering and leaving on walk K (455, 454, 455 px; see
-#: `docs/frame-measurement-plan.md`). The frame-edge detector's gap model
+#: `docs/frame-adjustment-findings.md`). The frame-edge detector's gap model
 #: (`tools/frame_edges/gapmodel.py`) places a frame's far edge through it.
 PITCH_UNITS = 366.5
 

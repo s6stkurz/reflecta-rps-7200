@@ -583,7 +583,7 @@ driver reports it and lets the scanner refuse rather than gating on it.
 it, using the same contrast the metering crop relies on. Across 3850 pairs no wrong match
 ever beat a confidence of 55, and the weakest right match scored 54.9, which is where the
 floor sits. Seventeen slides showed no drift at all: every reading fell inside the
-aperture's own 0.49 mm of slack. See `docs/registration-confidence-plan.md`.
+aperture's own 0.49 mm of slack. See `docs/frame-adjustment-findings.md`.
 
 ## Scanner details
 
@@ -621,7 +621,8 @@ before proposing it again.
 | `dpi-tradeoff-plan.md` | Which resolution is worth it, measured by aliasing at each pass's Nyquist | shipped |
 | `tiff-compression-plan.md` | Lossless deflate plus horizontal predictor, pixels verified identical | shipped |
 | `whole-roll-plan.md` | Driving the transport for a whole roll, and hunting phantom drift | shipped |
-| `registration-confidence-plan.md` | Can frame-finding be confidently wrong on self-similar frames? | shipped |
+| `frame-adjustment-code.md` | How the automatic frame adjustment is implemented: walk, edge detector, approval, hold loop | reference |
+| `frame-adjustment-findings.md` | What the frame adjustment rests on: the transport law, the film, the edge study, the confidence floor | reference |
 | `7200dpi-plan.md` | Why 7200 dpi cannot be shading-corrected, and the even/odd column stagger fix | mixed |
 | `multi-exposure/` | Bracketing, multi-pass averaging and pass registration: built, measured, archived | **rejected** |
 | `analog-gain-plan.md` | Is the gain field analog? A five-rung blue ladder answers | **rejected** |
