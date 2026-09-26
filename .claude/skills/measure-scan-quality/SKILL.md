@@ -50,16 +50,21 @@ correlates too -- so prefer the cross-frame test when a second frame exists.
 ## Noise: what can actually be removed
 
 **Only the random part.** Two scans at one exposure differ solely by what is
-random per pass; grain, detail and fixed pattern cancel:
+random per pass; grain, detail and fixed pattern cancel -- **once the two are
+registered** (`rps7200.passes.register_passes`). Unregistered, the difference
+also holds the grain shifted against itself, and "random" comes out inflated:
+a x4 repeat pair 2.3 lines apart read a random share of 334%.
 
     rnd, total, share = noise_split(repeat_a, repeat_b, mask)
 
-Measured on a slide here the random share was 21% at 300 dpi and 27% at 1800 --
-so three quarters of what looks like shadow noise is grain, and the ceiling on
-*any* multi-pass method was about -3.5%. **Compute this ceiling before spending
+The share depends on resolution. On a slide it was 21% at 300 dpi and 27% at
+1800, a ceiling of about -3.5% on *any* multi-pass method -- but 53-66% at 3600
+dpi on registered pairs, a ceiling of -13% to -22% for nine passes, where a pair
+of registered repeats achieved -1.6% to -5.6% against the better of the two.
+**Compute this ceiling at the resolution you mean to use, before spending
 scanner time**, because it decides whether the experiment can succeed at all:
 
-    ceiling(rnd, total, n_passes)     # e.g. -3.5% for n=9
+    ceiling(rnd, total, n_passes)     # -3.5% at 1800 dpi, -13 to -22% at 3600
 
 A 25-minute bracket was run to confirm a ceiling a 4-minute repeat pair had
 already given.
@@ -76,8 +81,18 @@ at different exposures:
 
     agreement_z(a, b, mask)     # median |z|; two repeats give ~1.03
 
-Anything near the repeat baseline is consistent with noise. On this scanner
-agreement holds to about x1.7 and collapses by x3.7.
+Anything near the repeat baseline is consistent with noise. **Register the
+passes before comparing them.** This file used to say agreement "holds to about
+x1.7 and collapses by x3.7" -- it was the carriage, not the exposure. The
+bracket was shot in ascending order and the passes drifted 2.4 lines over it;
+registered, its x3.84 pass agrees at 1.30 where unregistered it read 5.65, and
+the x4 pass of a three-pass run sits 0.1 line from its first. `tools/library.py
+merge` prints both, before and after.
+
+And compare noise **on one scale**. `relative_noise` divides by the mean, and a
+longer pass's mean carries the offset `solve_relation` finds (377 DN in green at
+x4), so on its own scale it reads a few percent quieter than it is. Scale every
+candidate onto the reference with the per-channel fit first.
 
 ## Rules that cost something to learn
 

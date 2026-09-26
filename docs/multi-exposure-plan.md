@@ -1,6 +1,90 @@
 # Multi-exposure: N-bracket capture and merge, in this driver
 
-## Status: measured on real film, and the hardware will not support it
+## Status (2026-09-26): the verdict below was the carriage, not the hardware
+
+The section after this one concluded that the hardware will not support
+multi-exposure. Its second finding -- passes stop agreeing as the bracket
+widens -- was **pass-to-pass drift**, and its merge had three faults of its own.
+Re-measured from the same stored passes, with today's correction:
+
+- **The passes were never registered.** The carriage lands somewhere slightly
+  different for every pass (TODO.md). Across the nine-pass bracket it walked
+  2.45 lines and 0.60 columns, and the ladder is shot in ascending order, so the
+  drift grew along with the exposure and read as an exposure effect.
+  - The three-pass run's x4 pass sits only 0.12 line from its first.
+  - The same x4 exposure in the two runs is 2.3 lines apart.
+  - It is how many passes came before, not the exposure.
+- **Registered, the passes agree like repeats.** Median |z| against the first
+  pass, by pass:
+
+  ```
+  exposure ratio     x1.19  x1.41  x1.68  x2.00  x2.38  x2.83  x3.36  x3.84
+  unregistered        0.95   1.02   1.07   1.18   1.45   1.96   2.59   5.65
+  registered          0.92   0.95   0.99   1.02   1.07   1.13   1.18   1.29
+  ```
+
+  The repeat baseline is 1.03. `rps7200/passes.py` does the registration: sub-pixel phase
+  correlation, with the shift applied as a Fourier phase ramp so no pass's
+  noise is smoothed.
+- **The merge compared clipped channels.**
+  - Its bias estimate took a whole-frame median over pixels where red was at
+    the rail, 83% of the longest pass. It came out at +22.5 sigma, and
+    subtracting it put every properly exposed shadow 22 sigma *out*.
+  - The gate then took the whole shadow region from a single pass.
+  - Passes are now compared only on the channels both measured.
+- **Its fallback was the noisiest pass.** Where the guard fired, the pixel came
+  from `frames[0]`, the shortest exposure. The per-channel choice elsewhere
+  picked the lowest draw, a bias toward black: −118 DN among five repeats in
+  the test that now pins it. Both now take the pass *expected* to be quietest,
+  whole.
+- **One exposure relation served all three channels.** At x4, green fits
+  slope 3.84 / offset 377 and blue 3.90 / 168. Green's fit applied to blue
+  made the merged blue noisier than any single pass. Each channel is now
+  fitted on its own.
+
+Merged against a single pass, shadow noise on the reference's scale
+(`tools/library.py merge`, darkest tenth, measured inside a 40 px border):
+
+```
+                                  vs middle pass   vs best single pass
+nine-pass bracket, as it was          +75%              --
+nine-pass, fixed merge, unregistered  +2.5%            +2.5%
+nine-pass, registered                 -7.0%            -3.1%
+three-pass, registered                -4.8%            -1.5%
+repeat pair at x1, registered         -7.4%            -5.6%
+repeat pair at x2, registered         -4.7%            -2.8%
+repeat pair at x4, registered         -2.9%            -1.6%
+```
+
+**The first finding holds only below 3600 dpi.** The random share of shadow
+noise, from registered repeat pairs at 3600 dpi:
+- 53-66%, where it was 21% at 300 dpi and 27% at 1800.
+- The ceiling on nine passes is then −13 to −22%, not −3.5%.
+- Unregistered, the "random" part also held grain shifted against itself: a x4
+  pair 2.3 lines apart read a random share of 334%.
+
+**What this does not settle.**
+- **The noise model.** It is still the default α = 1, β = 4096. A registered
+  repeat pair fits α ≈ 4-5 in corrected DN, which is why the repeat baseline
+  is 1.03 rather than 0.67. The gate therefore still distrusts ~12% of the
+  nine-pass frame; with α = 4 it recovers a little, −3.1% against −2.7%.
+  Fitting it from repeats is the next step.
+- **What a rigid shift leaves.** The top and bottom bands of the nine-pass
+  bracket sit −0.25 and +0.17 lines off after registering; see TODO.md.
+- **Which frames are dense enough to need this.** Both frames are one slide;
+  a dense negative is the case that decides whether any of this is worth
+  scanner time.
+- **Stefan's eye.** `merge_1_single_pass.tif`, `merge_2_unregistered.tif`,
+  `merge_3_registered.tif` and `previews/merge_crops.png` hold 100% crops.
+
+Everything above re-runs offline from the library:
+
+    uv run python tools/library.py merge --tag bracket-3600x9 [--no-register]
+
+## Earlier status: measured on real film, and the hardware will not support it
+
+*Superseded by the section above. Kept because its numbers are the unregistered
+ones the new section corrects.*
 
 The merge is built and tested, the capture works, and the exposure ladder is
 accurate to 1.5%. Multi-exposure still does not work on this scanner, for two

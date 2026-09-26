@@ -44,7 +44,7 @@ from rps7200 import library, tiff
 from rps7200.console import use_utf8_stdout
 from rps7200.framing import CONFIDENCE_FLOOR, MAX_DY_PX, SEARCH_MM
 from rps7200.protocol import MM_PER_INCH
-from rps7200.uniformity import luminance, register
+from rps7200.uniformity import luminance, phase_surface, register
 
 #: Correlation of two frames aligned at the lag `register` chose. The arbiter.
 #:
@@ -78,19 +78,14 @@ def reach_px(dpi: int) -> int:
 def surface(a: np.ndarray, b: np.ndarray, reach: int) -> np.ndarray:
     """`register`'s searched window, which it computes and discards.
 
-    Duplicated rather than returned from `register`, whose signature has a
-    dozen callers; this tool is the only thing that wants the whole surface.
-    Kept line-for-line with `uniformity.register` -- if that changes, this must.
+    `register`'s signature has a dozen callers, so it does not return the
+    surface; both compute it with `uniformity.phase_surface`, which is what
+    keeps this window identical to the one `register` searched.
     """
     fa, fb = luminance(a), luminance(b)
     h = min(fa.shape[0], fb.shape[0])
     w = min(fa.shape[1], fb.shape[1])
-    fa, fb = fa[:h, :w] , fb[:h, :w]
-    fa, fb = fa - fa.mean(), fb - fb.mean()
-    win = np.hanning(h)[:, None] * np.hanning(w)[None, :]
-    cross = np.fft.rfft2(fa * win) * np.conj(np.fft.rfft2(fb * win))
-    mag = np.abs(cross)
-    surf = np.fft.irfft2(cross / np.where(mag > 0, mag, 1.0), s=(h, w))
+    surf = phase_surface(fa[:h, :w], fb[:h, :w])
     ry, rx = min(reach, h // 2), min(reach, w // 2)
     ys = [dy % h for dy in range(-ry, ry + 1)]
     xs = [dx % w for dx in range(-rx, rx + 1)]

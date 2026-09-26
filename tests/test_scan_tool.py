@@ -176,6 +176,34 @@ def test_the_merge_is_recorded_in_the_sidecar(tmp_path, monkeypatch):
     assert len(meta["bracket"]["ratios"]) == 3
 
 
+def test_the_passes_are_registered_before_they_are_merged(tmp_path, monkeypatch):
+    """Each pass lands where the carriage put it -- here 0.8 lines further on
+    per pass -- and the merge has to undo that first."""
+    import json
+
+    from test_passes import as_pass, texture
+
+    original = FakeBracketScanner.scan
+
+    def textured(self, resolution=300, infrared=False, exposure_scale=1.0, **kw):
+        _, meta = original(self, resolution, infrared, exposure_scale, **kw)
+        k = len(self.scans)
+        n = 4 if infrared else 3
+        image = as_pass(texture(128, 160, dy=-0.8 * (k - 1), level=3000.0), seed=k)
+        if n == 4:
+            image = np.dstack([image, image[..., 1]])
+        return image, meta
+
+    monkeypatch.setattr(FakeBracketScanner, "scan", textured)
+    run(tmp_path, monkeypatch, "--bracket", "3")
+    meta = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    shifts = meta["bracket"]["shifts"]
+    assert [s["refused"] for s in shifts] == [None, None, None]
+    # a 128 x 160 frame registers to about a tenth of a pixel
+    for s, want in zip(shifts, [0.0, -0.8, -1.6]):
+        assert abs(s["dy"] - want) < 0.15, shifts
+
+
 def test_no_library_files_nothing_but_still_writes_the_scan(tmp_path, monkeypatch):
     patch_scanner(monkeypatch)
     monkeypatch.setattr(

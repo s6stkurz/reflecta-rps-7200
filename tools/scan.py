@@ -247,21 +247,35 @@ def main() -> int:
 
     if bracket is not None:
         from rps7200.bracket import merge_bracket
+        from rps7200.passes import register_passes, shift_image
 
         frames, ratios, metas = bracket
         # Merge the visible channels only: with --ir the brightest pass is RGBI
         # and the rest RGB, so the frames do not share a channel count.
-        merged, stats = merge_bracket([f[..., :3] for f in frames], ratios)
+        #
+        # Registered first: the carriage lands somewhere slightly different for
+        # every pass, 2.4 lines across the library's nine-pass bracket, and an
+        # unregistered merge of that came out 75% noisier than one pass.
+        aligned, valid, shifts = register_passes([f[..., :3] for f in frames])
+        for i, s in enumerate(shifts[1:], 1):
+            print(f"bracket pass {i + 1}: " + (
+                f"dy {s.dy:+.2f} dx {s.dx:+.2f}" if s.ok else f"left out -- {s.reason}"))
+        merged, stats = merge_bracket(aligned, ratios, valid=valid)
         print(f"bracket: {stats.describe()}")
         if args.ir and frames[-1].shape[2] == 4:
-            # The infrared pass is the brightest; carry its plane through.
-            image = np.dstack([merged, frames[-1][..., 3]])
+            # The infrared pass is the brightest; carry its plane through, moved
+            # with the visible channels of the same pass.
+            ir, last = frames[-1][..., 3], shifts[-1]
+            if last.ok:
+                ir, _ = shift_image(ir, last.dy, last.dx)
+            image = np.dstack([merged, ir])
         else:
             image = merged
         meta = dict(metas[-1])
         meta["bracket"] = {
             "passes": len(frames), "ratios": ratios,
             "stops": args.stops, "stats": stats.describe(),
+            "shifts": [{"dy": s.dy, "dx": s.dx, "refused": s.reason} for s in shifts],
         }
 
     out = Path(args.out)

@@ -536,6 +536,18 @@ bit is not evidence, not a new problem.
   into families does not help when the drift correlates with the variable.
   Unmeasured: whether it also moves with bit 0 set, and whether it saturates.
 
+  **It cost the multi-exposure study too, the same way.** The nine-pass 3600
+  dpi bracket walked 2.4 lines and 0.6 columns from first pass to last, and
+  because the ladder is shot in ascending order the drift read as an exposure
+  effect -- "passes stop agreeing as the bracket widens". Registration now
+  exists: `rps7200/passes.py`, sub-pixel and rigid, used by `tools/scan.py
+  --bracket` and `tools/library.py merge`. What a rigid shift leaves is the
+  open part: on that bracket the top and bottom bands still sit -0.25 and +0.17
+  lines off after registering, and a x4 repeat pair -0.31 at the bottom. If
+  that turns out to matter in a merge, the next step is a shift that varies
+  down the frame (pyopticfilm fits one line across row bands); `merge` prints
+  the band residuals that would justify it.
+
 - **Filing a roll compresses while the device is open.** `FrameWriter` gzips
   each frame on its own thread while the next one scans, which is what keeps a
   38-frame roll from ending in an eleven-minute wait. CLAUDE.md's warning is
