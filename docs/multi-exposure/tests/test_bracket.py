@@ -5,12 +5,19 @@ only worth its scan time if it beats the best single pass, and beats plain
 averaging of the same number of passes -- so those are measured, not assumed.
 """
 
-import numpy as np
-import pytest
+import sys
+from pathlib import Path
 
-from rps7200.bracket import (
+# The archived modules are files beside this folder, not a package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "code"))
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+
+from bracket import (  # noqa: E402
     DEFAULT_ALPHA,
     DEFAULT_BETA,
+    CLIP_START,
     FULL_SCALE,
     confidence,
     fit_noise_params,
@@ -57,7 +64,7 @@ def pairwise_merge(short, long, r, offset=0.0, alpha=DEFAULT_ALPHA, beta=DEFAULT
     # confidence reads the raw sample -- saturation is a property of what the
     # sensor returned -- and the offset is removed only for the arithmetic
     ca, cb = confidence(a), confidence(b)
-    b = b - np.float32(offset)
+    b = b - np.asarray(offset, dtype=np.float32)
     xa, xb = a, b / r
     va = alpha * np.maximum(xa, 0.0) + beta
     vb = (alpha * np.maximum(b, 0.0) + beta) / (r * r)
@@ -73,15 +80,27 @@ def test_two_frames_reduce_to_the_pairwise_formula():
     merged, stats = merge_bracket([short, long], [1.0, 2.5])
 
     # The merge solves the relation between the passes rather than trusting the
-    # commanded ratio, so the reference formula must use the same solved one --
-    # otherwise this compares two different exposure models, not two mergers.
-    from rps7200.bracket import solve_relation
-    slope, intercept = solve_relation(short[..., 1], long[..., 1])
+    # commanded ratio -- per channel -- so the reference formula must use the
+    # same solved ones, or this compares two exposure models, not two mergers.
+    from bracket import solve_relation
+    fits = [solve_relation(short[..., c], long[..., c]) for c in range(3)]
+    slope = np.array([f[0] for f in fits], dtype=np.float32)
+    intercept = np.array([f[1] for f in fits], dtype=np.float32)
     expected = pairwise_merge(short, long, slope, intercept)
-    # Where the residual gate and the misalignment guard are inactive -- which
-    # is everywhere for two well-registered frames -- the merge IS the IVW blend.
-    assert stats.reference_fallback_fraction < 1e-6
-    assert np.allclose(merged, np.clip(expected, 0, FULL_SCALE).astype(np.uint16), atol=1)
+    # Where the residual gate and the misalignment guard are inactive the merge
+    # IS the IVW blend. For two well-registered frames that is everywhere every
+    # channel is measured in both; where only one channel is -- the rest in the
+    # noise -- the gate judges on that channel alone, and an ordinary 3-sigma
+    # draw there can move a pixel by a few DN.
+    assert stats.fallback_fraction < 1e-6
+    expected = np.clip(expected, 0, FULL_SCALE).astype(np.uint16)
+    measured = (confidence(short.astype(np.float32)) >= 1.0).all(axis=2) & (
+        confidence(long.astype(np.float32)) >= 1.0
+    ).all(axis=2)
+    assert measured.mean() > 0.5
+    assert np.allclose(merged[measured], expected[measured], atol=1)
+    off = np.abs(merged.astype(np.int64) - expected) > 1
+    assert off.mean() < 1e-3
 
 
 # --- 2. the merge must beat the passes it merges ----------------------------
@@ -100,7 +119,7 @@ def test_merge_beats_every_single_pass():
 
 
 def test_more_exposures_help_more():
-    """The direction TobbyTravel measured: 5 brackets beat 2."""
+    """The direction pyopticfilm's contributors measured: 5 brackets beat 2."""
     truth = scene()
     results = {}
     for n in (2, 5, 9):
@@ -193,6 +212,99 @@ def test_a_shifted_pass_does_not_produce_colour_fringes(shift):
     )
 
 
+# --- 5. where the merge falls back, and on what -----------------------------
+
+def distrust_everything(monkeypatch):
+    """Make the residual gate and the guard fire on every pixel, so the output
+    is the fallback alone and can be judged on its own."""
+    import bracket
+    monkeypatch.setattr(bracket, "Z_LO", -2.0)
+    monkeypatch.setattr(bracket, "Z_HI", -1.0)
+    monkeypatch.setattr(bracket, "MISALIGN_SIGMA", -1.0)
+    monkeypatch.setattr(bracket, "CHANNEL_SPREAD_TAU", -1.0)
+
+
+def test_the_fallback_is_the_quietest_pass_not_the_reference(monkeypatch):
+    """It used to be `frames[0]`: the shortest exposure, so the noisiest. On
+    the library's registered nine-pass bracket that alone made the merge 7%
+    noisier than one of its own passes."""
+    distrust_everything(monkeypatch)
+    truth = scene()
+    short, long = expose(truth, 1.0), expose(truth, 4.0)
+    merged, stats = merge_bracket([short, long], [1.0, 4.0])
+    assert stats.fallback_fraction > 0.99
+    # where the long pass is not clipped, the fallback is the long pass
+    unclipped = (long < 0.8 * FULL_SCALE).all(axis=2)
+    got = rms_vs_truth(merged[unclipped], truth[unclipped], 1.0)
+    assert got < rms_vs_truth(short[unclipped], truth[unclipped], 1.0) * 0.6
+
+
+def test_the_fallback_among_repeats_does_not_pick_the_darkest_draw(monkeypatch):
+    """Choosing by each pass's own weight picks, per pixel, the sample that
+    happens to be lowest -- its variance model says it is the quietest. Among
+    repeats that is a bias toward black wherever the residual gate fires."""
+    import bracket
+    monkeypatch.setattr(bracket, "Z_LO", -2.0)             # the gate alone:
+    monkeypatch.setattr(bracket, "Z_HI", -1.0)             # the guard stays off
+    truth = scene()
+    frames = [expose(truth, 1.0) for _ in range(5)]
+    merged, _ = merge_bracket(frames, [1.0] * 5)
+    lit = truth[..., 1] > 2000
+    bias = float(np.mean(merged[..., 1][lit].astype(np.float64) - truth[..., 1][lit]))
+    sigma = float(np.sqrt(np.mean(DEFAULT_ALPHA * truth[..., 1][lit] + DEFAULT_BETA)))
+    # the minimum of five draws sits ~1.16 sigma low; a fair pick sits at 0
+    assert abs(bias) < 0.2 * sigma, f"bias {bias:.1f} DN against sigma {sigma:.1f}"
+
+
+def test_a_pass_says_nothing_where_its_valid_mask_is_false():
+    """What `register_passes` hands over: the rows a shift uncovered hold no
+    data of that pass's own."""
+    truth = scene()
+    a, b = expose(truth, 1.0), expose(truth, 1.0)
+    b[:, :30] = RNG.integers(0, 65535, b[:, :30].shape, dtype=np.uint16)
+    valid = [np.ones(a.shape[:2], bool), np.ones(a.shape[:2], bool)]
+    valid[1][:, :30] = False
+    merged, _ = merge_bracket([a, b], [1.0, 1.0], valid=valid)
+    assert np.array_equal(merged[:, :30], a[:, :30])
+
+
+def test_valid_masks_must_match_the_frames():
+    a = np.zeros((8, 8, 3), np.uint16)
+    with pytest.raises(ValueError, match="valid"):
+        merge_bracket([a, a], [1.0, 1.0], valid=[np.ones((8, 8), bool)])
+    with pytest.raises(ValueError, match="valid mask 1"):
+        merge_bracket([a, a], [1.0, 1.0], valid=[np.ones((8, 8), bool), np.ones((8, 7), bool)])
+
+
+def test_each_channel_gets_its_own_exposure_relation():
+    """On the library's three-pass bracket blue's relation at x4 is slope 3.90,
+    offset 168 where green's is 3.84, 377. Green's applied to blue made the
+    merged blue noisier than any single pass it was made from."""
+    truth = scene()
+    short = expose(truth, 1.0)
+    long = expose(truth, 4.0).astype(np.float64)
+    long[..., 2] *= 3.90 / 3.84                            # blue's own slope
+    long = np.clip(long, 0, FULL_SCALE).astype(np.uint16)
+    merged, _ = merge_bracket([short, long], [1.0, 4.0])
+    usable = (long < 0.8 * FULL_SCALE).all(axis=2) & (truth[..., 2] > 1000)
+    blue = merged[..., 2][usable].astype(np.float64)
+    # merged blue must be on the short pass's scale, not 1.6% off it
+    assert abs(np.median(blue / truth[..., 2][usable]) - 1.0) < 0.004
+
+
+def test_red_at_the_rail_is_not_read_as_misregistration():
+    """A clipped channel disagrees with the reference by construction. Counted,
+    it put the systematic z of the library's longest pass at +22.5 sigma and
+    the guard then fired on three quarters of a perfectly registered frame."""
+    truth = scene()
+    short = expose(truth, 1.0)
+    long = expose(truth, 20.0)
+    assert (long[..., 0] >= CLIP_START).mean() > 0.3
+    _, stats = merge_bracket([short, long], [1.0, 20.0])
+    assert stats.fallback_fraction < 0.01
+    assert stats.mean_confidence > 0.9
+
+
 # --- the noise model --------------------------------------------------------
 
 def test_noise_params_are_recovered_from_flats():
@@ -215,10 +327,10 @@ def test_too_few_flats_falls_back_to_the_defaults():
 
 class FakeLadder:
     """Just enough DirectScanner to exercise bracket_ladder."""
-    from rps7200.direct import DirectScanner
-    bracket_ladder = DirectScanner.bracket_ladder
-    MIN_BRACKET_PASSES = DirectScanner.MIN_BRACKET_PASSES
-    MAX_BRACKET_PASSES = DirectScanner.MAX_BRACKET_PASSES
+    from scan_bracket import BracketMixin
+    bracket_ladder = BracketMixin.bracket_ladder
+    MIN_BRACKET_PASSES = BracketMixin.MIN_BRACKET_PASSES
+    MAX_BRACKET_PASSES = BracketMixin.MAX_BRACKET_PASSES
 
     def __init__(self, exposure=(9604, 6506, 6506, 7745)):
         from rps7200.direct import Settings
@@ -316,3 +428,51 @@ def test_the_fit_is_not_thrown_by_channels_at_different_levels():
     # change the answer.
     assert a_split == pytest.approx(alpha, rel=0.25)
     assert b_split == pytest.approx(beta, rel=1.0)
+
+
+# --- capture ----------------------------------------------------------------
+
+def test_the_bracket_can_be_told_which_infrared_pass_to_take():
+    """`scan_bracket` had no `fast_infrared` parameter at all, so
+    `tools/scan.py` parsed `--no-fast-ir`, set it, and then did not pass it on
+    this path -- the bracket ran tied whatever was asked for, silently.
+
+    It matters more than a dropped flag usually would: below 1800 dpi the tied
+    pass's quality is waived rather than measured, which makes the flag the
+    escape hatch from a waiver.
+    """
+    import inspect
+
+    from rps7200.direct import DirectScanner
+    from scan_bracket import BracketMixin
+    from test_fast_infrared import metered_transport   # tests/, on pytest's pythonpath
+
+    class Scanner(BracketMixin, DirectScanner):
+        pass
+
+    parameter = inspect.signature(Scanner.scan_bracket).parameters
+    assert "fast_infrared" in parameter, "the flag cannot reach the bracket"
+    assert parameter["fast_infrared"].default is True
+
+    seen = []
+
+    class Stop(Exception):
+        pass
+
+    s = Scanner(transport=metered_transport())
+    s.verbose = False
+
+    def spy(**kw):
+        seen.append(kw.get("fast_infrared"))
+        raise Stop
+
+    s.scan = spy
+    for asked in (True, False):
+        seen.clear()
+        try:
+            s.scan_bracket(passes=3, resolution=600, infrared=True,
+                           auto_exposure=False, exposure_scale=[1.0, 1.0, 1.0],
+                           fast_infrared=asked)
+        except Stop:
+            pass
+        assert seen == [asked], f"asked {asked}, forwarded {seen}"

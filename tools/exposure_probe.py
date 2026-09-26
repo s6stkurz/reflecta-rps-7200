@@ -92,7 +92,7 @@ from rps7200.direct import (                                        # noqa: E402
     CheckCondition,
     DirectScanner,
 )
-from rps7200.bracket import FULL_SCALE                              # noqa: E402
+from rps7200.direct import FULL_SCALE                               # noqa: E402
 from rps7200.framing import metering_slice                          # noqa: E402
 
 #: The linearity chain, as multiples of what metering asked for: x1.2 a step, so

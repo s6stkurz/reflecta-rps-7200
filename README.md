@@ -44,7 +44,7 @@ numpy is the only hard dependency, plus a bundled libusb on Windows, where there
 nowhere conventional for a system one to live. The GUI adds nothing, because Tk ships with
 Python and its `PhotoImage` reads the raw PPM bytes `rps7200.preview` produces. libusb is
 loaded the first time something actually talks to the device, so decoding a stored scan,
-merging a bracket or writing a TIFF works on a machine with no scanner drivers at all.
+correcting it or writing a TIFF works on a machine with no scanner drivers at all.
 `tifffile` is optional and used automatically when present; the built-in TIFF
 reader/writer is complete on its own.
 
@@ -368,9 +368,9 @@ nothing to correlate is left exactly as it came.
 
 The resolution box offers 300, 600, 900, 1200, 1800, 3600 and 7200, and accepts any whole
 number from 25 to 7200 typed in; the device refuses what it dislikes with sense
-`0x26/0x82` before a byte of image data moves. **Bracketing is absent from the window**
-deliberately — see `docs/multi-exposure-plan.md`, which measured it and found it does not
-pay — though `tools/scan.py` still has `--bracket` and `--stops` behind it.
+`0x26/0x82` before a byte of image data moves. **Bracketing and multi-pass averaging are
+absent** deliberately — measured, and the gain is too small to see. The code, tests and
+measurements are archived in `docs/multi-exposure/`.
 
 **It remembers the setup**: resolution, infrared, film, exposure, metering, where files
 go, the window size and the pane widths, from `gui-settings.json` beside the library
@@ -623,7 +623,7 @@ before proposing it again.
 | `whole-roll-plan.md` | Driving the transport for a whole roll, and hunting phantom drift | shipped |
 | `registration-confidence-plan.md` | Can frame-finding be confidently wrong on self-similar frames? | shipped |
 | `7200dpi-plan.md` | Why 7200 dpi cannot be shading-corrected, and the even/odd column stagger fix | mixed |
-| `multi-exposure-plan.md` | N-exposure bracketing and inverse-variance merge, built and measured | **rejected** |
+| `multi-exposure/` | Bracketing, multi-pass averaging and pass registration: built, measured, archived | **rejected** |
 | `analog-gain-plan.md` | Is the gain field analog? A five-rung blue ladder answers | **rejected** |
 | `vignette-plan.md` | Whether this scanner has a vignette, measured by rotating an IT8 | **rejected** |
 | `byte14-plan.md` | Does MODE SELECT byte 14 change the line rate? And the silent row reversal | **rejected** |
@@ -688,7 +688,7 @@ Two pieces of this stand on other people's work:
   distributed — its published source was read as a protocol reference and reimplemented in
   Python. That backend is GPL-2.0-**or-later**, and the "or later" is what makes GPL-3 an
   option; this project takes it, for the patent grant and the clearer terms.
-- `rps7200/bracket.py` adapts the inverse-variance merge from
+- `docs/multi-exposure/code/bracket.py` (archived) adapts the inverse-variance merge from
   [pyopticfilm](https://github.com/jboneng/pyopticfilm)'s `exposure_merge.py`, on its
   `feat/me-n-brackets` branch. The structure is theirs; the noise constants and thresholds
   are ours, measured on this sensor. pyopticfilm is GPL-3.0-or-later, the same licence as

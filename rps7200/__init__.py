@@ -12,7 +12,7 @@ is applied here.
         image, meta = s.scan(resolution=1800, infrared=True)
 
 Nothing above imports libusb until it is used, so decoding a stored scan,
-merging a bracket or writing a TIFF works with no scanner drivers installed.
+correcting it or writing a TIFF works with no scanner drivers installed.
 """
 
 __version__ = "0.1.0"

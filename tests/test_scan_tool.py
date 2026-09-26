@@ -1,21 +1,19 @@
 """The single-scan tool, driven with no scanner underneath.
 
-`tools/scan.py` is the primary way a frame is captured, and it had a NameError
-on every path: `--bracket` and `--stops` were accepted, documented, and wired to
-nothing, and the reference to the missing variable sat *after* the scan and
-*before* the output was written -- so a run burned scanner time, filed the
-entry, and then died without producing the file it was asked for.
+`tools/scan.py` is the primary way a frame is captured, and it once had a
+NameError on every path, sitting *after* the scan and *before* the output was
+written -- so a run burned scanner time, filed the entry, and then died without
+producing the file it was asked for. These hold it to writing what it was asked
+for and filing what the scanner returned.
 
-What these hold it to is the part no hardware run would show quickly: that every
-pass of a bracket is filed, not just the one whose raw bytes happen to survive
-on the scanner.
+Its `--bracket` option and the tests for it were archived with the rest of the
+multi-exposure study in `docs/multi-exposure/`.
 """
 
 import sys
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 
 from conftest import load_tool
 from rps7200.direct import DirectScanner
@@ -23,11 +21,12 @@ from rps7200.direct import DirectScanner
 scan_tool = load_tool("scan")
 
 
-class FakeBracketScanner(DirectScanner):
-    """Answers a scan with a flat frame whose level follows the exposure.
+class FakeScanner(DirectScanner):
+    """Answers a scan with a flat frame whose level follows the pass count.
 
-    Raw bytes are per pass and distinct, which is the property under test: the
-    real scanner overwrites `last_raw` with every pass.
+    Raw bytes are per pass and distinct: the real scanner overwrites `last_raw`
+    with every pass, and a fake that reused them could not tell which one was
+    filed.
     """
 
     def __init__(self):
@@ -83,13 +82,12 @@ class FakeBracketScanner(DirectScanner):
 def patch_scanner(monkeypatch):
     """Swap in the fake, keeping the class itself.
 
-    A lambda would do for constructing one, but the tool reads
-    MIN_BRACKET_PASSES off the class to validate --bracket before opening
-    anything -- so the stand-in has to be a class, not a factory.
+    A class rather than a factory, so that anything the tool reads off
+    `DirectScanner` itself still resolves.
     """
     created = []
 
-    class Patched(FakeBracketScanner):
+    class Patched(FakeScanner):
         def __init__(self, **kw):
             super().__init__()
             created.append(self)
@@ -126,56 +124,6 @@ def test_a_plain_scan_is_filed_once(tmp_path, monkeypatch):
     assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 1
 
 
-# --- the bracket ------------------------------------------------------------
-
-
-def test_a_bracket_takes_the_passes_it_was_asked_for(tmp_path, monkeypatch):
-    scanner, code = run(tmp_path, monkeypatch, "--bracket", "3")
-    assert code == 0
-    assert len(scanner.scans) == 3
-
-
-def test_a_bracket_exposes_each_pass_differently(tmp_path, monkeypatch):
-    """A bracket of identical exposures is not a bracket."""
-    scanner, _ = run(tmp_path, monkeypatch, "--bracket", "4")
-    assert len(set(scanner.scans)) == 4
-    assert scanner.scans == sorted(scanner.scans), "ascending exposure order"
-
-
-def test_every_pass_is_filed_not_only_the_last(tmp_path, monkeypatch):
-    """last_raw holds one pass; waiting for the return value loses the rest."""
-    run(tmp_path, monkeypatch, "--bracket", "3")
-    entries = sorted((tmp_path / "lib").glob("*/scan.json"))
-    assert len(entries) == 3
-
-
-def test_each_filed_pass_keeps_its_own_raw_bytes(tmp_path, monkeypatch):
-    """Three entries sharing one pass's bytes would be worse than useless."""
-    import gzip
-
-    run(tmp_path, monkeypatch, "--bracket", "3")
-    raws = {
-        gzip.open(p, "rb").read()
-        for p in (tmp_path / "lib").glob("*/raw.bin.gz")
-    }
-    assert raws == {b"pass-1", b"pass-2", b"pass-3"}
-
-
-def test_the_merged_result_is_written(tmp_path, monkeypatch):
-    _, code = run(tmp_path, monkeypatch, "--bracket", "3")
-    assert code == 0
-    assert (tmp_path / "out.tif").exists()
-
-
-def test_the_merge_is_recorded_in_the_sidecar(tmp_path, monkeypatch):
-    import json
-
-    run(tmp_path, monkeypatch, "--bracket", "3")
-    meta = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
-    assert meta["bracket"]["passes"] == 3
-    assert len(meta["bracket"]["ratios"]) == 3
-
-
 def test_no_library_files_nothing_but_still_writes_the_scan(tmp_path, monkeypatch):
     patch_scanner(monkeypatch)
     monkeypatch.setattr(
@@ -186,20 +134,6 @@ def test_no_library_files_nothing_but_still_writes_the_scan(tmp_path, monkeypatc
     assert scan_tool.main() == 0
     assert (tmp_path / "out.tif").exists()
     assert not (tmp_path / "library").exists()
-
-
-@pytest.mark.parametrize("n", ["1", "10", "99"])
-def test_a_bracket_size_outside_the_range_is_refused_up_front(tmp_path, monkeypatch, n):
-    """Refused before the device opens: a calibration already spent is wasted."""
-    with pytest.raises(SystemExit):
-        run(tmp_path, monkeypatch, "--bracket", n)
-
-
-def test_bracket_zero_is_a_single_pass(tmp_path, monkeypatch):
-    """0 is the default, so it has to mean "off" rather than be refused."""
-    scanner, code = run(tmp_path, monkeypatch, "--bracket", "0")
-    assert code == 0
-    assert len(scanner.scans) == 1
 
 
 # --- the fast-infrared bit reaching the device ----------------------------
@@ -240,42 +174,13 @@ def test_an_rgb_run_with_fast_ir_typed_explicitly_still_sends_nothing(
     assert s.kwargs[-1]["fast_infrared"] is False
 
 
-def test_a_bracket_ties_its_infrared_pass_like_any_other(tmp_path, monkeypatch):
-    """A bracket takes one RGBI pass and the rest RGB, so the default has to
-    reach that one pass too -- otherwise `--bracket --ir` quietly costs the
-    ~220 s floor that every other path stopped paying."""
-    s, code = run(tmp_path, monkeypatch, "--ir", "--bracket", "3")
-    assert code == 0
-    assert s.kwargs, "no pass was taken"
-    assert all(k["fast_infrared"] is True for k in s.kwargs), s.kwargs
-
-
-def test_no_fast_ir_reaches_the_brackets_infrared_pass(tmp_path, monkeypatch):
-    """It did not. `scan_bracket` had no `fast_infrared` parameter and the
-    tool's bracket call passed none, so the flag was parsed, stored, and
-    dropped -- the pass ran tied whatever was typed, with nothing said.
-
-    Worth a test of its own rather than trusting the single-pass one beside it:
-    the two call sites are fourteen lines apart in `tools/scan.py` and only one
-    of them had it.
-    """
-    s, code = run(tmp_path, monkeypatch, "--ir", "--bracket", "3",
-                  "--no-fast-ir")
-    assert code == 0
-    assert s.kwargs, "no pass was taken"
-    # Subscripted, not `.get()`: before this was wired the key was simply
-    # absent, and an absent flag reads as False to any default-tolerant check.
-    # That is exactly the bug, so the test has to fail on absence.
-    assert all(k["fast_infrared"] is False for k in s.kwargs), s.kwargs
-
-
 # --- what actually lands in the library -----------------------------------
 
 
 RAW_LEVEL, CORRECTED_LEVEL = 111, 222
 
 
-class FakeCorrectingScanner(FakeBracketScanner):
+class FakeCorrectingScanner(FakeScanner):
     """Like the real one: returns the CORRECTED image, keeps the raw.
 
     `DirectScanner.scan` takes `raw_pixels = image` before flat-fielding,
@@ -342,18 +247,6 @@ def test_the_filed_entry_holds_raw_pixels_not_corrected_ones(tmp_path,
         "the correction that was computed still has to be recorded beside "
         "the pixels -- that is how a consumer tells 'not corrected' from "
         "'no correction was available'")
-
-
-def test_every_pass_of_a_bracket_is_filed_raw_too(tmp_path, monkeypatch):
-    """The bracket files through the same callback, one pass at a time, and
-    `last_pixels_raw` describes the pass that just ran -- so reading it late
-    would give every entry the last pass's pixels."""
-    _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
-    assert code == 0
-    filed = _filed(tmp_path)
-    assert len(filed) == 3
-    for image, _record in filed:
-        assert int(image.max()) == RAW_LEVEL
 
 
 def test_both_capture_tools_file_the_raw_pixels(tmp_path):

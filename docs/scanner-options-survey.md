@@ -160,34 +160,25 @@ Everything below is closed. The file named is where the numbers live.
 
 | what the products call it | the answer here | where |
 |---|---|---|
-| Multi-exposure / HDR | **impossible on this hardware** | `docs/multi-exposure-plan.md` |
-| Multi-sampling / averaging | **ceiling -1.8% to -3.5%**, grain-limited | `docs/multi-exposure-plan.md` |
+| Multi-exposure / HDR | **works, not worth it**: -3% noise, not visible | `docs/multi-exposure/plan.md` |
+| Multi-sampling / averaging | **works, not worth it**: -2% to -6%, not visible | `docs/multi-exposure/plan.md` |
 | Infrared dust removal (iSRD / VueScan IR) | deliberately **not ours** | TODO.md, "Decided against" |
 | Greyscale / monochrome scan mode | hardware mode **not worth using** | `docs/protocol.md` |
 | Analog gain | a **digital multiplier**, worth 0.53% | `docs/analog-gain-plan.md` |
 | Faster infrared pass | **adopted**, removes the floor | `docs/fast-infrared-plan.md` |
 | Autofocus | **no such command exists** | CLAUDE.md, `SET_SCAN_HEAD` |
 
-**Multi-exposure is built, measured and refused.** Two failures compound.
-There is very little to win: in the darkest tenth of a slide the random
-per-pass component is only 21% of high-frequency noise at 300 dpi and 27% at
-1800, the rest being film grain identical in every pass, which caps *any*
-multi-pass method at **-1.8% to -3.5%**. And the passes stop agreeing as the
-bracket widens -- two repeats at one exposure give median |z| = 1.03, and a
-nine-pass ladder gives 1.03 at x1.40, 1.48 at x2.33 and 5.60 at x3.66.
-**Agreement holds to about x1.7, degrades to x2.7 and collapses beyond**, and
-no linear, quadratic or cubic transfer function removes it. The measured
-outcome at 3600 dpi: a 2-pass bracket reads **+68.2%** noise against a single
-pass and a 9-pass **+75.4%**, while the narrow x1.4 bracket that the passes can
-actually support reads +0.9% -- neutral, which acquits the merge and condemns
-the feature. `rps7200/bracket.py` and `scan_bracket()` stay, tested and
-re-runnable offline; do not ship them as a default.
-
-**Multi-sampling is the same ceiling without the bracket.** The -3.5% above
-*is* the averaging ceiling, and it was checked the honest way: -1.8% predicted
-from averaging five passes at 300 dpi against -1.6% achieved, which is how we
-know the model is right rather than the merge broken. Higher resolution does
-not help -- more resolution resolves grain rather than adding noise.
+**Multi-exposure and multi-sampling are built, measured and archived.** The
+first verdict here -- "impossible on this hardware", passes that "stop agreeing
+as the bracket widens" -- was wrong: the carriage lands slightly differently for
+every pass, 2.4 lines over a nine-pass bracket, and the passes had never been
+registered. Registered, they agree like repeats, and the merge (with four of its
+own faults fixed) beats a single pass: -3.1% shadow noise against the best pass
+of a nine-pass bracket, -1.6% to -5.6% for a pair of repeats at 3600 dpi.
+**Too little to see**: side by side at 100%, single pass and merge look the
+same, because most of what reads as noise is film grain, identical in every
+pass. The code, tests, analysis scripts and numbers are in
+`docs/multi-exposure/`, out of the driver.
 
 **Infrared dust removal is a boundary, not a gap.** TODO.md's "Decided
 against": *"NegPy does it, and does it well. The point of this driver is

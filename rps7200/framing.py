@@ -1241,9 +1241,9 @@ def hold_plan(
 #     millimetre means the same thing to all of them. Confidence only breaks
 #     ties.
 #   * **Where members disagree, follow the most confident one -- never blend.**
-#     `bracket.py` already settled this for exposures, at `np.argmax(weights)`:
-#     averaging two readings that disagree produces a number neither of them
-#     supports.
+#     The bracket merge (archived, docs/multi-exposure/) settled this for
+#     exposures, at `np.argmax(weights)`: averaging two readings that disagree
+#     produces a number neither of them supports.
 
 #: The **ceiling** on how far apart two members may be and still be called
 #: agreed. The gate itself is their own two precisions added together; this
