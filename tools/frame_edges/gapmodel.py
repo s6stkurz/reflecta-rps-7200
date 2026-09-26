@@ -27,7 +27,7 @@ can be real, the stronger one -- weighted by how far it would move the frame --
 is kept and the other side is picture to the border.
 
 Underneath the geometry sits the per-row evidence, never a whole-frame row
-average (the detectors in `docs/frame-measurement-plan.md` that averaged rows
+average (the detectors in `docs/frame-adjustment-findings.md` that averaged rows
 first were each confidently wrong somewhere):
 
 1. **Uniform columns.** A column is uniform when ``FB_MIN`` of its rows lie

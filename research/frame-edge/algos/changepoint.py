@@ -179,7 +179,7 @@ TOP_CLEAR = 0.85
 MAX_OUTER = 100
 #: A plateau away from the border is a gap between frames, and no gap is wider
 #: than this: 29 and ~10 columns are the two measured in the ladder, 21.7 units
-#: (27 columns) is the lower bound docs/frame-measurement-plan.md derives.
+#: (27 columns) is the lower bound the old frame-measurement-plan.md derived.
 MAX_GAP = 40
 #: An outer segment this narrow is an odd border column (r0914_24's last
 #: column) or a neighbour sliver too narrow to read a step from: the step

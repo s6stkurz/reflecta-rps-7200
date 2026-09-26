@@ -5,7 +5,7 @@
     uv run python tools/registration_margin.py --self-similar
     uv run python tools/registration_margin.py --rolls rolls/2026-09-14
 
-The evidence behind `docs/registration-confidence-plan.md`. `rolls/` and
+The evidence behind `docs/frame-adjustment-findings.md`. `rolls/` and
 `library/` are gitignored, so the numbers in that document cannot be committed
 alongside it -- this is how they are re-derived, on whatever film is at hand.
 

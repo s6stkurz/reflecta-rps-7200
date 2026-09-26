@@ -1,6 +1,6 @@
 # Where does the frame end? An offline study
 
-The automatic positioning (`docs/frame-measurement-plan.md`) is limited by
+The automatic positioning (`docs/frame-adjustment-findings.md`) is limited by
 one unknown: **where the exposed picture ends and the unexposed film base
 begins** on a 300 dpi prescan. On the negative, base is the *brightest* thing
 on the film; in the positive it is the black strip Stefan sees at a frame's

@@ -45,7 +45,7 @@ GROUND_TRUTH = WORK / "ground_truth.json"
 GROUND_TRUTH_TEST = WORK / "locked" / "ground_truth_test.json"
 RESULTS = WORK / "results"
 
-#: From `docs/frame-measurement-plan.md`: one SLIDE unit is 1.2423 columns of a
+#: From `docs/frame-adjustment-findings.md`: one SLIDE unit is 1.2423 columns of a
 #: 300 dpi, 428-column prescan.
 COLUMNS_PER_UNIT = 1.2423
 PRESCAN_COLUMNS = 428

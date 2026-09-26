@@ -19,7 +19,7 @@ completely black from top to bottom"* (in the positive). Uniform, full height,
 straight near-vertical boundary.
 
 Why this is hard, measured over four earlier detectors
-(`docs/frame-measurement-plan.md`, `docs/registration-accuracy-plan.md`):
+(`docs/frame-adjustment-findings.md`):
 
 * A dark scene area (silhouette at dusk, black wall, shade) is nearly as clear
   as base on the negative, and flat by column. Level, flatness, 2-D uniformity

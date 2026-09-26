@@ -74,7 +74,7 @@ REACH = int(round(framing.SEARCH_MM / 25.4 * 300))
 #: Below this the integer match is not trusted and the frame is refused.
 MIN_CONFIDENCE = 50.0
 #: The fine fit's channel-mean Pearson correlation must reach this. Same
-#: picture twice starts at 0.89 in `docs/registration-confidence-plan.md`.
+#: picture twice starts at 0.89 in `docs/frame-adjustment-findings.md`.
 MIN_CORRELATION = 0.85
 #: The effective scale must be within this fraction of dpi / 300.
 SCALE_TOLERANCE = 0.02
