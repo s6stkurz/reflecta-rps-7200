@@ -894,8 +894,16 @@ class Transport:
                 payload = self._read_payload(read_size, timeout_ms)
                 # The device reports BUSY here until it is ready for the next
                 # command; not draining that stalls the following transfer.
+                #
+                # Counted from the payload's end, not the command's start. A
+                # pause mid-payload may last the pass's own bulk timeout --
+                # 287 s in an untied infrared pass, against a READ's 300 s --
+                # and a deadline spent while the bytes arrived made the first
+                # BUSY after them "stayed busy": the pass failed, and the
+                # device was marked suspect, with every byte already read.
                 final = self._wait_not_busy(
-                    deadline, f"command {command[0]:#04x} data-in"
+                    time.monotonic() + max_wait_s,
+                    f"command {command[0]:#04x} data-in"
                 )
                 if final == UsbStatus.CHECK:
                     raise CheckCondition(command[0])

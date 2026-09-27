@@ -179,6 +179,45 @@ def test_a_pause_is_waited_out_as_long_as_the_caller_waits_for_the_read():
         t._read_payload(64, 30_000)                   # the default command's
 
 
+def test_a_long_payload_does_not_spend_the_wait_that_follows_it(monkeypatch):
+    """One deadline, set at the READ's start, also bounded the BUSY the device
+    answers with after the payload. A payload that paused long enough to spend
+    it -- which the pass's own bulk timeout now allows -- was followed by
+    "stayed busy" at the first BUSY: every byte read, and the pass failed."""
+    from rps7200 import usb_transport
+    from rps7200.usb_transport import UsbStatus
+
+    clock = [1000.0]
+    monkeypatch.setattr(usb_transport.time, "monotonic", lambda: clock[0])
+
+    class Paused(Transport):
+        def __init__(self):
+            self.verbose = False
+            self.status = [UsbStatus.BUSY, UsbStatus.BUSY, UsbStatus.OK]
+
+        def _send_command(self, command):
+            return UsbStatus.READ
+
+        def _read_payload(self, size, timeout_ms):
+            clock[0] += 290.0 + 60.0          # a long pause, then the rest
+            return b"\xab" * size
+
+        def _control_in(self):
+            return self.status.pop(0)
+
+    t = Paused()
+    got = t._command(b"\x08" + b"\x00" * 5, None, 64, 287_000, 300.0)
+    assert got == b"\xab" * 64 and t.status == []
+
+    class StaysBusy(Paused):                  # still given up, on its own count
+        def _control_in(self):
+            clock[0] += 10.0
+            return UsbStatus.BUSY
+
+    with pytest.raises(UsbError, match="stayed busy"):
+        StaysBusy()._command(b"\x08" + b"\x00" * 5, None, 64, 287_000, 300.0)
+
+
 def test_a_pass_hands_its_patience_to_the_bulk_read():
     """The bulk transfer timed out at 120 s whatever the pass: a device that
     stays silent through an untied infrared pass's floor, rather than
