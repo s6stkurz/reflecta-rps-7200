@@ -1158,3 +1158,168 @@ def test_a_frame_is_labelled_the_way_the_window_labels_it(tmp_path, monkeypatch)
                         .read_text(encoding="utf-8"))
     assert record["film"]["frame"] == "teststrip-01"
     assert record["extra"]["roll_membership"]["kind"] == "frame"
+
+
+# --- filing that fails, and what debug filing is told ------------------------
+
+
+class _Patient(FakeRollScanner):
+    """Waits between frames for the writer, as a real frame's minutes do.
+
+    The fake yields its frames at once, so the writer would not have filed
+    the first before the last was scanned. Here each frame after the first
+    waits, up to a second, for the stop the roll would see in that time.
+    """
+
+    def scan_roll(self, **kw):
+        import time
+
+        stop = kw.get("should_stop") or (lambda: False)
+        for frame in super().scan_roll(**kw):
+            if frame.index:
+                deadline = time.monotonic() + 1.0
+                while not stop() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                if stop():
+                    return
+            yield frame
+
+
+def _refusing_library(tmp_path, monkeypatch, scanner_class, *argv, frames=4):
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    created = []
+
+    class Patched(scanner_class):
+        def __init__(self, **kw):
+            super().__init__(frames=frames)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(blocker / "lib"), "--no-shading",
+         "--roll", "refused", "--frames", str(frames), *argv],
+    )
+    return created, scan_roll.main()
+
+
+def test_a_roll_whose_filing_fails_stops_at_once(tmp_path, monkeypatch, capsys):
+    """A full disk or a library that has gone fails every frame after it the
+    same way. The tool scanned on for hours, printing a success line per
+    frame, and said so only at the end; the window stops after the frame in
+    flight, and so does this now."""
+    created, code = _refusing_library(tmp_path, monkeypatch, _Patient)
+    assert code != 0
+    err = capsys.readouterr().err
+    assert "could not be filed" in err
+    assert len(list((tmp_path / "roll").glob("frame*.tif"))) < 4, (
+        "the roll scanned on into a library it could not write")
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert "could not be filed" in manifest.get("stopped", "")
+
+
+class _Claiming(FakeRollScanner):
+    """Records what the tool tells debug filing, and when the scanner exits."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.claimed = []
+        self.order = []
+
+    def debug_claim(self, pixels):
+        self.claimed.append(pixels)
+
+    def __exit__(self, *exc):
+        self.order.append("scanner exited")
+
+
+def test_a_frame_is_claimed_from_debug_filing_only_once_it_is_filed(
+        tmp_path, monkeypatch):
+    """Claimed as it was queued, a frame whose filing failed was deleted from
+    the debug spool at close as well -- the one copy RPS7200_DEBUG=1 keeps."""
+    created, code = _refusing_library(tmp_path, monkeypatch, _Claiming,
+                                      frames=2)
+    assert code != 0
+    assert created[0].claimed == []
+
+
+def test_debug_filing_runs_once_every_frame_is_filed(tmp_path, monkeypatch):
+    """The scanner's exit files what debug filing spooled and deletes what
+    was claimed. Run as the device closed, it came before the writer had
+    filed the last frames: those were deleted unfiled, or filed twice."""
+    from rps7200 import session
+
+    created = []
+
+    class Patched(_Claiming):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    real_finish = session.FrameWriter.finish
+
+    def finish(self):
+        created[0].order.append("writer finished")
+        return real_finish(self)
+
+    monkeypatch.setattr(session.FrameWriter, "finish", finish)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "ordered", "--frames", "2"],
+    )
+    assert scan_roll.main() == 0
+    assert created[0].order == ["writer finished", "scanner exited"]
+    assert len(created[0].claimed) == 2
+    assert all(int(p.max()) == RAW_LEVEL for p in created[0].claimed)
+
+
+def test_a_walks_prescans_are_written_off_the_scanning_thread(tmp_path,
+                                                             monkeypatch):
+    """Deflated on the thread that drives the scanner, each prescan held the
+    device open and idle while it was written; the window's walk has always
+    handed them to its writer."""
+    import threading
+
+    from rps7200 import export
+
+    threads = []
+    real = export.write
+
+    def write(path, image, **kw):
+        threads.append((str(path), threading.current_thread()))
+        return real(path, image, **kw)
+
+    monkeypatch.setattr(export, "write", write)
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "2")
+    assert code == 0
+    written = [(p, t) for p, t in threads if "prescan" in p]
+    assert len(written) == 2
+    assert all(t is not threading.main_thread() for _p, t in written)
+    assert sorted(p.name for p in (tmp_path / "roll").glob("prescan*.tif")) \
+        == ["prescan01.tif", "prescan02.tif"]
+
+
+def test_a_walk_with_the_library_off_still_leaves_its_prescans(tmp_path,
+                                                              monkeypatch):
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--no-shading", "--roll", "nolib", "--dry-run", "--frames", "2"],
+    )
+    assert scan_roll.main() == 0
+    assert sorted(p.name for p in (tmp_path / "roll").glob("prescan*.tif")) \
+        == ["prescan01.tif", "prescan02.tif"]

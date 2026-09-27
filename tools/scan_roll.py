@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,7 @@ from rps7200.session import (
     Approved,
     FilmNotPlaced,
     FrameWriter,
+    HeldOpen,
     RollManifest,
     earlier_manifest,
     keep_first_numbering,
@@ -456,12 +458,37 @@ def main() -> int:
     #: hold a walk.
     placed = False
 
-    writer = FrameWriter()
+    #: Set on the writer's thread when a frame could not be filed. The roll
+    #: stops after the frame in flight, as the window's does: a full disk or
+    #: a library that has gone fails every frame after it the same way, and
+    #: this used to scan on for hours, printing a success line for each
+    #: frame, and say so only at the end.
+    filing_failed = threading.Event()
+
+    def filed(_seq, number, _entry, error) -> None:
+        # Said as it happens, on the writer's thread: what the chosen format
+        # could not carry, a copy that could not be written, and a frame that
+        # could not be filed at all.
+        while writer.notes:
+            print(writer.notes.pop(0), file=sys.stderr, flush=True)
+        if error is None:
+            return
+        print(f"picture {number}: could not be filed -- {error}",
+              file=sys.stderr, flush=True)
+        if not filing_failed.is_set():
+            filing_failed.set()
+            print("stopping after the frame in flight: the frames after it "
+                  "would be lost the same way", file=sys.stderr, flush=True)
+
+    writer = FrameWriter(on_done=filed)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
-    # frames and claims each of those passes (`debug_claim` below), so debug
-    # filing leaves them out rather than writing every frame twice -- 43 GB of
-    # duplicate on a 38-frame roll at 7200 dpi, which is why this used to say
-    # debug=False and so filed none of the prescans, probes and holds either.
+    # frames and the writer claims each of those passes as it files it
+    # (`claim=` below), so debug filing leaves them out rather than writing
+    # every frame twice -- 43 GB of duplicate on a 38-frame roll at 7200 dpi,
+    # which is why this used to say debug=False and so filed none of the
+    # prescans, probes and holds either. Held open by `HeldOpen`, so the
+    # device closes when the block ends and debug filing waits for the writer.
+    device: HeldOpen | None = None
     # Wrapped so `writer.finish()` below runs whatever comes out of this.
     # An exception the roll loop does not catch used to unwind straight
     # past it, and the frames already queued died unfiled -- scanner time
@@ -472,7 +499,8 @@ def main() -> int:
     # filing used to die with it.
     interrupt = DeferredInterrupt()
     try:
-        with interrupt, DirectScanner(verbose=args.verbose, debug=None) as s:
+        device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
+        with interrupt, device as s:
             info = s.inquiry()
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
@@ -624,7 +652,8 @@ def main() -> int:
                 correct_dry_run=args.correct_dry_run,
                 # the window's detector, so --correct reads edges as it does
                 edge_reader=frame_edges.walk_reader,
-                should_stop=interrupt.requested,
+                should_stop=lambda: (interrupt.requested()
+                                     or filing_failed.is_set()),
                 # Every pass of the roll, prescans and metering probes
                 # included. `--no-shading` used to skip only the calibration
                 # above, so the first prescan -- still asking for a correction
@@ -654,34 +683,40 @@ def main() -> int:
                     short = r.get("shortfall_mm", 0.0)
                     # Keep the prescan. The registration numbers are derived from
                     # it, and a number that looks wrong can only be settled by
-                    # looking at what it was measured on.
+                    # looking at what it was measured on. Written by the
+                    # writer, as the window's are: deflated here, it was
+                    # written on this thread with the device open and idle.
                     if frame.prescan is not None:
                         pre = out / f"prescan{number:02d}.tif"
-                        tiff.write(str(pre), frame.prescan)
                         record["prescan"] = pre.name
-                    # And filed, with its raw bytes, as the window files a
-                    # walk's prescans. A walk from here used to leave only the
-                    # corrected TIFF above: nothing that could be re-decoded,
-                    # and the references `--approved` holds frames to later.
-                    if (args.library and frame.prescan is not None
-                            and frame.raw_prescan is not None):
-                        capture = dict(s.capture_record())
+                        # And filed, with its raw bytes, as the window files a
+                        # walk's prescans. A walk from here used to leave only
+                        # the corrected TIFF: nothing that could be re-decoded,
+                        # and the references `--approved` holds frames to later.
+                        filing = bool(args.library
+                                      and frame.raw_prescan is not None)
+                        capture = dict(s.capture_record()) if filing else {}
                         meta = dict(frame.prescan_meta or {},
                                     roll_membership=roll_membership(
                                         roll_name, number, "prescan", out))
-                        if raw_bytes_disagree(frame.raw_prescan.shape,
-                                              capture.get("raw_layout"), meta):
+                        if filing and raw_bytes_disagree(
+                                frame.raw_prescan.shape,
+                                capture.get("raw_layout"), meta):
                             capture.update(raw=None, raw_layout=None)
-                        s.debug_claim(frame.raw_prescan)
                         writer.submit(
-                            number=number, paths=[], dpi=args.prescan_dpi,
+                            number=number, paths=[pre], dpi=args.prescan_dpi,
                             image=frame.prescan, raw_image=frame.raw_prescan,
-                            meta=meta, prescan=None, library=args.library,
+                            meta=meta, prescan=None,
+                            library=args.library if filing else None,
                             inquiry=info, capture=capture,
                             tags=sorted({*args.tags, "roll", "prescan", roll_name}),
                             film=FilmNotes(stock=args.stock, process=args.process,
                                            frame=roll_frame_label(roll_name, number),
                                            notes=args.notes),
+                            # Claimed from debug filing once filed, and only
+                            # with its bytes: see `FrameWriter._claim`.
+                            claim=(s.debug_claim
+                                   if capture.get("raw") is not None else None),
                         )
                     if frame.prescan_before is not None:
                         # The frame as it arrived, before aiming moved it. A
@@ -690,7 +725,11 @@ def main() -> int:
                         # helped is the detector's own -- which is the thing
                         # being checked.
                         was = out / f"prescan{number:02d}-before.tif"
-                        tiff.write(str(was), frame.prescan_before)
+                        writer.submit(
+                            number=number, paths=[was], dpi=args.prescan_dpi,
+                            image=frame.prescan_before, meta={}, prescan=None,
+                            library=None, inquiry=info, capture={},
+                            tags=[], film=FilmNotes())
                         record["prescan_before"] = was.name
                     # Every number here is optional. `registration` abstains on
                     # a loaded strip -- and once it says so honestly rather than
@@ -726,8 +765,7 @@ def main() -> int:
                     # capture_record() is read here, on this thread, before the next
                     # scan overwrites last_raw. Everything after it belongs to the
                     # writer and happens while the scanner is busy again.
-                    if args.library and frame.raw_image is not None:
-                        s.debug_claim(frame.raw_image)
+                    capture = s.capture_record()
                     writer.submit(
                         number=number,
                         # `paths`, plural. It was `path` until 2026-09-09, when
@@ -755,7 +793,12 @@ def main() -> int:
                         prescan_meta=frame.prescan_meta,
                         library=args.library,
                         inquiry=info,
-                        capture=s.capture_record(),
+                        capture=capture,
+                        # Claimed from debug filing once it is filed, and not
+                        # before: claimed as it was queued, a frame whose
+                        # filing failed was deleted from the spool as well.
+                        claim=(s.debug_claim
+                               if capture.get("raw") is not None else None),
                         tags=sorted({*args.tags, "roll", roll_name}),
                         film=FilmNotes(
                             stock=args.stock,
@@ -775,8 +818,11 @@ def main() -> int:
                                          else {}))),
                     )
                     submitted = True
-                    print(f"picture {number}: {path} {frame.image.shape} "
-                          f"in {frame.meta.get('duration_s')}s")
+                    # Scanned, and handed to the writer: not yet written. It
+                    # says so, on stderr and at once, if it cannot be filed.
+                    print(f"picture {number}: scanned {frame.image.shape} in "
+                          f"{frame.meta.get('duration_s')}s, filing it as "
+                          f"{path}")
 
                 record_of.record(record, awaiting=submitted)
 
@@ -789,19 +835,31 @@ def main() -> int:
         trouble = exc
         print(f"the roll stopped: {type(exc).__name__}: {exc}",
               file=sys.stderr)
-    # Only now, with the device closed: the last frame or two may still be
-    # gzipping, and that is exactly the work that must not happen with an open
-    # session.
-    #
-    # Reached through a `finally` around the whole scanning block, so it runs
-    # whatever came out of it. Without that, an exception the roll loop does
-    # not catch unwinds straight past here and the frames already queued die
-    # unfiled -- scanner time turned into nothing, with no message. That is
-    # structural; widening the roll's except tuple only moves the next one.
-    # `ScanSession._run` has had this shape all along, which is why the window
-    # never lost a frame this way.
-    writer.finish()
-    filed = dict(writer.done)
+    finally:
+        # Only now, with the device closed: the last frame or two may still
+        # be gzipping, and that is exactly the work that must not happen with
+        # an open session.
+        #
+        # Reached through this `finally` around the whole scanning block, so
+        # it runs whatever came out of it -- the early returns above
+        # included, which the comment here once claimed and the code did not
+        # do. Without it, an exception the roll loop does not catch unwinds
+        # straight past here and the frames already queued die unfiled --
+        # scanner time turned into nothing, with no message. That is
+        # structural; widening the roll's except tuple only moves the next
+        # one. `ScanSession._run` has had this shape all along, which is why
+        # the window never lost a frame this way.
+        writer.finish()
+        # Debug filing last, once every frame is filed and claimed: what it
+        # finds unclaimed is what this run did not keep -- probes, holds, and
+        # a frame whose filing failed.
+        if device is not None:
+            try:
+                device.release()
+            except Exception as exc:                     # noqa: BLE001
+                print(f"debug filing: {exc}", file=sys.stderr)
+    # Only the entries: a walk's -before picture is written with none.
+    filed = {n: e for n, e in writer.done if e is not None}
     for record in manifest["frames"]:
         entry = filed.get(record["number"])
         if entry is not None:
@@ -823,6 +881,9 @@ def main() -> int:
     manifest["duration_s"] = round(time.monotonic() - started, 1)
     if trouble is not None:
         manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
+    elif filing_failed.is_set():
+        manifest["stopped"] = ("stopped after the frame in flight: a frame "
+                               "could not be filed")
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
     # Placed, so it was made. Not a traceback when the disk refuses it: the

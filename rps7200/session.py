@@ -1847,6 +1847,39 @@ def close_device(scanner: Any) -> None:
         transport.close()
 
 
+class HeldOpen:
+    """A scanner open for a ``with`` block, for a tool that files its own passes.
+
+    Leaving the block closes the device and nothing else (`close_device`), so
+    the tool's own filing -- gzip and all -- runs with the device closed.
+    :meth:`release` is the scanner's own exit, deferred until that filing is
+    done: it files what debug filing spooled and nobody claimed, and a pass is
+    claimed only once it is filed. Exited with the block instead, it ran
+    first, and deleted every claimed pass from the spool before the tool had
+    filed it -- so a pass whose filing then failed was nowhere.
+
+    Entered and exited once each, as the scanner would be by ``with``.
+    """
+
+    def __init__(self, scanner: Any):
+        self.scanner = scanner
+        self._entered: Any = None
+
+    def __enter__(self) -> Any:
+        self._entered = self.scanner.__enter__()
+        return self._entered
+
+    def __exit__(self, *exc: object) -> None:
+        if self._entered is not None:
+            close_device(self._entered)
+
+    def release(self) -> None:
+        """The scanner's own exit: debug filing. Call once the tool's is done."""
+        entered, self._entered = self._entered, None
+        if entered is not None:
+            entered.__exit__(None, None, None)
+
+
 class _Stopped(Exception):
     """Raised on the worker when a cooperative stop was asked for."""
 
