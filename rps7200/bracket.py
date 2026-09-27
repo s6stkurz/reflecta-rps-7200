@@ -131,10 +131,12 @@ class MergeStats:
     def reference_fallback_fraction(self) -> float:
         """Pixels taken from the reference alone rather than the blend.
 
-        Not only misregistration: where a longer pass is clipped it disagrees
-        with the reference legitimately, and falls back here too. On a synthetic
-        bracket with perfect registration this still reads ~10%, all of it
-        clipping, so a high number is not by itself evidence of a shift.
+        Not only misregistration: a longer pass part way up its ramp into
+        saturation still counts, and can disagree with the reference
+        legitimately. A pass with no confidence at a pixel no longer can --
+        it used to, and a fully railed long pass sent ~10% of a perfectly
+        registered synthetic bracket here; a 1-2-8 one now reads about 5%. So
+        a high number is still not by itself evidence of a shift.
         """
         return self.reference_fallback_pixels / self.total_pixels if self.total_pixels else 0.0
 
@@ -517,7 +519,13 @@ def merge_bracket(
             z = (lum_ref - lum_x) / np.sqrt(np.maximum(v_ref + v, 1e-12))
             gate = np.minimum(confs[0], c).mean(axis=2)
             c_res = np.minimum(c_res, 1.0 - gate * (1.0 - _residual_confidence(z - median)))
-            worst_z = np.maximum(worst_z, np.abs(z - median))
+            # Only a pass that counts can disagree. A clipped long pass has no
+            # weight in the blend already, but it still disagreed by many
+            # sigma, flagged the pixel misaligned and sent it to the reference
+            # alone -- throwing away the unclipped passes between the two, in
+            # every highlight the longest pass railed on.
+            worst_z = np.maximum(worst_z,
+                                 np.where(gate > 0, np.abs(z - median), 0.0))
 
         # Where the passes disagree, fall back on whichever single pass is most
         # trusted at that pixel rather than on a blend of ones that conflict.
@@ -536,7 +544,10 @@ def merge_bracket(
         # highlight into pure black, which is worse than the clipped value it
         # replaces.
         chunk = np.where(no_confidence, scaled[0], chunk)
-        out[y0:y1] = np.clip(chunk, 0, FULL_SCALE).astype(np.uint16)
+        # Rounded, as `apply_shading` and `mono` round: a bare astype
+        # truncates, which biased every merged sample half a count low.
+        out[y0:y1] = np.clip(np.floor(chunk + 0.5), 0, FULL_SCALE).astype(
+            np.uint16)
 
         w_first += float(weights[0].sum())
         w_last += float(weights[-1].sum())

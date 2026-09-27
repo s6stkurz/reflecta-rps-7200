@@ -151,6 +151,41 @@ def test_a_fully_clipped_pass_is_ignored_not_averaged_in():
     assert rms_vs_truth(merged, truth, 2.0) < rms_vs_truth(good, truth, 2.0) * 1.5
 
 
+def test_a_clipped_long_pass_does_not_throw_away_the_ones_between():
+    """Weightless in the blend, the railed longest pass still disagreed by
+    many sigma, marked the pixel misaligned, and sent it to the reference --
+    the noisiest pass -- alone, discarding the unclipped middle one."""
+    rng = np.random.default_rng(5)
+    truth = scene()
+    frames = [expose(truth, e, rng=rng) for e in (1.0, 2.0, 8.0)]
+    merged, _stats = merge_bracket(frames, [1.0, 2.0, 8.0])
+    railed = (frames[2] >= 0.95 * FULL_SCALE).all(axis=2)
+    assert railed.mean() > 0.05, "the premise: the long pass rails somewhere"
+
+    def error(frame, scale):
+        return float(np.sqrt(np.mean(
+            (frame.astype(np.float64)[railed] / scale - truth[railed]) ** 2)))
+
+    assert error(merged, 1.0) < error(frames[1], 2.0), (
+        f"merged {error(merged, 1.0):.0f} against the middle pass alone "
+        f"{error(frames[1], 2.0):.0f} and the reference {error(frames[0], 1.0):.0f}")
+
+
+def test_the_merge_rounds_rather_than_truncates():
+    """A bare astype(uint16) floors, putting every merged sample half a count
+    low on average; the rest of this driver rounds with floor(x + 0.5)."""
+    from rps7200.bracket import solve_relation
+
+    truth = scene()
+    short, long = expose(truth, 1.0), expose(truth, 2.5)
+    merged, _ = merge_bracket([short, long], [1.0, 2.5])
+    slope, intercept = solve_relation(short[..., 1], long[..., 1])
+    expected = np.clip(pairwise_merge(short, long, slope, intercept),
+                       0, FULL_SCALE)
+    bias = float(np.mean(merged.astype(np.float64) - expected))
+    assert abs(bias) < 0.1, f"merged samples sit {bias:+.2f} counts off"
+
+
 def test_an_empty_pass_is_ignored():
     truth = scene()
     good = expose(truth, 2.0)
