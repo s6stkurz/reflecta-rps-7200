@@ -3558,6 +3558,28 @@ def test_a_saved_pass_is_one_channel_or_all_as_its_own_film_asks(window,
     assert delivered == [False]
 
 
+def test_a_delivered_file_says_the_resolution_it_was_scanned_at(window,
+                                                                monkeypatch,
+                                                                tmp_path):
+    """Save As, Save all and Export wrote no resolution, so a 3600 dpi frame
+    said 72 dpi or nothing -- while the output folder's copy of the same pass
+    said 3600."""
+    app, root = window
+    entry = tmp_path / "entry"
+    entry.mkdir()
+    (entry / "scan.tif").write_bytes(b"raw")
+    monkeypatch.setattr(gui.library, "corrected", lambda e: (
+        np.zeros((4, 6, 3), np.uint16),
+        {"scan": {"resolution_dpi": 3600}, "corrected": "applied"}))
+    written = []
+    monkeypatch.setattr(gui.export, "write", lambda path, image, **kw:
+                        written.append(kw.get("resolution")) or "")
+    result = types.SimpleNamespace(entry=entry, rotation=0, flipped=False,
+                                   meta={}, image=None)
+    app._deliver_one(result, tmp_path / "out.tif", 95, False, "G")
+    assert written == [3600]
+
+
 def test_approvals_are_read_without_loading_a_survey(tmp_path):
     """`approved.json` is the one thing in a roll folder the library cannot
     rebuild, so Delete has to be able to ask about it without reading pixels."""

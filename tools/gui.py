@@ -4600,7 +4600,14 @@ class ScannerGui:
             full = preview.orient(full, result.rotation, result.flipped)
             if mono:
                 full = to_monochrome(full, mono_channel)
-            note = export.write(path, full, quality=quality)
+            # The pass's own resolution, which the output folder's copy of it
+            # carries (`FrameWriter`). Written without it, a 3600 dpi frame
+            # said 72 dpi or nothing -- about a metre and a half wide to
+            # anything that sizes a picture by it.
+            dpi = ((entry_record.get("scan") or {}).get("resolution_dpi")
+                   or (result.meta or {}).get("resolution_dpi"))
+            note = export.write(path, full, resolution=dpi or None,
+                                quality=quality)
             how = entry_record.get("corrected")
             return (f"{Path(path).name} at full resolution"
                     + (f", turned {result.rotation}\u00b0"
@@ -4614,6 +4621,8 @@ class ScannerGui:
             note = export.write(
                 path,
                 to_monochrome(turned, mono_channel) if mono else turned,
+                # No resolution: a reduced copy at the scan's dpi would
+                # misstate its size as surely as 72 does.
                 quality=quality)
             return (f"{Path(path).name} -- reduced preview, the "
                     "full-resolution file is not filed yet"
