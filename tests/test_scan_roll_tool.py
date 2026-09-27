@@ -939,11 +939,12 @@ def test_approved_is_warned_about_on_the_film_its_walk_was_read_on(
     assert "not read at a 600 dpi prescan" in capsys.readouterr().err
 
     # --correct reads this roll's own prescans, which are --film's whatever
-    # the walk was, so its refusal stays judged on --film.
+    # the walk was, so its refusal stays judged on --film -- typed here, since
+    # left out it is now the walk's own.
     opened: list = []
     with pytest.raises(SystemExit) as refused:
         run(tmp_path, monkeypatch, "--approved", str(slides), "--correct",
-            "--frames", "1", opened=opened)
+            "--film", "negative", "--frames", "1", opened=opened)
     assert refused.value.code == 2
     assert opened == []
 
@@ -1449,3 +1450,48 @@ def test_the_advice_to_resume_names_every_frame_left(tmp_path, monkeypatch,
     assert scan_roll.main() == 1
     err = capsys.readouterr().err
     assert "--start-at 1 --only 1,3" in err
+
+
+def test_approved_scans_as_the_film_its_walk_was_made_on(tmp_path, monkeypatch,
+                                                         capsys):
+    """--film was negative unless typed, whatever the walk was: a slide walk
+    scanned from here was metered per channel, which takes a slide's own
+    cast off -- baked into the raw bytes, where nothing re-derives it."""
+    slides = _walked_at(tmp_path, monkeypatch, 300, film="positive")
+    scanner, code = run(tmp_path, monkeypatch, "--approved", str(slides),
+                        "--frames", "1")
+    assert code == 0
+    assert scanner.asked["film"] == "positive"
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert manifest["settings"]["film"] == "positive"
+
+
+def test_a_film_typed_against_the_walks_wins_and_is_said(tmp_path, monkeypatch,
+                                                        capsys):
+    slides = _walked_at(tmp_path, monkeypatch, 300, film="positive")
+    scanner, code = run(tmp_path, monkeypatch, "--approved", str(slides),
+                        "--film", "negative", "--frames", "1")
+    assert code == 0
+    assert scanner.asked["film"] == "negative"
+    assert "was made on positive film" in capsys.readouterr().err
+
+
+def test_infrared_on_a_walk_of_black_and_white_is_refused_before_opening(
+        tmp_path, monkeypatch):
+    """--ir is refused for film infrared cannot see through; a B&W walk
+    adopted as the film is that film, typed or not."""
+    bw = _walked_at(tmp_path, monkeypatch, 300, film="bw")
+    opened: list = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--approved", str(bw), "--ir",
+            "--frames", "1", opened=opened)
+    assert refused.value.code == 2
+    assert opened == []
+
+
+def test_a_roll_without_approved_is_still_negative_unless_told(tmp_path,
+                                                             monkeypatch):
+    scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0
+    assert scanner.asked["film"] == "negative"

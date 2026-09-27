@@ -170,8 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "'once' meters the first picture and holds it, which "
                          "keeps the roll internally consistent and saves ~45 s "
                          "a frame; 'none' scans at the device's own settings")
-    ap.add_argument("--film", default="negative",
-                    choices=["negative", "positive", "kodachrome", "bw"])
+    ap.add_argument("--film", default=None,
+                    choices=["negative", "positive", "kodachrome", "bw"],
+                    help="what is in the transport, for metering (default: "
+                         "negative; with --approved, the film its walk was "
+                         "made on)")
     ap.add_argument("--reference", default="calibration/shading.npz")
     ap.add_argument("--reuse", action="store_true",
                     help="load the cached shading reference instead of "
@@ -335,19 +338,25 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
                   "prescan_resolution": walked_at, "film": film}
 
 
+def _refuse_infrared(ap: argparse.ArgumentParser, film: str) -> None:
+    ap.error(
+        f"--ir with --film {film}: infrared is blind to it -- its "
+        + ("grain" if film == "bw" else "cyan layer")
+        + " absorbs infrared, so every frame would spend its ~212 s floor "
+        "and hand back the picture rather than the dust. Drop --ir. "
+        "(Chromogenic C-41 black and white does clean properly: scan that "
+        "as --film negative.)"
+    )
+
+
 def main() -> int:
     use_utf8_stdout()
     ap = build_parser()
     args = ap.parse_args()
-    if args.ir and not supports_infrared(args.film):
-        ap.error(
-            f"--ir with --film {args.film}: infrared is blind to it -- its "
-            + ("grain" if args.film == "bw" else "cyan layer")
-            + " absorbs infrared, so every frame would spend its ~212 s floor "
-            "and hand back the picture rather than the dust. Drop --ir. "
-            "(Chromogenic C-41 black and white does clean properly: scan that "
-            "as --film negative.)"
-        )
+    if args.film is None and not args.approved:
+        args.film = FILM_NEGATIVE
+    if args.ir and args.film and not supports_infrared(args.film):
+        _refuse_infrared(ap, args.film)
     # Everything knowable before the device is opened is checked here: the
     # roll calibrates and meters before its first frame, and a refusal after
     # that has spent minutes on what these lines say at once.
@@ -401,6 +410,22 @@ def main() -> int:
         print(f"holding {len(held)} frame(s) to positions from "
               f"{args.approved}: "
               + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+        # Metered and scanned as the film the walk was made on, as its
+        # prescan resolution is adopted above. --film defaulted to negative
+        # whatever the walk was: a slide walk scanned from here was metered
+        # per channel, taking each slide's own cast off -- baked into the raw
+        # bytes, where nothing re-derives it. Typed, it wins, and is said.
+        walked_film = held_note.get("film") or FILM_NEGATIVE
+        if args.film is None:
+            args.film = walked_film
+            print(f"scanning as {walked_film} film, as the walk in "
+                  f"{args.approved} was made")
+        elif args.film != walked_film:
+            print(f"warning: --film {args.film}, but the walk in "
+                  f"{args.approved} was made on {walked_film} film, and its "
+                  "positions were proposed as that", file=sys.stderr)
+        if args.ir and not supports_infrared(args.film):
+            _refuse_infrared(ap, args.film)
     if args.prescan_dpi is None:
         args.prescan_dpi = 300
     # Said before the device opens, not frame by frame after: at a prescan
