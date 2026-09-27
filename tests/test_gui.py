@@ -1157,7 +1157,10 @@ def window(tmp_path):
     session = ScanSession(root=str(tmp_path / "library"),
                           rolls=str(tmp_path / "rolls"), verbose=False)
     session._open_scanner = lambda: DemoScanner("library", speed=1e9)
-    app = gui_mod.ScannerGui(root, session, demo=True)
+    # Its own settings file: the default is gui-settings.json where the tests
+    # run, which in a checkout is the operator's own.
+    app = gui_mod.ScannerGui(root, session, demo=True,
+                             settings_path=tmp_path / "gui-settings.json")
     root.update()
     try:
         yield app, root
