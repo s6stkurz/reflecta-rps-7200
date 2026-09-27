@@ -67,6 +67,10 @@ def test_the_label_does_not_depend_on_the_progress_readout():
     from rps7200.session import Roll, _describe
     running = _describe(Roll(frames=6, resolution=1800))
     assert gui.stop_label(running) == "Stop after this frame"
+    # A roll given its frames by number, as the sheet's commission is, is
+    # "scanning 2 chosen frames" -- and it too stops after the frame.
+    chosen = _describe(Roll(frames=3, start_at=1, only=(1, 3), resolution=1800))
+    assert gui.stop_label(chosen) == "Stop after this frame"
 
 
 # -- what the form asks the scanner for -------------------------------------
@@ -1221,6 +1225,22 @@ def test_the_monochrome_controls_follow_the_film(window):
     # reduction is the average, whose view is MONO -- "avg" is not a plane.
     assert app.v_mono_channel.get() == MONO_AVERAGE
     assert app.v_channel.get() == "MONO"
+
+
+def test_the_infrared_tie_follows_the_infrared_box(window):
+    """The box only redid the estimate, so the tie under it stayed live after
+    infrared was unticked, and greyed when it was ticked after a black and
+    white film had greyed it."""
+    app, root = window
+    app.v_film.set("bw")
+    app._sync_film()
+    app.v_film.set("negative")
+    app._sync_film()
+    assert app.v_ir.get() is False
+    app.c_ir.invoke()                                  # ticked
+    assert str(app.c_fast_ir.cget("state")) == "normal"
+    app.c_ir.invoke()                                  # and unticked
+    assert str(app.c_fast_ir.cget("state")) == "disabled"
 
 
 def test_changing_the_monochrome_channel_changes_the_view(window):

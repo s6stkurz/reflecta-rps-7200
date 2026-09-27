@@ -770,10 +770,11 @@ class ScannerGui:
         none of them reaches the scanner. The two extra windows keep their own;
         see `_ContactSheet._actions` and `_FrameAdjuster._actions`.
 
-        Everything here is viewing or arranging. Nothing starts a scan, moves
-        film or calibrates -- `shortcuts.NEVER_BOUND` names those and a test
-        holds the line. `stop` is here because `request_stop` finishes the pass
-        already running rather than abandoning a read.
+        Viewing and arranging, bar three. Prescan, Scan and Roll start a pass,
+        and each asks first (`_confirm_then`, and `on_roll`'s own question).
+        Nothing moves film or calibrates -- `shortcuts.NEVER_BOUND` names those
+        and a test holds the line. `stop` is here because `request_stop`
+        finishes the pass already running rather than abandoning a read.
         """
         return {
             "previous_pass": lambda: self._walk(-1),
@@ -1400,9 +1401,13 @@ class ScannerGui:
                      values=[str(d) for d in PRESCAN_LADDER]).pack(side="left")
 
         self.v_ir = tk.BooleanVar(value=True)
+        # Through `_sync_infrared`, which greys the tie below by this box and
+        # ends in the estimate. Wired to the estimate alone, unticking left the
+        # tie live under an infrared cost, and ticking after a black and white
+        # film left it greyed.
         self.c_ir = ttk.Checkbutton(box, text="infrared (RGBI)",
                                     variable=self.v_ir,
-                                    command=self._show_estimate)
+                                    command=self._sync_infrared)
         self.c_ir.pack(anchor="w", pady=2)
         # Tied to the scan resolution by default. Untying it restores the fixed
         # ~220 s floor, which is worth having only where the plane matters more
@@ -3325,11 +3330,16 @@ class ScannerGui:
                 "in before and press \"Scan chosen frames\" -- the transport "
                 "goes to each frame itself, from wherever the film is.\n\n"
                 + STRIP_NUMBERS + "\n\n"
-                "It will calibrate again first, which is the right default "
-                "rather than a limitation: a reference describes the sensor at "
-                "the exposure and gain of the pass that measured it, and "
-                "months later neither is the same. Set Calibrate to \"reuse\" "
-                "before starting if you would rather load the saved one."
+                # Said as the window does it: nothing calibrates by itself. A
+                # window that has not calibrated since it opened asks first,
+                # and one that has uses the reference it measured.
+                + ("It uses the calibration this window made earlier."
+                   if self.calibrated else
+                   "It asks for a calibration first, which is the right default "
+                   "rather than a limitation: a reference describes the sensor "
+                   "at the exposure and gain of the pass that measured it, and "
+                   "months later neither is the same. The question offers the "
+                   "saved one too, with its age.")
                 + (f"\n\nRestored: {', '.join(sorted(restored))}."
                    if restored else ""))
         else:
@@ -5602,12 +5612,13 @@ class ScannerGui:
             messagebox.showinfo(
                 "Aim",
                 f"That point is {say_units(want, signed=False)} from the {side} edge, which "
-                f"would take more than {MAX_FINE_STEPS} sub-frame moves. Past "
-                "that the calibration goes sub-linear and the film would not "
-                "travel what was asked for.\n\nClick nearer the edge you want "
+                f"is further than one command moves the film "
+                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and a fine "
+                "adjustment is one command.\n\nClick nearer the edge you want "
                 "it to reach, or use the slide buttons.", parent=self.root)
             return
-        steps = max(1, -(-int(abs(want) * 1000) // int(MAX_FINE_MM * 1000)))
+        # The planner's own count, not a copy of its arithmetic.
+        steps = len(plan_nudges(want)) or 1
         way = "forward" if want > 0 else "back"
         if self.v_reverse.get():
             way = "back" if want > 0 else "forward"
@@ -5673,13 +5684,16 @@ def read_survey(folder, say=None) -> dict:
     orientation or it will not correlate against a fresh pass. `rotation` is
     carried on the result instead, which is exactly how a live pass behaves.
 
-    That is also why the manifest's single `rotation` is what un-rotates them:
-    a per-frame turn is recorded in `approved.json` and never applied to a
-    `prescanNN.tif`, so this arithmetic stays true however many frames were
-    turned individually. The per-frame turns come back as `rotations`, which
-    the sheet lays over the results afterwards. A walk's record can carry
-    its prescan's own pair (`prescan_rotation`), and wins where it does: two
-    walks merged into one survey need not have been made the same way up.
+    What un-rotates each is the turn it was written with: the frame record's
+    own pair (`prescan_rotation`, `prescan_flipped`, through
+    `session.prescan_arrangement`), which every walk now records -- two walks
+    merged into one survey need not have been made the same way up, and a turn
+    made while a walk ran reaches the prescans written after it. The
+    manifest's single `rotation` is the start of the walk's, and answers only
+    for a walk older than those records. A per-frame turn set on the sheet is
+    recorded in `approved.json` and never applied to a `prescanNN.tif`; those
+    come back as `rotations`, which the sheet lays over the results
+    afterwards.
 
     ``say`` hears anything the renumbering of an old walk, or of the roll
     beside it, could not settle; see `session.renumbered`.
@@ -6579,9 +6593,9 @@ def snap_offset(millimetres: float) -> float:
     A number finer than the hardware is a lie. The reachable set starts at one
     SLIDE command and steps by param, so there is nothing at all between zero
     and `FINE_STEP_MM` -- showing an operator "+1.3 units" invites him to aim at
-    a place that does not exist. Clamped to what eight commands can chain,
-    which is `MAX_TRAVEL_MM`, so the planner is never asked for a distance it
-    would refuse.
+    a place that does not exist. Clamped to what one command moves, which is
+    `MAX_TRAVEL_MM`, so the planner is never asked for a distance it would
+    refuse.
     """
     want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, float(millimetres)))
     sign = -1.0 if want < 0 else 1.0
@@ -6590,10 +6604,10 @@ def snap_offset(millimetres: float) -> float:
     except ValueError:
         plan = []
     # The result has to be re-plannable, or the adjuster stores a number the
-    # mover would later refuse. Eight commands of the largest step sum to
-    # slightly more than eight times the nominal maximum, so the top of the
-    # range can snap to a value just past what the planner accepts back. Drop
-    # a step until it survives the round trip.
+    # mover would later refuse. The largest command travels slightly more
+    # than the nominal maximum, so the top of the range can snap to a value
+    # just past what the planner accepts back. Drop a step until it survives
+    # the round trip.
     while plan:
         value = sign * abs(sum(plan))
         try:
@@ -6615,8 +6629,8 @@ def snap_offset(millimetres: float) -> float:
 #: to bend, and it became a single command when the cap went to 87.
 #:
 #: "finest" is not a distance at all: it walks to the next position the
-#: transport can reach, which is not a constant -- the lattice is 2.57 units
-#: off zero and 1.0 everywhere above it.
+#: transport can reach, which is not a constant -- the lattice is 2.84 units
+#: off zero (`param 1`, with the command's ramp) and 1.0 everywhere above it.
 ADJUST_PARAMS = {"small": 3, "medium": 8, "large": 20}
 ADJUST_STEPS = ("finest",) + tuple(
     f"{name} ({units_for_param(param):.1f} units)"
@@ -7386,8 +7400,14 @@ def stop_label(job: str) -> str:
     say which of the two things it will do, and be right about it for the whole
     run -- it once read the progress label, which the line counter overwrites a
     second in, and so relabelled itself mid-roll.
+
+    A roll given its frames by number -- the sheet's commission, a reopened
+    roll finished from the Roll button -- is "scanning N chosen frames",
+    which has no "roll" in it: it promised the end of a pass and waited for
+    the end of a frame, prescan, hold and metering included.
     """
-    return "Stop after this frame" if "roll" in job else "Stop (finishes this pass)"
+    roll = "roll" in job or "chosen frame" in job
+    return "Stop after this frame" if roll else "Stop (finishes this pass)"
 
 
 #: What one pixel of trackpad travel is worth, as a proportion. 150 px of
@@ -7716,10 +7736,12 @@ class _ShortcutSettings:
             text=("Click a key to change it, then press the one you want. The "
                   "same key can be used in different windows -- the arrows walk "
                   "the filmstrip here, move the selection in the contact sheet, "
-                  "and step the film in the position window.\n\n"
-                  "No shortcut starts a scan, calibrates, or moves film. Those "
-                  "cost minutes of the scanner or move your negative, and a "
-                  "slip on the keyboard is not a decision to do either.")
+                  "and step the frame's planned position in the position "
+                  "window.\n\n"
+                  "Prescan, Scan and Roll have keys, and each asks before it "
+                  "starts: they cost minutes of the scanner, and a slip on the "
+                  "keyboard is not a decision to spend them. Nothing "
+                  "calibrates or moves film from a key.")
         ).pack(anchor="w", pady=(2, 10))
 
         host = ttk.Frame(outer)
@@ -8647,13 +8669,16 @@ class _ContactSheet:
                     + said + " Scanning is offered as it always is, and will "
                     "say there is no film when it reaches for it.")
         else:
+            # Said as the roll does it. It claimed the automatic nudge still
+            # covered the frames not adjusted -- every ticked frame is held to
+            # its position, so it covers none (see `_approved_note`) -- and a
+            # rewind to the start of the strip, where the roll goes to the
+            # first frame ticked, forward or back.
             said = ("Tick what is worth scanning. " + said + " A frame is "
-                    "scanned the way you leave it here. Positions you set are "
-                    "used as given -- nothing moves until you commission the "
-                    "scan, and the automatic nudge does not apply to frames "
-                    "you adjust. The film is rewound to the start of the strip "
-                    "first, and every frame nobody ticked costs its advance "
-                    "only.")
+                    "scanned the way you leave it here. Positions are used as "
+                    "given -- nothing moves until you commission the scan. The "
+                    "film goes to the first frame ticked, and every frame "
+                    "nobody ticked after it costs its advance only.")
         ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
                   text=said).pack(anchor="w", pady=(0, 8))
 
