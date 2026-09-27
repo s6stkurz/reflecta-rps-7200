@@ -383,8 +383,10 @@ def save(
         # numbers and they existed nowhere durable before: `meta` carried them
         # this far and the record dropped them, so every confidence the driver
         # had ever measured lived only in the roll's own `roll.json`, which is
-        # gitignored and rewritten per frame. `tools/registration_margin.py`
-        # reads them back. Absent on a scan that never looked.
+        # gitignored and rewritten per frame. (`tools/registration_margin.py`
+        # re-derives the floor from the pictures themselves and does not read
+        # these; they are what the loop measured at the time, kept for a
+        # study that wants them.) Absent on a scan that never looked.
         "registration": meta.get("registration"),
         "calibration": {
             "shading": "shading.npz" if reference is not None else None,
