@@ -737,6 +737,39 @@ def test_an_old_walks_prescans_are_held_under_the_strips_numbers(
     assert all(a.number == n for n, a in held.items())
 
 
+def test_every_walked_frame_is_held_and_none_past_one_command(
+        tmp_path, monkeypatch):
+    """The sheet holds every frame it commissions -- one the detector left
+    unplaced at 0, which is what corrects the rewind -- and clamps each to
+    one command. --approved, which says it is the sheet's path, held only
+    the frames with a proposal, and held those unclamped."""
+    import json
+
+    from rps7200 import tiff
+    from rps7200.session import FINE_MAX_MM
+
+    folder = tmp_path / "walk"
+    folder.mkdir()
+    for n in (1, 2, 3):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n - 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]}),
+        encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({1: 0.4, 3: 25.0},
+                                   {1: {"source": "measured"},
+                                    2: {"source": "none"},
+                                    3: {"source": "measured"}}))
+    held, _note = scan_roll.hold_from_walk(folder)
+    assert sorted(held) == [1, 2, 3], "a frame with no proposal went unheld"
+    assert held[2].offset_mm == 0.0 and held[2].source == "none"
+    assert held[1].offset_mm == pytest.approx(0.4)
+    assert held[3].offset_mm == pytest.approx(FINE_MAX_MM)
+
+
 def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(
         tmp_path, monkeypatch):
     """`rolls/2026-09-23` as it is on disk. The survey lists the second walk:
