@@ -1652,3 +1652,51 @@ def test_a_black_and_white_roll_is_delivered_in_one_channel(
     (entry,) = [p.parent for p in (tmp_path / "lib").glob("*/scan.json")]
     image, _record = library.load(entry)
     assert image.shape[2] == 3, "the library keeps all three regardless"
+
+
+# --- the reference, and where debug filing files ------------------------------
+
+
+def test_a_reference_inside_a_library_entry_is_refused_before_opening(
+        tmp_path, monkeypatch):
+    entry = tmp_path / "lib" / "20260927T000000Z_x_300dpi"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    opened: list = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__()
+            opened.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--out", str(tmp_path / "roll"),
+        "--library", str(tmp_path / "lib"), "--roll", "ref",
+        "--reference", str(entry / "shading.npz"), "--frames", "1"])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    assert opened == []
+
+
+def test_a_roll_files_its_debug_passes_into_its_own_library(tmp_path,
+                                                           monkeypatch):
+    import os
+
+    monkeypatch.delenv("RPS7200_DEBUG_ROOT", raising=False)
+    seen = []
+
+    class Exiting(FakeRollScanner):
+        def __exit__(self, *exc):
+            seen.append(os.environ.get("RPS7200_DEBUG_ROOT"))
+
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: Exiting(frames=1))
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--out", str(tmp_path / "roll"),
+        "--library", str(tmp_path / "lib"), "--no-shading",
+        "--roll", "own", "--frames", "1"])
+    assert scan_roll.main() == 0
+    assert seen == [str(tmp_path / "lib")]
+    assert "RPS7200_DEBUG_ROOT" not in os.environ

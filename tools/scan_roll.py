@@ -72,14 +72,17 @@ from rps7200.session import (
     FrameWriter,
     HeldOpen,
     RollManifest,
+    debug_filing_into,
     earlier_manifest,
     keep_first_numbering,
     manifest_settings,
     plan_nudges,
     prescan_arrangement,
     recorded_roll_name,
+    reference_refused,
     renumbered,
     roll_dir,
+    say_reused,
     seek,
     walk_shift,
     walked_prescans,
@@ -618,6 +621,12 @@ def main() -> int:
         "frames": [],
     }
     if args.frames != 0:
+        ref_path = Path(args.reference)
+        if (not args.no_shading and not (args.reuse and ref_path.exists())
+                and reference_refused(ref_path)):
+            ap.error(str(reference_refused(ref_path)))
+        if args.reuse and ref_path.exists() and not args.no_shading:
+            say_reused(ref_path)
         say_roll_estimate(args)
 
     #: The one writer of the manifest, from this thread and the writer's; see
@@ -1061,7 +1070,10 @@ def main() -> int:
         # a frame whose filing failed.
         if device is not None:
             try:
-                device.release()
+                # Into this run's library, beside the frames it is
+                # evidence for.
+                with debug_filing_into(args.library):
+                    device.release()
             except Exception as exc:                     # noqa: BLE001
                 print(f"debug filing: {exc}", file=sys.stderr)
     # Only the entries: a walk's -before picture is written with none.

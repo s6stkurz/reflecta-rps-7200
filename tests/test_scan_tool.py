@@ -11,6 +11,7 @@ pass of a bracket is filed, not just the one whose raw bytes happen to survive
 on the scanner.
 """
 
+import os
 import sys
 from types import SimpleNamespace
 
@@ -643,3 +644,67 @@ def test_an_empty_library_means_do_not_file(tmp_path, monkeypatch):
     assert (tmp_path / "out.tif").exists()
     assert not list(tmp_path.glob("*/scan.json"))
     assert not (tmp_path / "index.json").exists()
+
+
+# --- the reference, and where debug filing files ------------------------------
+
+
+def test_a_reference_inside_a_library_entry_is_refused_before_opening(
+        tmp_path, monkeypatch):
+    """Calibrating replaces the file it is given: a library entry's
+    shading.npz, from a command line missing its --reuse, was replaced --
+    the one its checksum names -- with a calibration folder dropped in."""
+    entry = tmp_path / "lib" / "20260927T000000Z_x_300dpi"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"),
+        "--reference", str(entry / "shading.npz")])
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    assert created == []
+
+
+def test_a_reused_reference_says_how_old_it_is(tmp_path, monkeypatch, capsys):
+    cached = tmp_path / "shading.npz"
+    cached.write_bytes(b"")
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"),
+        "--reference", str(cached), "--reuse"])
+    assert scan_tool.main() == 0
+    assert created
+    assert "reusing the reference cached" in capsys.readouterr().out
+
+
+def test_debug_filing_files_into_the_runs_own_library(tmp_path, monkeypatch):
+    """It filed into ./library whatever --library said, apart from the
+    passes it is evidence for."""
+    monkeypatch.delenv("RPS7200_DEBUG_ROOT", raising=False)
+    seen = []
+
+    class Exiting(FakeCorrectingScanner):
+        def __exit__(self, *exc):
+            seen.append(os.environ.get("RPS7200_DEBUG_ROOT"))
+
+    _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
+    assert code == 0
+    assert seen == [str(tmp_path / "lib")]
+    assert "RPS7200_DEBUG_ROOT" not in os.environ, "left set for the process"
+
+
+def test_a_debug_root_the_operator_set_still_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "elsewhere"))
+    seen = []
+
+    class Exiting(FakeCorrectingScanner):
+        def __exit__(self, *exc):
+            seen.append(os.environ.get("RPS7200_DEBUG_ROOT"))
+
+    _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
+    assert code == 0
+    assert seen == [str(tmp_path / "elsewhere")]

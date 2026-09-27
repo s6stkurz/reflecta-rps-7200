@@ -39,7 +39,8 @@ import queue
 import shutil
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -1978,6 +1979,62 @@ def close_device(scanner: Any) -> None:
     transport = getattr(scanner, "t", None)
     if transport is not None:
         transport.close()
+
+
+@contextmanager
+def debug_filing_into(root: Any) -> Iterator[None]:
+    """Debug filing (RPS7200_DEBUG=1) files into ``root`` for this block.
+
+    It files into RPS7200_DEBUG_ROOT, or `./library`, whatever library the
+    run itself files into: a tool run with `--library /mnt/ext/library` put
+    its frames there and every probe, hold and framing prescan behind them
+    in the laptop's ./library, where nothing looking at that roll would find
+    them. An RPS7200_DEBUG_ROOT the operator set still wins.
+    """
+    name = DirectScanner.DEBUG_ROOT_ENV
+    if not root or os.environ.get(name):
+        yield
+        return
+    os.environ[name] = str(root)
+    try:
+        yield
+    finally:
+        os.environ.pop(name, None)
+
+
+def reference_refused(path: Any) -> str | None:
+    """Why a tool's ``--reference`` must not be ``path``, or None.
+
+    Calibrating replaces the file it is given, and writes the calibration's
+    own bytes beside it. Given a library entry's shading.npz -- a command
+    line from history, less its --reuse -- it replaced that entry's own
+    reference, the one its checksum names, and put a folder inside the
+    entry.
+    """
+    folder = Path(path).parent
+    if (folder / "scan.json").exists():
+        return (f"--reference {path} is inside the library entry {folder}; "
+                "calibrating would replace that entry's own reference. Give "
+                "a --reference outside the library.")
+    return None
+
+
+def say_reused(path: Any, say=print) -> None:
+    """Say how old a cached reference is, before a run reuses it.
+
+    It describes the sensor at the lamp, exposure and gain of the pass that
+    measured it, and becomes the reference of every entry the run files --
+    and `--reuse` took one of any age, from any power-on, without a word.
+    """
+    try:
+        hours = (time.time() - Path(path).stat().st_mtime) / 3600.0
+    except OSError:
+        return
+    age = (f"{hours * 60:.0f} minutes" if hours < 1
+           else f"{hours:.1f} hours" if hours < 48 else f"{hours / 24:.0f} days")
+    say(f"reusing the reference cached {age} ago in {path}; it describes the "
+        "sensor as it was then -- after a power cycle or a lamp change, "
+        "calibrate instead")
 
 
 class HeldOpen:

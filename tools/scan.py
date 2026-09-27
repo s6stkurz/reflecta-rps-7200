@@ -34,7 +34,13 @@ from rps7200.direct import DirectScanner, supports_infrared
 from rps7200.direct import DirectScanner as _Driver
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
 from rps7200.library import FilmNotes
-from rps7200.session import HeldOpen, keep_unfiled
+from rps7200.session import (
+    HeldOpen,
+    debug_filing_into,
+    keep_unfiled,
+    reference_refused,
+    say_reused,
+)
 
 
 def say_estimate(*, passes: int, resolution: int, infrared: bool,
@@ -232,10 +238,15 @@ def main() -> int:
         args.fast_ir = False
 
     ref_path = Path(args.reference)
+    calibrating = not args.no_shading and not (args.reuse and ref_path.exists())
+    if calibrating and reference_refused(ref_path):
+        ap.error(str(reference_refused(ref_path)))
+    if args.reuse and ref_path.exists() and not args.no_shading:
+        say_reused(ref_path)
     say_estimate(
         passes=args.bracket or 1, resolution=args.dpi, infrared=args.ir,
         fast_infrared=args.fast_ir,
-        calibrating=not args.no_shading and not (args.reuse and ref_path.exists()),
+        calibrating=calibrating,
         metering=args.auto_exposure and not args.exposure_scale)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
     # entries and claims each of those passes once it has filed it (below),
@@ -408,7 +419,9 @@ def main() -> int:
         # it finds unclaimed is what this run did not keep -- metering probes,
         # and a pass whose filing failed.
         if device is not None:
-            device.release()
+            # Into this run's library, beside the passes it is evidence for.
+            with debug_filing_into(args.library):
+                device.release()
 
     if trouble is not None:
         for e in entries:
