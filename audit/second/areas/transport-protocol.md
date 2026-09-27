@@ -1,14 +1,15 @@
 # USB transport, protocol and command sequence
 
-31 findings: 1 high, 10 medium, 19 low, 1 info.
+Area key `transport-protocol`. 35 findings: 1 high, 10 medium, 23 low, 1 info.
 
-**Not verified.** In the first audit every finding was re-read by an adversarial second reader; here that stage did not run (the account's spend limit was reached), so these are one reader's findings. Treat them as leads to confirm against the code.
+Every finding below was produced by one reader and then re-checked against the code by a second, adversarial reader. `verdict` is that second reader's: `confirmed`, `partly` (real, description corrected -- the corrected text is shown), or `found-by-verifier` (added by the second reader).
 
 [Back to the summary](../README.md)
 
 ## What this area is
 
 Transport and command layer at 03aacba (HEAD e47ceae differs only in audit/ files). The transport (rps7200/usb_transport.py) sends the vendor's shape of traffic: an IEEE1284 preamble plus 0xE0, six CDB bytes on port 0x85, a status read on 0x84, a length handshake on 0x82 for every 32 KB window and 16 KB bulk-in chunks. A zero-length first read raises NoDataYet, and a stall after part of a payload is waited out for 120 s. No code path sends SET_SCAN_HEAD (0xD2), IEEE1284 RESET or STOP SCAN. The functions that could (stop_scan, Transport.open(reset=True), reset) exist but have no callers. usbpcap never returns an interrupt or isochronous payload, and packets() only returns data for devices the caller names; the keystroke rule holds. DirectScanner has a working 'suspect' latch for reads abandoned inside read_planes, and _CommandLog keeps every command of a successful pass (CDB, data out, replies under 256 B, including REQUEST SENSE, READ STATE, READ/WRITE GAIN OFFSET, MODE SELECT and PARAM) in scan.json extra.commands.
+
 
 What remains:
 - **Calibration end detection (high).** Any read refusal is treated as 'finished'. A partial reference is adopted, cached and used, and the device is not marked suspect.
@@ -24,47 +25,51 @@ What remains:
 
 ## Findings at a glance
 
-| ID | Severity | Category | Title |
-|---|---|---|---|
-| [TP-01](#find-transport-protocol-tp-01) | high | bug | Calibration treats any read refusal as 'scanner finished': partial reference adopted, cached and used; device not marked suspect |
-| [TP-02](#find-transport-protocol-tp-02) | medium | data-integrity | EndOfData mid-read marks the pass complete: truncated pass returned as success, device not marked suspect |
-| [TP-03](#find-transport-protocol-tp-03) | medium | data-integrity | Transport drops a fully received READ payload when the trailing status is CHECK; FAIL/ERROR trailing statuses are ignored |
-| [TP-04](#find-transport-protocol-tp-04) | medium | hardware-safety | A transport error on START SCAN is outside the suspect guard (scan and calibration) |
-| [TP-05](#find-transport-protocol-tp-05) | medium | hardware-safety | A suspect device still receives ~14 configuration commands before a scan is refused |
-| [TP-06](#find-transport-protocol-tp-06) | medium | data-integrity | A failed or abandoned pass leaves no record: its command log, sense bytes and partial raw bytes are discarded |
-| [TP-07](#find-transport-protocol-tp-07) | medium | data-integrity | Raw calibration bytes are kept outside the library, read by nothing, and not kept at all on the non-ensure_shading path |
-| [TP-08](#find-transport-protocol-tp-08) | medium | hardware-safety | A scalar exposure_scale also scales the infrared exposure, a value the vendor never changes |
-| [TP-09](#find-transport-protocol-tp-09) | medium | user-error | CLI calibration on an empty transport is unguarded; calibrate_shading reads READ STATE but ignores the measured byte-8 media flag |
-| [TP-10](#find-transport-protocol-tp-10) | medium | data-integrity | Force Abort skips DirectScanner.close(), so the session's debug spool is never filed and its location is never reported |
-| [TP-11](#find-transport-protocol-tp-11) | medium | user-error | Ctrl-C in most tools abandons the read in flight; only scan.py and scan_roll.py defer it |
-| [TP-12](#find-transport-protocol-tp-12) | low | design | Calibration loop re-reads and re-writes gain/offset on every empty poll, not between reads as the vendor does |
-| [TP-13](#find-transport-protocol-tp-13) | low | doc-mismatch | session_start sends a sub-frame film move (SLIDE 00 01 00 00) that its docstring misdescribes and no probe tool records or undoes |
-| [TP-14](#find-transport-protocol-tp-14) | low | bug | Probe tools prescan without calibrating and now always fail with ShadingUnavailable, after session_start has already moved the film |
-| [TP-15](#find-transport-protocol-tp-15) | low | bug | read_planes counts lines from a READ that returned no data |
-| [TP-16](#find-transport-protocol-tp-16) | low | error-handling | NoDataYet on READ STATE is tolerated in position() but aborts scan() and calibration; wait_ready's timeout is ignored |
-| [TP-17](#find-transport-protocol-tp-17) | low | hardware-safety | STOP SCAN and IEEE1284 RESET remain public methods whose docstrings invite their use |
-| [TP-18](#find-transport-protocol-tp-18) | low | user-error | RPS7200_MAX_WINDOW is not validated: 0 or a negative value loops forever mid-read; a non-integer breaks import |
-| [TP-19](#find-transport-protocol-tp-19) | low | data-integrity | Command log fills with refused NoDataYet READs and omits every successful image READ |
-| [TP-21](#find-transport-protocol-tp-21) | low | design | The pcap parser ignores status and silently desyncs on a data-out command that was refused |
-| [TP-22](#find-transport-protocol-tp-22) | low | doc-mismatch | verify_protocol.py claims to send only vendor byte values; several stages send invented payloads, and results are written only at the very end |
-| [TP-23](#find-transport-protocol-tp-23) | low | doc-mismatch | Stale transport law in code comments and in verify_protocol constants (1.57 vs 1.84 vs 1.948) |
-| [TP-24](#find-transport-protocol-tp-24) | low | doc-mismatch | direct.py says SET GAIN OFFSET persists and compounds; protocol.md and CLAUDE.md say it is a fixed reference that cannot compound |
-| [TP-25](#find-transport-protocol-tp-25) | low | doc-mismatch | INFRARED_FLOOR_S is described as guarding the read, but nothing uses it except estimates; the real guard is a literal |
-| [TP-26](#find-transport-protocol-tp-26) | low | doc-mismatch | scan() claims the vendor's command order, but it differs from docs/protocol.md section 8, which does not note the difference |
-| [TP-27](#find-transport-protocol-tp-27) | low | design | Two different CAL-INFO prepare payloads, and the calibration sends the prepare twice |
-| [TP-28](#find-transport-protocol-tp-28) | low | demo-divergence | advance(steps) and retreat(steps) put the step count in the value byte, which the device ignores; the demo moves `steps` frames and retypes MM_PER_UNIT |
-| [TP-29](#find-transport-protocol-tp-29) | low | bug | _whole_frames counts a move when the position before the move could not be read |
-| [TP-30](#find-transport-protocol-tp-30) | low | hardware-safety | Calibration read deadline is an absolute 300 s, not idle-based, and is not scaled with resolution; on expiry the read is abandoned |
-| [TP-31](#find-transport-protocol-tp-31) | low | data-integrity | A failed CCD-mask read after a complete calibration throws away the whole calibration, bytes included |
-| [TP-20](#find-transport-protocol-tp-20) | info | design | Tight status polling: the BUSY loops spin on the control endpoint with no sleep for up to max_wait_s |
+| ID | Severity | Category | Verdict | Title |
+|---|---|---|---|---|
+| [TP-01](#transport-protocol-tp-01) | high | bug | confirmed | Calibration treats any read refusal as 'scanner finished': partial reference adopted, cached and used; device not marked suspect |
+| [TP-02](#transport-protocol-tp-02) | medium | data-integrity | confirmed | EndOfData mid-read marks the pass complete: truncated pass returned as success, device not marked suspect |
+| [TP-04](#transport-protocol-tp-04) | medium | hardware-safety | confirmed | A transport error on START SCAN is outside the suspect guard (scan and calibration) |
+| [TP-05](#transport-protocol-tp-05) | medium | hardware-safety | confirmed | A suspect device still receives ~14 configuration commands before a scan is refused |
+| [TP-06](#transport-protocol-tp-06) | medium | data-integrity | confirmed | A failed or abandoned pass leaves no record: its command log, sense bytes and partial raw bytes are discarded |
+| [TP-07](#transport-protocol-tp-07) | medium | data-integrity | confirmed | Raw calibration bytes are kept outside the library, read by nothing, and not kept at all on the non-ensure_shading path |
+| [TP-08](#transport-protocol-tp-08) | medium | hardware-safety | confirmed | A scalar exposure_scale also scales the infrared exposure, a value the vendor never changes |
+| [TP-09](#transport-protocol-tp-09) | medium | user-error | confirmed | CLI calibration on an empty transport is unguarded; calibrate_shading reads READ STATE but ignores the measured byte-8 media flag |
+| [TP-10](#transport-protocol-tp-10) | medium | data-integrity | confirmed | Force Abort skips DirectScanner.close(), so the session's debug spool is never filed and its location is never reported |
+| [TP-11](#transport-protocol-tp-11) | medium | user-error | confirmed | Ctrl-C in most tools abandons the read in flight; only scan.py and scan_roll.py defer it |
+| [TP-A1](#transport-protocol-tp-a1) | medium | data-integrity | found-by-verifier | A pass that was read completely but that the current decoder rejects is discarded with its raw bytes, so newer code can never re-decode it |
+| [TP-03](#transport-protocol-tp-03) | low | data-integrity | confirmed | Transport drops a fully received READ payload when the trailing status is CHECK; FAIL/ERROR trailing statuses are ignored |
+| [TP-12](#transport-protocol-tp-12) | low | design | confirmed | Calibration loop re-reads and re-writes gain/offset on every empty poll, not between reads as the vendor does |
+| [TP-13](#transport-protocol-tp-13) | low | doc-mismatch | partly | session_start sends a sub-frame film move (SLIDE 00 01 00 00) that its docstring misdescribes and no probe tool records or undoes |
+| [TP-14](#transport-protocol-tp-14) | low | bug | confirmed | Probe tools prescan without calibrating and now always fail with ShadingUnavailable, after session_start has already moved the film |
+| [TP-15](#transport-protocol-tp-15) | low | bug | confirmed | read_planes counts lines from a READ that returned no data |
+| [TP-16](#transport-protocol-tp-16) | low | error-handling | partly | NoDataYet on READ STATE is tolerated in position() but aborts scan() and calibration; wait_ready's timeout is ignored |
+| [TP-17](#transport-protocol-tp-17) | low | hardware-safety | confirmed | STOP SCAN and IEEE1284 RESET remain public methods whose docstrings invite their use |
+| [TP-18](#transport-protocol-tp-18) | low | user-error | confirmed | RPS7200_MAX_WINDOW is not validated: 0 or a negative value loops forever mid-read; a non-integer breaks import |
+| [TP-19](#transport-protocol-tp-19) | low | data-integrity | confirmed | Command log fills with refused NoDataYet READs and omits every successful image READ |
+| [TP-21](#transport-protocol-tp-21) | low | design | confirmed | The pcap parser ignores status and silently desyncs on a data-out command that was refused |
+| [TP-22](#transport-protocol-tp-22) | low | doc-mismatch | confirmed | verify_protocol.py claims to send only vendor byte values; several stages send invented payloads, and results are written only at the very end |
+| [TP-23](#transport-protocol-tp-23) | low | doc-mismatch | confirmed | Stale transport law in code comments and in verify_protocol constants (1.57 vs 1.84 vs 1.948) |
+| [TP-24](#transport-protocol-tp-24) | low | doc-mismatch | confirmed | direct.py says SET GAIN OFFSET persists and compounds; protocol.md and CLAUDE.md say it is a fixed reference that cannot compound |
+| [TP-25](#transport-protocol-tp-25) | low | doc-mismatch | confirmed | INFRARED_FLOOR_S is described as guarding the read, but nothing uses it except estimates; the real guard is a literal |
+| [TP-26](#transport-protocol-tp-26) | low | doc-mismatch | confirmed | scan() claims the vendor's command order, but it differs from docs/protocol.md section 8, which does not note the difference |
+| [TP-27](#transport-protocol-tp-27) | low | design | confirmed | Two different CAL-INFO prepare payloads, and the calibration sends the prepare twice |
+| [TP-28](#transport-protocol-tp-28) | low | demo-divergence | confirmed | advance(steps) and retreat(steps) put the step count in the value byte, which the device ignores; the demo moves `steps` frames and retypes MM_PER_UNIT |
+| [TP-29](#transport-protocol-tp-29) | low | bug | confirmed | _whole_frames counts a move when the position before the move could not be read |
+| [TP-30](#transport-protocol-tp-30) | low | hardware-safety | partly | Calibration read deadline is an absolute 300 s, not idle-based, and is not scaled with resolution; on expiry the read is abandoned |
+| [TP-31](#transport-protocol-tp-31) | low | data-integrity | confirmed | A failed CCD-mask read after a complete calibration throws away the whole calibration, bytes included |
+| [TP-A2](#transport-protocol-tp-a2) | low | hardware-safety | found-by-verifier | Any bulk-read error sends CLEAR_FEATURE(ENDPOINT_HALT), a standard control request outside the vendor's repertoire, into a device that is mid-pass |
+| [TP-A3](#transport-protocol-tp-a3) | low | doc-mismatch | found-by-verifier | scan()'s media check tests byte 8 but logs byte 6 and dismisses it with a comment that was true only of byte 6 |
+| [TP-A4](#transport-protocol-tp-a4) | low | data-integrity | found-by-verifier | The INQUIRY reply is kept only as parsed fields; its raw bytes are never recorded |
+| [TP-20](#transport-protocol-tp-20) | info | design | confirmed | Tight status polling: the BUSY loops spin on the control endpoint with no sleep for up to max_wait_s |
 
 ## Findings in full
 
-<a id="find-transport-protocol-tp-01"></a>
+<a id="transport-protocol-tp-01"></a>
 
 ### TP-01 -- Calibration treats any read refusal as 'scanner finished': partial reference adopted, cached and used; device not marked suspect
 
-**Severity** high · **Category** bug
+**Severity** high · **Category** bug · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2305`, `rps7200/direct.py:2310`, `rps7200/direct.py:2323`, `rps7200/direct.py:2337`, `rps7200/direct.py:2351`, `rps7200/direct.py:1795`, `rps7200/direct.py:866`, `rps7200/shading.py:135`
 
@@ -88,11 +93,17 @@ read_lines (1795) raises ScanReadError for ANY refusal whose sense is not ASC 0x
 
 **Fix:** End the calibration only on sense.end_of_data (EndOfData). Treat any other ScanReadError like a lost read: _mark_suspect and raise. Before adopting and caching a reference, check the received line count against the descriptor (sum of declared lines, or the documented 160 lines) or at least against both phases being present. Refuse to overwrite the cache or the session reference with a reference that fails that check. Keep the previous self._shading when the new one is None.
 
-<a id="find-transport-protocol-tp-02"></a>
+<details><summary>Second reader's check</summary>
+
+direct.py:2305-2313 catches `(EndOfData, ScanReadError)` together and sets `ended = True`. read_lines (1777-1799) with retries=1 raises plain ScanReadError for any refusal whose sense is not ASC 0x20, including Sense.unreadable (protocol.py:451-453: end_of_data requires readable and code 0x20). Nothing compares `blocks` to the descriptor's declared lines or to the expected ~40 blocks. The BaseException handler (2337-2340) skips _mark_suspect because ended is True. calculate_shading (shading.py:135-182) accepts any positive number of lines, and a single-level population (for example only dark lines) is averaged as the 'light' reference. It returns None for empty data, and 2351 then overwrites a previously good session reference with None. ensure_shading (848-866) archives the data and atomically saves the partial reference over calibration/shading.npz, and later reuse=True sessions load it. Every link in the chain is in the executable code. The trigger (a non-0x20 refusal mid-calibration) is a device condition, but the code's own comments record queued one-shot senses and refused gain writes in this exact loop.
+
+</details>
+
+<a id="transport-protocol-tp-02"></a>
 
 ### TP-02 -- EndOfData mid-read marks the pass complete: truncated pass returned as success, device not marked suspect
 
-**Severity** medium · **Category** data-integrity
+**Severity** medium · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1862`, `rps7200/direct.py:1881`, `rps7200/direct.py:3286`, `rps7200/protocol.py:367`, `rps7200/direct.py:2283`
 
@@ -112,37 +123,17 @@ then 1881: `self._read_complete = True`. In _read_pass (3286): `if not self._rea
 
 **Fix:** If EndOfData arrives with got < total_lines, record it explicitly in meta (e.g. `lines_expected`, `lines_received`, `ended_early: true`) and surface it as a warning or failed job. Decide deliberately whether that state should also set suspect. At minimum, do not set `_read_complete` for a short pass without recording that the device ended it early.
 
-<a id="find-transport-protocol-tp-03"></a>
+<details><summary>Second reader's check</summary>
 
-### TP-03 -- Transport drops a fully received READ payload when the trailing status is CHECK; FAIL/ERROR trailing statuses are ignored
+read_planes 1862-1864 breaks on EndOfData at any `got`, then sets `_read_complete = True` (1881) unconditionally. _read_pass (3286) therefore does not mark the device suspect. Nothing in scan() compares image.shape[0] to params.lines. meta 'height' is simply the shorter value, and only raw.layout.lines_received vs lines shows the shortfall, and only when raw bytes were kept. protocol.py:367-373 itself says ASC 0x20 is indistinguishable from an invalid command.
 
-**Severity** medium · **Category** data-integrity
+</details>
 
-**Where:** `rps7200/usb_transport.py:849`, `rps7200/usb_transport.py:852`, `rps7200/usb_transport.py:855`, `rps7200/direct.py:1787`, `rps7200/direct.py:1846`
-
-Once every byte of a READ has arrived, the scanner considers those lines delivered. If the post-transfer status is CHECK, the transport throws them away. In read_planes (retries=1) that either becomes EndOfData, which ends the pass shorter by up to one batch (216 lines across channels) that did arrive, or ScanReadError, which abandons the pass. In calibration it ends the calibration (TP-01) and the chunk is not archived. Retrying the READ (read_lines default retries=3) would resume after the dropped lines and misalign every later line. Conversely, a device-reported FAIL or ERROR after a data phase is silently accepted.
-
-**Evidence (from the code):**
-
-```text
-usb_transport.py:849-857:
-    payload = self._read_payload(read_size, timeout_ms)
-    final = self._wait_not_busy(deadline, ...)
-    if final == UsbStatus.CHECK:
-        raise CheckCondition(command[0])
-    return payload
-Any other final status (FAIL 0x88, ERROR 0xFF, AGAIN) falls through and the payload is returned as good.
-```
-
-**Failure scenario:** The last READ of a pass returns its full 216 lines and the scanner then reports CHECK (end of data) on the trailing status. The transport raises and the lines are discarded. read_lines reads sense 0x20, raises EndOfData, and the image loses its last ~54-72 rows (bottom-up passes: the top). raw.bin also lacks them, so reconstruct cannot recover them.
-
-**Fix:** Return the payload together with the trailing status (e.g. raise a CheckCondition subclass that carries `payload`) so read_planes and calibration can keep the bytes and then decide on the sense. Treat FAIL and ERROR after a data phase as errors rather than success.
-
-<a id="find-transport-protocol-tp-04"></a>
+<a id="transport-protocol-tp-04"></a>
 
 ### TP-04 -- A transport error on START SCAN is outside the suspect guard (scan and calibration)
 
-**Severity** medium · **Category** hardware-safety
+**Severity** medium · **Category** hardware-safety · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:3248`, `rps7200/direct.py:3252`, `rps7200/direct.py:2274`, `rps7200/direct.py:2280`, `rps7200/direct.py:1628`, `rps7200/direct.py:4147`
 
@@ -158,11 +149,17 @@ _read_pass: `self.start_scan()` (3248), then `self._read_complete = False` (3251
 
 **Fix:** Treat any non-CheckCondition exception from the SCAN command as 'may have started': move start_scan inside the guarded block in both _read_pass and calibrate_shading, or have start_scan call _mark_suspect on UsbError.
 
-<a id="find-transport-protocol-tp-05"></a>
+<details><summary>Second reader's check</summary>
+
+start_scan (1627-1653) catches only CheckCondition around `self.t.command(_cmd(SCSI_SCAN, 1))`, which runs with the transport's default max_wait_s=60 and a 30 s control timeout. A UsbError (status read timeout, 'stayed busy', AGAIN past the deadline) escapes. In _read_pass, start_scan() (3248) is called before `self._read_complete = False` and the try (3252). In calibrate_shading, start_scan (2274) is before the try (2280). So _mark_suspect is never called. scan_roll catches UsbError at 4147 as an ordinary frame failure and continues because `self.suspect is None` (4157), so it advances and scans into a device that may have accepted SCAN.
+
+</details>
+
+<a id="transport-protocol-tp-05"></a>
 
 ### TP-05 -- A suspect device still receives ~14 configuration commands before a scan is refused
 
-**Severity** medium · **Category** hardware-safety
+**Severity** medium · **Category** hardware-safety · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2995`, `rps7200/direct.py:3016`, `rps7200/direct.py:3051`, `rps7200/direct.py:3062`, `rps7200/direct.py:1523`, `rps7200/direct.py:2476`, `rps7200/protocol.py:355`
 
@@ -180,11 +177,17 @@ scan() has no `_refuse_if_suspect` at its top. It sends read_state x1-4, wait_wa
 
 **Fix:** Call self._refuse_if_suspect('a scan') at the top of scan() (before metering), and likewise in auto_exposure and prescan, so no configuration command reaches a suspect device.
 
-<a id="find-transport-protocol-tp-06"></a>
+<details><summary>Second reader's check</summary>
+
+_refuse_if_suspect is called only in slide (1523), start_scan (1623) and calibrate_shading (2178). scan() runs read_state, wait_warm, test_unit_ready, set_exposure_time, set_highlight_shadow, set_scan_frame, cmd_17, get/set_gain_offset, set_mode and test_unit_ready (2995-3060) before slide(SLIDE_INIT) at 3062 raises DeviceSuspect. auto_exposure writes set_gain_offset(base) before its first probe (2476-2490). session._run (1945-1963) dispatches new jobs without checking scanner.suspect. This contradicts CLAUDE.md:418-420 and the DeviceSuspect docstring at protocol.py:355-364 ('Raised by every command that would drive the device').
+
+</details>
+
+<a id="transport-protocol-tp-06"></a>
 
 ### TP-06 -- A failed or abandoned pass leaves no record: its command log, sense bytes and partial raw bytes are discarded
 
-**Severity** medium · **Category** data-integrity
+**Severity** medium · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:3070`, `rps7200/direct.py:3074`, `rps7200/direct.py:1835`, `rps7200/direct.py:3222`, `rps7200/direct.py:2345`
 
@@ -206,11 +209,17 @@ On an exception `commands` is dropped with the frame. read_planes collects into 
 
 **Fix:** On failure, write a small failure record: the command log, the exception, last_state and the partial blob, spooled like _debug_capture does, at least when debug is on. File it after close() as an entry tagged 'failed-pass', or into a failures/ directory.
 
-<a id="find-transport-protocol-tp-07"></a>
+<details><summary>Second reader's check</summary>
+
+scan() 3070-3076: `commands = stopper()` sits in a finally, and the exception then propagates, so the log is dropped. read_planes keeps `chunks` local (1835) and sets last_raw only after the loop (1885). _debug_capture is only reached on success (3222). calibrate_shading calls stop() only after the try/finally (2345), so on failure its log is neither returned nor archived, and the logger is left recording. Only str(exc) survives.
+
+</details>
+
+<a id="transport-protocol-tp-07"></a>
 
 ### TP-07 -- Raw calibration bytes are kept outside the library, read by nothing, and not kept at all on the non-ensure_shading path
 
-**Severity** medium · **Category** data-integrity
+**Severity** medium · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:854`, `rps7200/direct.py:860`, `rps7200/direct.py:724`, `rps7200/direct.py:2132`, `rps7200/direct.py:2372`, `rps7200/direct.py:781`, `tools/uniformity.py:735`, `tools/uniformity.py:742`, `rps7200/library.py:271`
 
@@ -226,11 +235,17 @@ ensure_shading: `archive = self.archive_calibration(result, path.parent)` (856),
 
 **Fix:** Store the raw calibration payload, or a content-addressed copy with a sha256, inside the library, e.g. library/calibrations/<sha>/ referenced by hash from each entry's calibration block, for loaded references too (record the archive hash in the cache). Make keep_data=True the default, or make ensure_shading the only public path. Add a library helper that recomputes the reference from the raw calibration bytes so reconstruct can use it.
 
-<a id="find-transport-protocol-tp-08"></a>
+<details><summary>Second reader's check</summary>
+
+archive_calibration is called only from ensure_shading (856). calibrate_shading defaults to keep_data=False (2132) and returns data None, and tools/uniformity.py:735-742 uses that default and saves its reference non-atomically with reference.save. grep finds no reader of data.bin or calibration.json in rps7200/ or tools/. The only link from an entry is shading_origin['archive'], a str(path) that is relative when the reference path is relative (ensure_shading passes path.parent). It is set only for a freshly calibrated session and not for loaded ones (load_shading 724-729). archive_calibration writes data.bin, ccd_mask.bin, shading.npz and calibration.json with plain write_bytes, write_text and np.savez_compressed (781-803), non-atomically.
+
+</details>
+
+<a id="transport-protocol-tp-08"></a>
 
 ### TP-08 -- A scalar exposure_scale also scales the infrared exposure, a value the vendor never changes
 
-**Severity** medium · **Category** hardware-safety
+**Severity** medium · **Category** hardware-safety · **Verdict** confirmed
 
 **Where:** `rps7200/protocol.py:613`, `rps7200/direct.py:3028`, `rps7200/direct.py:1728`, `tools/gui.py:1801`, `tools/scan.py:216`
 
@@ -249,11 +264,17 @@ protocol.py:613-614:
 
 **Fix:** Treat a scalar as applying to the visible channels only (pad IR with 1.0, as the list form does), or reject a scalar when infrared is on. Say explicitly in the GUI and CLI that IR exposure is the device's.
 
-<a id="find-transport-protocol-tp-09"></a>
+<details><summary>Second reader's check</summary>
+
+Settings.scaled (protocol.py:612-617) multiplies all four exposures, IR included, for a scalar, and pads a 3-list with 1.0 for IR. gui.py:1801 and tools/scan.py:216 turn a single typed value into a scalar. scan() writes settings via set_gain_offset (3028-3029), and 1728 puts exposure[3] into bytes 18-19. So '3' and '3 3 3' send different IR exposures. The metered path returns a 3-list and leaves IR alone. docs/protocol.md:416-417 records that the vendor never changes the IR exposure. The clamp at 65535 prevents a wrap, but the IR plane's brightness changes for a scalar only.
+
+</details>
+
+<a id="transport-protocol-tp-09"></a>
 
 ### TP-09 -- CLI calibration on an empty transport is unguarded; calibrate_shading reads READ STATE but ignores the measured byte-8 media flag
 
-**Severity** medium · **Category** user-error
+**Severity** medium · **Category** user-error · **Verdict** confirmed
 
 **Where:** `tools/scan.py:270`, `tools/scan.py:273`, `rps7200/direct.py:2185`, `rps7200/protocol.py:584`, `tools/scan_roll.py:195`
 
@@ -271,11 +292,17 @@ tools/scan.py:270-274 prints 'calibrating (about 3-4 minutes ...)' and calls `s.
 
 **Fix:** Have tools/scan.py (and scan_roll.py before its calibrate) require explicit confirmation or a --film-loaded flag. In calibrate_shading, log prominently or refuse unless a force flag is given when READ STATE byte 8 reads 1 (empty), while still treating a 0 as not proof of film.
 
-<a id="find-transport-protocol-tp-10"></a>
+<details><summary>Second reader's check</summary>
+
+tools/scan.py:269-274 calls ensure_shading straight after inquiry with no film prompt. calibrate_shading's opening loop (2185-2191) only looks at warming_up. State.no_media (protocol.py:584-587, byte 8) is available at that moment and is ignored. scan_roll's calibrate() (tools/scan_roll.py:189-196) likewise does not check media. The window asks first (gui.py confirm), so the CLI tools are the unguarded path.
+
+</details>
+
+<a id="transport-protocol-tp-10"></a>
 
 ### TP-10 -- Force Abort skips DirectScanner.close(), so the session's debug spool is never filed and its location is never reported
 
-**Severity** medium · **Category** data-integrity
+**Severity** medium · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/session.py:1863`, `rps7200/session.py:1869`, `rps7200/session.py:1973`, `rps7200/direct.py:1134`, `rps7200/direct.py:1145`, `rps7200/direct.py:926`
 
@@ -291,11 +318,17 @@ force_abort: `transport = getattr(scanner, "t", None) ... transport.close()` (18
 
 **Fix:** In force_abort (and in an atexit or crash handler), run the debug flush after the transport is closed, or at least log the spool path. Consider spooling under the library root (e.g. library/.spool) instead of the system temp dir, so leftovers survive and can be found.
 
-<a id="find-transport-protocol-tp-11"></a>
+<details><summary>Second reader's check</summary>
+
+force_abort (session.py:1855-1875) sets dead=True and closes only the transport. _run's finally (1973-1974) skips `self._scanner.close()` when dead, and DirectScanner.close (1134-1145) is the only caller of _debug_flush. The spool is tempfile.mkdtemp('rps7200-debug-') (926-928), and its path is never logged or emitted. The meta.json sidecars (966-973) exist so the spool can be filed by hand, but nothing tells the operator where it is. A process crash or kill has the same effect.
+
+</details>
+
+<a id="transport-protocol-tp-11"></a>
 
 ### TP-11 -- Ctrl-C in most tools abandons the read in flight; only scan.py and scan_roll.py defer it
 
-**Severity** medium · **Category** user-error
+**Severity** medium · **Category** user-error · **Verdict** confirmed
 
 **Where:** `rps7200/console.py:50`, `tools/verify_protocol.py:1394`, `tools/filing_load_test.py:204`, `tools/uniformity.py:733`, `tools/transport_truth.py:111`, `tools/hold_probe.py:118`
 
@@ -313,11 +346,69 @@ DeferredInterrupt ('Ctrl-C asks the pass in flight to finish rather than abandon
 
 **Fix:** Wrap the device-owning block of every tool that scans in DeferredInterrupt and check .requested() between passes, or install it inside DirectScanner.open() for the main thread.
 
-<a id="find-transport-protocol-tp-12"></a>
+<details><summary>Second reader's check</summary>
+
+grep shows DeferredInterrupt imported only by tools/scan.py and tools/scan_roll.py (plus console.py itself). verify_protocol.py:1394, filing_load_test.py:204, uniformity.py:733 and the probe tools open DirectScanner with the default SIGINT handling. A KeyboardInterrupt inside read_planes goes through _read_pass's BaseException handler (marks suspect) and then __exit__ -> close(), which releases the interface mid-pass. CLAUDE.md:421-422 is accurate for the two tools it names, but CLAUDE.md asks for filing_load_test.py to be run before trusting the roll path.
+
+</details>
+
+<a id="transport-protocol-tp-a1"></a>
+
+### TP-A1 -- A pass that was read completely but that the current decoder rejects is discarded with its raw bytes, so newer code can never re-decode it
+
+**Severity** medium · **Category** data-integrity · **Verdict** found-by-verifier
+
+**Where:** `rps7200/direct.py:1879`, `rps7200/direct.py:1885`, `rps7200/direct.py:1904`, `rps7200/direct.py:1953`, `rps7200/direct.py:1959`, `rps7200/direct.py:3070`, `rps7200/direct.py:3222`, `rps7200/direct.py:4147`
+
+Every byte of the pass arrived and the device is fine (_read_complete is True, so it is not marked suspect). But when the host-side decode rejects the bytes (unexpected or missing channel tags, a channel-count mismatch, or an unexpected shape later in scan()), the exception propagates out of scan(). last_raw was set but nothing files it, the command log is dropped, and _debug_capture never runs, even with RPS7200_DEBUG=1. These are exactly the passes the owner wants kept for newer code: bytes that today's decoder cannot interpret. `reconstruct` exists to re-decode stored bytes with better code, but this path never stores them.
+
+**Evidence (from the code):**
+
+```text
+read_planes: `blob = b"".join(chunks)`; `self._read_complete = True`; `if keep_raw: self.last_raw = blob ...`; then `image, direction = self.decode_index(blob, params, channels)`. decode_index raises: `if not order: raise ScanReadError("no recognisable channel tags in scan data; ...")` and `if len(order) != channels: raise ScanReadError(f"expected {channels} channels ...")`. scan(): `try: image, params, ccd_mask = self._read_pass(...) finally: ... commands = stopper()`, with `self._debug_capture(raw_pixels, meta)` only at 3222 on success. scan_roll: `except (UsbError, ScanReadError, ..., ValueError) as exc: ... yield RollFrame(index, position, None, {}, ... error=str(exc))`.
+```
+
+**Failure scenario:** On an RGBI roll a frame comes back with an unexpected tag layout (for example an 'I' plane missing). decode_index raises ScanReadError, scan_roll records 'frame N failed' with only str(exc), advances, and the ~4-channel raw payload (hundreds of MB at high dpi) that would show what the scanner actually sent is garbage-collected.
+
+**Fix:** When _read_complete is True and decoding fails, spool or file the raw bytes, layout, PARAM reply and command log as a failed-decode entry (or a debug spool item) before re-raising, so reconstruct can re-try them later.
+
+<a id="transport-protocol-tp-03"></a>
+
+### TP-03 -- Transport drops a fully received READ payload when the trailing status is CHECK; FAIL/ERROR trailing statuses are ignored
+
+**Severity** low · **Category** data-integrity · **Verdict** confirmed
+
+**Where:** `rps7200/usb_transport.py:849`, `rps7200/usb_transport.py:852`, `rps7200/usb_transport.py:855`, `rps7200/direct.py:1787`, `rps7200/direct.py:1846`
+
+Once every byte of a READ has arrived, the scanner considers those lines delivered. If the post-transfer status is CHECK, the transport throws them away. In read_planes (retries=1) that either becomes EndOfData, which ends the pass shorter by up to one batch (216 lines across channels) that did arrive, or ScanReadError, which abandons the pass. In calibration it ends the calibration (TP-01) and the chunk is not archived. Retrying the READ (read_lines default retries=3) would resume after the dropped lines and misalign every later line. Conversely, a device-reported FAIL or ERROR after a data phase is silently accepted.
+
+**Evidence (from the code):**
+
+```text
+usb_transport.py:849-857:
+    payload = self._read_payload(read_size, timeout_ms)
+    final = self._wait_not_busy(deadline, ...)
+    if final == UsbStatus.CHECK:
+        raise CheckCondition(command[0])
+    return payload
+Any other final status (FAIL 0x88, ERROR 0xFF, AGAIN) falls through and the payload is returned as good.
+```
+
+**Failure scenario:** The last READ of a pass returns its full 216 lines and the scanner then reports CHECK (end of data) on the trailing status. The transport raises and the lines are discarded. read_lines reads sense 0x20, raises EndOfData, and the image loses its last ~54-72 rows (bottom-up passes: the top). raw.bin also lacks them, so reconstruct cannot recover them.
+
+**Fix:** Return the payload together with the trailing status (e.g. raise a CheckCondition subclass that carries `payload`) so read_planes and calibration can keep the bytes and then decide on the sense. Treat FAIL and ERROR after a data phase as errors rather than success.
+
+<details><summary>Second reader's check</summary>
+
+usb_transport.py:849-857 is as quoted. A trailing CHECK after a complete _read_payload raises CheckCondition and the payload is dropped. Any other non-BUSY final status (FAIL 0x88, ERROR 0xFF, AGAIN, READ) falls through and the payload is returned as good. read_lines then reads sense and raises EndOfData or ScanReadError, and the lines already transferred are lost from raw.bin too. The code is accurately described. Severity is lowered because no evidence in code or docs shows that the device ever reports CHECK after a full data-in phase, so the failure scenario is hypothetical.
+
+</details>
+
+<a id="transport-protocol-tp-12"></a>
 
 ### TP-12 -- Calibration loop re-reads and re-writes gain/offset on every empty poll, not between reads as the vendor does
 
-**Severity** low · **Category** design
+**Severity** low · **Category** design · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2300`, `rps7200/direct.py:2302`, `rps7200/direct.py:2307`
 
@@ -341,15 +432,21 @@ while time.monotonic() < deadline:
 
 **Fix:** Re-write gain/offset only after a successful block, as the vendor does. Read the sense when set_gain_offset is refused instead of swallowing the CheckCondition.
 
-<a id="find-transport-protocol-tp-13"></a>
+<details><summary>Second reader's check</summary>
+
+In the calibration loop (2300-2310), get/set_gain_offset runs at the top of every iteration, including every NoDataYet spin (sleep 0.05 then continue). The CheckCondition from set_gain_offset (a direct t.command) is swallowed without reading sense, so a queued condition lands on the next READ. That READ then feeds TP-01's 'finished' path. It has evidently completed calibrations on hardware, so this is low.
+
+</details>
+
+<a id="transport-protocol-tp-13"></a>
 
 ### TP-13 -- session_start sends a sub-frame film move (SLIDE 00 01 00 00) that its docstring misdescribes and no probe tool records or undoes
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** partly
 
-**Where:** `rps7200/direct.py:2102`, `rps7200/direct.py:2124`, `rps7200/direct.py:1501`, `tools/transport_truth.py:122`, `tools/hold_probe.py:130`, `tools/roll_registration_walk.py:262`, `tools/exposure_probe.py:237`
+**Where:** `rps7200/direct.py:2099`, `rps7200/direct.py:2124`, `rps7200/direct.py:1501`, `tools/transport_truth.py:122`
 
-Action 0x00 param 1 is a sub-frame forward move of about 2.84 units that does not touch the frame counter (protocol.md section 5). Seven probe tools call session_start before their baseline, so the film is moved by an amount no log records and nothing restores. transport_truth even prints 'NOT sent: SLIDE_INIT' while sending this unannounced move. The docstring also gets the value byte wrong and keeps a disproven hypothesis about 0xE7.
+session_start's docstring misstates the SLIDE payload (the code sends `00 01 00 00`, not `00 01 00 04`) and keeps a disproven 0xE7 hypothesis. The sub-frame move it makes (~2.84 units forward) is not logged by the eight probe tools that call it. Because it happens before their baseline prescans, it shifts the film from the operator's placement but does not corrupt their measurements.
 
 **Evidence (from the code):**
 
@@ -361,11 +458,17 @@ Docstring (2102-2103): 'REQUEST SENSE and a SLIDE with `00 01 00 04`'. Code (212
 
 **Fix:** Either drop the move from session_start or make it explicit (value=0x04 as documented, logged, and counted by callers that track travel). Correct the docstring about the value byte and about 0xE7.
 
-<a id="find-transport-protocol-tp-14"></a>
+<details><summary>Second reader's check</summary>
+
+The docstring (2102-2103) says `00 01 00 04`. The code at 2124 sends slide(0x00, param=0x01) with value defaulting to 0 (1501), so `00 01 00 00` goes on the wire, and protocol.md §11 shows value-0 sub-frame commands (`00 46 00 00`) do move the film. The 0xE7 hypothesis is contradicted by protocol.md:53/563. However, in transport_truth.py (122-125) and the other probes, session_start runs before the baseline prescan, so the extra move does not corrupt any measured step or drift figure. It moves the film from where the operator placed it, unlogged.
+
+</details>
+
+<a id="transport-protocol-tp-14"></a>
 
 ### TP-14 -- Probe tools prescan without calibrating and now always fail with ShadingUnavailable, after session_start has already moved the film
 
-**Severity** low · **Category** bug
+**Severity** low · **Category** bug · **Verdict** confirmed
 
 **Where:** `tools/transport_probe.py:55`, `tools/transport_truth.py:124`, `tools/hold_probe.py:136`, `tools/roll_registration_walk.py:108`, `tools/exposure_probe.py:252`, `rps7200/direct.py:2948`
 
@@ -381,11 +484,17 @@ transport_probe.look: `image, _ = scanner.prescan(resolution=dpi)` (shading defa
 
 **Fix:** Call ensure_shading (after confirming film is loaded) or pass shading=False explicitly in these tools, and fix their docstrings. Add a smoke test that constructs each tool's first pass against a fake scanner.
 
-<a id="find-transport-protocol-tp-15"></a>
+<details><summary>Second reader's check</summary>
+
+prescan defaults to shading=True (2059). transport_probe.py:57, transport_truth.py:125, hold_probe.py:136 and roll_registration_walk.py:108 call prescan without shading=False, and exposure_probe.py:265 passes shading=True. None of them calls ensure_shading or load_shading. scan() raises uncalibrated before any command when _shading is None (2948-2963). This happens after session_start has already sent its SLIDE. In exposure_probe, auto_exposure also writes gain/offset (2476-2490) before its probe is refused.
+
+</details>
+
+<a id="transport-protocol-tp-15"></a>
 
 ### TP-15 -- read_planes counts lines from a READ that returned no data
 
-**Severity** low · **Category** bug
+**Severity** low · **Category** bug · **Verdict** confirmed
 
 **Where:** `rps7200/usb_transport.py:828`, `rps7200/usb_transport.py:842`, `rps7200/direct.py:1846`, `rps7200/direct.py:1867`
 
@@ -401,15 +510,21 @@ usb_transport.py:828-842: `if status == UsbStatus.OK: if data: ... return b""`. 
 
 **Fix:** In read_lines (or the transport), raise if a READ returns anything other than exactly lines x bytes_per_line bytes. Make _command reject status OK when read_size > 0.
 
-<a id="find-transport-protocol-tp-16"></a>
+<details><summary>Second reader's check</summary>
+
+_command returns b"" for status OK even when read_size > 0 (usb_transport.py:828-842). read_lines returns that b"", and read_planes appends it and does `got += n` without a length check (1866-1867). The calibration loop counts it as a block. _read_payload itself never returns short, so b"" is the only short case. This is hypothetical device behaviour, so low.
+
+</details>
+
+<a id="transport-protocol-tp-16"></a>
 
 ### TP-16 -- NoDataYet on READ STATE is tolerated in position() but aborts scan() and calibration; wait_ready's timeout is ignored
 
-**Severity** low · **Category** error-handling
+**Severity** low · **Category** error-handling · **Verdict** partly
 
-**Where:** `rps7200/direct.py:1600`, `rps7200/direct.py:2995`, `rps7200/direct.py:2185`, `rps7200/direct.py:3063`, `rps7200/direct.py:3253`
+**Where:** `rps7200/direct.py:2995`, `rps7200/direct.py:2185`, `rps7200/direct.py:1213`, `rps7200/direct.py:1600`
 
-An empty READ STATE (status READ followed by a zero-length packet, which the transport turns into NoDataYet) is expected just after a SLIDE. The hold loop does exactly that: nudge, sleep 0.4 s, then a prescan whose first command is READ STATE while the mechanism is busy for about 1.1 s. There it aborts the verification pass instead of being retried. Separately, if the device is not ready 120 s after START SCAN, _read_pass goes straight on to COPY, gets refused three times and abandons the pass (suspect).
+READ STATE returning an empty payload (NoDataYet) escapes scan()'s opening READ STATE loop, which catches only CheckCondition and ScanReadError, and calibrate_shading's identical loop. position() tolerates it. A prescan 0.4 s after a hold-loop nudge can therefore fail the hold for a transient condition. The ignored wait_ready results are not a real defect: start_scan waits NOT READY out itself, and the post-START case ends conservatively in suspect.
 
 **Evidence (from the code):**
 
@@ -421,11 +536,17 @@ position(): `except (CheckCondition, UsbError, ScanReadError, IndexError): retur
 
 **Fix:** Catch NoDataYet in the pre-pass READ STATE polls (retry after a short sleep). Act on wait_ready's result, for example by waiting longer before COPY after START SCAN rather than proceeding.
 
-<a id="find-transport-protocol-tp-17"></a>
+<details><summary>Second reader's check</summary>
+
+Confirmed: _query catches only CheckCondition, so NoDataYet (a UsbError) propagates from read_state. scan()'s opening loop catches only (CheckCondition, ScanReadError) (2995-3001), so an empty READ STATE aborts the pass before START (not suspect). _hold_to_approved sleeps only HOLD_SETTLE_S=0.4 s after nudge before prescan. On wait_ready: ignoring it at 3063 is harmless, because start_scan itself waits out NOT READY for up to 600 s (1640-1647). At 3253, a timeout leads to get_ccd_mask being refused and the pass being marked suspect, which is conservative rather than wrong.
+
+</details>
+
+<a id="transport-protocol-tp-17"></a>
 
 ### TP-17 -- STOP SCAN and IEEE1284 RESET remain public methods whose docstrings invite their use
 
-**Severity** low · **Category** hardware-safety
+**Severity** low · **Category** hardware-safety · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1674`, `rps7200/direct.py:1682`, `rps7200/direct.py:1660`, `rps7200/usb_transport.py:496`, `rps7200/usb_transport.py:686`
 
@@ -443,11 +564,17 @@ direct.py:1674-1679: `def stop_scan(self) -> None: """Stop scanning. Never raise
 
 **Fix:** Delete stop_scan, reset() and open(reset=...), or rename them to something like _forbidden_stop_scan and have them raise with a pointer to CLAUDE.md. Fix the finish_scan docstring.
 
-<a id="find-transport-protocol-tp-18"></a>
+<details><summary>Second reader's check</summary>
+
+stop_scan (1674-1692) sends SCSI_SCAN 0, and its docstring says it 'runs on the cleanup path'. Transport.open(reset=True) (496-525) and reset() (686-689) send IEEE1284_RESET. grep finds no callers of stop_scan, reset() or reset=True. No method sends SCSI_SET_SCAN_HEAD (only the constant is defined and exported).
+
+</details>
+
+<a id="transport-protocol-tp-18"></a>
 
 ### TP-18 -- RPS7200_MAX_WINDOW is not validated: 0 or a negative value loops forever mid-read; a non-integer breaks import
 
-**Severity** low · **Category** user-error
+**Severity** low · **Category** user-error · **Verdict** confirmed
 
 **Where:** `rps7200/usb_transport.py:67`, `rps7200/usb_transport.py:743`, `rps7200/usb_transport.py:744`, `rps7200/usb_transport.py:768`
 
@@ -463,11 +590,17 @@ With max_window <= 0 the inner loop never runs, got never grows, and the outer l
 
 **Fix:** Parse the value defensively (fall back to the default and warn when it is not a positive integer). Assert max_window > 0 in Transport.__init__.
 
-<a id="find-transport-protocol-tp-19"></a>
+<details><summary>Second reader's check</summary>
+
+MAX_WINDOW = int(os.environ...) at import (67), with no validation. With max_window <= 0, window = min(max_window, size-got) is <= 0, the inner loop is skipped, got never grows, and _read_payload re-announces forever (743-768). A non-integer value raises ValueError when usb_transport is imported. Additionally, a value larger than the 32 KB the device serves per handshake makes the inner loop stall after 32 KB and raise 'scanner stopped mid-payload' after 120 s, which abandons the read. One correction: open() sends no INQUIRY, so the first hang is at the session's inquiry(), not at open.
+
+</details>
+
+<a id="transport-protocol-tp-19"></a>
 
 ### TP-19 -- Command log fills with refused NoDataYet READs and omits every successful image READ
 
-**Severity** low · **Category** data-integrity
+**Severity** low · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:486`, `rps7200/direct.py:490`, `rps7200/direct.py:1860`
 
@@ -483,11 +616,17 @@ _CommandLog.command: `except Exception as exc: entry["refused"] = type(exc).__na
 
 **Fix:** Record the successful image READs compactly (t, lines, bytes), and collapse runs of NoDataYet into a count with first and last t.
 
-<a id="find-transport-protocol-tp-21"></a>
+<details><summary>Second reader's check</summary>
+
+_CommandLog.command (475-497) appends refused entries (NoDataYet included, since it is an Exception) and returns early without appending for READ replies >= 256 B. read_planes polls every 0.02 s (poll default) on NoDataYet, so each empty READ is one listed entry. The calibration's 4-line reads (41 KB) are likewise counted, not listed, while its NoDataYet spins and per-spin gain writes are listed.
+
+</details>
+
+<a id="transport-protocol-tp-21"></a>
 
 ### TP-21 -- The pcap parser ignores status and silently desyncs on a data-out command that was refused
 
-**Severity** low · **Category** design
+**Severity** low · **Category** design · **Verdict** confirmed
 
 **Where:** `tools/parse_capture.py:82`, `tools/parse_capture.py:92`, `tools/verify_capture.py:89`, `tools/verify_capture.py:19`, `tools/verify_capture.py:180`
 
@@ -503,11 +642,17 @@ parse(): `writes = op in (0x0A, 0x15, 0xDC, 0xD1); n = size if writes else 0; da
 
 **Fix:** Use the 0x84 status reads in the stream to decide whether a data phase followed. Implement step 3 or remove it. Reword the final line to 'the driver's MODE SELECT builder reproduces the vendor's bytes'.
 
-<a id="find-transport-protocol-tp-22"></a>
+<details><summary>Second reader's check</summary>
+
+parse() (parse_capture.py:82-96) always consumes `size` data bytes after a write opcode and has no status information, since stream() keeps only port-0x85 bytes. verify_capture step 3 (121-130) only prints the value distributions and appends no problem. Step 4 reproduces vendor payloads from the vendor's own fields and never checks the driver's own choices. The final line (180) claims 'this driver sends what CyberView sends.'
+
+</details>
+
+<a id="transport-protocol-tp-22"></a>
 
 ### TP-22 -- verify_protocol.py claims to send only vendor byte values; several stages send invented payloads, and results are written only at the very end
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
 
 **Where:** `tools/verify_protocol.py:11`, `tools/verify_protocol.py:448`, `tools/verify_protocol.py:779`, `tools/verify_protocol.py:1049`, `tools/verify_protocol.py:1149`, `tools/verify_protocol.py:1394`, `tools/verify_protocol.py:1400`
 
@@ -523,11 +668,17 @@ Module docstring (11): 'Everything here is 300 dpi RGB 8-bit and sends only byte
 
 **Fix:** Correct the docstring and list which stages send non-vendor payloads. Require an explicit flag for stages 12, 14 and 15. Write results.json after every stage, atomically. Wrap the run in DeferredInterrupt.
 
-<a id="find-transport-protocol-tp-23"></a>
+<details><summary>Second reader's check</summary>
+
+The docstring line 11 says 'sends only byte values the vendor sends'. The code includes _ladder(s, 0x01, 0x04, ...) (448), `for param in (87, 120, 160, 200, 255)` (779), send(0, ...) (1049) and STAGE15_RUNGS including 160 (1088). results.json is written only after the with-block completes (1394-1403).
+
+</details>
+
+<a id="transport-protocol-tp-23"></a>
 
 ### TP-23 -- Stale transport law in code comments and in verify_protocol constants (1.57 vs 1.84 vs 1.948)
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
 
 **Where:** `rps7200/protocol.py:240`, `rps7200/protocol.py:253`, `rps7200/protocol.py:290`, `rps7200/direct.py:3566`, `tools/verify_protocol.py:484`, `tools/verify_protocol.py:1165`, `tools/verify_protocol.py:1203`, `tools/verify_protocol.py:1240`, `tools/verify_protocol.py:1323`
 
@@ -543,11 +694,17 @@ protocol.py:240-241: 'The numbers are docs/protocol.md section 11's law ... `dis
 
 **Fix:** Derive every figure from rps7200.protocol (COMMAND_UNITS, MM_PER_UNIT, units_for_param). Correct the protocol.py and direct.py comments to the law in force.
 
-<a id="find-transport-protocol-tp-24"></a>
+<details><summary>Second reader's check</summary>
+
+protocol.py:240-241 quotes the 0.1662 mm law while COMMAND_UNITS=1.84 (0.1945 mm). units_for_param's docstring (290) says param 1 travels 2.57 while it returns 2.84. verify_protocol uses 1.5724 (1165, 1203), prints 'direct.py says 1.572' (1240), uses 1.948 (1323), and keeps 0.1057/0.1662 (484). The runaway band is centred on a prediction about 7% off for small params, so the effect is small.
+
+</details>
+
+<a id="transport-protocol-tp-24"></a>
 
 ### TP-24 -- direct.py says SET GAIN OFFSET persists and compounds; protocol.md and CLAUDE.md say it is a fixed reference that cannot compound
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2473`, `rps7200/direct.py:4114`
 
@@ -565,11 +722,17 @@ auto_exposure (2473-2475): 'scan multiplies whatever the device currently holds,
 
 **Fix:** Correct the auto_exposure comment to the measured fact and keep the explicit set_gain_offset(base) as the belt-and-braces write it is.
 
-<a id="find-transport-protocol-tp-25"></a>
+<details><summary>Second reader's check</summary>
+
+auto_exposure's comment at 2473-2475 ('SET GAIN OFFSET persists, so re-reading it each round would compound') contradicts scan_roll's comment at 4114-4122 and docs/protocol.md §6 (READ GAIN/OFFSET is a fixed reference).
+
+</details>
+
+<a id="transport-protocol-tp-25"></a>
 
 ### TP-25 -- INFRARED_FLOOR_S is described as guarding the read, but nothing uses it except estimates; the real guard is a literal
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:509`, `rps7200/direct.py:515`, `rps7200/direct.py:521`, `rps7200/direct.py:645`
 
@@ -585,11 +748,17 @@ direct.py:509-514: '#: The infrared floor ... Here, beside the read it guards, r
 
 **Fix:** Derive UNTIED_INFRARED_IDLE_S from a named measured maximum, e.g. INFRARED_FLOOR_MAX_S = 227 plus a 60 s margin, and fix the comment, or drop the claim.
 
-<a id="find-transport-protocol-tp-26"></a>
+<details><summary>Second reader's check</summary>
+
+INFRARED_FLOOR_S (515) is referenced only by session.py:65, a re-export for estimates. read_idle_s (641-645) uses UNTIED_INFRARED_IDLE_S = 227.0 + 60.0 (521). The comment at 509-514 claims the floor sits 'beside the read it guards'. The comment at 518-520 also says 'the floor plus the 227 s top ... and a minute', but the value adds only 227 + 60.
+
+</details>
+
+<a id="transport-protocol-tp-26"></a>
 
 ### TP-26 -- scan() claims the vendor's command order, but it differs from docs/protocol.md section 8, which does not note the difference
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2863`, `rps7200/direct.py:3016`, `rps7200/direct.py:3263`, `rps7200/direct.py:3269`
 
@@ -607,11 +776,17 @@ scan() docstring (2863-2866): 'The command order here is the vendor software's, 
 
 **Fix:** List the driver's actual sequence in protocol.md section 8 beside the vendor's and mark the differences. Soften the scan() docstring accordingly.
 
-<a id="find-transport-protocol-tp-27"></a>
+<details><summary>Second reader's check</summary>
+
+The scan() docstring (2863-2866) claims the vendor's order. docs/protocol.md §8 (472-484) lists WRITE GAIN/OFFSET, SET SCAN FRAME, CMD 17, MODE SELECT, COPY, SLIDE INIT, SCAN, READ xN, PARAM. The code sends gain after the frame (3016-3029), COPY and PARAM after SCAN and before the READs (_read_pass 3248-3269), plus SET EXPOSURE TIME, HIGHLIGHT and TEST UNIT READY. protocol.md:8-9 promises to note driver differences and does not.
+
+</details>
+
+<a id="transport-protocol-tp-27"></a>
 
 ### TP-27 -- Two different CAL-INFO prepare payloads, and the calibration sends the prepare twice
 
-**Severity** low · **Category** design
+**Severity** low · **Category** design · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1360`, `rps7200/direct.py:1362`, `rps7200/direct.py:2198`, `rps7200/direct.py:2255`
 
@@ -627,11 +802,17 @@ get_shading_parms: `prep = bytearray(6); prep[0] = SUB_CALIBRATION_INFO | 0x80` 
 
 **Fix:** Check both payloads against the captures (parse_capture) and send exactly the vendor's one, once.
 
-<a id="find-transport-protocol-tp-28"></a>
+<details><summary>Second reader's check</summary>
+
+get_shading_parms sends `95 00 00 00 00 00` (1359-1361). calibrate_shading sends `95 00 02 00 00 00` (2198-2201). Both run in one calibration (2202 and 2255). Which one matches the vendor cannot be verified without the captures, but the two differ and the prepare is issued twice.
+
+</details>
+
+<a id="transport-protocol-tp-28"></a>
 
 ### TP-28 -- advance(steps) and retreat(steps) put the step count in the value byte, which the device ignores; the demo moves `steps` frames and retypes MM_PER_UNIT
 
-**Severity** low · **Category** demo-divergence
+**Severity** low · **Category** demo-divergence · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1543`, `rps7200/direct.py:1557`, `rps7200/demo.py:391`, `rps7200/demo.py:413`, `rps7200/demo.py:451`
 
@@ -647,11 +828,17 @@ direct.py:1543 `self.slide(action, param=0x01, value=steps)`; protocol.md sectio
 
 **Fix:** Remove the steps parameter (always value=1) or loop single-frame moves. Make the demo take STEP_MM from DirectScanner.
 
-<a id="find-transport-protocol-tp-29"></a>
+<details><summary>Second reader's check</summary>
+
+_whole_frames sends slide(action, param=1, value=steps) (1543) and returns on the first position change. demo.py advance/retreat move `steps` positions (391, 413). demo.py:451 retypes 0.1057 instead of DirectScanner.STEP_MM. All current callers use steps=1.
+
+</details>
+
+<a id="transport-protocol-tp-29"></a>
 
 ### TP-29 -- _whole_frames counts a move when the position before the move could not be read
 
-**Severity** low · **Category** bug
+**Severity** low · **Category** bug · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1542`, `rps7200/direct.py:1549`
 
@@ -667,15 +854,21 @@ If READ STATE fails just before the SLIDE, the first successful poll counts as '
 
 **Fix:** When `before` is None, re-read it before sending, or require two consecutive equal readings that differ from the last known good position.
 
-<a id="find-transport-protocol-tp-30"></a>
+<details><summary>Second reader's check</summary>
+
+before = self.position() can be None (1542, since position() swallows errors). The check `now is not None and now != before` (1549) then accepts the first successful read, even an unchanged position, as the move.
+
+</details>
+
+<a id="transport-protocol-tp-30"></a>
 
 ### TP-30 -- Calibration read deadline is an absolute 300 s, not idle-based, and is not scaled with resolution; on expiry the read is abandoned
 
-**Severity** low · **Category** hardware-safety
+**Severity** low · **Category** hardware-safety · **Verdict** partly
 
-**Where:** `rps7200/direct.py:2131`, `rps7200/direct.py:2298`, `rps7200/direct.py:2323`, `rps7200/direct.py:2328`
+**Where:** `rps7200/direct.py:2131`, `rps7200/direct.py:2298`, `rps7200/direct.py:2323`
 
-read_planes uses an idle timeout plus a 3600 s ceiling, so a pass that keeps delivering is never abandoned. The calibration instead stops at 300 s even while data is flowing, which by the code's own account is an abandoned read, and it does not scale for calibrate_shading(resolution=7200), a supported argument that reads twice the bytes. The margin over the documented 4-minute upper estimate is about 25%.
+The calibration read phase has an absolute 300 s deadline rather than an idle timeout like read_planes. A calibration still delivering blocks at 300 s is abandoned and the device marked suspect. The claim that this breaks calibrate_shading(resolution=7200) has no real caller behind it.
 
 **Evidence (from the code):**
 
@@ -687,11 +880,17 @@ read_planes uses an idle timeout plus a 3600 s ceiling, so a pass that keeps del
 
 **Fix:** Use an idle-based timeout (no block for N s) plus a generous ceiling, as read_planes does, and scale it with resolution.
 
-<a id="find-transport-protocol-tp-31"></a>
+<details><summary>Second reader's check</summary>
+
+The absolute 300 s deadline (2131, 2298) is real, and on expiry the calibration is abandoned and marked suspect even while blocks are flowing. The deadline starts after the 10 s silence. The resolution-scaling half is not reachable: the only production caller, ensure_shading (848), uses the 3600 dpi default, and MAX_SHADING_COLUMNS (1973-1986) records that a 7200 dpi calibration returns the same 5172 columns, so nothing calls it with resolution=7200.
+
+</details>
+
+<a id="transport-protocol-tp-31"></a>
 
 ### TP-31 -- A failed CCD-mask read after a complete calibration throws away the whole calibration, bytes included
 
-**Severity** low · **Category** data-integrity
+**Severity** low · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2336`, `rps7200/direct.py:2337`, `rps7200/direct.py:2347`
 
@@ -707,11 +906,81 @@ A calibration that delivered every block and ended cleanly is discarded because 
 
 **Fix:** Archive the collected bytes before reading the mask. If the mask read fails, keep the reference (the per-pass mask is what corrections use) and record that the calibration mask is missing.
 
-<a id="find-transport-protocol-tp-20"></a>
+<details><summary>Second reader's check</summary>
+
+get_ccd_mask (2336) is inside the try. A ScanReadError after `ended = True` is re-raised without suspect, and `data = b"".join(collected)` (2347), the reference and ensure_shading's archive_calibration are never reached, so the calibration bytes are dropped.
+
+</details>
+
+<a id="transport-protocol-tp-a2"></a>
+
+### TP-A2 -- Any bulk-read error sends CLEAR_FEATURE(ENDPOINT_HALT), a standard control request outside the vendor's repertoire, into a device that is mid-pass
+
+**Severity** low · **Category** hardware-safety · **Verdict** found-by-verifier
+
+**Where:** `rps7200/usb_transport.py:649`, `rps7200/usb_transport.py:653`, `rps7200/usb_transport.py:673`
+
+**Doc claim:** CLAUDE.md 'Never commit' section: 'every vendor control transfer CyberView makes is one of the three shapes usb_transport.py makes and there are no others ... So the control plane is verified against the vendor'
+
+CLAUDE.md ('Never commit' section) says every control transfer CyberView makes is one of the three vendor shapes usb_transport.py makes, 'so the control plane is verified against the vendor'. The converse, that this module sends only those shapes, is false. Every failed bulk read (a 120 s bulk timeout with zero bytes, PIPE, OVERFLOW) triggers libusb_clear_halt, which sends a standard CLEAR_FEATURE to the device, and the captures show CyberView never sending one. It happens at the moment the device is most fragile (a pass just failed), and nothing records it in the command log.
+
+**Evidence (from the code):**
+
+```text
+_bulk_read_into: `if rc < 0 and not (rc == LIBUSB_ERROR_TIMEOUT and transferred.value > 0): # Drain the stall before it poisons every later control transfer. try: self.clear_halt() ...` and clear_halt: `rc = _lib.libusb_clear_halt(self._handle, self.bulk_in_ep)`.
+```
+
+**Failure scenario:** A 1800 dpi READ's bulk transfer times out with 0 bytes. The transport clears the halt on endpoint 0x81 before raising, which is a control request never observed from the vendor. What that does to a bridge mid-scan has never been measured, and the command log, which records only SCSI CDBs, does not show it happened.
+
+**Fix:** Document clear_halt as a deliberate departure from the vendor, log it through the command log or the debug record, and consider leaving it to an explicit recovery step rather than running it automatically inside a pass.
+
+<a id="transport-protocol-tp-a3"></a>
+
+### TP-A3 -- scan()'s media check tests byte 8 but logs byte 6 and dismisses it with a comment that was true only of byte 6
+
+**Severity** low · **Category** doc-mismatch · **Verdict** found-by-verifier
+
+**Where:** `rps7200/direct.py:3005`, `rps7200/direct.py:3007`, `rps7200/direct.py:3011`, `rps7200/protocol.py:568`, `rps7200/protocol.py:584`
+
+**Doc claim:** rps7200/direct.py:3007-3009 comment 'this bit has read clear with film definitely loaded'; contradicted by protocol.py:569-583 and CLAUDE.md 'Calibrate with the film loaded' (byte 8 is the flag the driver reads now)
+
+media_loaded was moved from byte 6 to byte 8 (measured with one variable changed, per its docstring and CLAUDE.md). The scan-path comment and log line still describe the old byte-6 flag: they print byte 6's value as the evidence and call 'that bit' unreliable. The flag the code now trusts elsewhere is therefore both ignored here and misreported. An operator scanning an empty transport sees a log line blaming an unreliable bit and the scan proceeds.
+
+**Evidence (from the code):**
+
+```text
+direct.py:3005-3015: `if require_media: state = self.read_state(); if not state.media_loaded: # Reported, not enforced: this bit has read clear with film definitely loaded, so trusting it would block valid scans. ... self._log(f"note: state {state.scanning:#04x} suggests no film, but that bit is not reliable; continuing")`. protocol.py:568-587: `media_loaded` is `not self.no_media`, and `no_media` is `bool(self.busy)`, i.e. byte 8, with the docstring saying the byte-6 reading 'could not be believed'.
+```
+
+**Failure scenario:** The strip is not in the transport. READ STATE byte 8 reads 1. scan() logs 'note: state 0x0d suggests no film, but that bit is not reliable; continuing' and runs the full pass, so the operator cannot tell that the reliable flag said empty.
+
+**Fix:** Log byte 8 (and byte 6 separately if wanted), correct the comment, and decide explicitly whether a byte-8 'empty' should warn loudly or refuse (compare TP-09).
+
+<a id="transport-protocol-tp-a4"></a>
+
+### TP-A4 -- The INQUIRY reply is kept only as parsed fields; its raw bytes are never recorded
+
+**Severity** low · **Category** data-integrity · **Verdict** found-by-verifier
+
+**Where:** `rps7200/direct.py:1154`, `rps7200/direct.py:1167`, `rps7200/library.py:202`, `rps7200/library.py:340`
+
+The device identity (firmware, CCD geometry, capability bytes) is stored only through the pieusb offsets the parser assumes. If an offset is wrong, or an unparsed byte turns out to matter (the Inquiry dataclass drops most of the ~120 bytes), no entry can be re-derived. That goes against the requirement that every received byte needed for later evaluation is kept.
+
+**Evidence (from the code):**
+
+```text
+inquiry(): `d = self.t.command(_cmd(SCSI_INQUIRY, length), read_size=length)` then `result = Inquiry(vendor=text(8, 8), ... frame=(short(108), ...))`, and d is discarded. library._describe_inquiry: `return {f.name: getattr(inquiry, f.name) for f in fields(inquiry)}` -> record 'device'. INQUIRY runs at open(), before any _CommandLog.start(), so it is not in extra.commands either.
+```
+
+**Failure scenario:** A later investigation needs to know whether two sessions ran different firmware sub-revisions encoded in bytes the parser skips. Every library entry holds only the parsed subset, and no raw INQUIRY exists anywhere.
+
+**Fix:** Keep the raw INQUIRY bytes on the Inquiry object (hex) and store them in the entry's device record.
+
+<a id="transport-protocol-tp-20"></a>
 
 ### TP-20 -- Tight status polling: the BUSY loops spin on the control endpoint with no sleep for up to max_wait_s
 
-**Severity** info · **Category** design
+**Severity** info · **Category** design · **Verdict** confirmed
 
 **Where:** `rps7200/usb_transport.py:711`, `rps7200/usb_transport.py:820`
 
@@ -726,6 +995,12 @@ _wait_not_busy: `while status == UsbStatus.BUSY: if time.monotonic() > deadline:
 **Failure scenario:** A device that stays BUSY for tens of seconds (for example after a data-out) is hammered with tens of thousands of status reads.
 
 **Fix:** Add a short sleep (for example 5-20 ms) inside the BUSY loops, matched to the vendor cadence measured in the captures.
+
+<details><summary>Second reader's check</summary>
+
+_wait_not_busy (711-714) and _command's BUSY loop (820-823) call _control_in back to back with no sleep until the deadline. No harm is shown, which makes this an observation.
+
+</details>
 
 ## What this area persists
 
@@ -742,6 +1017,14 @@ _wait_not_busy: `while status == UsbStatus.BUSY: if time.monotonic() > deadline:
 | Debug spool of passes awaiting filing | $TMP/rps7200-debug-*/NNN-{image.npy, raw.bin, meta.json, shading.npz, ccd_mask.bin} | npy raw decoded pixels, raw bytes, JSON meta sidecar | raw | DirectScanner._debug_capture (direct.py:908-998) during the session | DirectScanner._debug_flush at close() (1031-1125) | Lossless. Stranded unfiled if close() never runs (force abort, crash), and nothing reports the path (TP-10) |
 | Protocol probe outputs | probe/<stage>_*.tif, probe/results.json (tools/verify_protocol.py --out) | TIFF of 8-bit raw pixels (shading=False); JSON merged read-modify-write | raw pixels, no raw bytes or command log unless RPS7200_DEBUG=1 | verify_protocol.shot / main | verify_protocol later stages (stage 16 reads stage15_home.tif), humans | TIFF lossless. results.json written non-atomically and only after all stages succeed (TP-22) |
 | USB captures | captures/*.pcapng (gitignored) | pcapng with USBPcap pseudo-header | raw | external (Wireshark/USBPcap) | rps7200.usbpcap._records (private) -> packets(devices)/setups/scanner_devices -> tools/parse_capture.py, tools/verify_capture.py | Read-only. packets() returns only CONTROL/BULK records of named devices, and setups() only 8 header bytes, so interrupt (keystroke) payloads are never returned |
+
+**Second reader's corrections to this table:**
+
+1. Command log (scan.json -> extra.commands): the rule is not 'exact for replies under 256 B'. Only replies of 256 B or more to SCSI READ (0x08) are counted instead of listed (direct.py:490-493). Every other reply is kept in full as hex whatever its size, so the per-pass COPY CCD mask (5172 B, opcode 0x18) appears in full in the log, as well as in ccd_mask.bin. A calibration's log is returned (and archived in calibration.json) only on success. On failure the logger is never stopped (calibrate_shading calls stop() only after its try/finally, 2345), so it keeps recording later commands until the next scan()'s start() resets it. The log also never contains INQUIRY (sent at open, before any start()) or libusb clear_halt control requests (TP-A2).
+2. 'device' in scan.json is not written by DirectScanner.scan meta. It is added by library.save through _describe_inquiry (library.py:202-213, 340) from the parsed Inquiry dataclass. The raw INQUIRY bytes are kept nowhere (TP-A4).
+3. Calibration archive: calibration.json also holds 'reference' and 'ccd_mask' keys naming the sibling files. The archive's shading.npz, like data.bin and ccd_mask.bin, is written non-atomically (np.savez_compressed straight to the final name, direct.py:786-787). data.bin also contains every 4-line block, including any partial set accepted by TP-01, with no record of how many blocks were expected.
+4. Raw image bytes: in addition to the losses listed, a pass that was read completely but rejected by decode_index is not kept anywhere (TP-A1). raw.layout.lines_received vs lines is the only persisted trace of an early EndOfData (TP-02), and it is present only when raw bytes were kept.
+5. Session shading cache: besides being overwritten by a partial calibration, a zero-block 'finished' calibration sets the in-session reference to None without touching the cache (save_shading returns None). The in-memory reference and the cache can therefore diverge silently.
 
 ## What the operator can do
 

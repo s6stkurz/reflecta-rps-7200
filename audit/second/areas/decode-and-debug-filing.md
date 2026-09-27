@@ -1,56 +1,67 @@
 # Decode, direction, shading and debug filing
 
-21 findings: 5 high, 6 medium, 8 low, 2 info.
+Area key `decode-and-debug-filing`. 24 findings: 3 high, 7 medium, 12 low, 2 info.
 
-**Not verified.** In the first audit every finding was re-read by an adversarial second reader; here that stage did not run (the account's spend limit was reached), so these are one reader's findings. Treat them as leads to confirm against the code.
+Every finding below was produced by one reader and then re-checked against the code by a second, adversarial reader. `verdict` is that second reader's: `confirmed`, `partly` (real, description corrected -- the corrected text is shown), or `found-by-verifier` (added by the second reader).
 
 [Back to the summary](../README.md)
 
 ## What this area is
 
 Decode and debug filing (rps7200/direct.py read path, decode_index, _debug_capture/_debug_flush/debug_claim, calibration; direction.py; shading.py; defects.py), checked against the code at 03aacba. HEAD 0fc837d only adds audit/second files. The decode itself is sound. Every byte a completed READ returns is concatenated unchanged, 2-byte tags and trailing partial lines included, and kept as last_raw whenever keep_raw or debug is set. raw_layout records stride, width, lines, channels and lines_received, and decode_index is deterministic and re-runnable from those. Read direction comes from the line tags and is recorded on every pass. The 7200 dpi stagger trim is recorded and replayed. Exposure is clamped to the 16-bit timer. The shading reference and per-pass CCD mask are stored losslessly. The weak points are around the decode rather than in it:
+
 (1) debug_claim throws away the spooled copy before the caller's own filing is confirmed, and callers only file after close(). A failed save therefore loses the pass.
+
 (2) Claimed passes are still spooled to the system temp dir and kept until close(). A roll with debug on holds every frame twice, so the peak-disk problem the flush comments say is fixed is still there.
+
 (3) With debug off (the default), metering probes, hold/aim prescans and every roll frame's own prescan are never stored with raw bytes. The frame entry's prescan.tif holds corrected 8-bit pixels and no label says so.
+
 (4) A pass that was fully read but fails to decode, realign or correct is never filed, and its bytes are discarded. That is exactly the case the raw bytes exist for.
+
 (5) An ambiguous ASC 0x20 during the read is taken as a normal end of data. The image is silently truncated and the device is not marked suspect.
+
 (6) Calibration raw bytes are archived outside the library. Entries corrected with a reused reference are not linked to them, and no code reads them back.
+
 (7) The spool is left behind with no recovery path after force_abort, a crash or a missing close(). Debug entries go to a CWD-relative library rather than the session's.
+
 defects.py is dead in every delivered path.
 
 ## Findings at a glance
 
-| ID | Severity | Category | Title |
-|---|---|---|---|
-| [DBG-1](#find-decode-and-debug-filing-dbg-1) | high | data-integrity | debug_claim deletes the spooled copy before the claimant's own filing is confirmed |
-| [DBG-2](#find-decode-and-debug-filing-dbg-2) | high | design | Claimed passes are still spooled and held in the temp dir until close(), so a debug-on roll keeps every frame twice |
-| [DBG-3](#find-decode-and-debug-filing-dbg-3) | high | data-integrity | With debug off (the default), prescans, before-prescans, metering probes and hold/aim passes never reach the library with raw bytes |
-| [DBG-4](#find-decode-and-debug-filing-dbg-4) | high | error-handling | A pass that was read completely but fails to decode, realign or correct is never filed; its raw bytes and command log are discarded |
-| [DBG-5](#find-decode-and-debug-filing-dbg-5) | high | error-handling | ASC 0x20 during an image read is taken as end of data: pass silently truncated, device not marked suspect |
-| [DBG-6](#find-decode-and-debug-filing-dbg-6) | medium | data-integrity | Calibration raw bytes are archived outside the library, unlinked for reused references, and read by nothing |
-| [DBG-7](#find-decode-and-debug-filing-dbg-7) | medium | error-handling | Calibration treats any refused read as 'finished' and builds a reference from however many lines arrived |
-| [DBG-8](#find-decode-and-debug-filing-dbg-8) | medium | data-integrity | Debug spool is orphaned after force_abort, a crash, or a script that never calls close(); no tool files it and its sidecars are incomplete |
-| [DBG-9](#find-decode-and-debug-filing-dbg-9) | medium | user-error | Debug entries are filed into RPS7200_DEBUG_ROOT or ./library, not the library the session or tool is using |
-| [DBG-10](#find-decode-and-debug-filing-dbg-10) | medium | user-error | Probe tools accept RPS7200_DEBUG=0/false as 'on' while DirectScanner treats it as off |
-| [DBG-11](#find-decode-and-debug-filing-dbg-11) | medium | data-integrity | Payload followed by CHECK CONDITION is discarded by the transport, losing the last chunk of a pass or calibration |
-| [DBG-12](#find-decode-and-debug-filing-dbg-12) | low | bug | apply_shading silently corrects only part of the frame when the mask maps fewer columns than the pass has |
-| [DBG-13](#find-decode-and-debug-filing-dbg-13) | low | data-integrity | Debug capture copies meta before callers add bracket, roll and registration fields |
-| [DBG-14](#find-decode-and-debug-filing-dbg-14) | low | data-integrity | set_gain_offset silently wraps gain and offset above 255 while the record keeps the unwrapped value |
-| [DBG-15](#find-decode-and-debug-filing-dbg-15) | low | doc-mismatch | _CommandLog lists every NoDataYet-refused image READ, bloating each entry's commands, contrary to its docstring |
-| [DBG-16](#find-decode-and-debug-filing-dbg-16) | low | doc-mismatch | auto_exposure's comment says SET GAIN OFFSET persists; the rest of the code and CLAUDE.md say the read-back is a fixed reference |
-| [DBG-17](#find-decode-and-debug-filing-dbg-17) | low | doc-mismatch | CLAUDE.md says a single scan compresses nothing while the device is open; the spool compresses the shading reference with the device open |
-| [DBG-18](#find-decode-and-debug-filing-dbg-18) | low | hardware-safety | stop_scan() is a public method that sends STOP SCAN, which CLAUDE.md forbids; it is unused and unguarded |
-| [DBG-19](#find-decode-and-debug-filing-dbg-19) | low | demo-divergence | The demo stand-in has no debug spooling, no command log and no read_planes, so make run-demo never exercises debug filing |
-| [DBG-20](#find-decode-and-debug-filing-dbg-20) | info | dead-code | defects.py (destripe, column-defect detection, resample_reference) is not used by any delivered path |
-| [DBG-21](#find-decode-and-debug-filing-dbg-21) | info | doc-mismatch | The infrared plane is never shading-corrected, although CLAUDE.md says everything an operator sees is corrected |
+| ID | Severity | Category | Verdict | Title |
+|---|---|---|---|---|
+| [DBG-1](#decode-and-debug-filing-dbg-1) | high | data-integrity | confirmed | debug_claim deletes the spooled copy before the claimant's own filing is confirmed |
+| [DBG-2](#decode-and-debug-filing-dbg-2) | high | design | confirmed | Claimed passes are still spooled and held in the temp dir until close(), so a debug-on roll keeps every frame twice |
+| [DBG-3](#decode-and-debug-filing-dbg-3) | high | data-integrity | confirmed | With debug off (the default), prescans, before-prescans, metering probes and hold/aim passes never reach the library with raw bytes |
+| [DBG-4](#decode-and-debug-filing-dbg-4) | medium | error-handling | confirmed | A pass that was read completely but fails to decode, realign or correct is never filed; its raw bytes and command log are discarded |
+| [DBG-5](#decode-and-debug-filing-dbg-5) | medium | error-handling | partly | ASC 0x20 during an image read is taken as end of data: pass silently truncated, device not marked suspect |
+| [DBG-6](#decode-and-debug-filing-dbg-6) | medium | data-integrity | confirmed | Calibration raw bytes are archived outside the library, unlinked for reused references, and read by nothing |
+| [DBG-7](#decode-and-debug-filing-dbg-7) | medium | error-handling | confirmed | Calibration treats any refused read as 'finished' and builds a reference from however many lines arrived |
+| [DBG-8](#decode-and-debug-filing-dbg-8) | medium | data-integrity | confirmed | Debug spool is orphaned after force_abort, a crash, or a script that never calls close(); no tool files it and its sidecars are incomplete |
+| [DBG-10](#decode-and-debug-filing-dbg-10) | medium | user-error | partly | Probe tools accept RPS7200_DEBUG=0/false as 'on' while DirectScanner treats it as off |
+| [DBG-A1](#decode-and-debug-filing-dbg-a1) | medium | data-integrity | found-by-verifier | Debug-filed metering probes and hold prescans record film 'negative' whatever is loaded, and carry no role or link to the frame they served |
+| [DBG-9](#decode-and-debug-filing-dbg-9) | low | user-error | partly | Debug entries are filed into RPS7200_DEBUG_ROOT or ./library, not the library the session or tool is using |
+| [DBG-11](#decode-and-debug-filing-dbg-11) | low | data-integrity | partly | Payload followed by CHECK CONDITION is discarded by the transport, losing the last chunk of a pass or calibration |
+| [DBG-12](#decode-and-debug-filing-dbg-12) | low | bug | confirmed | apply_shading silently corrects only part of the frame when the mask maps fewer columns than the pass has |
+| [DBG-13](#decode-and-debug-filing-dbg-13) | low | data-integrity | confirmed | Debug capture copies meta before callers add bracket, roll and registration fields |
+| [DBG-14](#decode-and-debug-filing-dbg-14) | low | data-integrity | confirmed | set_gain_offset silently wraps gain and offset above 255 while the record keeps the unwrapped value |
+| [DBG-15](#decode-and-debug-filing-dbg-15) | low | doc-mismatch | confirmed | _CommandLog lists every NoDataYet-refused image READ, bloating each entry's commands, contrary to its docstring |
+| [DBG-16](#decode-and-debug-filing-dbg-16) | low | doc-mismatch | confirmed | auto_exposure's comment says SET GAIN OFFSET persists; the rest of the code and CLAUDE.md say the read-back is a fixed reference |
+| [DBG-17](#decode-and-debug-filing-dbg-17) | low | doc-mismatch | partly | CLAUDE.md says a single scan compresses nothing while the device is open; the spool compresses the shading reference with the device open |
+| [DBG-18](#decode-and-debug-filing-dbg-18) | low | hardware-safety | confirmed | stop_scan() is a public method that sends STOP SCAN, which CLAUDE.md forbids; it is unused and unguarded |
+| [DBG-19](#decode-and-debug-filing-dbg-19) | low | demo-divergence | confirmed | The demo stand-in has no debug spooling, no command log and no read_planes, so make run-demo never exercises debug filing |
+| [DBG-A3](#decode-and-debug-filing-dbg-a3) | low | error-handling | found-by-verifier | read_planes reads image data with retries=1, so a queued one-shot sense on an image READ abandons the pass (suspect) or ends it as 'end of data' |
+| [DBG-A4](#decode-and-debug-filing-dbg-a4) | low | data-integrity | found-by-verifier | A failed pass's command log keeps recording after scan() or calibrate_shading() raise before the logger is stopped |
+| [DBG-20](#decode-and-debug-filing-dbg-20) | info | dead-code | confirmed | defects.py (destripe, column-defect detection, resample_reference) is not used by any delivered path |
+| [DBG-A2](#decode-and-debug-filing-dbg-a2) | info | design | found-by-verifier | Exposure 16-bit timer wrap is guarded; gain/offset are not (observation) |
 
 ## Findings in full
 
-<a id="find-decode-and-debug-filing-dbg-1"></a>
+<a id="decode-and-debug-filing-dbg-1"></a>
 
 ### DBG-1 -- debug_claim deletes the spooled copy before the claimant's own filing is confirmed
 
-**Severity** high · **Category** data-integrity
+**Severity** high · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1000-1016`, `rps7200/direct.py:1055-1059`, `rps7200/direct.py:1134-1145`, `tools/scan.py:266`, `tools/scan.py:295-300`, `tools/scan.py:366-375`, `tools/scan_roll.py:475`, `tools/scan_roll.py:730`, `tools/scan_roll.py:803`, `rps7200/session.py:2872-2875`, `rps7200/session.py:1972-1979`
 
@@ -66,11 +77,17 @@ direct.py:1055 `if item.get("claimed"):` / `# Its caller filed it, with these sa
 
 **Fix:** Make the claim conditional: keep the spooled files until the claimant reports success (e.g. debug_filed(pixels, entry_path) from FrameWriter/library.save callbacks). Alternatively flush after the claimant's filing and only unlink claimed items whose entry exists and verifies. In tools/scan.py, file each pending item in its own try so one failure does not lose the rest.
 
-<a id="find-decode-and-debug-filing-dbg-2"></a>
+<details><summary>Second reader's check</summary>
+
+direct.py:1055-1059 unlinks a claimed item's spool in _debug_flush unconditionally (`if item.get("claimed"): ... stuck += self._debug_unlink(item); continue`). close() (1134-1145) runs the flush right after t.close(). tools/scan.py claims in hold() (s.debug_claim(raw), ~296) inside the with-block (266) and only files in the loop at 366-375 after the with has exited, with no per-item try; a library.save failure raises out of main with the pixels/bytes only in memory. session.py:2872-2875 claims before self._writer.submit, and FrameWriter._write (1618-1705) keeps no copy when library.save raises (_run only appends to errors). In the window the claimed spool is unlinked at close regardless of whether the writer failed hours earlier. So the one redundant copy is dropped on a promise, not on confirmation. Without debug the same failure would also lose the data, but debug is the stated safety net and the claim defeats it.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-2"></a>
 
 ### DBG-2 -- Claimed passes are still spooled and held in the temp dir until close(), so a debug-on roll keeps every frame twice
 
-**Severity** high · **Category** design
+**Severity** high · **Category** design · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:922-998`, `rps7200/direct.py:3222`, `rps7200/direct.py:1090-1100`, `rps7200/direct.py:925-928`
 
@@ -86,11 +103,17 @@ scan() always calls `self._debug_capture(raw_pixels, meta)` (3222), which writes
 
 **Fix:** Let the caller claim before the spool write: a flag on scan(), or check a claim registry keyed by pass id. Alternatively unlink a claimed item's files as soon as the claimant confirms filing. Spool beside the debug root (same volume as the library), not in tempfile's default dir. Surface spool failures as an event, not only a log line.
 
-<a id="find-decode-and-debug-filing-dbg-3"></a>
+<details><summary>Second reader's check</summary>
+
+scan() always calls self._debug_capture(raw_pixels, meta) (direct.py:3222), which np.save()s the pixels and write_bytes() the raw blob into tempfile.mkdtemp(prefix="rps7200-debug-") (925-962). debug_claim (1000-1016) only sets item["claimed"]=True; files are removed only in _debug_flush at close(). The window's ScanSession keeps one DirectScanner open for its whole life (session.py _run loop, close only in finally at 1972-1974), so every claimed frame of every roll stays spooled until the window quits. The comment at 1090-1100 names exactly this peak as what runs a machine out of space. The capture's `except Exception as exc: self._log(f"debug: could not spool this scan ({exc})")` swallows ENOSPC, so later unclaimed passes (the only ones debug exists for) silently go unfiled.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-3"></a>
 
 ### DBG-3 -- With debug off (the default), prescans, before-prescans, metering probes and hold/aim passes never reach the library with raw bytes
 
-**Severity** high · **Category** data-integrity
+**Severity** high · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:556-561`, `rps7200/direct.py:922-923`, `rps7200/direct.py:3975-3976`, `rps7200/direct.py:4137-4141`, `rps7200/session.py:2574-2587`, `rps7200/session.py:2620-2628`, `rps7200/library.py:269-270`, `rps7200/library.py:378-382`, `tools/scan_roll.py:752`
 
@@ -106,11 +129,17 @@ A pass that no caller files is filed only through debug mode, which is off unles
 
 **Fix:** File the roll's prescan raw pixels and raw bytes with the frame entry (carry `last_raw`/`last_raw_layout` on RollFrame like raw_prescan). Mark prescan.tif as corrected in the record, or store the raw one. Consider making low-cost passes (300 dpi probes and prescans, ~1 MB) always filed regardless of debug.
 
-<a id="find-decode-and-debug-filing-dbg-4"></a>
+<details><summary>Second reader's check</summary>
+
+DirectScanner.__init__ enables debug only on the env var or debug=True (direct.py:556-561); _debug_capture returns immediately when off (922-923). On a real (non-dry-run) roll the frame's prescan reaches the library only as library.save(prescan=rf.prescan) (session.py:2618-2622; tools/scan_roll.py:748-751), and library.save writes it as tiff prescan.tif (library.py:269-270) with a record of only {file, read_direction, carriage_state} (378-382): no raw pixels, no raw bytes, no corrections flag, no exposure/commands. rf.prescan is prescan()'s return, which is the shading-corrected 8-bit picture (prescan passes shading=shading, default True, direct.py:2076-2087). RollFrame does carry raw_prescan pixels (direct.py:4134-4136) but no caller files them on a real roll (session files raw_prescan only under `if job.dry_run`, 2535-2566; scan_roll.py:667 likewise only on the dry-run branch). prescan_before is filed with file_entry=False (session.py:2585). Metering probes (auto_exposure scan at 2492) and hold verification prescans (3377) are never filed by any caller. With debug off (the default for the operator) none of these passes' bytes survive.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-4"></a>
 
 ### DBG-4 -- A pass that was read completely but fails to decode, realign or correct is never filed; its raw bytes and command log are discarded
 
-**Severity** high · **Category** error-handling
+**Severity** medium · **Category** error-handling · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1878-1904`, `rps7200/direct.py:1953-1970`, `rps7200/direct.py:3070-3076`, `rps7200/direct.py:3090-3097`, `rps7200/direct.py:3115-3151`, `rps7200/direct.py:3222`, `rps7200/direct.py:3280-3294`, `rps7200/direct.py:4147-4156`
 
@@ -126,15 +155,21 @@ read_planes: `self._read_complete = True` ... `self.last_raw = blob` ... `image,
 
 **Fix:** In scan(), wrap post-read processing: on any exception after `_read_complete`, spool/file last_raw + raw_layout + commands + params as a 'decode-failed' debug entry (and hand them to the caller via the exception or RollFrame). Call finish_scan() whenever the read completed. Decode without per-line bytes copies (np.frombuffer over the blob with a strided view).
 
-<a id="find-decode-and-debug-filing-dbg-5"></a>
+<details><summary>Second reader's check</summary>
+
+read_planes sets _read_complete=True and last_raw=blob (1878-1896) before decode_index (1904), which raises ScanReadError on missing/extra channel tags (1950-1961); _realign_native_column_stagger raises ValueError (2031-2035); scan() raises ShadingUnavailable after the pass (3115-3126). _debug_capture is reached only at 3222, so none of these paths spools anything, even with debug on. _read_pass's except path (3280-3291) skips finish_scan (the else branch), and scan()'s `finally: commands = stopper()` value is dropped. scan_roll's except (4147-4156) yields RollFrame(error=...) with no bytes; no caller reads last_raw on failure and the next pass clears or overwrites it. Real, but it needs an anomalous pass (unexpected tags, 3-plane RGBI, wider pass than predicted), so medium rather than high.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-5"></a>
 
 ### DBG-5 -- ASC 0x20 during an image read is taken as end of data: pass silently truncated, device not marked suspect
 
-**Severity** high · **Category** error-handling
+**Severity** medium · **Category** error-handling · **Verdict** partly
 
-**Where:** `rps7200/direct.py:1787-1794`, `rps7200/direct.py:1862-1864`, `rps7200/direct.py:1878-1881`, `rps7200/direct.py:3286-3290`, `rps7200/protocol.py:412-414`, `rps7200/direct.py:2283-2286`, `rps7200/direct.py:3155-3167`
+**Where:** `rps7200/direct.py:1787-1797`, `rps7200/direct.py:1862-1864`, `rps7200/direct.py:1878-1880`, `rps7200/direct.py:3155-3162`, `rps7200/protocol.py:412-414`
 
-Code 0x20 also means 'invalid command'. The calibration comment shows the device returning it for reads that were refused rather than exhausted. read_planes accepts it at any point as a finished pass. It marks the read complete so no suspect is set, decodes a short image and returns it as a normal pass for correction, display and filing. The only warning is a log line. The shortfall shows in the record only through raw.layout (lines against lines_received) when the bytes were kept. If 0x20 arrives on the very first READ the blob is empty. decode_index then raises 'no recognisable channel tags', again without suspect, and the roll carries on into a device that may still be scanning.
+read_planes accepts end-of-data (ASC 0x20, which the protocol module itself says is indistinguishable from 'invalid command') at any point in a pass as a normal finish: it marks the read complete (no suspect), decodes whatever arrived and returns it as an ordinary pass. The pass meta does not record the expected line count (params.lines), so without raw bytes a truncated pass is indistinguishable in the library from a complete one; only a log line says so. If the 0x20 did not really mean exhaustion, the device is left mid-scan with no suspect flag.
 
 **Evidence (from the code):**
 
@@ -146,11 +181,17 @@ protocol.py: `#: ASC reported once a scan is exhausted. Indistinguishable by sen
 
 **Fix:** Treat EndOfData before `got == total_lines` as suspicious. Retry once after TEST UNIT READY, then either mark suspect or flag the pass as short (`meta['lines_expected']`, `meta['lines_received']`, `meta['short_read']`) and raise to the caller rather than returning a normal image. Always record params.lines and received lines in meta, not only in raw_layout.
 
-<a id="find-decode-and-debug-filing-dbg-6"></a>
+<details><summary>Second reader's check</summary>
+
+Code is as described: read_lines raises EndOfData whenever the sense ASC is 0x20 (1791-1794, protocol.py:412-414 says 0x20 is indistinguishable from 'invalid command'), read_planes catches it at any line count and breaks (1862-1864), then marks the read complete (1880) so no suspect is set, decodes a short image and returns it as a normal pass. The meta records only height=image.shape[0] (3161); the expected line count params.lines appears only in raw.layout, which exists only when bytes were kept. An empty first read gives decode_index's 'no recognisable channel tags' with _read_complete already True, so again no suspect. What is speculative is the failure scenario: nothing in the code or captures shows a 0x20 arriving mid-image-read while the device is still scanning (the calibration comment is about calibration reads after polling). So the defect is a silent acceptance and non-recording of a short pass, and the wedge is a possibility rather than a demonstrated path.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-6"></a>
 
 ### DBG-6 -- Calibration raw bytes are archived outside the library, unlinked for reused references, and read by nothing
 
-**Severity** medium · **Category** data-integrity
+**Severity** medium · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:713-734`, `rps7200/direct.py:749-804`, `rps7200/direct.py:854-860`, `rps7200/direct.py:3208-3211`, `rps7200/shading.py:75-91`, `tools/uniformity.py:735`, `rps7200/library.py:28-30`
 
@@ -166,11 +207,17 @@ Each entry stores the reduced reference (shading.npz), not the bytes it was redu
 
 **Fix:** Copy (or hard-link) data.bin and calibration.json into each entry, or store a content hash of data.bin inside shading.npz and in shading_origin, and keep the calibration archive under the library root. Add a loader that rebuilds a reference from an archive. Write the archive with the same INCOMPLETE/atomic pattern as library.save.
 
-<a id="find-decode-and-debug-filing-dbg-7"></a>
+<details><summary>Second reader's check</summary>
+
+ensure_shading archives via archive_calibration(result, path.parent) (direct.py:854-860) into <reference dir>/<stamp>/ with plain write_bytes/write_text (no temp+rename, no INCOMPLETE marker, 781-803), and links it from entries only as `self._shading_origin["archive"] = str(archive)` (859-860), a path relative to the CWD when the reference path is relative (GUI default home=Path('.')). load_shading's origin (722-729) has no archive link or hash, so every entry corrected with a reused cache has no pointer to the calibration bytes. grep finds no reader of data.bin/calibration.json in rps7200/ or tools/. tools/uniformity.py:735 calls calibrate_shading() directly with keep_data False, so nothing is archived there.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-7"></a>
 
 ### DBG-7 -- Calibration treats any refused read as 'finished' and builds a reference from however many lines arrived
 
-**Severity** medium · **Category** error-handling
+**Severity** medium · **Category** error-handling · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2305-2313`, `rps7200/direct.py:2323-2332`, `rps7200/direct.py:2351`, `rps7200/shading.py:135-182`
 
@@ -186,11 +233,17 @@ A calibration cut short by an unrelated refusal is not marked suspect, even thou
 
 **Fix:** Only EndOfData ends the calibration. Other refusals should retry or mark suspect. Reject a reference with fewer lines than declared by the descriptor, without a two-phase split, or with a light mean far from the expected level. Keep the previous reference in that case.
 
-<a id="find-decode-and-debug-filing-dbg-8"></a>
+<details><summary>Second reader's check</summary>
+
+calibrate_shading's read loop catches `(EndOfData, ScanReadError)` and sets ended=True (2311-2314), so any refused read (read_lines raises ScanReadError for every non-0x20 sense with retries=1, 1795-1797) ends the calibration as 'finished' with no suspect. calculate_shading (shading.py:135-182) has no minimum line count or level check: fewer than split_ratio between min and max makes every line 'light', so a calibration cut short during the dark phase yields a dark-floor 'reference'. The block count and means are only logged (2362-2366).
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-8"></a>
 
 ### DBG-8 -- Debug spool is orphaned after force_abort, a crash, or a script that never calls close(); no tool files it and its sidecars are incomplete
 
-**Severity** medium · **Category** data-integrity
+**Severity** medium · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/session.py:1855-1875`, `rps7200/session.py:1972-1974`, `rps7200/direct.py:925-928`, `rps7200/direct.py:969-977`, `rps7200/direct.py:983-990`, `rps7200/direct.py:1039`, `rps7200/direct.py:1134-1145`
 
@@ -206,35 +259,21 @@ force_abort: `self.dead = True` ... `transport.close()`. The finally block runs 
 
 **Fix:** Write reference/mask paths and a 'claimed' marker into each sidecar. Add `tools/library.py file-spool DIR` to file an orphaned spool. In force_abort, run `scanner._debug_flush()` after closing the transport. Register a weakref.finalize/atexit flush or at least a warning. Spool under the debug library root rather than the system temp.
 
-<a id="find-decode-and-debug-filing-dbg-9"></a>
+<details><summary>Second reader's check</summary>
 
-### DBG-9 -- Debug entries are filed into RPS7200_DEBUG_ROOT or ./library, not the library the session or tool is using
+force_abort sets self.dead=True and closes the transport (session.py:1855-1875); _run's finally does `if not self.dead: self._scanner.close()` (1972-1974), so _debug_flush never runs and the spool stays in the system temp dir. No atexit/finalizer exists (grep), and no tool references 'rps7200-debug'. The sidecar (direct.py:969-977) holds only meta, raw_layout and captured: not the claimed flag (in-memory only, 1015-1016) and not which NNN-shading.npz applies (reference_path is in the item, not the sidecar, 983-990). Filing it by hand risks duplicates and the wrong reference. The n=0 overwrite needs _debug_flush to return early after swapping pending out (library import failure, 1041-1047), which is narrow but real.
 
-**Severity** medium · **Category** user-error
+</details>
 
-**Where:** `rps7200/direct.py:1049`, `rps7200/library.py:53`, `tools/gui.py:8886`, `tools/scan.py:140`, `tools/scan_roll.py:175`
-
-The claimed passes go to the caller's library (e.g. `--library /data/lib`). The passes only debug files (metering probes, hold/aim prescans, roll prescans) go to a `library/` folder relative to whatever the working directory was. That can be a different disk or a stray folder. The evidence for a frame's exposure and registration then lives apart from the frame, and nothing warns that the two roots differ.
-
-**Evidence (from the code):**
-
-```text
-`root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT` where `DEFAULT_ROOT = Path("library")` (CWD-relative). The window: `root=args.library or str(home / "library")`. The tools take `--library DIR`.
-```
-
-**Failure scenario:** `uv run python tools/gui.py --library D:/scans/lib` launched from C:/Users/stefan with RPS7200_DEBUG=1. Frames land in D:/scans/lib, and the probes and prescans that explain them land in C:/Users/stefan/library.
-
-**Fix:** Give DirectScanner a debug_root attribute that ScanSession and the tools set to their own library root. Fall back to the env var or DEFAULT_ROOT only when no caller sets one, and resolve it to an absolute path at construction.
-
-<a id="find-decode-and-debug-filing-dbg-10"></a>
+<a id="decode-and-debug-filing-dbg-10"></a>
 
 ### DBG-10 -- Probe tools accept RPS7200_DEBUG=0/false as 'on' while DirectScanner treats it as off
 
-**Severity** medium · **Category** user-error
+**Severity** medium · **Category** user-error · **Verdict** partly
 
-**Where:** `rps7200/direct.py:556-561`, `tools/gain_probe.py:115`, `tools/fast_ir_probe.py:177`, `tools/fast_ir_probe.py:430`, `tools/byte14_probe.py:113`, `tools/roll_registration_walk.py:242`, `tools/hold_probe.py:114`, `tools/transport_truth.py:107`, `tools/exposure_probe.py:224`
+**Where:** `rps7200/direct.py:556-561`, `tools/gain_probe.py:115`, `tools/fast_ir_probe.py:177`, `tools/fast_ir_probe.py:430`, `tools/byte14_probe.py:113`, `tools/roll_registration_walk.py:242`, `tools/hold_probe.py:114`, `tools/transport_truth.py:107`, `tools/exposure_probe.py:216`
 
-The guards exist so a probe never runs without filing, but they test a different condition from the one that turns filing on. Any non-empty value other than the four accepted ones ('0', 'false', '2', 'y', 'debug') passes the guard, and every probe pass is then silently left unfiled. That is the loss the guard was added to prevent.
+Every probe tool's 'refusing to run without RPS7200_DEBUG=1' guard (including exposure_probe) tests only that the variable is non-empty, while DirectScanner turns filing on only for 1/true/yes/on. Any other non-empty value (0, false, 2, y) passes the guard and the probe's hardware passes are then left unfiled, which is the loss the guard exists to prevent.
 
 **Evidence (from the code):**
 
@@ -246,15 +285,67 @@ Probe guards: `if not os.environ.get("RPS7200_DEBUG"): print("refusing to run wi
 
 **Fix:** Guard on the scanner's own decision: construct the scanner first and refuse if `not scanner.debug`. Or share one parser (a DirectScanner.debug_from_env() classmethod) between the guards and __init__. Add the guard to exposure_probe.
 
-<a id="find-decode-and-debug-filing-dbg-11"></a>
+<details><summary>Second reader's check</summary>
+
+The mismatch is real: the probe guards test `os.environ.get("RPS7200_DEBUG")` for non-empty (gain_probe.py:115, fast_ir_probe.py:177/430, byte14_probe.py:113, roll_registration_walk.py:242, hold_probe.py:114, transport_truth.py:107, exposure_probe.py:216), then build DirectScanner(verbose=...) with debug=None, which enables filing only for {'1','true','yes','on'} (direct.py:556-561). RPS7200_DEBUG=0/2/y passes the guard and files nothing. But the claim that exposure_probe has no guard at all is wrong: exposure_probe.py:216-218 has the same guard (using DirectScanner.DEBUG_ENV).
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-a1"></a>
+
+### DBG-A1 -- Debug-filed metering probes and hold prescans record film 'negative' whatever is loaded, and carry no role or link to the frame they served
+
+**Severity** medium · **Category** data-integrity · **Verdict** found-by-verifier
+
+**Where:** `rps7200/direct.py:2492-2503`, `rps7200/direct.py:3377-3378`, `rps7200/direct.py:3155-3160`, `rps7200/direct.py:1063-1074`, `rps7200/demo.py:230-233`
+
+These passes exist only in the library through debug filing, and the record is their only description. Every metering probe and hold/aim verification prescan says film=negative even on a slide or B&W roll. Nothing says the entry is a metering probe (or which round) or a hold prescan, and nothing links it to the roll, frame number or the frame entry whose `metering`/`registration` it is the evidence for. roll_prescan passes do pass film (3968-3973), so the error is limited to the passes that only debug files.
+
+**Evidence (from the code):**
+
+```text
+auto_exposure's probe: `image, _ = self.scan(resolution=resolution, infrared=False, exposure_scale=scales, shading=shading, keep_raw=True,)` with no film argument, so scan's default `film: str = FILM_NEGATIVE` goes into `meta = {..., "film": film, ...}`. The hold loop: `image, _ = self.prescan(resolution=prescan_resolution, keep_raw=keep_raw, shading=shading)`, again without film. _debug_flush files them with `film=FilmNotes(notes="captured with RPS7200_DEBUG on"), tags=["debug"]`. demo.py itself notes: 'The driver's probes are `scan` calls with no film'.
+```
+
+**Failure scenario:** A B&W roll is scanned with RPS7200_DEBUG=1. Later a question about blue headroom (per-film BLUE_RGBI_HEADROOM) is answered from the library's metering probes. Each probe entry says film 'negative' and 'debug', so they are sorted under the wrong film, and matching them to their frames needs guessing from timestamps.
+
+**Fix:** Pass film through auto_exposure's probe scan and the hold/aim prescans, and add a role field (e.g. meta['pass_role'] = 'metering-probe' with round number / 'hold-prescan' with roll and frame index) before _debug_capture copies the meta.
+
+<a id="decode-and-debug-filing-dbg-9"></a>
+
+### DBG-9 -- Debug entries are filed into RPS7200_DEBUG_ROOT or ./library, not the library the session or tool is using
+
+**Severity** low · **Category** user-error · **Verdict** partly
+
+**Where:** `rps7200/direct.py:1049`, `rps7200/library.py:53`, `tools/gui.py:8856`, `tools/gui.py:8886`, `tools/scan.py:140`, `tools/scan_roll.py:175`
+
+Debug filing always goes to RPS7200_DEBUG_ROOT or ./library, ignoring the library the caller was given. With the defaults these coincide, but when --library DIR is passed to the window, scan.py or scan_roll.py (or in the demo, whose root is under demo/), the claimed frames go to DIR and the debug-only passes (metering probes, hold/aim prescans, unclaimed passes) go to a CWD-relative library/, silently.
+
+**Evidence (from the code):**
+
+```text
+`root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT` where `DEFAULT_ROOT = Path("library")` (CWD-relative). The window: `root=args.library or str(home / "library")`. The tools take `--library DIR`.
+```
+
+**Failure scenario:** `uv run python tools/gui.py --library D:/scans/lib` launched from C:/Users/stefan with RPS7200_DEBUG=1. Frames land in D:/scans/lib, and the probes and prescans that explain them land in C:/Users/stefan/library.
+
+**Fix:** Give DirectScanner a debug_root attribute that ScanSession and the tools set to their own library root. Fall back to the env var or DEFAULT_ROOT only when no caller sets one, and resolve it to an absolute path at construction.
+
+<details><summary>Second reader's check</summary>
+
+_debug_flush uses `os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT` (direct.py:1049) with DEFAULT_ROOT=Path('library') (library.py:53); nothing sets RPS7200_DEBUG_ROOT. But the defaults agree: the GUI's home is Path('.') outside the demo (gui.py:8856) so its root is ./library, and tools/scan.py and scan_roll.py default --library to 'library'. The split only happens when the operator passes an explicit --library DIR (or launches the demo, where home is DEMO_ROOT). Nothing is lost; the evidence is filed in a different library from the frames it explains, with no warning.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-11"></a>
 
 ### DBG-11 -- Payload followed by CHECK CONDITION is discarded by the transport, losing the last chunk of a pass or calibration
 
-**Severity** medium · **Category** data-integrity
+**Severity** low · **Category** data-integrity · **Verdict** partly
 
-**Where:** `rps7200/usb_transport.py:849-857`, `rps7200/direct.py:1779-1797`, `rps7200/direct.py:1862-1864`, `rps7200/direct.py:2306-2313`
+**Where:** `rps7200/usb_transport.py:849-857`, `rps7200/direct.py:1779-1797`, `rps7200/direct.py:1862-1864`
 
-By the driver's own account the scanner reports a queued sense on whatever command comes next. A status of CHECK after a successful data-in phase therefore means the bytes arrived and the condition belongs to the next command. The transport throws those bytes away. In read_planes this shortens the pass by one batch (up to 216 lines per plane) with no error (see DBG-5). The bytes never reach last_raw, so they are missing from the stored raw stream too, although the device sent them.
+The transport discards a payload it has fully read when the status after the data-in phase is CHECK CONDITION. If the device ever attaches a (possibly queued) sense to a successful READ, those bytes never reach last_raw or raw.bin.gz, and read_planes either ends the pass short (0x20) or abandons it. Whether the device does this is unmeasured.
 
 **Evidence (from the code):**
 
@@ -266,11 +357,17 @@ By the driver's own account the scanner reports a queued sense on whatever comma
 
 **Fix:** Return the payload together with the pending-check flag, e.g. a (payload, check) result or an exception carrying `.payload`. Have read_lines append the bytes and only then read the sense.
 
-<a id="find-decode-and-debug-filing-dbg-12"></a>
+<details><summary>Second reader's check</summary>
+
+usb_transport.py:849-857 does read the payload and then raise CheckCondition when the post-transfer status is CHECK, discarding bytes already transferred. In read_planes (retries=1) that becomes EndOfData (silent break) or ScanReadError (suspect). But there is no evidence in the code or captures that the device ever reports CHECK after a completed data-in phase; the scenario ('final READ returns its lines with end-of-data attached') is conjecture. It is a latent loss path, not a demonstrated one.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-12"></a>
 
 ### DBG-12 -- apply_shading silently corrects only part of the frame when the mask maps fewer columns than the pass has
 
-**Severity** low · **Category** bug
+**Severity** low · **Category** bug · **Verdict** confirmed
 
 **Where:** `rps7200/shading.py:185-193`, `rps7200/shading.py:236-240`, `rps7200/shading.py:267-281`, `rps7200/direct.py:3115-3144`
 
@@ -286,11 +383,17 @@ scan()'s own comment says 'correcting half a frame is worse than correcting none
 
 **Fix:** In apply_shading, raise (or mark the report 'partial') when `loc.size < w`. In scan(), refuse a partial correction the way it refuses a too-narrow reference.
 
-<a id="find-decode-and-debug-filing-dbg-13"></a>
+<details><summary>Second reader's check</summary>
+
+build_width_to_loc returns locs[:width] (shading.py:185-193); apply_shading writes only out[:, :loc.size, c] (267-281) and reports columns vs width. scan()'s guards are only params.width > pixels_per_line (3115-3126), so a mask with fewer MASK_USED entries than the pass width leaves the right-hand columns uncorrected while the pass is returned and filed with a shading report (i.e. as corrected). Reachability is narrow: the mask is read sized from the reference's pixels_per_line (3258-3262) and all known calibrations are 5172 columns.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-13"></a>
 
 ### DBG-13 -- Debug capture copies meta before callers add bracket, roll and registration fields
 
-**Severity** low · **Category** data-integrity
+**Severity** low · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:930`, `rps7200/direct.py:3222`, `rps7200/direct.py:2821-2824`, `rps7200/direct.py:4134-4136`
 
@@ -306,11 +409,17 @@ Any pass filed by debug rather than by its caller loses the membership and regis
 
 **Fix:** Let scan() accept extra meta (bracket/roll fields) before capture. Alternatively have the spool item hold a reference to the live meta and copy it at flush time, rewriting the sidecar.
 
-<a id="find-decode-and-debug-filing-dbg-14"></a>
+<details><summary>Second reader's check</summary>
+
+_debug_capture stores `"meta": dict(meta)` (direct.py:930) inside scan() at 3222. scan_bracket adds bracket_index/ratio/passes/stops to the returned meta afterwards (2821-2824), and scan_roll adds roll_index/roll_position/registration (4131-4133). The spooled copy never sees them. With tools/scan.py --no-library (hold() returns before claiming) or scan_roll without --library, debug is the only filer and its entries lack those fields.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-14"></a>
 
 ### DBG-14 -- set_gain_offset silently wraps gain and offset above 255 while the record keeps the unwrapped value
 
-**Severity** low · **Category** data-integrity
+**Severity** low · **Category** data-integrity · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1716-1730`, `rps7200/direct.py:3173-3175`, `tools/gain_probe.py:101`, `tools/gain_probe.py:157-161`
 
@@ -326,11 +435,17 @@ Exposure is protected: to_bytes(2) raises above 65535 and scaled() clamps. Gain 
 
 **Fix:** Validate 0..255 and raise, as the exposure path does, rather than masking.
 
-<a id="find-decode-and-debug-filing-dbg-15"></a>
+<details><summary>Second reader's check</summary>
+
+set_gain_offset masks offset/gain with & 0xFF (direct.py:1716-1730). In ordinary scan() the settings come from get_gain_offset() (device bytes, <256), so this is only reachable when a caller substitutes settings: gain_probe.py patches get_gain_offset to return replace(reference, gain=[..., gain, ...]) (157-166) with gains taken from --ladder unchecked (106-107). scan() then records meta gain=settings.gain (3173-3175), the unmasked value, while the payload sent (in commands) holds the masked byte.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-15"></a>
 
 ### DBG-15 -- _CommandLog lists every NoDataYet-refused image READ, bloating each entry's commands, contrary to its docstring
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:440-443`, `rps7200/direct.py:484-489`, `rps7200/direct.py:1845-1861`
 
@@ -348,11 +463,17 @@ Docstring: "Image-data READs are counted, not listed: a 7200 dpi pass makes thou
 
 **Fix:** Count NoDataYet refusals on image READs in `image_reads` (e.g. `waits`) rather than listing them.
 
-<a id="find-decode-and-debug-filing-dbg-16"></a>
+<details><summary>Second reader's check</summary>
+
+_CommandLog.command appends an entry for every exception (`entry["refused"] = type(exc).__name__; self.record.append(entry); raise`, direct.py:484-489). NoDataYet is raised by the inner transport (usb_transport.py:755) and read_planes re-polls every 0.02 s (1847-1861), so each empty poll becomes a listed entry, contrary to the class docstring's 'Image-data READs are counted, not listed' (440-443). The list goes into meta['commands'], scan.json extra, last_scan_meta and the debug sidecar.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-16"></a>
 
 ### DBG-16 -- auto_exposure's comment says SET GAIN OFFSET persists; the rest of the code and CLAUDE.md say the read-back is a fixed reference
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:2473-2476`, `rps7200/direct.py:3875-3880`, `rps7200/direct.py:4114-4122`
 
@@ -370,17 +491,23 @@ direct.py:2473: "`scan` multiplies whatever the device currently holds, and SET 
 
 **Fix:** Rewrite the auto_exposure comment to match the measured behaviour: READ GAIN/OFFSET returns a fixed reference, and the write-back of base is defensive.
 
-<a id="find-decode-and-debug-filing-dbg-17"></a>
+<details><summary>Second reader's check</summary>
+
+auto_exposure's comment (direct.py:2473-2475) says 'SET GAIN OFFSET persists, so re-reading it each round would compound the scales', while scan_roll's comment (4114-4121) says the read-back is a fixed reference so exposure cannot compound, and CLAUDE.md:448 says SET GAIN OFFSET does not persist. Comment-only contradiction; code behaviour is unaffected.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-17"></a>
 
 ### DBG-17 -- CLAUDE.md says a single scan compresses nothing while the device is open; the spool compresses the shading reference with the device open
 
-**Severity** low · **Category** doc-mismatch
+**Severity** low · **Category** doc-mismatch · **Verdict** partly
 
-**Where:** `rps7200/direct.py:978-990`, `rps7200/shading.py:91`
+**Where:** `rps7200/shading.py:91`, `rps7200/direct.py:983-990`, `rps7200/library.py:273`, `rps7200/direct.py:757-758`, `rps7200/direct.py:786-787`, `rps7200/direct.py:745`
 
 **Doc claim:** CLAUDE.md 'A single scan compresses nothing while the device is open. Each is spooled to a temporary file ... gzipped after close()'
 
-This is small (a few hundred kB, once per reference), but it contradicts the stated rule, whose origin is a wedge that followed compression with the device open. The flush uses the in-memory reference anyway, so the compressed spool copy is only for orphan recovery and could be written uncompressed (np.savez).
+The rule that nothing is compressed with the device open is broken in several places, not only the debug spool: ShadingReference.save always uses np.savez_compressed, and it is called with the device open by _debug_capture, by library.save even when compress=False (the window's single scans and prescans), by archive_calibration (whose docstring claims the archive is written uncompressed), and by save_shading from ensure_shading. Each write is small (hundreds of kB).
 
 **Evidence (from the code):**
 
@@ -392,11 +519,17 @@ This is small (a few hundred kB, once per reference), but it contradicts the sta
 
 **Fix:** Use np.savez (uncompressed) for the spool copy, or correct the documentation.
 
-<a id="find-decode-and-debug-filing-dbg-18"></a>
+<details><summary>Second reader's check</summary>
+
+Confirmed that _debug_capture calls item['reference'].save(ref_path), which is np.savez_compressed (shading.py:91), with the device open (direct.py:983-990), against CLAUDE.md:185. But the reader understated it: the same compressed write with the device open also happens in (a) library.save's reference.save(path/'shading.npz') (library.py:273), which the window calls with compress=False precisely because the device is open, so every window single-scan/prescan entry compresses its shading.npz with the device open; (b) archive_calibration's result['reference'].save(folder/'shading.npz') (direct.py:786-787), whose docstring (757-758) says 'Written uncompressed: the device is still open'; (c) save_shading (745), called from ensure_shading with the device open.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-18"></a>
 
 ### DBG-18 -- stop_scan() is a public method that sends STOP SCAN, which CLAUDE.md forbids; it is unused and unguarded
 
-**Severity** low · **Category** hardware-safety
+**Severity** low · **Category** hardware-safety · **Verdict** confirmed
 
 **Where:** `rps7200/direct.py:1674-1691`
 
@@ -414,11 +547,17 @@ CLAUDE.md: 'No IEEE1284 RESET, and no STOP SCAN — the vendor sends neither, an
 
 **Fix:** Delete it, or make it raise with a pointer to CLAUDE.md.
 
-<a id="find-decode-and-debug-filing-dbg-19"></a>
+<details><summary>Second reader's check</summary>
+
+stop_scan (direct.py:1674-1691) sends _cmd(SCSI_SCAN, 0) with no _refuse_if_suspect and a docstring saying leaving a scan running is what wedges it, so 'this always makes the attempt'. It contradicts CLAUDE.md:425 ('no STOP SCAN ... both leave the device unresponsive') and finish_scan's own docstring (1657-1665). grep finds no caller in rps7200/, tools/ or tests/.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-19"></a>
 
 ### DBG-19 -- The demo stand-in has no debug spooling, no command log and no read_planes, so make run-demo never exercises debug filing
 
-**Severity** low · **Category** demo-divergence
+**Severity** low · **Category** demo-divergence · **Verdict** confirmed
 
 **Where:** `rps7200/demo.py:196`, `rps7200/demo.py:342-344`, `rps7200/demo.py:604-650`, `rps7200/demo.py:846-909`, `rps7200/session.py:2872`
 
@@ -434,11 +573,57 @@ Everything in the debug-filing chain (spool, claim, flush after close, unlink on
 
 **Fix:** Give the stand-in the real debug machinery (share the spool/claim/flush code as a mixin used by both). Feed its encoded blob through read_planes-equivalent code rather than calling decode_index directly.
 
-<a id="find-decode-and-debug-filing-dbg-20"></a>
+<details><summary>Second reader's check</summary>
+
+DemoScanner (demo.py:196) is not a DirectScanner subclass and has no debug, _debug_capture, debug_claim or _debug_flush. Its close() (342) only closes the fake transport. session._file uses getattr(self._scanner, 'debug_claim', None) (session.py:2872), so the claim path is skipped in the demo. The debug-filing chain lives below the seam, so this is not an 'if demo' violation, but make run-demo/run-sheet cannot exercise DBG-1/2/4/8.
+
+</details>
+
+<a id="decode-and-debug-filing-dbg-a3"></a>
+
+### DBG-A3 -- read_planes reads image data with retries=1, so a queued one-shot sense on an image READ abandons the pass (suspect) or ends it as 'end of data'
+
+**Severity** low · **Category** error-handling · **Verdict** found-by-verifier
+
+**Where:** `rps7200/direct.py:1766-1797`, `rps7200/direct.py:1845`
+
+The retry that read_lines exists to provide is switched off for every image read. A stray queued sense (unit attention, a condition left by cmd_17 or SET GAIN OFFSET) on any READ of a pass therefore raises ScanReadError at once. That marks the device suspect and loses the pass, or, if its ASC is 0x20, silently truncates the pass (DBG-5). No raw bytes are filed either way (DBG-4). Retrying a refused READ is safe by the driver's own account ('A refusal ... is answered before any transfer and is harmless').
+
+**Evidence (from the code):**
+
+```text
+read_lines docstring: 'Retries like _query does: a queued one-shot sense condition is reported against whichever command arrives next, so the first attempt can be rejected for something that has nothing to do with this read.' read_planes: `chunk = self.read_lines(n, bpl, retries=1)`.
+```
+
+**Failure scenario:** A one-shot condition queued by an earlier command in the pass is reported on the first image READ. The 20-minute roll frame is abandoned, the session goes DeviceSuspect and the roll ends, although the device was fine.
+
+**Fix:** Allow at least one retry for a refusal whose sense is neither end-of-data nor a hard error, and record the sense in the pass's commands; treat a 0x20 before any line has arrived as an error rather than end-of-data.
+
+<a id="decode-and-debug-filing-dbg-a4"></a>
+
+### DBG-A4 -- A failed pass's command log keeps recording after scan() or calibrate_shading() raise before the logger is stopped
+
+**Severity** low · **Category** data-integrity · **Verdict** found-by-verifier
+
+**Where:** `rps7200/direct.py:2976-2979`, `rps7200/direct.py:3070-3076`, `rps7200/direct.py:2182-2184`, `rps7200/direct.py:2351-2352`
+
+The commands of a pass that failed before its read are never returned or filed. _CommandLog.record stays a live list, so every later command (moves, READ STATE, nudges) accumulates into it until the next scan's start() silently discards them. A failed pass therefore leaves no record of what it sent, which is the evidence needed to diagnose it.
+
+**Evidence (from the code):**
+
+```text
+scan(): `logger = getattr(self.t, "start", None); if callable(logger): logger()` well before `try: image, params, ccd_mask = self._read_pass(...) finally: stopper = ...`. Any exception between them (wait_warm, set_mode, SLIDE INIT, wait_ready) skips stop(). calibrate_shading calls stopper only after the try/finally (2351), so any raise skips it.
+```
+
+**Failure scenario:** MODE SELECT is refused on a new resolution. scan() raises, the commands that led to the refusal are never surfaced, and the next successful pass's record starts fresh with no trace of them.
+
+**Fix:** Wrap the whole pass from start() in try/finally and stop the logger on every exit. Attach the partial log to the raised exception or to last_failed_commands so a caller can file it.
+
+<a id="decode-and-debug-filing-dbg-20"></a>
 
 ### DBG-20 -- defects.py (destripe, column-defect detection, resample_reference) is not used by any delivered path
 
-**Severity** info · **Category** dead-code
+**Severity** info · **Category** dead-code · **Verdict** confirmed
 
 **Where:** `rps7200/defects.py:1-262`, `rps7200/direct.py:32-39`, `rps7200/direct.py:244-260`, `tools/make_comparison.py:20-25`
 
@@ -454,27 +639,31 @@ Only direct.py imports and re-exports them (`from .defects import (column_defect
 
 **Fix:** Move to research/ or mark it experimental. If it is ever wired in, round rather than truncate on the way back to integers.
 
-<a id="find-decode-and-debug-filing-dbg-21"></a>
+<details><summary>Second reader's check</summary>
 
-### DBG-21 -- The infrared plane is never shading-corrected, although CLAUDE.md says everything an operator sees is corrected
+grep shows defects.py symbols are imported only by direct.py (32-39) and re-exported in __all__ (244-260). tools/make_comparison.py:23 and tools/film_edge_study.py:156 only mention it in text. No scan, export, library.corrected or GUI path calls destripe, find_column_defects or resample_reference.
 
-**Severity** info · **Category** doc-mismatch
+</details>
 
-**Where:** `rps7200/direct.py:2227-2233`, `rps7200/shading.py:256-259`
+<a id="decode-and-debug-filing-dbg-a2"></a>
 
-**Doc claim:** CLAUDE.md 'The library holds raw pixels; everything else is corrected' -- the I plane is not
+### DBG-A2 -- Exposure 16-bit timer wrap is guarded; gain/offset are not (observation)
 
-README.md:484 documents it; CLAUDE.md's 'Everything an operator sees ... is corrected' does not mention it. The raw IR bytes are kept, so it stays re-derivable if an IR reference is ever acquired.
+**Severity** info · **Category** design · **Verdict** found-by-verifier
+
+**Where:** `rps7200/protocol.py:601-628`, `rps7200/direct.py:1716-1730`
+
+Every exposure scan() sends goes through scaled(), which clamps to [100, 65535], and to_bytes would raise rather than wrap if anything bypassed it. So the wrap CLAUDE.md warns about cannot happen through scan(). meta records the clamped value in 'exposure' and the requested multiplier in 'exposure_scale'. Gain and offset are masked rather than checked (see DBG-14).
 
 **Evidence (from the code):**
 
 ```text
-The calibration runs `passes=ONE_PASS_COLOR`, so the reference has only R, G and B. apply_shading: `if c not in reference.ref: report["uncorrected"] += 1; continue`.
+Settings.scaled: `int(max(100, min(65535, round(e * f))))`; set_gain_offset: `int(s.exposure[i]).to_bytes(2, "little")` (raises OverflowError above 65535) but `data[12 + i] = int(s.gain[i]) & 0xFF`.
 ```
 
-**Failure scenario:** The delivered I plane keeps its column pattern, and a dust-removal step keyed on it inherits the stripes.
+**Failure scenario:** None for exposure.
 
-**Fix:** Say so in CLAUDE.md next to the raw/corrected rule.
+**Fix:** None for exposure; see DBG-14 for gain/offset.
 
 ## What this area persists
 
@@ -489,6 +678,10 @@ The calibration runs `passes=ONE_PASS_COLOR`, so the reference has only R, G and
 | Shading cache | <reference path>, e.g. calibration/shading.npz (GUI default, CWD-relative) | np.savez_compressed float64 ref/mean/dark/dark_mean/pixels_per_line/channels | derived (reduction of calibration bytes) | DirectScanner.save_shading (direct.py:736-747), atomic via .<stem>.part.npz + os.replace; tools/uniformity.py writes it directly | load_shading / ensure_shading(reuse=True) | lossless for the reduction; carries no link to the calibration bytes it came from (DBG-6) |
 | Calibration archive | <reference dir>/<UTC stamp>[-N]/{data.bin, ccd_mask.bin, shading.npz, calibration.json} | data.bin = every calibration line exactly as read (16-bit LE, 2-byte tags), uncompressed; calibration.json with width, bytes_per_line, resolution, sha256, commands, protocol_revision | raw | DirectScanner.archive_calibration via ensure_shading (direct.py:749-804, 854-860); not by tools/uniformity.py's direct calibrate_shading | nothing in the code | bytes exact; written non-atomically without an INCOMPLETE marker; outside the library; referenced from entries only by a relative path string in extra.shading_origin.archive, and not at all for a reused cache (DBG-6) |
 | Framing prescan inside a frame entry | <library>/<entry>/prescan.tif | TIFF 8-bit RGB | corrected (rf.prescan from prescan() with shading=True); the record does not say so | library.save(prescan=...) from ScanSession._file / tools/scan_roll.py | migrate_direction, demo picture_signature, window | no raw bytes or raw pixels stored for it unless debug is on (DBG-3) |
+
+**Second reader's corrections to this table:**
+
+1) 'Debug spool shading reference': the npz also holds 'channels' and 'dark_channels' arrays. It is written with np.savez_compressed while the device is open (see DBG-17). 'read_by: nothing' is right: the flush uses the in-memory object. 2) 'Library entry from debug flush': the shading.npz inside every library entry is always savez_compressed, even for the window's compress=False entries written with the device open (library.py:273). compress=False otherwise gives raw.bin and uncompressed TIFFs; the debug flush itself always uses compress=True. 3) 'Calibration archive': its shading.npz is savez_compressed (the docstring's 'written uncompressed' is false for that file). data.bin holds only the chunks of successful reads; the refusal that ended the calibration contributes nothing. calibration.json is written with plain write_text (non-atomic). 4) 'Framing prescan inside a frame entry': this applies to real (non-dry-run) rolls only. On a dry run (window walk, scan_roll.py --dry-run with --library) each final prescan is filed as its own entry with raw pixels and, when the layout agrees, raw bytes (session.py:2549-2566, tools/scan_roll.py:666-686). prescan_before and the hold/aim intermediate prescans are never filed in the library (session.py:2585 file_entry=False) and exist only as corrected TIFFs in rolls/<roll>/ or not at all. 5) Missing rows: rolls/<roll>/prescanNN.tif and prescanNN-before.tif (corrected 8-bit TIFF, written by tools/scan_roll.py:660/686 and the session's writer, not re-derivable). The record fields also omit params.lines: the expected line count is persisted only inside raw.layout.lines, so an entry without raw bytes cannot show that it was truncated (DBG-5). 6) 'Per-pass record ... gain/offset recorded unmasked': this happens only when a caller substitutes settings (gain_probe). In ordinary scans gain/offset are the device's read-back bytes.
 
 ## What the operator can do
 
