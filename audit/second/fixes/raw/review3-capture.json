@@ -1,0 +1,45 @@
+{
+ "type": "result",
+ "key": "v2:1f13b3b4c612de62c57fc46ce330c30e73530b8317d4ab813ef63c4fc02b1a68",
+ "agentId": "a7a9cd07aa57fc41f",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "rps7200/direct.py",
+    "line": 2960,
+    "problem": "The DBG-7 fix does not catch the case it describes. The device declares one phase's lines (4 x 20 = 80) and sends both phases, about 160, dark first. The check `arrived < lines_declared` refuses only a calibration that stopped inside the dark phase. One that got EndOfData exactly at the phase boundary (arrived == declared, all of it dark) passes the check. calculate_shading finds no level gap, so it builds a one-point reference from the dark lines and installs it. I confirmed this with the branch's own test harness: Calibrating(calibration_lines(12,12)[:12], declared=12).calibrate_shading() returns refused=None, shading.two_point False, mean {0:170,1:170,2:170}. That is the ~170-count dark floor, which the comment says must never be divided into scans. The new test only covers 8 of 12 lines, so it misses this.",
+    "fix": "Refuse whenever the reference has no lit phase. Either require `reference.two_point` (all measured calibrations are two-phase) or require `arrived >= 2 * lines_declared` less a small tolerance. Alternatively refuse when the light mean is not well above the dark level. Add a test that ends exactly at the declared count with only dark lines."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/direct.py",
+    "line": 1595,
+    "problem": "The spool directory leaks when every spooled pass was claimed and answered. `_debug_receipt` unlinks the image, raw, meta and mask files but never the per-calibration `NNN-shading.npz`, which is correctly kept for later passes. `_debug_flush` then returns at once because `_debug_pending` is empty, so neither close() nor debug_settle() reaches the rmtree. Reproduced: debug on, one pass spooled with a reference, claimed, receipt(entry), close(), debug_settle() leaves lib/.spool/rps7200-debug-*/001-shading.npz on disk. This happens on a debug-on walk with no holds, a fixed-exposure window Scan, or `tools/scan.py --no-auto-exposure`, about 1.7 MB (now uncompressed) and one directory per session, inside the library.",
+    "fix": "In `_debug_flush`, when `_debug_pending` is empty but `self._debug_spool` exists, still run the cleanup tail: rmtree the spool, reset `_debug_spool` and `_debug_reference_saved`, and rmdir an empty `.spool`. Alternatively, in `_debug_receipt`, remove the spool once pending is empty and only references remain. Add the reference to the existing claim tests (they use no reference, which is why they pass)."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/direct.py",
+    "line": 1415,
+    "problem": "`_keep_failed_pass` always overwrites `shading_skipped` with 'the pass failed ...', which drops the SHADING_SKIPPED_EXPLICIT sentinel of a deliberate `shading=False` pass. For a failed raw-on-purpose pass taken with no reference (e.g. calibration mode 'off'), `library.verify` then reports 'no shading reference ... correction was asked for: the pass failed ...' permanently (make verify stays red), and `library.corrected` labels it 'raw -- correction was asked for', which is false.",
+    "fix": "Carry the pass's own skip state: if `flight['meta']['mode']['skip_shading']` / the scan's shading=False, keep `shading_skipped = SHADING_SKIPPED_EXPLICIT` and record the failure only in `meta['failed']`. Use the 'the pass failed' text only for a pass that asked for correction."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/direct.py",
+    "line": 1601,
+    "problem": "close() now files nothing at all while any claim is unanswered, not just the claimed passes. In tools/scan.py and tools/scan_roll.py the filing and `debug_settle()` come after the `with` block. A second Ctrl-C (abort) or any exception that escapes before them therefore leaves every unclaimed metering probe and hold prescan unfiled in library/.spool. Before this branch, close() filed them. They can be recovered with `file-spool`, but that is a regression of the debug-filing guarantee for exactly the passes it exists to keep.",
+    "fix": "At close(), file the unclaimed items and keep only the claimed ones pending for `debug_settle`. `_reserve`'s exclusive mkdir already makes concurrent entry creation safe. Otherwise, call `debug_settle()` from a `finally` in both tools."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 1561,
+    "problem": "FrameWriter.DEPTH went from 2 to 4 on the argument that prescans now take the extra slots. Where no prescan jobs are queued, the bound is instead 4 frames: `tools/scan_roll.py --no-library` on a real roll, where `file_prescan` returns early. A 7200 dpi RGBI frame job holds the corrected image, the raw pixels and the capture's raw bytes, about 1.7 GB, so a stalled writer's peak RAM rises from about 5 GB to about 8.5 GB. That is the resource CLAUDE.md guards (the '19 GB' spooling rationale).",
+    "fix": "Bound frames rather than jobs. Keep depth 2 for frame jobs and put prescan jobs outside the bound (a separate small queue, or a semaphore counted only for kind='frame'). Or size the queue as 2 + the number of prescan jobs per frame only when prescans are actually submitted."
+   }
+  ]
+ }
+}
