@@ -166,3 +166,30 @@ def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
     assert "left alone" in done.stdout + done.stderr
     assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
     assert not (path / "scan.before-migrate-raw.tif").exists()
+
+
+def test_file_spool_files_what_debug_filing_left_behind(tmp_path):
+    """From the library's `.spool`, by default, and nothing left there after."""
+    import numpy as np
+
+    from rps7200.direct import DirectScanner
+
+    class Detached(DirectScanner):
+        def __init__(self):
+            super().__init__(transport=object(), debug=True)
+            self._own_transport = False
+
+    root = tmp_path / "library"
+    s = Detached()
+    s.debug_root = root
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
+    spool = s._debug_pending[0]["image_path"].parent
+    assert spool.parent == root / DirectScanner.DEBUG_SPOOL_DIR
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert "1 pass(es) filed" in done.stdout
+    assert len(list(root.glob("*/scan.json"))) == 1
+    assert not spool.exists()

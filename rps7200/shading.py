@@ -72,7 +72,10 @@ class ShadingReference:
     def two_point(self) -> bool:
         return bool(self.dark)
 
-    def save(self, path: str | Path) -> None:
+    def save(self, path: str | Path, compress: bool = True) -> None:
+        """``compress=False`` for a caller writing with the device open, where
+        compressing -- even a few hundred kilobytes -- is what CLAUDE.md keeps
+        away from it. `load` reads either."""
         # One dict, built then splatted. The per-channel arrays and their
         # scalar means are different types, and splatting them as separate
         # comprehensions asks `savez_compressed` to accept each comprehension's
@@ -88,7 +91,7 @@ class ShadingReference:
         for c in sorted(self.dark):
             arrays[f"dark{c}"] = self.dark[c]
             arrays[f"darkmean{c}"] = np.float64(self.dark_mean[c])
-        np.savez_compressed(path, **arrays)
+        (np.savez_compressed if compress else np.savez)(path, **arrays)
 
     @classmethod
     def load(cls, path: str | Path) -> "ShadingReference":

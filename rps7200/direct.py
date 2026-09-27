@@ -539,6 +539,98 @@ def debug_from_env() -> bool:
             in {"1", "true", "yes", "on"})
 
 
+def file_spool(folder: str | Path, root: str | Path, *,
+               claimed: bool = False,
+               say: Callable[[str], None] = print) -> list[Path]:
+    """File a debug spool left behind, from the record beside each pass.
+
+    One is left when a filing failed -- a full disk, a root that could not be
+    made -- or when a process died before close(). Its comment always said it
+    "can be filed later by hand", and nothing could. Run this with no window
+    or tool holding the scanner: a session files its own spool as it closes,
+    and this would file the same passes again.
+
+    A pass a caller claimed (`DirectScanner.debug_claim`) was probably filed
+    by that caller; its sidecar says so, and it is left unless ``claimed``.
+    A spool written before sidecars named their files is read by its numbers:
+    each pass takes the latest `NNN-shading.npz` at or before its own. Each
+    pass filed is removed from the spool, and the spool once only references
+    are left in it. Returns the entries written.
+    """
+    folder = Path(folder)
+    written: list[Path] = []
+    references: dict[str, ShadingReference | None] = {}
+
+    def reference(path: Path | None) -> ShadingReference | None:
+        if path is None or not path.exists():
+            return None
+        if path.name not in references:
+            references[path.name] = ShadingReference.load(path)
+        return references[path.name]
+
+    def latest_reference(number: int) -> Path | None:
+        found = [p for p in folder.glob("*-shading.npz")
+                 if p.name.split("-")[0].isdigit()
+                 and int(p.name.split("-")[0]) <= number]
+        if not found:
+            return None
+        return max(found, key=lambda p: int(p.name.split("-")[0]))
+
+    for side in sorted(folder.glob("*-meta.json")):
+        prefix = side.name[: -len("-meta.json")]
+        try:
+            record = json.loads(side.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            say(f"{side.name}: cannot be read ({exc}); left as it is")
+            continue
+        if record.get("claimed") and not claimed:
+            say(f"{prefix}: claimed by the caller that took it, which files "
+                "its own; left as it is (--claimed files it too)")
+            continue
+        files = record.get("files")
+        if files is None:                                 # written before
+            files = {"image": f"{prefix}-image.npy",
+                     "raw": f"{prefix}-raw.bin",
+                     "ccd_mask": f"{prefix}-ccd_mask.bin"}
+            shading = (latest_reference(int(prefix)) if prefix.isdigit()
+                       else None)
+        else:
+            shading = folder / files["shading"] if files.get("shading") else None
+        paths = {key: folder / name for key, name in files.items()
+                 if key != "shading" and name}
+        image = paths.get("image")
+        if image is None or not image.exists():
+            say(f"{prefix}: its pixels are not here; left as it is")
+            continue
+        raw = paths.get("raw")
+        mask = paths.get("ccd_mask")
+        item = {
+            "image_path": image,
+            "meta": record.get("meta") or {},
+            "raw_path": raw if raw is not None and raw.exists() else None,
+            "raw_layout": record.get("raw_layout"),
+            "reference": reference(shading),
+            "ccd_mask": (mask.read_bytes()
+                         if mask is not None and mask.exists() else None),
+            "tags": list(record.get("tags") or ["debug"]) + ["from-spool"],
+            "notes": record.get("notes") or "filed from a spool left behind",
+        }
+        try:
+            entry = DirectScanner._file_spooled(item, root)
+        except Exception as exc:                          # noqa: BLE001
+            say(f"{prefix}: could not be filed ({exc}); left as it is")
+            continue
+        written.append(entry)
+        say(f"{prefix} -> {entry}")
+        for path in (image, raw, mask, side):
+            if path is not None:
+                path.unlink(missing_ok=True)
+    if folder.exists() and not [p for p in folder.iterdir()
+                                if not p.name.endswith("-shading.npz")]:
+        shutil.rmtree(folder, ignore_errors=True)
+    return written
+
+
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -886,7 +978,7 @@ class DirectScanner:
         if mask is not None:
             (folder / "ccd_mask.bin").write_bytes(bytes(mask))
         if result.get("reference") is not None:
-            result["reference"].save(folder / "shading.npz")
+            result["reference"].save(folder / "shading.npz", compress=False)
         import hashlib
         record = {
             "measured_utc": (self._shading_origin or {}).get("measured_utc"),
@@ -1087,26 +1179,16 @@ class DirectScanner:
             # the CCD mask is 5172 bytes.
             item["reference"] = record.get("reference")
             item["ccd_mask"] = record.get("ccd_mask")
-
-            # And on disk beside the pixels, so a spool left behind -- by a
-            # failed filing, or a process that died before close() -- still
-            # says what each pass was and can be filed later by hand.
-            side = spool / f"{n:03d}-meta.json"
-            side.write_text(json.dumps(
-                {"meta": item["meta"], "raw_layout": item["raw_layout"],
-                 "captured": item["captured"]}, indent=2, default=str),
-                encoding="utf-8")
-            item["meta_path"] = side
             if item["reference"] is not None:
                 # Once per reference, not once per pass: every pass of a
-                # session shares it, and saving it compresses -- small, but
+                # session shares it. Uncompressed, as everything else here:
                 # the device is open. Removed with the spool, never per pass,
                 # because the passes after this one still point at it.
                 saved = getattr(self, "_debug_reference_saved", None)
                 if saved is None or saved[0] is not item["reference"] \
                         or not saved[1].exists():
                     ref_path = spool / f"{n:03d}-shading.npz"
-                    item["reference"].save(ref_path)
+                    item["reference"].save(ref_path, compress=False)
                     saved = (item["reference"], ref_path)
                     self._debug_reference_saved = saved
                 item["reference_path"] = saved[1]
@@ -1115,10 +1197,42 @@ class DirectScanner:
                 mask_path.write_bytes(bytes(item["ccd_mask"]))
                 item["mask_path"] = mask_path
 
+            # And on disk beside the pixels, last, so a spool left behind --
+            # by a failed filing, a force abort, a process that died before
+            # close() -- says what each pass was and which of the files
+            # beside it are its own, and `file_spool` can file it.
+            item["meta_path"] = spool / f"{n:03d}-meta.json"
+            self._debug_note(item)
+
             with self._debug_lock:
                 self._debug_pending.append(item)
         except Exception as exc:                      # never break a scan
             self._log(f"debug: could not spool this scan ({exc})")
+
+    @staticmethod
+    def _debug_note(item: dict[str, Any]) -> None:
+        """Write a spooled pass's sidecar: its record, and whose files are
+        whose. Rewritten when the pass is claimed, or its claim given back,
+        so a spool left behind says which passes a caller may have filed.
+
+        The reference is named per pass because it is written once per
+        calibration, beside the first pass that used it: without the name, a
+        spool filed by hand had to guess which of its `NNN-shading.npz`
+        applied to which pass.
+        """
+        def name(key: str) -> str | None:
+            path = item.get(key)
+            return Path(path).name if path is not None else None
+
+        Path(item["meta_path"]).write_text(json.dumps(
+            {"meta": item["meta"], "raw_layout": item.get("raw_layout"),
+             "captured": item.get("captured"),
+             "files": {"image": name("image_path"), "raw": name("raw_path"),
+                       "shading": name("reference_path"),
+                       "ccd_mask": name("mask_path")},
+             "tags": item.get("tags"), "notes": item.get("notes"),
+             "claimed": bool(item.get("claimed"))},
+            indent=2, default=str), encoding="utf-8")
 
     def _after_a_failed_pass(self, exc: BaseException) -> None:
         """Keep what a pass that raised left: see `_keeps_what_a_failed_pass_left`.
@@ -1241,8 +1355,16 @@ class DirectScanner:
                 ref = item.get("pixels")
                 if ref is not None and ref() is pixels:
                     item["claimed"] = True
+                    self._debug_renote(item)
                     return functools.partial(self._debug_receipt, item)
         return None
+
+    def _debug_renote(self, item: dict[str, Any]) -> None:
+        """`_debug_note`, never costing the caller its pass for a sidecar."""
+        try:
+            self._debug_note(item)
+        except Exception as exc:                          # noqa: BLE001
+            self._log(f"debug: could not update {item.get('meta_path')} ({exc})")
 
     def _debug_receipt(self, item: dict[str, Any], entry: Any) -> None:
         """The claimant's answer for one pass: see `debug_claim`."""
@@ -1251,6 +1373,7 @@ class DirectScanner:
                 # Not filed after all, so it goes back to being ours: the
                 # flush files it, and until then its spool stays put.
                 item["claimed"] = False
+                self._debug_renote(item)
                 self._log("debug: a pass its caller could not file is kept, "
                           "and filed with the rest")
                 return
@@ -1286,6 +1409,40 @@ class DirectScanner:
                     stuck += 1
         return stuck
 
+    @staticmethod
+    def _file_spooled(item: dict[str, Any], root: str | Path,
+                      inquiry: Any = None) -> Path:
+        """File one spooled pass in the library at ``root``. Returns the entry.
+
+        Its pixels are mapped, not loaded -- tiff.write walks them once, so a
+        570 MB frame need not be resident -- and the mapping is let go before
+        this returns. POSIX lets a file be unlinked while it is mapped and
+        keeps the inode until the mapping goes; Windows refuses outright, with
+        WinError 32. That refusal was swallowed, so on Windows nothing was
+        ever freed -- a 38-frame roll at 7200 dpi left 43 GB in the temporary
+        directory, for ever. Letting go of the array is enough:
+        `library.save` keeps no reference to it.
+        """
+        from . import library
+        from .library import FilmNotes
+
+        image = np.load(item["image_path"], mmap_mode="r")
+        try:
+            return library.save(
+                image, item["meta"],
+                root=root,
+                film=FilmNotes(notes=item.get(
+                    "notes", "captured with RPS7200_DEBUG on")),
+                tags=item.get("tags") or ["debug"],
+                reference=item.get("reference"),
+                ccd_mask=item.get("ccd_mask"),
+                raw_path=item.get("raw_path"),
+                raw_layout=item.get("raw_layout"),
+                inquiry=inquiry,
+            )
+        finally:
+            del image
+
     def _debug_flush(self, settle: bool = False) -> None:
         """Write the queued scans. Called after the transport is closed.
 
@@ -1309,8 +1466,7 @@ class DirectScanner:
             pending, self._debug_pending = self._debug_pending, []
         self._log(f"debug: filing {len(pending)} scan(s) in the library ...")
         try:
-            from . import library
-            from .library import FilmNotes
+            from . import library  # noqa: F401  (fails here, not per pass)
         except Exception as exc:
             self._log(f"debug: library unavailable ({exc}); {len(pending)} "
                       f"scan(s) left unfiled in {self._debug_spool}")
@@ -1323,7 +1479,6 @@ class DirectScanner:
         stuck = 0
         failed = 0
         for n, item in enumerate(pending, 1):
-            image = None
             filed = False
             if item.get("claimed"):
                 # Claimed and never answered for, with the claimant done: it
@@ -1332,21 +1487,7 @@ class DirectScanner:
                 self._log(f"debug: scan {n}/{len(pending)} was claimed and "
                           "never filed by its caller; filing it here")
             try:
-                # mmap the image rather than loading it: tiff.write walks it
-                # once, so a 570 MB frame need not be resident.
-                image = np.load(item["image_path"], mmap_mode="r")
-                entry = library.save(
-                    image, item["meta"],
-                    root=root,
-                    film=FilmNotes(notes=item.get(
-                        "notes", "captured with RPS7200_DEBUG on")),
-                    tags=item.get("tags") or ["debug"],
-                    reference=item.get("reference"),
-                    ccd_mask=item.get("ccd_mask"),
-                    raw_path=item.get("raw_path"),
-                    raw_layout=item.get("raw_layout"),
-                    inquiry=self._inquiry,
-                )
+                entry = self._file_spooled(item, root, self._inquiry)
                 self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
                 filed = True
             except Exception as exc:
@@ -1354,14 +1495,6 @@ class DirectScanner:
                 self._log(f"debug: could not file scan {n} ({exc}); its spooled "
                           f"pixels, bytes and record are kept in {self._debug_spool}")
             finally:
-                # Drop the mapping before unlinking what it maps. POSIX lets a
-                # file be unlinked while it is mapped and keeps the inode until
-                # the mapping goes; Windows refuses outright, with WinError 32.
-                # That refusal was swallowed below, so on Windows nothing was
-                # ever freed -- a 38-frame roll at 7200 dpi left 43 GB in the
-                # temporary directory, for ever. Letting go of the array is
-                # enough: `library.save` keeps no reference to it.
-                image = None
                 # Free each frame's spool as soon as it is filed, not at the
                 # end. At 7200 dpi a frame spools 1.1 GB, so holding all 38 of
                 # a roll through the flush would want 43 GB of disk on top of

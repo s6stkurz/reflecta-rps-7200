@@ -17,6 +17,7 @@ read it as the end of the film.
 """
 
 import inspect
+import json
 
 import numpy as np
 import pytest
@@ -860,6 +861,77 @@ def test_a_spooled_pass_describes_itself(tmp_path, monkeypatch):
     s.close()
     assert not item["meta_path"].exists(), "a filed pass left its record behind"
     assert not item["reference_path"].exists(), "the spool outlived its filing"
+
+
+def _left_behind(tmp_path, monkeypatch, claim=False):
+    """A spool a filing could not file: two passes under one reference, the
+    second claimed by a caller when ``claim``."""
+    from rps7200.shading import ShadingReference
+
+    blocker = tmp_path / "a-file-not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(blocker / "library"))
+    s = _debug_scanner(debug=True)
+    s._shading = ShadingReference(ref={0: np.full(16, 3.0)}, mean={0: 3.0},
+                                  pixels_per_line=16)
+    first, second = (np.full((8, 16, 3), v, np.uint8) for v in (1, 2))
+    for n, image in enumerate((first, second)):
+        s._ccd_mask = bytes([n]) * 16
+        s.last_raw = bytes([n]) * 48
+        s.last_raw_layout = {"width": 16, "channels": 3, "lines": 8}
+        s._debug_capture(image, dict(_META))
+    if claim:
+        s.debug_claim(second)
+    spool = s._debug_pending[0]["image_path"].parent
+    s._debug_flush(settle=True)                  # fails: the root is a file
+    return spool, (first, second)
+
+
+def test_a_spooled_pass_names_its_own_files(tmp_path, monkeypatch):
+    """The reference is written once per calibration, beside the first pass
+    that used it: without its name, a spool filed by hand had to guess which
+    `NNN-shading.npz` applied to which pass."""
+    import json
+
+    spool, _ = _left_behind(tmp_path, monkeypatch, claim=True)
+    sides = [json.loads(p.read_text(encoding="utf-8"))
+             for p in sorted(spool.glob("*-meta.json"))]
+    assert [side["files"]["shading"] for side in sides] == [
+        "001-shading.npz", "001-shading.npz"]
+    assert [side["files"]["raw"] for side in sides] == [
+        "001-raw.bin", "002-raw.bin"]
+    assert [side["claimed"] for side in sides] == [False, True]
+
+
+def test_a_spool_left_behind_can_be_filed(tmp_path, monkeypatch):
+    """Its comment said it "can be filed later by hand", and nothing could."""
+    from rps7200 import library, tiff
+    from rps7200.direct import file_spool
+
+    spool, (first, second) = _left_behind(tmp_path, monkeypatch)
+    filed = file_spool(spool, tmp_path / "lib", say=lambda m: None)
+    assert len(filed) == 2
+    for entry, image, n in zip(filed, (first, second), (0, 1)):
+        assert np.array_equal(tiff.read(str(entry / "scan.tif")), image)
+        assert library.read_raw(entry) == bytes([n]) * 48
+        assert (entry / "ccd_mask.bin").read_bytes() == bytes([n]) * 16
+        assert (entry / "shading.npz").exists()
+        record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+        assert "from-spool" in record["tags"] and "debug" in record["tags"]
+    assert not spool.exists(), "the spool outlived its filing"
+
+
+def test_a_claimed_pass_in_a_spool_left_behind_is_filed_only_when_asked(
+        tmp_path, monkeypatch):
+    """Its caller files its own, and probably did."""
+    from rps7200.direct import file_spool
+
+    spool, _ = _left_behind(tmp_path, monkeypatch, claim=True)
+    assert len(file_spool(spool, tmp_path / "lib", say=lambda m: None)) == 1
+    assert spool.exists()
+    assert len(file_spool(spool, tmp_path / "lib", claimed=True,
+                          say=lambda m: None)) == 1
+    assert not spool.exists()
 
 
 def test_bytes_laid_out_for_another_pass_are_not_spooled(tmp_path, monkeypatch):
