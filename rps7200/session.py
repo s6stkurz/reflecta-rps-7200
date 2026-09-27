@@ -2907,6 +2907,11 @@ class ScanSession:
                                     f"prescan{number:02d}-before.tif", taken),
                                 roll=name,
                                 file_entry=False,
+                                # Its own name in the output folder too. Named
+                                # as the frame's, it was claimed before either
+                                # file existed, and written second -- over the
+                                # corrected prescan it came before.
+                                out_suffix="-before",
                             )
                 # The scan's own meta, for the manifest below. Bound out here
                 # because `record` is written for a dry run too, where there is
@@ -3126,11 +3131,13 @@ class ScanSession:
         file_entry: bool = True,
         on_filed: Callable[..., Any] | None = None,
         plain: bool = False,
+        out_suffix: str = "",
     ) -> tuple[int, bool]:
         """Write this picture, and unless told otherwise file it in the library.
 
         ``plain`` files a roll's picture uncompressed, as a single pass is,
         for one that nothing will be scanned after; see `_roll`.
+        ``out_suffix`` goes into the output folder's name for it.
 
         ``file_entry=False`` writes the file and no entry. It exists for the
         prescan a correction replaced, and the reason is specific: the capture
@@ -3162,7 +3169,8 @@ class ScanSession:
         if self.out_dir is not None:
             where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
                      else self.out_dir)
-            paths.append(_unclaimed(where / self._out_name(number, meta, roll)))
+            paths.append(_unclaimed(where / self._out_name(number, meta, roll,
+                                                           out_suffix)))
         capture = self._scanner.capture_record()
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
@@ -3262,7 +3270,7 @@ class ScanSession:
         return turn, flip
 
     def _out_name(
-        self, number: int, meta: dict[str, Any], roll: str
+        self, number: int, meta: dict[str, Any], roll: str, suffix: str = ""
     ) -> str:
         """A filename that says which roll and which frame it came from.
 
@@ -3272,7 +3280,7 @@ class ScanSession:
         fine for one pass, useless for thirty-eight of them.
 
         A scan that belongs to no roll keeps a timestamp, because there is
-        nothing better to call it.
+        nothing better to call it. ``suffix`` goes before the extension.
         """
         dpi = meta.get("resolution_dpi") or 0
         channels = meta.get("channels") or len(meta.get("channel_order") or "")
@@ -3280,7 +3288,7 @@ class ScanSession:
         # `_ir` still names a pass that *was* infrared even when the format
         # cannot carry the plane: it says what was scanned, and the JPEG's own
         # note says what arrived. Renaming it would lose the first.
-        end = export.suffix_for(self.out_format)
+        end = suffix + export.suffix_for(self.out_format)
         if roll and number:
             return f"{_safe(roll)}_frame{number:02d}_{dpi}dpi{ir}{end}"
         if roll:

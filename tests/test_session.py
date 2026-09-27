@@ -3153,6 +3153,33 @@ def test_the_output_folder_honours_the_format_and_the_roll_does_not(tmp_path):
         "a roll's own files stay TIFF whatever the setting says"
 
 
+def test_a_walks_picture_from_before_its_aim_keeps_its_own_name(tmp_path):
+    """Both were named as the frame's before either was written, and the
+    before-picture, written second, replaced the corrected prescan in the
+    operator's folder -- under the frame's own name, with nothing to say so."""
+
+    class Aimed(FakeScanner):
+        def scan_roll(self, first_index=0, **kw):
+            yield RollFrame(
+                index=first_index, position=self.pos, image=None, meta={},
+                prescan=np.full((24, 36, 3), 50, np.uint8), registration={},
+                prescan_before=np.full((24, 36, 3), 20, np.uint8),
+                prescan_meta={"resolution_dpi": 300,
+                              "channel_order": list("RGB")})
+
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=Aimed, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, dry_run=True, name="aim"))
+    s.shutdown()
+    s.join(timeout=10)
+    final = out / "prescans" / "aim_frame01_300dpi.tif"
+    before = out / "prescans" / "aim_frame01_300dpi-before.tif"
+    assert int(tiff.read(final).max()) == 50, "the corrected prescan was replaced"
+    assert int(tiff.read(before).max()) == 20
+
+
 def test_the_filename_says_which_format_it_is(tmp_path):
     """`_out_name` is the only thing that decides, so it is pinned directly --
     a roll of 38 frames landing on the wrong extension is a slow thing to spot."""
