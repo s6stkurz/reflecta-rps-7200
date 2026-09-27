@@ -1208,6 +1208,41 @@ def test_a_refiled_picture_is_not_given_its_old_likeness(tmp_path):
         after = s._signatures[path]
     assert not np.array_equal(before, after)
     assert np.array_equal(after, demo.picture_signature(path))
+    with np.load(cache) as data:
+        # And the old likeness goes: kept, the file only ever grew.
+        assert len(data["paths"]) == 1
+
+
+def test_another_windows_half_written_cache_is_left_alone(tmp_path):
+    """Two demo windows share the cache. Both wrote it beside itself under
+    one fixed name, so they wrote into the same file at once and one renamed
+    the mixture over the cache. Each writes under a name of its own now."""
+    for n in range(3):
+        _scan_only(tmp_path / "lib", 30 + n)
+    cache = tmp_path / "demo" / "pictures.npz"
+    cache.parent.mkdir(parents=True)
+    theirs = cache.with_name(f".{cache.name}.part")
+    theirs.write_bytes(b"another window, half way through")
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+    assert theirs.read_bytes() == b"another window, half way through"
+    with np.load(cache) as data:
+        assert len(data["paths"]) == 3
+    assert [p.name for p in cache.parent.glob("*.part")] == [theirs.name]
+
+
+def test_another_librarys_likenesses_are_kept(tmp_path):
+    """Pruning drops what the libraries read here no longer hold, and only
+    that: a window showing other libraries shares the file."""
+    for n in range(2):
+        _scan_only(tmp_path / "one", 30 + n)
+        _scan_only(tmp_path / "two", 40 + n)
+    cache = tmp_path / "demo" / "pictures.npz"
+    for lib in ("one", "two"):
+        with DemoScanner(tmp_path / lib, speed=1e9, cache=cache) as s:
+            s._signing.join()
+    with np.load(cache) as data:
+        assert len(data["paths"]) == 4
 
 
 # -- what the demo files: raw pixels, corrected last, as the scanner does -----

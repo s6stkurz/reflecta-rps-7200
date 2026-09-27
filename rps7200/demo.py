@@ -51,11 +51,13 @@ stand-in: only what the film shows is the demo's.
 from __future__ import annotations
 
 import json
+import os
 import random
+import tempfile
 import threading
 import time
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
@@ -181,6 +183,16 @@ def _signature_key(entry: Path) -> str:
         return entry.as_posix()
     return (f"{entry.as_posix()}|{source.name}|{stat.st_mtime_ns}|"
             f"{stat.st_size}")
+
+
+def _signature_library(key: str) -> str:
+    """The library a `_signature_key` belongs to, as `Path.as_posix` spells it.
+
+    From the right, because the entry's own path leads the key and may hold
+    anything; the three fields after it do not.
+    """
+    parts = key.rsplit("|", 3)
+    return PurePosixPath(parts[0] if len(parts) == 4 else key).parent.as_posix()
 
 
 def _windows(signature: np.ndarray) -> np.ndarray:
@@ -1410,7 +1422,7 @@ class DemoScanner:
                 known = {}
         entries = sorted({p.parent for lib in self.libraries
                           for p in lib.glob("*/scan.json")})
-        added = False
+        mine: dict[str, np.ndarray] = {}
         for entry in entries:
             key = _signature_key(entry)
             signature = known.get(key)
@@ -1418,21 +1430,36 @@ class DemoScanner:
                 signature = picture_signature(entry)
                 if signature is None:
                     continue
-                known[key], added = signature, True
+            mine[key] = signature
             self._signatures[entry] = signature
-        if added and self.cache is not None and known:
+        # What this pass read, and whatever another window's libraries left
+        # here. A key of a library read here that no entry has now -- one
+        # refiled, or gone -- is dropped: kept, the file only ever grew.
+        read = {lib.as_posix() for lib in self.libraries}
+        keep = {key: signature for key, signature in known.items()
+                if _signature_library(key) not in read}
+        keep.update(mine)
+        if keep.keys() != known.keys() and self.cache is not None and keep:
             # Beside, then renamed over: this thread is a daemon, killed where
             # it stands when the window quits, and two demo windows share the
-            # file -- written in place, either left it truncated.
-            temp = self.cache.with_name(f".{self.cache.name}.part")
+            # file -- written in place, either left it truncated. Beside under
+            # a name of its own: under one fixed name the two windows wrote
+            # into the same file at once, and one renamed the mixture over
+            # the cache.
+            temp = None
             try:
                 self.cache.parent.mkdir(parents=True, exist_ok=True)
-                with open(temp, "wb") as fh:
-                    np.savez(fh, paths=np.array(list(known)),
-                             signatures=np.stack(list(known.values())))
+                handle, name = tempfile.mkstemp(
+                    dir=self.cache.parent, prefix=f".{self.cache.name}.",
+                    suffix=".part")
+                temp = Path(name)
+                with os.fdopen(handle, "wb") as fh:
+                    np.savez(fh, paths=np.array(list(keep)),
+                             signatures=np.stack(list(keep.values())))
                 _replace(temp, self.cache)
             except OSError as exc:
-                temp.unlink(missing_ok=True)
+                if temp is not None:
+                    temp.unlink(missing_ok=True)
                 self._log(f"could not keep the picture signatures: {exc}")
 
     def _pictures_for(self, film: str) -> dict[int, list[Path]]:
