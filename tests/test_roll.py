@@ -18,6 +18,7 @@ read it as the end of the film.
 
 import inspect
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -942,6 +943,80 @@ def test_bytes_laid_out_for_another_pass_are_not_spooled(tmp_path, monkeypatch):
     s.last_raw_layout = {"width": 860, "lines": 573, "channels": 4}
     s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
     assert "raw_path" not in s._debug_pending[0]
+
+
+def test_bytes_of_another_height_are_not_spooled_either(tmp_path, monkeypatch):
+    """Bytes of another window, or of a read cut short, can share this pass's
+    width and channels; only the rows they decode to tell them apart. Judged,
+    as the session judges them, on what arrived less what realignment
+    trimmed."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s.last_raw = b"\x00" * 64
+    s.last_raw_layout = {"width": 16, "lines": 20, "channels": 3,
+                         "lines_received": 3 * 20}
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    assert "raw_path" not in s._debug_pending[0]
+    # 12 rows arrived and the realignment trimmed 4: these are the 8 rows'.
+    s.last_raw_layout = {"width": 16, "lines": 12, "channels": 3,
+                         "lines_received": 3 * 12}
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     dict(_META, stagger_realigned=4))
+    assert "raw_path" in s._debug_pending[1]
+
+
+def test_a_wait_for_image_data_is_counted_not_listed():
+    """A read polls every 20 ms until the scanner has scanned that far: a long
+    pass listed thousands of identical waits, burying the refusals that
+    matter, against the log's own word that image READs are counted."""
+    from rps7200.direct import _CommandLog
+    from rps7200.protocol import SCSI_READ, _cmd
+    from rps7200.usb_transport import NoDataYet
+
+    class NotYet:
+        def command(self, command, *a, **kw):
+            raise NoDataYet("nothing yet")
+
+    log = _CommandLog(NotYet())
+    log.start()
+    for _ in range(3):
+        with pytest.raises(NoDataYet):
+            log.command(_cmd(SCSI_READ, 4096), read_size=4096)
+    with pytest.raises(NoDataYet):
+        log.command(_cmd(0x15, 16), data=b"\x00")
+    record = log.stop()
+    assert record["image_reads"]["waits"] == 3
+    assert [e["refused"] for e in record["sent"]] == ["NoDataYet"], \
+        "a refusal of anything but image data is still listed"
+
+
+def test_a_gain_or_offset_that_does_not_fit_its_byte_is_refused():
+    """Masked, a gain of 256 went to the device as 0 while the pass's record
+    said 256."""
+    from conftest import FakeTransport
+
+    s = DirectScanner(transport=FakeTransport(), debug=False)
+    good = settings(8000, 20000, 50000, 8000)
+    for bad in (replace(good, gain=[21, 33, 256, 25]),
+                replace(good, offset=[-1, 10, 28, 10])):
+        with pytest.raises(ValueError, match="one byte"):
+            s.set_gain_offset(bad)
+    assert s.t.sent == [], "sent something it could not have meant"
+    s.set_gain_offset(good)
+    assert len(s.t.sent) == 1
+
+
+def test_nothing_sends_stop_scan():
+    """The vendor never sends it, and it leaves the device unresponsive. An
+    unused public `stop_scan` said the opposite -- that leaving a scan
+    running is what wedges it, so this always makes the attempt -- which is
+    an invitation to call it on a cleanup path."""
+    from pathlib import Path
+
+    assert not hasattr(DirectScanner, "stop_scan")
+    repo = Path(__file__).resolve().parent.parent
+    for path in [*(repo / "rps7200").glob("*.py"), *(repo / "tools").glob("*.py")]:
+        assert "SCSI_SCAN, 0)" not in path.read_text(encoding="utf-8"), path
 
 
 def test_a_pass_its_caller_files_is_not_filed_twice(tmp_path, monkeypatch):

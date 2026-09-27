@@ -432,6 +432,42 @@ class RollFrame:
         return self.error is None and self.image is not None
 
 
+def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
+                       meta: dict[str, Any] | None = None) -> dict[str, tuple]:
+    """Where raw bytes laid out like this cannot be the pass with this shape.
+
+    Empty when they can. Every writer that files bytes beside pixels asks this
+    first: bytes of another pass decode to a different photograph, which is
+    the one failure the library exists to make impossible. Here rather than in
+    `session`, which re-exports it, so debug filing asks the same question.
+    """
+    layout = dict(layout or {})
+    actual = {
+        "lines": shape[0],
+        "width": shape[1],
+        "channels": shape[2] if len(shape) > 2 else 1,
+    }
+    # The rows the bytes can decode to: what arrived, not what GET PARAMETERS
+    # declared, less what the 7200 dpi realignment trimmed. Judged against the
+    # declared count, every pass that ended early -- the one whose bytes
+    # matter most -- and every 7200 dpi pass looked like another pass's bytes,
+    # and was filed without them.
+    received = layout.get("lines_received")
+    channels = layout.get("channels")
+    if received is not None and channels:
+        layout["lines"] = int(received) // int(channels)
+    if layout.get("lines") is not None:
+        layout["lines"] = (int(layout["lines"])
+                           - int((meta or {}).get("stagger_realigned") or 0))
+    # Only fields the layout actually declares are judged; an absent one says
+    # nothing, and dropping good bytes over it would be its own bug.
+    return {
+        k: (layout[k], actual[k])
+        for k in actual
+        if layout.get(k) is not None and layout[k] != actual[k]
+    }
+
+
 def _prescans_kept(capture: dict[str, Any] | None,
                    before: dict[str, Any]) -> dict[str, Any]:
     """A frame's prescan records, as `RollFrame` carries them.
@@ -512,6 +548,17 @@ class _CommandLog:
             entry["out"] = bytes(data).hex()
         try:
             reply = self._inner.command(command, *args, **kwargs)
+        except NoDataYet:
+            if command[0] != SCSI_READ:
+                entry["refused"] = NoDataYet.__name__
+                self.record.append(entry)
+                raise
+            # The scanner has not scanned this far yet, and a read polls
+            # every 20 ms until it has: counted, as the reads that returned
+            # data are, rather than listed. Listed, a long pass buried the
+            # refusals worth reading under thousands of identical waits.
+            self.bulk["waits"] = self.bulk.get("waits", 0) + 1
+            raise
         except Exception as exc:
             entry["refused"] = type(exc).__name__
             self.record.append(entry)
@@ -1159,14 +1206,13 @@ class DirectScanner:
             layout = record.get("raw_layout") or {}
             # The bytes must be this pass's. `read_planes` no longer leaves an
             # earlier pass's behind, and this is the second guard: bytes laid
-            # out for another width or channel count are another photograph.
-            # Height is not judged -- at 7200 dpi the stagger realignment trims
-            # rows the bytes still hold, and a short read decodes fewer.
-            if capture is None and raw is not None and any(
-                layout.get(k) is not None and layout[k] != v
-                for k, v in (("width", image.shape[1]),
-                             ("channels", image.shape[2] if image.ndim > 2 else 1))
-            ):
+            # out for another width, channel count or height are another
+            # photograph. The session's own question, which judges the rows
+            # the bytes can decode to -- what arrived, less what the 7200 dpi
+            # realignment trimmed -- so it asks about height too, where this
+            # used to leave height out rather than get those two wrong.
+            if capture is None and raw is not None and raw_bytes_disagree(
+                    image.shape, layout, meta):
                 self._log("debug: the raw bytes held do not describe this "
                           "pass; spooling it without them")
                 raw, layout = None, {}
@@ -2088,25 +2134,6 @@ class DirectScanner:
                 return
             time.sleep(0.2)
 
-    def stop_scan(self) -> None:
-        """Stop scanning. Never raises -- it runs on the cleanup path.
-
-        Leaving a scan running is what wedges the scanner badly enough to need
-        a power cycle, so this always makes the attempt.
-        """
-        self._log("stop scan")
-        try:
-            self.t.command(_cmd(SCSI_SCAN, 0))
-        except CheckCondition:
-            try:
-                self._log(f"  stop_scan: {self.read_sense()}")
-            except UsbError:
-                pass
-        except UsbError as exc:
-            self._log(f"  stop_scan failed: {exc}")
-        finally:
-            self._scanning = False
-
     def get_gain_offset(self) -> Settings:
         """Read the scanner's current exposure/gain/offset."""
         d = self._query(
@@ -2130,6 +2157,15 @@ class DirectScanner:
         answers ILLEGAL REQUEST otherwise. This is the calibration step it means
         by "calibration disable not granted".
         """
+        # A byte each, refused rather than masked, as the exposure's two bytes
+        # already are by `to_bytes`: masked, a gain of 256 went to the device
+        # as 0 while the pass's record said 256 -- a record that disagrees
+        # with what was sent, which is what re-evaluating a pass cannot have.
+        for name, values in (("gain", s.gain), ("offset", s.offset)):
+            wrong = [int(v) for v in values if not 0 <= int(v) <= 0xFF]
+            if wrong:
+                raise ValueError(f"{name} {wrong} does not fit the one byte "
+                                 "it is sent in (0-255)")
         data = bytearray(29)
         for i in range(3):
             data[i * 2 : i * 2 + 2] = int(s.exposure[i]).to_bytes(2, "little")

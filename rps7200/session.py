@@ -47,7 +47,7 @@ from typing import Any
 import numpy as np
 
 from . import export, library, preview
-from .direct import METER_EACH, DirectScanner
+from .direct import METER_EACH, DirectScanner, raw_bytes_disagree
 from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
@@ -729,41 +729,6 @@ def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
         if out.get(name) is None and out.get(alias) is not None:
             out[name] = out[alias]
     return out
-
-
-def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
-                       meta: dict[str, Any] | None = None) -> dict[str, tuple]:
-    """Where raw bytes laid out like this cannot be the pass with this shape.
-
-    Empty when they can. Every writer that files bytes beside pixels asks this
-    first: bytes of another pass decode to a different photograph, which is
-    the one failure the library exists to make impossible.
-    """
-    layout = dict(layout or {})
-    actual = {
-        "lines": shape[0],
-        "width": shape[1],
-        "channels": shape[2] if len(shape) > 2 else 1,
-    }
-    # The rows the bytes can decode to: what arrived, not what GET PARAMETERS
-    # declared, less what the 7200 dpi realignment trimmed. Judged against the
-    # declared count, every pass that ended early -- the one whose bytes
-    # matter most -- and every 7200 dpi pass looked like another pass's bytes,
-    # and was filed without them.
-    received = layout.get("lines_received")
-    channels = layout.get("channels")
-    if received is not None and channels:
-        layout["lines"] = int(received) // int(channels)
-    if layout.get("lines") is not None:
-        layout["lines"] = (int(layout["lines"])
-                           - int((meta or {}).get("stagger_realigned") or 0))
-    # Only fields the layout actually declares are judged; an absent one says
-    # nothing, and dropping good bytes over it would be its own bug.
-    return {
-        k: (layout[k], actual[k])
-        for k in actual
-        if layout.get(k) is not None and layout[k] != actual[k]
-    }
 
 
 def answering(receipt: Callable[[Any], None] | None,
