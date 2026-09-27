@@ -1,0 +1,38 @@
+{
+ "type": "result",
+ "key": "v2:34c58779ebc568aed682b4c9fc747200b4565e6de1a6b213b5c1e9ada6acaa70",
+ "agentId": "a625554bfedc9b558",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "tools/roll_registration_walk.py",
+    "line": 77,
+    "problem": "Every probe now calibrates first by default through probing.ensure_reference, which adds about 210 s and moves the mechanism. None of the time estimates the operator uses to decide whether to background a run include that cost, and the estimates are the only guard against the harness's 10-minute foreground kill (a killed read is abandoned and wedges the scanner, per CLAUDE.md). Affected: roll_registration_walk.estimate() (the 8-minute NOTE is computed from it), exposure_probe.budget() (line 161, printed per --only chunk, and chunks exist precisely to stay under 10 minutes, yet each chunk now recalibrates unless --reuse is given), hold_probe's 'about 5 minutes' (line 117), transport_truth's '(len(plan)+2)*20' (line 118), and fast_ir_probe's budget (lines 184/441). Example: a walk estimated at 7 minutes prints no background note and actually runs about 10.5 minutes. byte14_probe is the only probe that adds the 210 s. There is also a related gap in probing.ensure_reference (tools/probing.py:79): with --reuse and no cache file, ensure_shading silently calibrates, while every estimate treats --reuse as costing nothing.",
+    "fix": "Put one constant for the calibration cost in tools/probing.py (e.g. CALIBRATION_S = 210) plus a helper calibration_seconds(args) that returns 0 only when args.reuse is set and Path(args.reference).exists(). Add it to estimate()/budget() and to the hold_probe, transport_truth and fast_ir totals, so the 8-minute background advice is computed from the total. In ensure_reference, print that a calibration is running when --reuse finds no cache."
+   },
+   {
+    "severity": "major",
+    "file": "rps7200/library.py",
+    "line": 951,
+    "problem": "reconstruct still counts damage as 'nothing stored', which is the class of error LIB-03 was meant to close. _raw_on_disk only checks whether a raw.bin or raw.bin.gz file exists, so when the record names raw.file (with a sha256) but that file has been deleted, the verdict is NOTHING and `tools/library.py reconstruct` exits 0. Verified: after deleting raw.bin.gz from a saved entry, reconstruct printed '- ...: no raw bytes stored for this entry' and returned 0, while verify reported 'raw.bin.gz is missing'. The same happens at line 996: a corrected entry whose record names a shading file that is now missing is also NOTHING.",
+    "fix": "At line 951, return DAMAGED whenever (record.get('raw') or {}).get('file') is set, whether or not a file is on disk, and keep NOTHING only for a record that names no raw file. At line 996, return DAMAGED when cal.get('shading') is named but the file is missing, and keep NOTHING for a record with no reference named. Add a test that deletes raw.bin.gz and asserts that reconstruct exits 1."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/library.py",
+    "line": 1437,
+    "problem": "verify and calibration_of (line 1605) resolve extra.shading_origin.archive with Path(named). That value is written by direct.py as str(archive), so an entry filed on Windows records 'calibration\\\\20260927T...'. On macOS or Linux, Path() treats that as a single filename containing a backslash, so verify reports every such archive as 'missing' and `make verify` fails on an intact library once it has been moved between machines. The project explicitly supports all three OSes.",
+    "fix": "Normalise before resolving, e.g. named = PureWindowsPath(named).as_posix() if '\\\\' in named else named (or Path(*PureWindowsPath(named).parts)), in both verify and calibration_of. Longer term, record the archive with Path.as_posix() in DirectScanner.ensure_shading."
+   },
+   {
+    "severity": "minor",
+    "file": "tests/test_library.py",
+    "line": 887,
+    "problem": "test_two_indexes_written_at_once_leave_a_whole_one passes on the base commit e700609, where reindex used a plain write_text with a shared temporary name. Threads under the GIL each write the same small JSON whole, so the test cannot detect the torn-index bug it claims to cover. test_a_compaction_a_kill_stopped_is_finished_by_a_second_one also passes on base, but that is acceptable because its companion damage tests fail on base.",
+    "fix": "Make the race observable: monkeypatch the file write inside _write_atomic (or os.replace) to sleep between the partial write and the rename. Alternatively, assert that _write_atomic uses distinct temporary names per thread, e.g. by capturing the temp paths from two threads and asserting they differ. The test should fail against the old shared '.index.json.part' name."
+   }
+  ]
+ }
+}
