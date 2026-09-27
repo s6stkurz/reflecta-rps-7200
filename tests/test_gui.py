@@ -5767,6 +5767,47 @@ def test_a_roll_at_a_resolution_nothing_can_correct_is_refused(window,
     assert len(said) == 1 and asked == [1]
 
 
+def test_aim_measures_only_from_a_prescan_of_the_film_where_it_is(window,
+                                                                  monkeypatch):
+    """Any prescan on screen was aimed from: an older frame's, a reopened
+    roll's from another day, or the one just aimed from -- a second click on
+    it applied the same correction twice."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    aimed, said, jobs = [], [], []
+    monkeypatch.setattr(app, "_aim", lambda event: aimed.append(event))
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.v_aim.set(True)
+
+    def prescan(seq, number=0):
+        return Result(seq=seq, kind="prescan", label=f"prescan {seq}",
+                      image=np.zeros((20, 30, 3), np.uint8), meta={},
+                      number=number)
+
+    older, fresh = prescan(1), prescan(2)
+    for result in (older, fresh):
+        app._handle(Event(kind="result", result=result))
+    click = types.SimpleNamespace(x=5, y=5)
+    app._show(fresh)
+    app.on_press(click)
+    assert len(aimed) == 1
+    app._show(older)
+    app.on_press(click)
+    assert len(aimed) == 1 and "no longer shows where the film is" in said[-1]
+    app._show(fresh)
+    app.on_nudge(1, 0.5)                          # what an aim ends in
+    app.on_press(click)
+    assert len(aimed) == 1, "the film has moved since"
+    walked = prescan(3, number=4)                 # a walk's, the film moved on
+    app._handle(Event(kind="result", result=walked))
+    app._show(walked)
+    app.on_press(click)
+    assert len(aimed) == 1
+
+
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     """Only the buttons grey while the scanner works. The roll key queued a
     second roll behind the first, and an aim-click or a fine move queued a

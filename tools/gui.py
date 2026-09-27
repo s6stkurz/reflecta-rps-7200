@@ -405,6 +405,9 @@ class ScannerGui:
         #: which the pump reads up to a tick after the job was taken, so a
         #: double press of Scan inside that tick queued a second pass.
         self._queued_run = None
+        #: The prescan an aim-click may measure from: the newest one taken of
+        #: the film where it still is. None once anything has moved it.
+        self._aim_from = None
         #: A calibration handed over whose "calibrated" has not come back.
         self._calibration_pending = False
         #: The open sheet's decisions, booked to be filed; see `_keep_sheet_soon`.
@@ -2243,6 +2246,8 @@ class ScannerGui:
         """Hand a pass or a roll to the session, and be working from now."""
         self.session.submit(job)
         self._queued_run = job
+        if isinstance(job, Roll):
+            self._aim_from = None                # a roll moves the film
 
     def on_prescan(self) -> None:
         # The buttons grey only once the worker reports the job it took, so a
@@ -3617,6 +3622,7 @@ class ScannerGui:
         if self._moving_refused():
             return
         self.session.submit(Move(frames=frames))
+        self._aim_from = None                    # the film is somewhere else now
 
     def on_nudge(self, direction: int, millimetres: float | None = None) -> None:
         if self._moving_refused():
@@ -3667,6 +3673,7 @@ class ScannerGui:
                       "to go into backlash")
         self._last_nudge = direction
         self.session.submit(Move(millimetres=millimetres * direction))
+        self._aim_from = None                    # the film is somewhere else now
 
     def on_stop(self) -> None:
         self.session.request_stop()
@@ -3926,6 +3933,10 @@ class ScannerGui:
             self._progress(event.done, event.total)
         elif event.kind == "result":
             self._add_result(event.result)
+            if event.result.kind == "prescan" and not event.result.number:
+                # A prescan of the film where it is: the one an aim-click may
+                # measure from, until the film next moves.
+                self._aim_from = event.result.seq
             # One of these two kinds is the "this frame is done" signal,
             # depending on which the roll actually produces -- a dry run
             # never delivers a "frame" result, only "prescan". Recomputes
@@ -5374,6 +5385,17 @@ class ScannerGui:
     def on_press(self, event: tk.Event) -> None:
         if self.v_aim.get() and self.current is not None \
                 and self.current.kind == "prescan":
+            if self.current.seq != self._aim_from:
+                # A distance measured on one picture of the film, applied to
+                # the film where it is now: an older frame's prescan, a
+                # walk's, a reopened roll's from another day -- or the one
+                # just aimed from, which a second click applied twice.
+                messagebox.showinfo(
+                    "Aim",
+                    "This prescan no longer shows where the film is: it is "
+                    "another frame's, or the film has moved since it was "
+                    "taken. Prescan again and aim on that.", parent=self.root)
+                return
             self._aim(event)
             return
         self._drag = (event.x, event.y, list(self._view))
