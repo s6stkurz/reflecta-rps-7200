@@ -1711,6 +1711,7 @@ UNFILED_TEMP = "rps7200-unfiled"
 
 
 def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
+                 compress: bool = False,
                  **save: Any) -> tuple[Path | None, list[str]]:
     """File a picture the library refused somewhere else, whole.
 
@@ -1725,9 +1726,14 @@ def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
     pixels, so moving the folder into the library files it: tried in an
     `unfiled` folder beside each of ``near`` -- the folders a delivered copy
     was just written to, which are known to take a file -- and then in the
-    system's temporary directory. Written plain, like everything filed with
-    the scanner open. ``save`` is what `library.save` takes besides the
-    pixels, meta and root.
+    system's temporary directory. Written plain unless ``compress``, like
+    everything filed with the scanner open, and then `library.compact` is
+    the caller's once it has closed: the window's close does it, and
+    `tools/scan_roll.py` after its writer finishes. A caller filing with the
+    device already closed -- `tools/scan.py` -- compresses it at once; plain,
+    and nothing compacting it, it stayed raw.bin and uncompressed TIFFs for
+    good. ``save`` is what `library.save` takes besides the pixels, meta and
+    root.
 
     Returns the entry, or None, and why each place refused it.
     """
@@ -1738,7 +1744,7 @@ def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
                    Path(tempfile.gettempdir()) / UNFILED_TEMP]:
         if folder not in places:
             places.append(folder)
-    save = dict(save, compress=False,
+    save = dict(save, compress=compress,
                 tags=sorted({*(save.get("tags") or ()), UNFILED}))
     refused = []
     for root in places:

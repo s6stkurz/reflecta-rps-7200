@@ -1240,6 +1240,23 @@ def test_a_frame_the_library_refused_names_the_copy_it_wrote(tmp_path,
     assert (tmp_path / "roll" / record["file"]).exists()
 
 
+def test_a_refused_frames_raw_data_is_compressed_once_the_device_closes(
+        tmp_path, monkeypatch):
+    """Kept plain, as everything filed with the device open is -- and only
+    the window's close compacted what its writer kept plain, so from here it
+    stayed raw.bin and uncompressed TIFFs for good."""
+    from rps7200 import library
+
+    _created, code = _refusing_library(tmp_path, monkeypatch, _Patient,
+                                       frames=1)
+    assert code != 0
+    (kept,) = [p.parent for p in
+               (tmp_path / "roll" / "unfiled").glob("*/scan.json")]
+    assert (kept / library.RAW_FILE).exists()
+    assert not (kept / library.RAW_PLAIN).exists()
+    assert library.read_raw(kept) == b"raw-bytes"
+
+
 class _Claiming(FakeRollScanner):
     """Records what the tool tells debug filing, and when the scanner exits."""
 

@@ -404,10 +404,11 @@ def main() -> int:
                     # Its raw data kept elsewhere, whole, where it can be
                     # moved into the library later -- beside --out, or in the
                     # system's temporary directory. See
-                    # `session.keep_unfiled`.
+                    # `session.keep_unfiled`. Compressed, as the passes filed
+                    # here are: the device is closed by now.
                     kept, elsewhere = keep_unfiled(pixels, meta,
                                                    near=[Path(args.out).parent],
-                                                   **filing)
+                                                   compress=True, **filing)
                     said = (f"pass {n} could not be filed in {args.library} "
                             f"({exc}); ")
                     said += (f"its raw data is kept in {kept} -- move that folder "

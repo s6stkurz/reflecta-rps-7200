@@ -593,6 +593,20 @@ def test_a_pass_the_library_refuses_costs_neither_the_rest_nor_the_file(
         assert library.read_raw(path.parent) is not None
 
 
+def test_a_refused_pass_is_kept_compressed(tmp_path, monkeypatch):
+    """Kept after the device has closed, as every pass here is filed. It was
+    kept plain -- the window's rule, for filing with the device open -- and
+    nothing here compacts, so it stayed raw.bin and uncompressed for good."""
+    from rps7200 import library
+
+    _created, code = _refused(tmp_path, monkeypatch)
+    assert code != 0
+    (kept,) = [p.parent for p in
+               (tmp_path / "out" / "unfiled").glob("*/scan.json")]
+    assert (kept / library.RAW_FILE).exists()
+    assert not (kept / library.RAW_PLAIN).exists()
+
+
 def test_a_pass_is_claimed_from_debug_filing_only_once_filed(tmp_path,
                                                             monkeypatch):
     """Claimed as it was held, a pass whose filing then failed was deleted

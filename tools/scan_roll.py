@@ -48,7 +48,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import preview, session, tiff
+from rps7200 import library, preview, session, tiff
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
@@ -1113,6 +1113,16 @@ def main() -> int:
                         device.release()
                 except Exception as exc:                 # noqa: BLE001
                     print(f"debug filing: {exc}", file=sys.stderr)
+            # A frame the library refused is kept plain beside its copy
+            # (`session.keep_unfiled`), as it is filed with the device open;
+            # compressed now it has closed, as the window's close does. Left
+            # to nothing, it stayed raw.bin and uncompressed TIFFs for good.
+            for entry in writer.uncompressed:
+                try:
+                    library.compact(entry)
+                except (OSError, ValueError) as exc:
+                    print(f"could not compress {entry}: {exc}; it stays "
+                          "uncompressed and complete", file=sys.stderr)
     # Only the entries: a walk's -before picture is written with none.
     filed = {n: e for n, e in writer.done if e is not None}
     for record in manifest["frames"]:
