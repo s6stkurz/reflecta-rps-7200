@@ -5808,6 +5808,55 @@ def test_aim_measures_only_from_a_prescan_of_the_film_where_it_is(window,
     assert len(aimed) == 1
 
 
+def _unwalked_roll(tmp_path, done, settings=True):
+    """A roll scanned without a walk, six frames asked for, `done` done."""
+    folder = tmp_path / "rolls" / "resume"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "resume", "numbering": "strip", "wanted": list(range(1, 7)),
+        **({"settings": {"resolution": 1800, "prescan_resolution": 300,
+                         "film": "negative", "start_at": 1, "frames": 6}}
+           if settings else {}),
+        "frames": [{"number": n, "done": True} for n in done]}),
+        encoding="utf-8")
+    return folder
+
+
+def test_finishing_a_reopened_roll_skips_the_frames_it_has(window, monkeypatch,
+                                                           tmp_path):
+    """The Roll button carried a first frame and a count, so with 1, 2, 4
+    and 5 of six done, "first frame 3" scanned 3 to 6: 4 and 5 again, their
+    frameNN.tif replaced, at up to minutes a frame."""
+    app, root = window
+    app.calibrated = True
+    said, asked, jobs = [], [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.open_roll(_unwalked_roll(tmp_path, done=(1, 2, 4, 5)))
+    assert "the frames already done are skipped" in said[-1]
+    assert (app.v_startat.get(), app.v_last.get()) == ("3", "6")
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs[0].only == (3, 6) and jobs[0].start_at == 3
+    assert "Already scanned, and skipped: 4-5." in asked[0]
+
+
+def test_a_reopened_roll_with_no_settings_does_not_say_they_are_back(
+        window, monkeypatch, tmp_path):
+    app, root = window
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.v_startat.set("1")
+    app.open_roll(_unwalked_roll(tmp_path, done=(1, 2), settings=False))
+    assert "Its settings are back" not in said[-1]
+    assert "records no settings" in said[-1]
+    assert app.v_startat.get() == "1", "and it did not set the box"
+
+
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     """Only the buttons grey while the scanner works. The roll key queued a
     second roll behind the first, and an aim-click or a fine move queued a

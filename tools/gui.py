@@ -2356,6 +2356,34 @@ class ScannerGui:
         typed = self._typed_roll_name(fresh=dry)
         folder = roll_dir(self.session.rolls, typed)
         where = folder_note(folder, dry)
+        # A roll reopened to be finished skips what it has done. The Roll
+        # button carried only a first frame and a count, so with frames 1, 2,
+        # 4 and 5 of six done, "first frame 3" scanned 3 to 6 and took 4 and
+        # 5 again, replacing their frameNN.tif. Only the reopened roll, and
+        # only where the range has an end: "to the end of the strip" is not a
+        # list of frames, so there the frames it would take again are named.
+        only = None
+        if (not dry and self._loaded_roll is not None
+                and _folder_key(folder) == _folder_key(self._loaded_roll)):
+            done = done_in(folder)
+            if frames is not None:
+                span = range(start_at, start_at + frames)
+                skipped = [n for n in span if n in done]
+                if skipped:
+                    only = tuple(n for n in span if n not in done)
+                    if not only:
+                        messagebox.showinfo(
+                            "Scan roll", f"{range_words(start_at, frames)} "
+                            f"of {folder.name} are scanned already.")
+                        return
+                    where += (f"\n\nAlready scanned, and skipped: "
+                              f"{number_spans(skipped)}.")
+            else:
+                ahead = sorted(n for n in done if n >= start_at)
+                if ahead:
+                    where += (f"\n\nAlready scanned, and scanned again unless "
+                              f"a last frame stops before them: "
+                              f"{number_spans(ahead)}.")
         # One question either way: `on_roll` is the only confirmation the
         # `roll` key gets, and asking twice trains the habit of dismissing both.
         keep = False
@@ -2449,7 +2477,7 @@ class ScannerGui:
         self._roll_wall_start = time.monotonic()
         self._roll_seeking = True
         self._roll_dry = dry
-        self._roll_frames_total = frames
+        self._roll_frames_total = frames if only is None else len(only)
         self._roll_frames_done = 0
         self._roll_seconds_per_frame = per
         self._update_roll_eta()
@@ -2472,6 +2500,7 @@ class ScannerGui:
             # folder already records.
             out=str(folder),
             extend_walk=keep,
+            only=only,
             notes=self._notes(), tags=self._tags(),
         ))
 
@@ -3134,14 +3163,22 @@ class ScannerGui:
                 return
             if restored:
                 self.v_startat.set(str(remaining[0]))
+            # Said as it was done: without settings in its manifest nothing was
+            # put back, and the box was left alone -- which this used to say
+            # had been set.
+            ready = (f"Its settings are back and \"first frame\" is set to "
+                     f"frame {remaining[0]}" if restored else
+                     f"It records no settings, so the window's are left as they "
+                     f"are: set them, and \"first frame\" to frame "
+                     f"{remaining[0]}")
             messagebox.showinfo(
                 "Open a roll",
                 f"{out['roll']} was scanned without walking the strip first, "
                 f"so there is no contact sheet to show.\n\n"
                 f"{len(done)} frames are done and {len(remaining)} are left. "
-                f"Its settings are back and \"first frame\" is set to frame "
-                f"{remaining[0]} -- put the strip in the way it went in "
-                "before and press Roll, and the film is wound there first.\n\n"
+                f"{ready} -- put the strip in the way it went in before and "
+                "press Roll, and the film is wound there first; the frames "
+                "already done are skipped.\n\n"
                 + STRIP_NUMBERS)
             self._say(f"reopened {out['roll']}: {len(done)} scanned, "
                       f"{len(remaining)} left, no sheet")
@@ -3455,14 +3492,7 @@ class ScannerGui:
         What the reopened roll said, and what its roll.json says now -- a
         commission earlier in this session has scanned frames since.
         """
-        done = set(self._sheet_done)
-        try:
-            progress = read_manifest(Path(folder) / "roll.json")
-        except ValueError:
-            return done
-        if progress.get("numbering") == NUMBERING:
-            done |= scanned_frames(progress)
-        return done
+        return set(self._sheet_done) | done_in(folder)
 
     def _options_note(self, options) -> str:
         """Name the settings this roll uses that the window does not show.
@@ -6376,6 +6406,22 @@ def scanned_frames(manifest: dict) -> set[int]:
         if finished:
             out.add(number)
     return out
+
+
+def done_in(folder) -> set[int]:
+    """The frames a roll folder's roll.json says are scanned, on the strip.
+
+    Empty for a folder with none, one that cannot be read, or one numbered
+    before its numbers were places on the strip -- `read_survey` renumbers
+    those, and a set in the wrong numbering would skip the wrong frames.
+    """
+    try:
+        progress = read_manifest(Path(folder) / "roll.json")
+    except ValueError:
+        return set()
+    if progress.get("numbering") != NUMBERING:
+        return set()
+    return scanned_frames(progress)
 
 
 def wanted_frames(manifest: dict, progress: dict) -> list[int]:
