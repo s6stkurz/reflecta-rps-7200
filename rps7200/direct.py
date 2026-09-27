@@ -3599,11 +3599,6 @@ class DirectScanner:
     STEP_MM = MM_PER_UNIT
     OVERHEAD_MM = MM_PER_COMMAND
 
-    #: Below this the loop leaves the frame alone. Roughly half the smallest
-    #: move the hardware can make (param 1, `FINE_MIN_MM`), so it never asks for a
-    #: correction it cannot deliver, and never chatters at measurement noise.
-    CORRECTION_DEADBAND_MM = 0.15
-
     #: The largest `param` a single correction may use, and therefore the
     #: largest correction there is: past it, `plan_nudges` chains commands and
     #: pays the ramp and the scatter again for each.
