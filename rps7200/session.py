@@ -3130,7 +3130,6 @@ class ScanSession:
             stopped = f"{type(exc).__name__}: {exc}"
             raise
         finally:
-            record_of.ended(stopped)
             # Ends the generator at its yield rather than leaving it suspended
             # with the device half-way through a roll.
             frames.close()
@@ -3148,6 +3147,8 @@ class ScanSession:
             # through the transport since, and a counter that comes back to
             # the same number is no longer evidence of the same picture.
             self._last_prescan = None
+            # Last, once the device is left alone: when and how it ended.
+            record_of.ended(stopped)
         return stopped
 
     # -- shared ------------------------------------------------------------
