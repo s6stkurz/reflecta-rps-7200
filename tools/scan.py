@@ -16,8 +16,10 @@ measured it.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -253,6 +255,11 @@ def main() -> int:
     interrupt = DeferredInterrupt()
     trouble: BaseException | None = None
     pending: list[dict] = []
+    # One name for every pass of one bracket, in each pass's record: an index
+    # and a ratio say where a pass sat in *a* bracket, and without this which
+    # bracket had to be guessed from timestamps before the passes could be
+    # merged again.
+    bracket_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     # Each bracket pass as the sensor returned it, for the merge to judge
     # saturation on -- see rps7200/bracket.py. With the library on, these are
     # the same arrays `pending` files, not copies. With it off nothing else
@@ -302,6 +309,8 @@ def main() -> int:
                     raw = getattr(s, "last_pixels_raw", None)
                     if raw is not None:
                         s.debug_claim(raw)
+                    if args.bracket:
+                        meta["bracket_id"] = bracket_id
                     pending.append(
                         dict(capture, inquiry=info, meta=meta,
                              image=image if raw is None else raw)
@@ -418,10 +427,17 @@ def main() -> int:
             merged, stats = merge_bracket(frames, ratios, sensor_rails=sensor)
         print(f"bracket: {stats.describe()}")
         image = merged
-        meta = dict(metas[-1])
+        # The reference pass's, because the merged pixels are on its scale:
+        # this described the longest pass, so anything scaling the file back
+        # to an exposure from it was out by the whole bracket's span.
+        meta = dict(metas[0])
         meta["bracket"] = {
+            "id": bracket_id,
             "passes": len(frames), "ratios": ratios,
             "stops": args.stops, "stats": stats.describe(),
+            "scale_of_pass": 0,
+            "merge": dataclasses.asdict(stats),
+            "entries": [e.name for e in entries],
         }
 
     out = Path(args.out)

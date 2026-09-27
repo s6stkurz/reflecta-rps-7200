@@ -11,8 +11,12 @@ a pass carries a pixel exactly as far as it is trustworthy there: a clipped
 highlight contributes nothing, a noisy shadow contributes little, and a
 well-exposed mid-tone dominates. Variance comes from a Poisson-Gaussian model,
 ``var ~ alpha * signal + beta`` -- shot noise proportional to signal, read noise
-constant -- whose two constants are measured from our own flats by
-:func:`fit_noise_params` rather than assumed.
+constant. :func:`fit_noise_params` measures the two constants from flats, and
+:func:`merge_bracket` takes them as ``alpha`` and ``beta``; **but no caller
+fits them yet**, so every merge `tools/scan.py` runs uses
+:data:`DEFAULT_ALPHA` and :data:`DEFAULT_BETA`, which are assumed, not
+measured on this scanner. Every weight and every sigma below -- the
+misalignment gate included -- is in units of that assumption.
 
 Adapted from pyopticfilm's `exposure_merge.py`, specifically its
 `feat/me-n-brackets` branch, which generalises the pairwise merge to N:
@@ -66,9 +70,12 @@ CLIP_END = 0.95 * FULL_SCALE
 Z_LO = 3.0
 Z_HI = 5.0
 
-#: Fallback Poisson-Gaussian constants, used only when no flats are available to
-#: fit. `beta` is read-noise variance in DN^2. Measure instead: see
-#: :func:`fit_noise_params`.
+#: Poisson-Gaussian constants for when nothing has been fitted -- which today
+#: is every merge: `tools/scan.py` passes no flats, so these are what runs.
+#: `beta` is read-noise variance in DN^2 (64 DN of read noise). Assumed, not
+#: measured on this scanner, and after a per-column gain and a dark
+#: subtraction the real variance can differ; :func:`fit_noise_params` is how
+#: to measure them instead.
 DEFAULT_ALPHA = 1.0
 DEFAULT_BETA = 4096.0
 
@@ -107,6 +114,14 @@ class MergeStats:
     zero_confidence_pixels: int
     total_pixels: int
     reference_fallback_pixels: int
+    #: The relation each pass was merged by, fitted against pass 0 -- not the
+    #: commanded ladder, which is not the relation (see `solve_relation`) --
+    #: and the noise constants every weight was computed in. What it takes to
+    #: merge the same entries the same way again.
+    fitted_ratios: tuple[float, ...] = ()
+    fitted_offsets: tuple[float, ...] = ()
+    alpha: float = DEFAULT_ALPHA
+    beta: float = DEFAULT_BETA
 
     @property
     def zero_confidence_fraction(self) -> float:
@@ -540,4 +555,8 @@ def merge_bracket(
         zero_confidence_pixels=zero_pixels,
         total_pixels=total,
         reference_fallback_pixels=fallback_pixels,
+        fitted_ratios=tuple(float(r) for r in ratios),
+        fitted_offsets=tuple(float(o) for o in offsets),
+        alpha=float(alpha),
+        beta=float(beta),
     )

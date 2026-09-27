@@ -179,6 +179,30 @@ def test_the_merge_is_recorded_in_the_sidecar(tmp_path, monkeypatch):
     assert len(meta["bracket"]["ratios"]) == 3
 
 
+def test_the_sidecar_describes_the_pass_the_merge_is_scaled_to(tmp_path,
+                                                             monkeypatch):
+    """The merged pixels are on pass 0's scale and the sidecar described the
+    last pass -- a tool scaling the file back to an exposure was out by the
+    whole bracket. Nor could the merge be redone: the fitted relation lived
+    in a prose string, and nothing but timing said which entries were one
+    bracket."""
+    import json
+
+    scanner, code = run(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 0
+    meta = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert meta["exposure_scale"][0] == scanner.scans[0], "not pass 0's"
+    merge = meta["bracket"]["merge"]
+    assert len(merge["fitted_ratios"]) == len(merge["fitted_offsets"]) == 3
+    assert {"alpha", "beta"} <= set(merge)
+    records = [json.loads((tmp_path / "lib" / name / "scan.json")
+                          .read_text(encoding="utf-8"))
+               for name in meta["bracket"]["entries"]]
+    assert len(records) == 3
+    assert {r["extra"]["bracket_id"] for r in records} == {
+        meta["bracket"]["id"]}
+
+
 def test_no_library_files_nothing_but_still_writes_the_scan(tmp_path, monkeypatch):
     patch_scanner(monkeypatch)
     monkeypatch.setattr(
