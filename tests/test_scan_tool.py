@@ -530,3 +530,84 @@ def test_the_run_says_how_long_it_will_take(tmp_path, monkeypatch, capsys):
     _, code = run(tmp_path, monkeypatch, "--bracket", "3")
     assert code == 0
     assert "estimated" in capsys.readouterr().out
+
+
+# --- on the driver itself ----------------------------------------------------
+#
+# Every double above hands out bytes that could never decode to the pixels it
+# files -- b"pass-1" beside a 6x6 frame -- so no test here could say that an
+# entry this tool files re-decodes to itself, or that the file it writes is the
+# corrected picture. These run the real `DirectScanner` on a device double
+# (`conftest.DeviceAtCommands`) under the tool's own `main()`.
+
+
+def run_on_device(tmp_path, monkeypatch, *argv):
+    from conftest import tool_on_device
+
+    devices = tool_on_device(scan_tool, monkeypatch)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out.tif"),
+         "--library", str(tmp_path / "lib"),
+         "--reference", str(tmp_path / "calibration" / "shading.npz"),
+         "--dpi", "300", *argv],
+    )
+    return devices, scan_tool.main()
+
+
+def _entries(root):
+    from rps7200 import library
+    return [root / r["id"] for r in library.entries(root)]
+
+
+@pytest.mark.parametrize("argv", [[], ["--ir"], ["--auto-exposure"]])
+def test_what_it_files_reconstructs_and_what_it_writes_is_corrected(
+        tmp_path, monkeypatch, argv):
+    """The two halves, on the pass that was really taken: the entry holds the
+    raw pixels its own bytes decode to, and out.tif is `library.corrected` of
+    that entry -- what Save As would give -- rather than merely existing."""
+    from rps7200 import library, tiff
+
+    devices, code = run_on_device(tmp_path, monkeypatch, *argv)
+    assert code == 0
+    entries = _entries(tmp_path / "lib")
+    assert len(entries) == 1
+    entry = entries[0]
+    assert library.reconstruct(entry)[1].startswith("identical")
+    assert library.load(entry)[1]["image"]["corrections_applied"] == []
+    assert library.read_raw(entry) == devices[0].passes[-1]["blob"]
+    delivered = tiff.read(str(tmp_path / "out.tif"))
+    assert np.array_equal(delivered, library.corrected(entry)[0])
+    assert not np.array_equal(delivered, library.load(entry)[0]), \
+        "the raw pixels were delivered"
+
+
+def test_each_pass_of_a_bracket_files_its_own_bytes_and_reconstructs(
+        tmp_path, monkeypatch):
+    from rps7200 import library
+
+    devices, code = run_on_device(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 0
+    entries = _entries(tmp_path / "lib")
+    assert len(entries) == 3
+    sent = {p["blob"] for p in devices[0].passes if not p["calibrate"]}
+    kept = [library.read_raw(e) for e in entries]
+    assert len(set(kept)) == 3 and set(kept) <= sent
+    for entry in entries:
+        assert library.reconstruct(entry)[1].startswith("identical"), entry
+
+
+def test_with_debug_on_every_pass_is_filed_once(tmp_path, monkeypatch):
+    """What the tool keeps it files; the metering probes it does not keep,
+    debug filing does; nothing is filed by both."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "debug"))
+    devices, code = run_on_device(tmp_path, monkeypatch, "--auto-exposure")
+    assert code == 0
+    ours = [library.read_raw(e) for e in _entries(tmp_path / "lib")]
+    debug = [library.read_raw(e) for e in _entries(tmp_path / "debug")]
+    sent = [p["blob"] for p in devices[0].passes if not p["calibrate"]]
+    assert len(ours) == 1 and debug, "no probe was filed"
+    assert sorted(ours + debug) == sorted(sent), "a pass filed twice or lost"

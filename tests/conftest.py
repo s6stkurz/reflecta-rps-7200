@@ -590,12 +590,19 @@ class DeviceAtCommands:
     Closed, it refuses every command as `Transport` does once its handle is
     gone. ``on_read(device, n)`` is called before the ``n``th image READ of
     the whole session, so a test can act mid-pass -- a force abort, say.
+
+    The film is a strip of ``last + 1`` frames, as `StripTransport` has it:
+    SLIDE NEXT and PREV move ``position``, READ STATE byte 2 says where it is,
+    and the READ STATE straight after a move is refused, as the device's is.
     """
 
     #: What READ GAIN/OFFSET reports: the device's own power-on values.
     EXPOSURE = (9604, 6506, 6506, 7745)
 
-    def __init__(self, *, upward=(), seed=0, position=0, on_read=None):
+    def __init__(self, *, upward=(), seed=0, position=0, last=16,
+                 on_read=None):
+        self.last = last
+        self._moved = False
         self.upward = set(upward)
         self.on_read = on_read
         self.reads = 0
@@ -638,12 +645,23 @@ class DeviceAtCommands:
         if opcode == p.SCSI_REQUEST_SENSE:
             sense, self._sense = self._sense, bytes(14)
             return sense
+        if opcode == p.SCSI_SLIDE:
+            if data[0] == p.SLIDE_NEXT and self.position < self.last:
+                self.position += 1
+                self._moved = True
+            elif data[0] == p.SLIDE_PREV and self.position > 0:
+                self.position -= 1
+                self._moved = True
+            return b""
         if opcode in (p.SCSI_TEST_UNIT_READY, p.SCSI_WRITE_GAIN_OFFSET,
-                      p.SCSI_SLIDE, p.SCSI_VENDOR_E7):
+                      p.SCSI_VENDOR_E7):
             return b""
         if opcode == p.SCSI_INQUIRY:
             return _inquiry_answer()[:read_size]
         if opcode == p.SCSI_READ_STATE:
+            if self._moved:
+                self._moved = False
+                self._refuse(opcode, 0x00)
             state = bytearray(13)
             state[2] = self.position
             return bytes(state)
@@ -792,6 +810,28 @@ def scanner_at_commands(monkeypatch, *, debug=False, **device):
     monkeypatch.setattr(direct, "time", NoWaiting())
     device_ = DeviceAtCommands(**device)
     return DirectScanner(transport=device_, verbose=False, debug=debug), device_
+
+
+def tool_on_device(tool, monkeypatch, **device) -> list:
+    """Put the driver itself, on a `DeviceAtCommands`, under a tool's `main()`.
+
+    The tools build their own scanner (`DirectScanner(verbose=..., debug=None)`),
+    so the class is replaced by one that is the driver in every method and
+    only opens onto the double instead of the bus. Returns the devices, one
+    per scanner the tool made, filled in as it runs.
+    """
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    devices = []
+
+    class OnTheDevice(DirectScanner):
+        def __init__(self, verbose=False, debug=None, **kw):
+            devices.append(DeviceAtCommands(**device))
+            super().__init__(transport=devices[-1], verbose=False, debug=debug)
+
+    monkeypatch.setattr(tool, "DirectScanner", OnTheDevice)
+    return devices
 
 
 #: `roll.json` as 8a9ba17 -- what `main` ran until the roll learned where the

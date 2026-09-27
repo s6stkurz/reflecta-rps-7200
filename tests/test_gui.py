@@ -3400,6 +3400,46 @@ def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):
     assert len(summary["done"]) == 2, "both were scanned; only one survives"
 
 
+@pytest.mark.parametrize("rotation,flipped,mono", [
+    (0, False, False), (90, True, False), (270, False, True)])
+def test_save_as_save_all_and_export_deliver_the_entry_corrected(
+        tmp_path, monkeypatch, rotation, flipped, mono):
+    """`_deliver_one` is the single function behind Save As, Save all and
+    Export, and nothing called it: every delivered-file test used a stand-in
+    whose raw and corrected pixels were the same array, so a delivery of the
+    raw pixels would have passed them all. The entry here is a real pass,
+    filed raw with a reference that visibly changes it; what is written must
+    be that entry corrected, turned as the pass was, and never the raw."""
+    from types import SimpleNamespace
+
+    from conftest import scanner_at_commands
+    from rps7200 import library, preview, tiff
+    from rps7200.mono import to_monochrome
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    scanner.scan(resolution=300, infrared=False, keep_raw=True)
+    entry = library.save(scanner.last_pixels_raw, scanner.last_scan_meta,
+                         root=tmp_path / "library", **scanner.capture_record())
+    result = SimpleNamespace(entry=entry, image=None, rotation=rotation,
+                             flipped=flipped)
+    out = tmp_path / "delivered.tif"
+
+    # No widget is touched, which is why it may run off the UI thread; so no
+    # window is needed to call it either.
+    said = gui.ScannerGui._deliver_one(None, result, str(out), 95, mono, "G")
+    assert "full resolution" in said
+
+    def arranged(pixels):
+        turned = preview.orient(pixels, rotation, flipped)
+        return to_monochrome(turned, "G") if mono else turned
+
+    written = tiff.read(str(out))
+    assert np.array_equal(written, arranged(library.corrected(entry)[0]))
+    assert not np.array_equal(written, arranged(library.load(entry)[0])), \
+        "the raw pixels were delivered"
+
+
 def test_approvals_are_read_without_loading_a_survey(tmp_path):
     """`approved.json` is the one thing in a roll folder the library cannot
     rebuild, so Delete has to be able to ask about it without reading pixels."""

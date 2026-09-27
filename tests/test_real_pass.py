@@ -530,3 +530,35 @@ def test_a_force_abort_mid_read_leaves_the_scanner_suspect(monkeypatch,
     assert any(e.kind == "failed" for e in events)
     assert library.entries(tmp_path / "library") == [], \
         "a pass abandoned mid-read was filed as if whole"
+
+
+def test_a_real_roll_through_the_session_files_frames_that_reconstruct(
+        monkeypatch, tmp_path):
+    """The window's roll on the driver's own loop -- metering, prescans,
+    frame passes, whole-frame moves on a strip -- rather than a stand-in
+    whose raw bytes were the same 64 placeholder bytes for every frame. Each
+    frame's entry re-decodes to itself, and each rolls/<name>/frameNN.tif is
+    that entry corrected."""
+    from rps7200 import tiff
+    from rps7200.session import Roll
+
+    scanner, device = scanner_at_commands(monkeypatch, upward={3})
+    _, events = _session_to_close(
+        scanner, tmp_path,
+        [_calibration(tmp_path),
+         Roll(frames=2, resolution=300, infrared=True, name="r")])
+
+    assert not [e.text for e in events if e.kind == "failed"]
+    frames = {r["extra"]["roll_membership"]["number"]:
+              tmp_path / "library" / r["id"]
+              for r in library.entries(tmp_path / "library")
+              if r["extra"]["roll_membership"]["kind"] == "frame"}
+    assert sorted(frames) == [1, 2]
+    sent = {p["blob"] for p in device.passes}
+    for number, entry in frames.items():
+        assert library.reconstruct(entry)[1].startswith("identical"), number
+        assert library.load(entry)[1]["image"]["corrections_applied"] == []
+        assert library.read_raw(entry) in sent
+        delivered = tiff.read(str(tmp_path / "rolls" / "r" /
+                                  f"frame{number:02d}.tif"))
+        assert np.array_equal(delivered, library.corrected(entry)[0]), number
