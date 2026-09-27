@@ -4379,7 +4379,12 @@ class ScannerGui:
             full = preview.orient(full, result.rotation, result.flipped)
             if mono:
                 full = to_monochrome(full, mono_channel)
-            note = export.write(path, full, quality=quality)
+            # The scan's own resolution, which every delivered file from here
+            # went without: a TIFF said 72 dpi or nothing depending on what
+            # was installed, and a JPEG always said the editor's default.
+            dpi = (entry_record.get("scan") or {}).get("resolution_dpi")
+            note = export.write(path, full, quality=quality,
+                                resolution=int(dpi) if dpi else None)
             how = entry_record.get("corrected")
             return (f"{Path(path).name} at full resolution"
                     + (f", turned {result.rotation}\u00b0"

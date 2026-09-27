@@ -47,6 +47,8 @@ _Y_RESOLUTION = 283
 _PLANAR_CONFIG = 284
 _PREDICTOR = 317
 _RESOLUTION_UNIT = 296
+_RESOLUTION_UNIT_NONE = 1
+_RESOLUTION_UNIT_INCH = 2
 _SOFTWARE = 305
 _EXTRA_SAMPLES = 338
 _SAMPLE_FORMAT = 339
@@ -192,6 +194,10 @@ def _write_builtin(
     # Header, then pixel data, then IFD, then any values too big to inline.
     data_offset = 8
     data_size = int(sum(strip_counts))
+    # TIFF 6 wants the IFD on a word boundary, and an 8-bit image with an odd
+    # byte count put it on an odd one. One pad byte after the pixels, which
+    # no strip covers.
+    pad = data_size % 2
 
     # Collect (tag, type, count, payload) first; out-of-line offsets can only be
     # resolved once the entry count is known, since it sets the IFD's size.
@@ -238,11 +244,15 @@ def _write_builtin(
     add(_SAMPLES_PER_PIXEL, _SHORT, [channels])
     add(_ROWS_PER_STRIP, _LONG, [rows_per_strip])
     add(_STRIP_BYTE_COUNTS, _LONG, strip_counts)
-    res = int(resolution) if resolution else 72
+    # With no resolution, what tifffile writes: 1/1 and no unit. This wrote
+    # 72 per inch, so which of the two was installed decided whether a
+    # 3600 dpi frame opened as unitless or as a 72 dpi image two metres wide.
+    res = int(resolution) if resolution else 1
     add(_X_RESOLUTION, _RATIONAL, [(res, 1)])
     add(_Y_RESOLUTION, _RATIONAL, [(res, 1)])
     add(_PLANAR_CONFIG, _SHORT, [1])
-    add(_RESOLUTION_UNIT, _SHORT, [2])
+    add(_RESOLUTION_UNIT, _SHORT, [_RESOLUTION_UNIT_INCH if resolution
+                                   else _RESOLUTION_UNIT_NONE])
     add(_SOFTWARE, _ASCII, software.encode() + b"\x00")
     if channels > 3:
         # 0 = unspecified: the IR plane is data, not alpha, so nothing should
@@ -252,7 +262,7 @@ def _write_builtin(
 
     fields.sort(key=lambda f: f[0])
 
-    ifd_offset = data_offset + data_size
+    ifd_offset = data_offset + data_size + pad
     # 2-byte entry count + 12 bytes per entry + 4-byte next-IFD pointer
     extras_base = ifd_offset + 2 + 12 * len(fields) + 4
 
@@ -271,6 +281,7 @@ def _write_builtin(
     fh.write(b"II")
     fh.write(struct.pack("<HI", 42, ifd_offset))
     fh.write(data.tobytes())
+    fh.write(b"\x00" * pad)
     fh.write(struct.pack("<H", len(entries)))
     for tag, ftype, count, slot in entries:
         fh.write(struct.pack("<HHI", tag, ftype, count))

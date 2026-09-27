@@ -1898,6 +1898,27 @@ def test_a_position_that_is_not_a_number_is_no_move_at_all(tmp_path):
     assert state["offsets"] == {3: 0.5}
 
 
+def test_a_saved_file_says_the_resolution_it_was_scanned_at(tmp_path):
+    """Save as, Save all and Export passed no resolution, so every file from
+    the window said 72 dpi or nothing, depending on what was installed."""
+    from rps7200 import library, tiff
+
+    entry = library.save(
+        np.full((4, 6, 3), 1000, np.uint16),
+        {"resolution_dpi": 900, "channels": 3, "film": "negative",
+         "channel_order": list("RGB"), "width": 6, "height": 4},
+        root=tmp_path / "lib")
+    result = types.SimpleNamespace(entry=entry, rotation=0, flipped=False,
+                                   image=None)
+    out = tmp_path / "saved.tif"
+    gui.ScannerGui._deliver_one(types.SimpleNamespace(), result, out, 95,
+                                False, "G")
+    tifffile = pytest.importorskip("tifffile")
+    with tifffile.TiffFile(str(out)) as handle:
+        assert handle.pages[0].tags["XResolution"].value == (900, 1)
+    assert tiff.read(str(out)).shape == (4, 6, 3)
+
+
 def test_a_snapped_offset_can_always_be_planned_again():
     """The adjuster stores what snap_offset returns and the mover plans from
     it later. A value the planner would refuse on the way back is a number

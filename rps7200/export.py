@@ -107,8 +107,13 @@ def infrared_path(path: str | Path) -> Path:
     return Path(path).with_suffix(dng.SUFFIX)
 
 
-def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> None:
-    """The picture alone. Anything past three channels leaves in the DNG."""
+def _write_jpeg(path: Path, image: np.ndarray, quality: int,
+                resolution: int | None = None) -> None:
+    """The picture alone. Anything past three channels leaves in the DNG.
+
+    With the scan's resolution in its header, as the TIFF carries it: without
+    one every JPEG opened at an editor's default, 72 per inch.
+    """
     from PIL import Image                                # noqa: PLC0415
 
     if image.ndim == 3 and image.shape[2] > JPEG_MAX_CHANNELS:
@@ -124,6 +129,7 @@ def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> None:
         # few percent of file size.
         subsampling=0,
         optimize=True,
+        **({"dpi": (int(resolution), int(resolution))} if resolution else {}),
     )
 
 
@@ -187,7 +193,7 @@ def write(
     fmt = format_of(path)
     if fmt == "jpeg":
         try:
-            _write_jpeg(path, image, quality)
+            _write_jpeg(path, image, quality, resolution)
         except ImportError:
             path = path.with_suffix(SUFFIXES["tiff"])
             tiff.write(str(path), image, resolution=resolution,
