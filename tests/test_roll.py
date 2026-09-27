@@ -1455,6 +1455,25 @@ def test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film():
     assert films == ["bw"], films
 
 
+def test_an_aim_says_what_decided_it_in_the_readers_own_terms():
+    """The edge reader's note says `source`; the aim's log read the legacy
+    ensemble's `agreed` and `chose`, and printed 'by ;' and 'from ?'."""
+    from rps7200.framing import StripWalk
+
+    class Read(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"source": "measured", "reason": "edges at 3 and 425",
+                         "members": []}
+
+    reference = _lit()
+    lines = []
+    scanner = FakeRoll([reference])
+    scanner.log_hook = lines.append
+    scanner._aim_frame(0, reference, 300, Read(), dry_run=True)
+    said = [line for line in lines if line.startswith("frame 1:")]
+    assert said and "by measured" in said[0], said
+
+
 def test_a_frame_that_will_not_move_is_scanned_anyway_and_flagged():
     reference = _lit()
     scanner = FakeRoll([reference])

@@ -3493,7 +3493,10 @@ class DirectScanner:
             self._log(f"frame {index + 1}: left as it came -- {out['reason']}")
             return out
 
-        agreed = "+".join(detail.get("agreed", []))
+        # The edge reader's note says `source`, not the legacy ensemble's
+        # `agreed` and `chose`, and these lines read "by " and "from ?".
+        agreed = ("+".join(detail.get("agreed", []))
+                  or str(detail.get("source") or "the detector"))
         if abs(decision) < HOLD_TOLERANCE_MM:
             # Inside the smallest move the hardware can make, so there is
             # nothing to ask for. Not "close enough" -- unaskable.
@@ -3532,7 +3535,7 @@ class DirectScanner:
             return out
 
         self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
-                  f"(from {detail.get('chose', '?')})")
+                  f"(from {detail.get('chose') or detail.get('reason', '?')})")
         fix = self._hold_to_approved(
             index, image, prescan_resolution,
             _Aim(offset_mm=decision, reference=image),

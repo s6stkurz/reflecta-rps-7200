@@ -242,6 +242,28 @@ def test_the_walk_reader_answers_through_strip_walk():
     assert reader.reread(1, frames[0][1]) == pytest.approx(mm)
 
 
+def test_a_walk_never_moves_film_on_one_members_vote(monkeypatch):
+    """`lone_gap` lets one member's gap-with-a-neighbour through, labelled
+    `unconfirmed` for the sheet, where a person decides. In a walk that aims
+    there is no person, and the driver moved film on it anyway -- the case
+    `combine` exists to refuse. It is told nothing to do now, and why."""
+    from tools.frame_edges import propose
+
+    note = {"source": "unconfirmed", "reason": "gap with neighbour, one vote",
+            "units": 6.0}
+    monkeypatch.setattr(propose, "centring",
+                        lambda *a, **kw: (0.6, dict(note)))
+    reader = frame_edges.walk_reader("negative")
+    frames = _walk()
+    mm, detail = reader.judge(1, frames[0][1])
+    assert mm is None
+    assert "one vote" in detail["reason"] and detail["source"] == "unconfirmed"
+
+    monkeypatch.setattr(propose, "centring",
+                        lambda *a, **kw: (0.6, dict(note, source="measured")))
+    assert reader.judge(1, frames[0][1])[0] == pytest.approx(0.6)
+
+
 def _near_black(seed=1, density=0.01):
     """Fogged leader, or an opaque strip end, as an 8-bit corrected prescan:
     almost all 0, with sparse 1-count noise. Its relative contrast is high,
