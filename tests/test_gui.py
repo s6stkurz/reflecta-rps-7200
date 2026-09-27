@@ -871,6 +871,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _working=lambda: False, _hand_over=submitted.append,
         _scanned_in=lambda folder: set(),
         _refused_up_front=lambda *a, **k: False,
+        _sheet_roll=None,
     )
 
 
@@ -5408,6 +5409,63 @@ def test_a_walk_added_to_a_roll_opened_from_elsewhere_takes_that_walk_along(
     assert all((here / f["prescan"]).exists() for f in survey["frames"])
     assert sorted((p.name, p.read_bytes()) for p in folder.iterdir()) \
         == before, "the walk it was opened from is left as it was"
+
+
+def _commission(app, monkeypatch, numbers=(1, 2)):
+    """Press "Scan chosen frames" and say yes, with nothing reaching a device."""
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.calibrated = True
+    app.on_scan_chosen(numbers)
+    return jobs
+
+
+def test_a_roll_opened_from_elsewhere_is_commissioned_with_its_walk(
+        window, tmp_path, monkeypatch):
+    """Only a walk added to it carried the walk across; a commission wrote
+    approved.json and the frames into the folder here with no survey, and it
+    reopened as a roll "scanned without walking the strip first"."""
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)
+    app.sheet.top.destroy()
+    jobs = _commission(app, monkeypatch)
+    here = pathlib.Path(app.session.rolls) / folder.name
+    assert jobs[0].out == str(here)
+    assert gui.same_walk(folder, here)
+    assert sorted(p.name for p in here.glob("prescan*.tif")) == [
+        "prescan01.tif", "prescan02.tif", "prescan03.tif"]
+
+
+def test_a_roll_from_elsewhere_is_not_added_to_another_of_its_name(
+        window, tmp_path, monkeypatch):
+    """Two rolls from different roots can share a name -- date-named folders
+    do -- and the folder of that name here was taken whatever it held: this
+    strip's approvals were merged into that one's and its frames written over
+    that one's frameNN.tif."""
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    other = pathlib.Path(app.session.rolls) / folder.name
+    other.mkdir(parents=True)
+    (other / "survey.json").write_text(json.dumps(
+        {"roll": "another strip", "frames": [{"number": 9}]}), encoding="utf-8")
+    app.open_roll(folder)
+    app.sheet.top.destroy()
+    jobs = _commission(app, monkeypatch)
+    ours = other.with_name(f"{folder.name}-2")
+    assert jobs[0].out == str(ours)
+    assert not (other / "approved.json").exists()
+    assert gui.same_walk(folder, ours)
+    # The same folder for the rest of the session, however its survey grows.
+    (ours / "survey.json").write_text('{"frames": [1]}', encoding="utf-8")
+    assert app._roll_folder() == ours
 
 
 def test_carrying_a_walk_never_writes_over_one_or_follows_a_path(tmp_path):

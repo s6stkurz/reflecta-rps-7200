@@ -534,6 +534,9 @@ class ScannerGui:
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
         self._loaded_roll = None             # which roll folder is open, if any
+        #: Each roll opened from outside `session.rolls`, and the folder here
+        #: it is scanned into; see `_roll_folder`.
+        self._carried: dict[str, Path] = {}
         #: What each control was built holding, taken between `_build` and
         #: `_restore`. The panels' headers and every reset are measured against
         #: it. See `_take_defaults`.
@@ -2623,7 +2626,25 @@ class ScannerGui:
                 inside = sheet.resolve().parent == rolls.resolve()
             except OSError:
                 inside = False
-            return sheet if inside else roll_dir(rolls, sheet.name)
+            if inside:
+                return sheet
+            # Not simply the folder of the same name here: that may be another
+            # roll altogether -- two rolls from different roots named by the
+            # same date -- and `carry_walk` leaves a folder that has a walk
+            # alone, so this strip's frames and approvals were added to that
+            # one's. The first folder of that name, or `-2`, `-3`, ..., that
+            # is free or already holds this walk; and the same one for the
+            # rest of the session, when a walk added to it has made its
+            # survey this one's no longer.
+            key = _folder_key(sheet)
+            chosen = self._carried.get(key)
+            if chosen is None:
+                chosen = base = roll_dir(rolls, sheet.name)
+                n = 2
+                while chosen.exists() and not same_walk(sheet, chosen):
+                    chosen, n = base.with_name(f"{base.name}-{n}"), n + 1
+                self._carried[key] = chosen
+            return chosen
         return self._next_roll_folder(fresh=False)
 
     def _close_sheet(self) -> None:
@@ -3471,6 +3492,25 @@ class ScannerGui:
             + "\n\nStart?",
         ):
             return
+        # A sheet opened from outside this session's rolls is scanned into a
+        # folder here, and its walk goes with it, as a walk added to it does.
+        # Without it the roll here held the frames and approved.json and no
+        # survey: it reopened as "scanned without walking the strip first",
+        # and the positions could no longer be reviewed against their
+        # prescans.
+        if self._sheet_roll is not None:
+            try:
+                carried = carry_walk(self._sheet_roll, folder)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror(
+                    "Scan chosen frames",
+                    f"The walk in {self._sheet_roll} could not be copied into "
+                    f"{folder}: {exc}\n\nNothing has moved.")
+                return
+            if carried:
+                self._say(f"copied the walk in {self._sheet_roll} into "
+                          f"{folder}, which the roll is scanned into; the "
+                          "original is left as it was")
         self._show_roll_name(
             folder.name,
             ours=folder.name != self.fields["roll"].get().strip())
@@ -6406,6 +6446,17 @@ def carry_walk(source, target) -> list[str]:
         shutil.copyfile(source / name, target / name)
     write_manifest(target / "survey.json", manifest)
     return [*names, "survey.json"]
+
+
+def same_walk(source, target) -> bool:
+    """Whether ``target`` holds the walk ``source`` holds, as `carry_walk`
+    would have copied it: the same survey.json, read."""
+    try:
+        theirs = read_manifest(Path(target) / "survey.json")
+        return bool(theirs) and theirs == read_manifest(
+            Path(source) / "survey.json")
+    except ValueError:
+        return False
 
 
 def walk_stamp(folder) -> int | None:
