@@ -84,6 +84,28 @@ def test_two_members_that_disagree_move_nothing():
     assert "mm" not in detail["reason"]
 
 
+def test_the_pair_said_to_be_closest_is_the_closest():
+    """It took the pair furthest apart and called it 'closest' -- the one
+    line a person reads to learn why a frame was left where it came."""
+    decision, detail = combine([reading(-0.60, 0.8, "left-gap", 0.01),
+                                reading(0.00, 0.8, "prior", 0.01),
+                                reading(0.35, 0.8, "closure", 0.01)])
+    assert decision is None
+    assert "closest are prior" in detail["reason"], detail["reason"]
+    assert "closure" in detail["reason"] and "left-gap" not in detail["reason"]
+
+
+def test_two_pairs_equally_close_are_said_without_a_crash():
+    """The pairs were tuples ending in two Readings, which do not order: a
+    tie on the number compared them, and the TypeError escaped the roll's
+    per-frame net and ended the roll."""
+    decision, detail = combine([reading(-0.40, 0.8, "left-gap", 0.01),
+                                reading(0.00, 0.8, "prior", 0.01),
+                                reading(0.40, 0.8, "closure", 0.01)])
+    assert decision is None
+    assert "none agree" in detail["reason"]
+
+
 def test_an_agreeing_pair_is_never_averaged():
     """`bracket.py:355` settled this for exposures: where sources conflict, the
     single most-trusted one wins and nothing is blended. The mean of 0.30 and

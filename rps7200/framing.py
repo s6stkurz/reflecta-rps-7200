@@ -1589,10 +1589,16 @@ def combine(
         if i != j and abs(a.mm - b.mm) <= gate(a, b)
     }
     if not agreed:
-        worst = max(
-            (abs(a.mm - b.mm) - gate(a, b), a, b)
-            for i, a in enumerate(usable)
-            for j, b in enumerate(usable) if i < j
+        # The pair nearest to agreeing, which is what the message names. It
+        # took `max` over (excess, Reading, Reading) tuples: the pair furthest
+        # apart, called "closest", and a tie on the excess compared two
+        # Readings, which do not order -- a TypeError outside the roll's
+        # per-frame net, ending the roll. A key compares the number alone.
+        worst = min(
+            ((abs(a.mm - b.mm) - gate(a, b), a, b)
+             for i, a in enumerate(usable)
+             for j, b in enumerate(usable) if i < j),
+            key=lambda pair: pair[0],
         )
         return None, dict(detail, reason=(
             f"{len(usable)} members measured and none agree: closest are "
