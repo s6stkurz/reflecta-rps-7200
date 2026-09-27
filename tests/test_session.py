@@ -297,6 +297,40 @@ def test_what_the_session_files_it_claims_from_debug_filing(tmp_path):
     assert scanner.claimed[0] is scanner.last_pixels_raw
 
 
+def test_a_pass_is_claimed_only_once_it_is_filed(tmp_path):
+    """Claimed as it was queued, a pass whose filing then failed was deleted
+    from the debug spool at close as well -- the one copy RPS7200_DEBUG=1
+    exists to keep. The claim now follows the entry."""
+    scanner = CorrectingScanner()
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    events = []
+    s = ScanSession(root=str(blocker / "library"), open_scanner=lambda: scanner,
+                    verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    s.join(timeout=10.0)
+    events.extend(s.poll())
+    assert any("could not be filed" in (e.text or "") for e in events)
+    assert scanner.claimed == [], "a pass that was never filed was claimed"
+
+
+def test_a_pass_filed_without_its_raw_bytes_is_left_to_debug_filing(tmp_path):
+    """When the bytes on hand are another pass's they are dropped, and the
+    entry goes without them. The spool took this pass's own as it was read,
+    so claiming it threw away the only copy of them."""
+    scanner = CorrectingScanner()
+    scanner.capture_record = lambda: {
+        "reference": None, "ccd_mask": None, "raw": b"\x00" * 64,
+        "raw_layout": {"format": "index", "width": 860, "lines": 573,
+                       "channels": 4},
+    }
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert library.entries(tmp_path), "the pass was not filed at all"
+    assert scanner.claimed == []
+
+
 def test_the_default_scanner_leaves_debug_to_the_environment(monkeypatch):
     # No libusb needed to build one: this is about the flag, not the bus.
     from rps7200 import direct
@@ -1025,8 +1059,36 @@ def test_force_abort_closes_the_transport_and_marks_the_session_dead(tmp_path):
     assert s.dead is True
     s.shutdown()
     s.join(timeout=5.0)
-    # A dead session does not politely close the device it just yanked.
-    assert scanner.closed is False
+
+
+def test_a_force_abort_still_files_what_debug_filing_spooled(tmp_path):
+    """`close()` is what files the debug spool, and a dead session skipped
+    it: every probe and hold of the session was left in a temporary directory
+    nothing named, at the one time they mattered most. It sends the device
+    nothing, so it runs -- after the writer, like every close."""
+    order = []
+    scanner = FakeScanner()
+    scanner.close = lambda: order.append("close")
+    s = ScanSession(root=str(tmp_path), open_scanner=lambda: scanner, verbose=False)
+    real_finish = session.FrameWriter.finish
+
+    def watched_finish(self):
+        order.append("writer finished")
+        return real_finish(self)
+
+    session.FrameWriter.finish = watched_finish
+    try:
+        s.start()
+        for _ in range(200):
+            if scanner.opened:
+                break
+            time.sleep(0.01)
+        s.force_abort()
+        s.shutdown()
+        s.join(timeout=5.0)
+    finally:
+        session.FrameWriter.finish = real_finish
+    assert order == ["writer finished", "close"]
 
 
 # -- events -----------------------------------------------------------------
@@ -1130,15 +1192,24 @@ def test_a_scanner_that_will_not_open_is_reported_not_raised(tmp_path):
 
 
 def test_the_device_closes_before_the_writer_spends_time_gzipping(tmp_path):
-    """Gzipping a library entry with the device open and idle preceded a wedge."""
+    """Gzipping a library entry with the device open and idle preceded a wedge.
+
+    And debug filing -- `close()` -- only once the writer has finished, so a
+    pass is left to it exactly when nothing here filed it."""
     order = []
     scanner = FakeScanner()
     real_close = scanner.close
+    real_transport_close = scanner.t.close
+
+    def watched_transport_close():
+        order.append("device closed")
+        real_transport_close()
 
     def watched_close():
-        order.append("device closed")
+        order.append("debug filed")
         real_close()
 
+    scanner.t.close = watched_transport_close
     scanner.close = watched_close
     s = ScanSession(root=str(tmp_path), open_scanner=lambda: scanner, verbose=False)
     real_writer = session.FrameWriter.finish
@@ -1155,7 +1226,7 @@ def test_the_device_closes_before_the_writer_spends_time_gzipping(tmp_path):
         s.join(timeout=10.0)
     finally:
         session.FrameWriter.finish = real_writer
-    assert order == ["device closed", "writer finished"]
+    assert order == ["device closed", "writer finished", "debug filed"]
 
 
 # -- estimates --------------------------------------------------------------

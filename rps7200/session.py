@@ -1661,6 +1661,26 @@ class FrameWriter:
             self.errors.append(f"picture {job['number']}: filed, but its "
                                f"manifest could not say so ({exc})")
 
+    def _claim(self, job: dict, raw_image: np.ndarray | None) -> None:
+        """Tell debug filing this pass is filed -- now that it is.
+
+        ``job["claim"]`` is `DirectScanner.debug_claim`, handed over by a
+        caller that files the pass itself. Called here, once `library.save`
+        has returned, and never before: a pass claimed when it was queued was
+        left out of debug filing whatever became of it, so one whose filing
+        then failed was deleted from the spool as well -- the one copy of it
+        that RPS7200_DEBUG=1 exists to keep.
+        """
+        claim = job.get("claim")
+        if claim is None or raw_image is None:
+            return
+        try:
+            claim(raw_image)
+        except Exception as exc:                         # noqa: BLE001
+            # Filed either way; at worst debug filing files it a second time.
+            self.notes.append(f"picture {job['number']}: filed, but debug "
+                              f"filing was not told so ({exc})")
+
     def _write(self, job: dict) -> None:
         # The delivered files carry the orientation that was asked for and the
         # shading correction; the library entry below carries neither. Its
@@ -1730,6 +1750,7 @@ class FrameWriter:
             else:
                 if not job.get("compress", True):
                     self.uncompressed.append(entry)
+                self._claim(job, raw_image)
         problems = []
         written = []
         for path in job.get("paths") or ():
@@ -1793,6 +1814,25 @@ class FrameWriter:
 # ---------------------------------------------------------------------------
 # The session
 # ---------------------------------------------------------------------------
+
+
+def close_device(scanner: Any) -> None:
+    """Close the scanner's transport, and do nothing else.
+
+    `DirectScanner.close()` closes the transport and then files what debug
+    filing spooled. A caller that files its own passes wants those two apart:
+    the device closed before any filing starts -- gzipping with it open and
+    idle preceded a wedge -- and debug filing after its own filing has landed,
+    because a pass is claimed from it only once it is filed. `close()` is
+    still called afterwards, and closing a closed transport is nothing.
+
+    A transport the scanner was handed is not its own to close, and is left.
+    """
+    if not getattr(scanner, "_own_transport", True):
+        return
+    transport = getattr(scanner, "t", None)
+    if transport is not None:
+        transport.close()
 
 
 class _Stopped(Exception):
@@ -2047,10 +2087,12 @@ class ScanSession:
         finally:
             # Order matters: the device closes first, and only then does the
             # writer get to spend time gzipping. The other way round is the
-            # open-and-idle state that preceded a wedge.
+            # open-and-idle state that preceded a wedge. The device alone:
+            # `close()` also files what debug filing caught, and that waits
+            # for the writer below -- see there.
             try:
                 if not self.dead:
-                    self._scanner.close()
+                    close_device(self._scanner)
             except Exception as exc:                     # noqa: BLE001
                 self._emit("log", text=f"close: {exc}")
             if self._writer is not None:
@@ -2065,6 +2107,23 @@ class ScanSession:
                 for manifest in self._manifests.values():
                     if manifest.unsaved is not None:
                         manifest.save()
+            # Debug filing (RPS7200_DEBUG=1), after every filing is in: the
+            # writer claims each pass it has filed, so what is left unclaimed
+            # is what nothing here kept -- metering probes, holds, and a pass
+            # whose filing failed, whose spooled copy is then the one there
+            # is. Run before the writer finished, it deleted the spool of a
+            # pass still to be filed, and of one that went on to fail.
+            #
+            # After a force abort too. `close()` sends the device nothing --
+            # it closes a transport the abort already closed, which is
+            # harmless, and files the spool -- and skipping it left every
+            # spooled pass in a temporary directory nothing would ever name,
+            # at the one time the probes and holds matter most.
+            try:
+                self._scanner.close()
+            except Exception as exc:                     # noqa: BLE001
+                self._emit("log", text=f"close: {exc}")
+            if self._writer is not None:
                 # Now, with the device closed: see `_file`'s `compress`.
                 for entry in self._writer.uncompressed:
                     try:
@@ -2947,11 +3006,17 @@ class ScanSession:
             raw_image = None
         # This pass is filed here, so debug filing (RPS7200_DEBUG=1) leaves it
         # out rather than filing it twice; it still files the passes nothing
-        # here keeps -- metering probes, hold and aim prescans.
+        # here keeps -- metering probes, hold and aim prescans. Claimed by the
+        # writer once the entry is written (`FrameWriter._claim`), not here.
+        # And not at all when the entry goes without raw bytes: the spool took
+        # this pass's own as it was read, and debug filing is then the one
+        # place they are kept.
         claim = getattr(self._scanner, "debug_claim", None)
-        if (raw_image is not None and file_entry and self.root is not None
-                and callable(claim)):
-            claim(raw_image)
+        if not (raw_image is not None and file_entry and self.root is not None
+                and callable(claim)
+                and (capture.get("raw") is not None
+                     or capture.get("raw_path") is not None)):
+            claim = None
         self._writer.submit(
             seq=seq,
             number=number,
@@ -2981,6 +3046,7 @@ class ScanSession:
             mono=mono,
             mono_channel=mono_channel,
             on_filed=on_filed,
+            claim=claim,
         )
         return turn, flip
 
