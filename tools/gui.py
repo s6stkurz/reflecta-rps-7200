@@ -3781,12 +3781,13 @@ class ScannerGui:
             self._safely("a save", self._saved, message)
         while True:
             try:
-                seq, image, problem = self._reads.get_nowait()
+                seq, image, problem, how = self._reads.get_nowait()
             except queue.Empty:
                 break
             if problem:
                 self._say(problem)
-            self._safely("the full-resolution pixels", self._loaded, seq, image)
+            self._safely("the full-resolution pixels", self._loaded, seq, image,
+                         how)
         while True:
             try:
                 token, counts, clipped, problem = self._measured.get_nowait()
@@ -4890,12 +4891,15 @@ class ScannerGui:
         self._load_next = None
 
         def work(entry: Path, seq: int) -> None:
-            image = problem = None
+            image = problem = how = None
             try:
                 # Corrected, not raw: the library stores what the scanner sent
                 # and the correction beside it, and this is the full-resolution
-                # view an operator asked to look at.
-                image, _ = library.corrected(entry)
+                # view an operator asked to look at. How that went comes back
+                # with it: an entry that could not be corrected is handed back
+                # raw, and was shown as "the scan's own pixels" without a word.
+                image, record = library.corrected(entry)
+                how = record.get("corrected")
             except Exception as exc:                     # noqa: BLE001
                 problem = f"could not read {entry.name}: {exc}"
             # Through a queue, never by calling Tk. `after()` from another
@@ -4903,11 +4907,12 @@ class ScannerGui:
             # visible failure into a silent one: the read finished, the call
             # back never arrived, and the full-resolution view simply never
             # appeared with nothing anywhere to say why.
-            self._reads.put((seq, image, problem))
+            self._reads.put((seq, image, problem, how))
 
         threading.Thread(target=work, args=(r.entry, r.seq), daemon=True).start()
 
-    def _loaded(self, seq: int, image) -> None:
+    def _loaded(self, seq: int, image, how: str | None = None) -> None:
+        """The scan's own pixels are in; `how` is `library.corrected`'s word."""
         self._loading = None
         waiting, self._load_next = self._load_next, None
         if waiting is not None and waiting is self.current:
@@ -4924,7 +4929,11 @@ class ScannerGui:
             image, image.shape[1] / max(1, self.current.image.shape[1]))
         self._levels_seq = seq
         self._say(f"{self.current.label}: now showing the scan's own "
-                  f"{image.shape[1]}x{image.shape[0]} pixels")
+                  f"{image.shape[1]}x{image.shape[0]} pixels"
+                  + ("" if how in (None, "applied", "already") else
+                     f" -- UNCORRECTED ({how}): the striping and fall-off in "
+                     "them are the sensor's, and so is what the histogram "
+                     "says"))
         # The levels are deliberately not re-measured -- they stay the working
         # copy's, so a 1:1 look is the same picture as the fit it came from.
         # The histogram is, because it is a measurement rather than a look, and

@@ -5401,6 +5401,28 @@ def _reopened_with_entry(app, entry):
     return result
 
 
+def test_the_full_view_says_when_the_scan_could_not_be_corrected(
+        window, monkeypatch, tmp_path):
+    """`library.corrected` hands an entry it cannot correct back raw and says
+    so; the 1:1 view threw that away and showed the striped frame as "the
+    scan's own pixels" -- the one thing the library contract says a person is
+    never shown without a word."""
+    app, root = window
+    entry = tmp_path / "old-entry"
+    entry.mkdir()
+    monkeypatch.setattr(gui.library, "corrected", lambda e: (
+        np.zeros((8, 12, 3), np.uint16), {"corrected": "no reference"}))
+    result = _reopened_with_entry(app, entry)
+    app._show(result)
+    deadline = time.monotonic() + 10
+    while "own 12x8 pixels" not in app.log.get("1.0", "end") \
+            and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    shown = app.log.get("1.0", "end")
+    assert "own 12x8 pixels -- UNCORRECTED (no reference)" in shown
+
+
 @pytest.mark.parametrize("demo", [True, False])
 def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
                                                            monkeypatch, demo):
