@@ -10,6 +10,7 @@ import gzip
 import json
 
 import numpy as np
+import pytest
 
 from rps7200 import library, tiff
 from rps7200.direct import (CHANNEL_ORDER, INDEX_HEADER,
@@ -764,6 +765,113 @@ def test_an_entry_cut_short_is_reported_not_passed_over(tmp_path):
     problems = library.verify(tmp_path)
     assert any(cut.name in p and "did not finish" in p for p in problems)
     assert any(orphan.name in p and "no scan.json" in p for p in problems)
+
+
+def _fails_at(monkeypatch, step):
+    """Make one step of `library.save` fail as a full disk or a kill would."""
+    def refuse(*a, **k):
+        raise OSError(28, f"No space left on device ({step})")
+
+    if step == "scan.tif":
+        monkeypatch.setattr(library.tiff, "write", refuse)
+    elif step == "prescan.tif":
+        real = library.tiff.write
+
+        def write(path, *a, **k):
+            if str(path).endswith("prescan.tif"):
+                refuse()
+            return real(path, *a, **k)
+
+        monkeypatch.setattr(library.tiff, "write", write)
+    elif step == "shading.npz":
+        monkeypatch.setattr(ShadingReference, "save", refuse)
+    elif step == "raw bytes":
+        monkeypatch.setattr(library.gzip, "open", refuse)
+    elif step == "record":
+        monkeypatch.setattr(library, "_write_atomic", refuse)
+
+
+@pytest.mark.parametrize("step", ["scan.tif", "prescan.tif", "shading.npz",
+                                  "raw bytes", "record"])
+def test_a_save_cut_short_is_reported_and_never_listed(tmp_path, monkeypatch,
+                                                       step):
+    """Whole or not at all, and the "not at all" has to be visible. The only
+    test of that marker built the half-written directory by hand; this one
+    makes `library.save` itself fail at each of its writes in turn."""
+    make_entry(tmp_path)
+    _fails_at(monkeypatch, step)
+    with pytest.raises(OSError):
+        make_entry(tmp_path, prescan=np.zeros((4, 6, 3), np.uint8))
+    monkeypatch.undo()
+
+    cut = [p for p in tmp_path.iterdir()
+           if p.is_dir() and (p / library.INCOMPLETE).exists()]
+    assert len(cut) == 1, f"no marker left when {step} failed"
+    assert len(library.entries(tmp_path)) == 1, "the cut entry was listed"
+    assert any(cut[0].name in p and "did not finish" in p
+               for p in library.verify(tmp_path))
+
+
+def _plain_entry(tmp_path):
+    stream, image = index_stream(16, 8, 3, seed=5)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"format": "index", "bytes_per_line": 32,
+              "line_stride": 32 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, compress=False,
+                        prescan=np.full((4, 6, 3), 7, np.uint8))
+    return path, image, stream
+
+
+def _compact_cut_short_after_the_swaps(path, monkeypatch):
+    """`compact` killed between swapping the TIFFs in and writing the record."""
+    def killed(*a, **k):
+        raise OSError("killed before the record was written")
+
+    monkeypatch.setattr(library, "_write_atomic", killed)
+    with pytest.raises(OSError):
+        library.compact(path)
+    monkeypatch.undo()
+
+
+def _real_problems(root):
+    """What verify says, less the one thing every entry here lacks."""
+    return [p for p in library.verify(root) if "never be corrected" not in p]
+
+
+def test_a_compact_cut_short_leaves_pixels_and_bytes_intact_and_can_finish(
+        tmp_path, monkeypatch):
+    """What an interrupted compact leaves is readable, loses nothing, and a
+    second compact completes it -- including the prescan, which no compact
+    test had covered."""
+    path, image, stream = _plain_entry(tmp_path)
+    _compact_cut_short_after_the_swaps(path, monkeypatch)
+
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert library.read_raw(path) == stream
+    assert library.compact(path) is True
+    assert _real_problems(tmp_path) == []
+    assert library.reconstruct(path)[1] == "identical to the stored image"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-07: compact swaps the recompressed TIFFs in before it writes the "
+    "record, so an interruption between them leaves scan.json holding the "
+    "old checksums and verify calls intact pixels damaged"))
+def test_a_compact_cut_short_is_not_reported_as_damage(tmp_path, monkeypatch):
+    """A false alarm in the one check that exists to catch real damage, on
+    an entry nothing will ever compact again: the session compacts only what
+    it filed itself, and no tool re-runs it."""
+    path, _, _ = _plain_entry(tmp_path)
+    before = (path / "scan.tif").read_bytes()
+    _compact_cut_short_after_the_swaps(path, monkeypatch)
+    if (path / "scan.tif").read_bytes() == before:
+        # The bare-install writer (no tifffile) has no compression to apply,
+        # so the swap changes no byte and there is no checksum to go stale.
+        pytest.skip("this TIFF writer compresses nothing")
+    assert _real_problems(tmp_path) == []
 
 
 def test_every_file_of_an_entry_is_checksummed(tmp_path):

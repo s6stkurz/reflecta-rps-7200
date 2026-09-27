@@ -239,6 +239,34 @@ def test_a_kept_calibration_reduces_again_to_the_reference_it_archived(
 
 
 @pytest.mark.xfail(strict=True, reason=(
+    "T-07: archive_calibration writes data.bin, the mask and the reference "
+    "and only then calibration.json, with no INCOMPLETE marker, so an "
+    "archive cut short is bytes with nothing to say what they are"))
+def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
+    """Killed or out of space part way, `calibration/<UTC>/` held data.bin
+    and no record of its width or line stride, so the bytes the archive
+    exists for cannot be reduced again -- and nothing says the folder is
+    unfinished. `ensure_shading` carries on (the reference is in hand), which
+    is right, and makes the half-written folder the only trace."""
+    scanner, _ = scanner_at_commands(monkeypatch)
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(ShadingReference, "save", full)
+    scanner.ensure_shading(tmp_path / "calibration" / "shading.npz")
+    monkeypatch.undo()
+
+    folders = [p for p in (tmp_path / "calibration").iterdir() if p.is_dir()]
+    assert folders, "nothing was archived at all"
+    for folder in folders:
+        assert ((folder / "calibration.json").exists()
+                or (folder / library.INCOMPLETE).exists()), (
+            f"{folder.name} holds {sorted(p.name for p in folder.iterdir())} "
+            "and does not say it is unfinished")
+
+
+@pytest.mark.xfail(strict=True, reason=(
     "T-08: a pass corrected by a reused reference records only the cache "
     "path, which the next calibration overwrites, and no link to the archived "
     "bytes that reference was reduced from"))
