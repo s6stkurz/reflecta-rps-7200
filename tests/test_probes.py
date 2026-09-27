@@ -85,11 +85,45 @@ class ProbeScanner:
             # Ctrl-C lands while this pass is being read.
             signal.raise_signal(signal.SIGINT)
         rng = np.random.default_rng(self._scans)
-        image = rng.integers(20000, 30000, self._shape, dtype=np.uint16)
-        h = self._shape[0]
+        h, w, c = self._shape
+        image = rng.integers(20000, 30000, (h, w, 4 if kw.get("infrared") else c),
+                             dtype=np.uint16)
         return image, {"duration_s": 1.0, "height": h,
                        "exposure": [9604, 6506, 6506, 7745],
                        "gain": [39, 33, 21, 21]}
+
+    def prescan(self, resolution=300, keep_raw=False, **kw):
+        # Through `self.scan`, as the driver's prescan is -- which is also
+        # where a probe's stop check sits.
+        image, meta = self.scan(shading=True)
+        return (image >> 8).astype(np.uint8), meta
+
+    # -- the transport ----------------------------------------------------
+    position_now = 10
+
+    def position(self):
+        return self.position_now
+
+    def advance(self, *a, **k):
+        self.calls.append("advance")
+        self.position_now += 1
+        return self.position_now
+
+    def retreat(self, *a, **k):
+        self.calls.append("retreat")
+        self.position_now -= 1
+        return self.position_now
+
+    def nudge(self, mm):
+        self.calls.append("nudge")
+        return {"param": 3, "asked_mm": round(mm + 0.03, 3),
+                "requested_mm": mm}
+
+    def _hold_to_approved(self, index, now, resolution, approved, keep_raw=True):
+        self.prescan()
+        return {"outcome": "held", "target_mm": approved.offset_mm,
+                "final_mm": approved.offset_mm, "moves": 0, "spent_mm": 0.0,
+                "history": [], "prescan": now}
 
 
 def run(monkeypatch, name, scanner, *argv):
@@ -101,23 +135,49 @@ def run(monkeypatch, name, scanner, *argv):
     return tool.main()
 
 
-@pytest.mark.parametrize("name", ["byte14_probe", "gain_probe"])
-def test_a_debug_value_that_files_nothing_is_refused(monkeypatch, name):
+#: Every probe that drives the scanner, with the arguments that keep a run to
+#: a handful of passes and its output inside the test's own directory.
+PROBES = {
+    "byte14_probe": [],
+    "gain_probe": [],
+    "fast_ir_probe": [],
+    "hold_probe": [],
+    "transport_truth": [],
+    "exposure_probe": ["--frames", "2", "--ladder-every", "0"],
+    "roll_registration_walk": ["--frames", "2"],
+}
+
+
+def probe_argv(name, tmp_path):
+    extra = list(PROBES[name])
+    if name == "roll_registration_walk":
+        extra += ["--out", str(tmp_path / "walk")]
+    return extra
+
+
+@pytest.mark.parametrize("name", sorted(PROBES))
+def test_a_debug_value_that_files_nothing_is_refused(monkeypatch, tmp_path, name):
     """The gate asked whether the variable was set; the driver files only
     for 1/true/yes/on, so RPS7200_DEBUG=0 ran the whole probe unfiled."""
     calls: list[str] = []
-    assert run(monkeypatch, name, ProbeScanner(calls, debug=False)) == 2
+    assert run(monkeypatch, name, ProbeScanner(calls, debug=False),
+               *probe_argv(name, tmp_path)) == 2
     assert calls == [], "the device was driven by a probe that files nothing"
 
 
-@pytest.mark.parametrize("name", ["byte14_probe", "gain_probe"])
-def test_a_probe_gets_its_reference_before_its_first_pass(monkeypatch, name):
-    """Every probe's first pass is metering, a corrected pass, and none of
-    them acquired a reference: each died there with ShadingUnavailable."""
+@pytest.mark.parametrize("name", sorted(PROBES))
+def test_a_probe_gets_its_reference_before_its_first_pass(monkeypatch, tmp_path,
+                                                          name):
+    """Every probe's first pass is metering or a prescan, a corrected pass,
+    and none of them acquired a reference: each died there with
+    ShadingUnavailable once the driver stopped calibrating inside a pass."""
     calls: list[str] = []
-    assert run(monkeypatch, name, ProbeScanner(calls)) == 0
-    assert calls.index("reference") < calls.index("meter")
-    assert "scan" in calls
+    monkeypatch.chdir(tmp_path)
+    run(monkeypatch, name, ProbeScanner(calls), *probe_argv(name, tmp_path))
+    assert "reference" in calls
+    first = min(calls.index(c) for c in ("meter", "scan") if c in calls)
+    assert calls.index("reference") < first
+    assert "scan" in calls, "no pass was ever taken"
 
 
 def test_ctrl_c_finishes_the_pass_in_flight_and_starts_no_other(monkeypatch):
@@ -163,3 +223,114 @@ def test_a_ladder_rung_nothing_has_sent_is_refused(monkeypatch, name, ladder):
     calls: list[str] = []
     assert run(monkeypatch, name, ProbeScanner(calls), "--ladder", ladder) == 2
     assert calls == []
+
+
+# -- exposure_probe, chunked under the ten-minute kill ------------------------
+
+
+def chunk(monkeypatch, scanner, only, json_path, *extra):
+    return run(monkeypatch, "exposure_probe", scanner, "--frames", "6",
+               "--ladder-every", "0", "--only", only, "--json", str(json_path),
+               *extra)
+
+
+def test_chunks_add_up_to_one_walk_on_the_right_frames(monkeypatch, tmp_path):
+    """A chunk began wherever the transport was, so `--only 3-4` after a
+    rewound `--only 1-2` scanned frames 1-2 again and filed them as 3-4; and
+    each chunk rewrote the JSON with its own passes alone -- the join key back
+    to the library, gone for every chunk but the last."""
+    import json
+
+    out = tmp_path / "exposure.json"
+    scanner = ProbeScanner([])
+    assert chunk(monkeypatch, scanner, "1-2", out) == 0
+    # left on the next chunk's first frame, not rewound
+    assert scanner.position_now == 10 + 2
+    assert chunk(monkeypatch, scanner, "3-4", out) == 0
+    passes = json.loads(out.read_text(encoding="utf-8"))["passes"]
+    assert [p["frame"] for p in passes] == [1, 2, 3, 4]
+    assert [p["transport_position"] for p in passes] == [10, 11, 12, 13]
+
+
+def test_a_chunk_on_the_wrong_frame_is_refused_before_a_pass(monkeypatch, tmp_path):
+    out = tmp_path / "exposure.json"
+    scanner = ProbeScanner([])
+    assert chunk(monkeypatch, scanner, "1-2", out) == 0
+    scanner.position_now = 10                     # rewound by hand
+    calls: list[str] = []
+    scanner.calls = calls
+    assert chunk(monkeypatch, scanner, "3-4", out) == 2
+    assert "scan" not in calls and "reference" not in calls
+
+
+def test_a_chunk_without_the_file_that_joins_it_is_refused(monkeypatch, tmp_path):
+    calls: list[str] = []
+    assert run(monkeypatch, "exposure_probe", ProbeScanner(calls),
+               "--only", "1-2") == 2
+    assert calls == []
+
+
+def test_the_last_chunk_returns_the_strip_to_its_first_frame(monkeypatch, tmp_path):
+    out = tmp_path / "exposure.json"
+    scanner = ProbeScanner([])
+    for only in ("1-2", "3-4", "5-6"):
+        assert chunk(monkeypatch, scanner, only, out) == 0
+    assert scanner.position_now == 10
+
+
+def test_exposure_probe_leaves_a_suspect_device_where_it_is(monkeypatch, tmp_path):
+    """Its rewind sent SLIDE_PREV to a scanner a stopped read left busy."""
+    calls: list[str] = []
+    scanner = ProbeScanner(calls, fail_on=2)
+    run(monkeypatch, "exposure_probe", scanner, "--frames", "3",
+        "--ladder-every", "0")
+    assert "retreat" not in calls
+
+
+# -- the registration walk's record ------------------------------------------
+
+
+def test_the_walk_records_what_was_commanded_not_what_was_asked(monkeypatch,
+                                                                tmp_path):
+    """The walk overwrote the driver's `asked_mm` -- what the command
+    travels -- with the request, the one field that was the ground truth."""
+    import json
+
+    out = tmp_path / "walk"
+    scanner = ProbeScanner([])
+    assert run(monkeypatch, "roll_registration_walk", scanner, "--frames", "1",
+               "--ladder", "1", "--out", str(out)) == 0
+    log = json.loads((out / "walk-A.json").read_text(encoding="utf-8"))
+    rung = log["ladders"][0]["rungs"][0]
+    assert rung["sent"]["asked_mm"] != rung["sent"]["requested_mm"]
+    assert rung["commanded_mm"] == pytest.approx(rung["sent"]["asked_mm"])
+
+
+def test_a_walk_label_used_again_is_refused(monkeypatch, tmp_path):
+    """It wrote over the earlier walk's prescans and log: the corpus."""
+    out = tmp_path / "walk"
+    out.mkdir()
+    (out / "A01_p1.tif").write_bytes(b"the earlier corpus")
+    calls: list[str] = []
+    assert run(monkeypatch, "roll_registration_walk", ProbeScanner(calls),
+               "--frames", "1", "--out", str(out)) == 2
+    assert calls == []
+    assert (out / "A01_p1.tif").read_bytes() == b"the earlier corpus"
+
+
+def test_hold_probe_names_the_floor_the_hold_loop_uses(monkeypatch, capsys):
+    """It told the operator the floor was 40 when the loop refused below 55."""
+    from rps7200.framing import CONFIDENCE_FLOOR
+
+    scanner = ProbeScanner([])
+
+    def held(*a, **k):
+        scanner.prescan()
+        return {"outcome": "held", "target_mm": 0.0, "final_mm": 0.0,
+                "moves": 0, "spent_mm": 0.0, "history": [{"confidence": 70.0}]}
+
+    scanner._hold_to_approved = held
+    run(monkeypatch, "hold_probe", scanner)
+    out = capsys.readouterr().out
+    assert f"floor is {CONFIDENCE_FLOOR:g}" in out
+    assert "floor is 40" not in out

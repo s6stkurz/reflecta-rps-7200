@@ -73,8 +73,8 @@ pair, the fixed/random noise split -- runs offline from the filed raw bytes.
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -92,8 +92,10 @@ from rps7200.direct import (                                        # noqa: E402
     CheckCondition,
     DirectScanner,
 )
+from rps7200 import library                                         # noqa: E402
 from rps7200.bracket import FULL_SCALE                              # noqa: E402
 from rps7200.framing import metering_slice                          # noqa: E402
+from tools import probing                                           # noqa: E402
 
 #: The linearity chain, as multiples of what metering asked for: x1.2 a step, so
 #: every adjacent ratio carries the same weight. This is what the offline
@@ -117,9 +119,34 @@ SECONDS_PER_PASS = 33.0
 SECONDS_METERING = 2 * SECONDS_PER_PASS          # two 300 dpi RGB probe rounds
 SECONDS_ADVANCE = 7.0
 
-#: How far under target still counts as landed. `auto_exposure`'s own default,
-#: repeated rather than imported because the band is what is being checked.
-UNDER_TOLERANCE = 0.08
+#: How far under target still counts as landed: `auto_exposure`'s own
+#: default, read from it. It was retyped here, and a copy drifts from the
+#: driver without anything saying so.
+UNDER_TOLERANCE = float(inspect.signature(DirectScanner.auto_exposure)
+                        .parameters["tolerance"].default)
+
+
+def earlier_chunks(json_path: str | None,
+                   whole: list[tuple[int, tuple[float, ...]]],
+                   ) -> tuple[list[dict] | None, int | None]:
+    """What earlier chunks of this plan recorded, and where frame 1 was.
+
+    Returns the passes they recorded and the transport position of the
+    plan's frame 1, from any pass that recorded one; ``(None, None)`` when
+    the file is another plan's, or not one this writes.
+    """
+    if not json_path or not Path(json_path).exists():
+        return [], None
+    try:
+        data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    if data.get("schedule") != [[n, list(r)] for n, r in whole]:
+        return None, None
+    kept = list(data.get("passes") or [])
+    start = next((p["transport_position"] - (p["frame"] - 1) for p in kept
+                  if p.get("transport_position") is not None), None)
+    return kept, start
 
 
 def plan(frames: int, every: int) -> list[tuple[int, tuple[float, ...]]]:
@@ -179,7 +206,9 @@ def main() -> int:
                          "sensor, so it does not need fifteen readings.")
     ap.add_argument("--only", default=None, metavar="A-B",
                     help="walk just these frames of the plan, to chunk a run "
-                         "under the harness's ten-minute foreground kill")
+                         "under the harness's ten-minute foreground kill. "
+                         "Needs --json: each chunk adds its passes to it, and "
+                         "checks the film is on frame A before it starts")
     ap.add_argument("--film", default=FILM_NEGATIVE)
     ap.add_argument("--resolution", type=int, default=RESOLUTION)
     ap.add_argument("--target", type=float, default=EXPOSURE_TARGET,
@@ -188,11 +217,13 @@ def main() -> int:
     ap.add_argument("--no-rewind", action="store_true",
                     help="leave the film where the walk ended instead of "
                          "returning it to where it started")
+    probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and the budget, and open nothing")
     args = ap.parse_args()
 
-    schedule = plan(args.frames, args.ladder_every)
+    whole = plan(args.frames, args.ladder_every)
+    schedule = whole
     if args.only:
         first, _, last = args.only.partition("-")
         lo, hi = int(first), int(last or first)
@@ -200,6 +231,22 @@ def main() -> int:
         if not schedule:
             print(f"--only {args.only} selects no frames", file=sys.stderr)
             return 2
+        if not args.json:
+            # A chunk's passes are joined to the library through this file
+            # alone; without it, every chunk's join key is thrown away.
+            print("--only needs --json: each chunk adds its passes to it",
+                  file=sys.stderr)
+            return 2
+    earlier, start = earlier_chunks(args.json, whole)
+    if earlier is None:
+        print(f"{args.json} holds a walk of another plan; give another "
+              f"--json", file=sys.stderr)
+        return 2
+    if schedule[0][0] > 1 and start is None:
+        print(f"frame {schedule[0][0]} is not the first of the plan, and "
+              f"{args.json} does not say where frame 1 was: run the chunk "
+              f"holding frame 1 first", file=sys.stderr)
+        return 2
 
     if args.dry_run:
         laddered = [n for n, rungs in schedule if len(rungs) > 1]
@@ -213,15 +260,20 @@ def main() -> int:
         print(f"  roughly {budget(schedule) / 60:.0f} minutes -- background it")
         return 0
 
-    if not os.environ.get(DirectScanner.DEBUG_ENV):
-        print(f"refusing to run without {DirectScanner.DEBUG_ENV}=1: a probe "
-              f"that files nothing cannot be re-analysed, and forty minutes of "
-              f"scanner time is not worth spending twice", file=sys.stderr)
+    # On the real run as well as the dry one: the harness kills a foreground
+    # command at ten minutes, and a killed read is an abandoned one.
+    print(f"roughly {budget(schedule) / 60:.0f} minutes"
+          + (" -- background it" if budget(schedule) > 8 * 60 else ""))
+    if probing.refuse_unfiled(DirectScanner):
         return 2
 
-    passes: list[dict] = []
+    # Every earlier chunk's passes, less any for a frame this one scans again.
+    again = {number for number, _ in schedule}
+    passes: list[dict] = [p for p in earlier if p.get("frame") not in again]
     positions: list[int] = []
+    finished = False
     scanner = DirectScanner(verbose=True)
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         state = scanner.read_state()
@@ -234,8 +286,30 @@ def main() -> int:
             # see the transport, so this warns and carries on.
             print("   READ_STATE says no media -- a set bit is evidence and a "
                   "clear one is not, so this is a note, not a refusal")
+        if start is not None:
+            # Where the film has to be for frame numbers to mean frames. A
+            # chunk used to begin wherever the transport was, so `--only 5-8`
+            # after a rewound `--only 1-4` scanned frames 1-4 again and filed
+            # them as 5-8 -- a ladder on frame 5 included.
+            here, want = scanner.position(), start + schedule[0][0] - 1
+            if here != want:
+                away = None if here is None else want - here
+                print(f"refusing: frame {schedule[0][0]} was at transport "
+                      f"position {want} when the earlier chunks ran, and the "
+                      f"film is at {here}"
+                      + ("" if away is None else
+                         f" -- move it {abs(away)} frame"
+                         f"{'s' if abs(away) != 1 else ''} "
+                         f"{'on' if away > 0 else 'back'} (the window's "
+                         f"next/prev) and run the chunk again"),
+                      file=sys.stderr)
+                return 2
         scanner.session_start()
         scanner.wait_warm()
+        # Every pass here is a corrected one, metering included, and a
+        # session with no reference refuses one: without this the probe
+        # died on its first frame.
+        probing.ensure_reference(scanner, args)
 
         for index, (number, rungs) in enumerate(schedule):
             here = scanner.position()
@@ -296,18 +370,23 @@ def main() -> int:
                 del image
                 # Written after every pass. A forty-minute run that loses
                 # everything because the last pass raised is worse than no run.
+                # Whole or not at all, and with every earlier chunk's passes
+                # in it: the file was rewritten in place with this chunk's
+                # alone, so a second chunk replaced the first's join key and a
+                # kill part way left none.
                 if args.json:
                     Path(args.json).parent.mkdir(parents=True, exist_ok=True)
-                    Path(args.json).write_text(json.dumps(
-                        {"schedule": [[n, list(r)] for n, r in schedule],
+                    library._write_atomic(Path(args.json), json.dumps(
+                        {"schedule": [[n, list(r)] for n, r in whole],
                          "target": args.target, "ladder": list(LADDER),
-                         "passes": passes}, indent=2, default=float),
-                        encoding="utf-8")
+                         "passes": passes}, indent=2, default=float))
 
             if index < len(schedule) - 1:
                 if scanner.advance() is None:
                     print("   the transport did not move -- end of the strip")
                     break
+        else:
+            finished = True
 
     except BaseException as exc:                        # noqa: BLE001
         print(f"\nprobe stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -316,17 +395,36 @@ def main() -> int:
     finally:
         # Put the film back before letting go of the device, so the strip is
         # where it started and the next run does not begin half way along it.
+        # Not with a device a stopped read left busy -- SLIDE to a scanner
+        # still streaming the pass is what a power cycle is for -- and not
+        # once the operator has asked to stop, which the guard refuses.
+        #
+        # A chunk that is not the plan's last leaves the film on the next
+        # chunk's first frame instead: the last frame of a schedule is never
+        # advanced past, so a chunk run with --no-rewind left the next one
+        # starting a frame early.
         try:
-            if not args.no_rewind and positions:
-                back = max(positions) - min(positions)
-                for _ in range(back):
-                    if scanner.retreat() is None:
-                        break
-                if back:
-                    print(f"\nreturned the film {back} frame"
-                          f"{'s' if back != 1 else ''}")
+            why = probing.suspect(scanner)
+            if why:
+                print(f"\nthe film is left where it is: the device is suspect "
+                      f"({why}). Power it off and on", file=sys.stderr)
+            elif not args.no_rewind and positions:
+                if finished and schedule[-1][0] < whole[-1][0]:
+                    if scanner.advance() is not None:
+                        print(f"\nthe film is on frame {schedule[-1][0] + 1}, "
+                              f"where the next chunk starts")
+                else:
+                    first = min(positions) if start is None else start
+                    back = max(positions) - first
+                    for _ in range(back):
+                        if scanner.retreat() is None:
+                            break
+                    if back:
+                        print(f"\nreturned the film {back} frame"
+                              f"{'s' if back != 1 else ''}")
         except BaseException as exc:                    # noqa: BLE001
             print(f"could not return the film: {exc}", file=sys.stderr)
+        guard.release()
         try:
             scanner.close()
         except BaseException:                           # noqa: BLE001

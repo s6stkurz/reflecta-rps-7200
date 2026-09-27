@@ -127,9 +127,9 @@ def main() -> int:
         return 0
 
     results: list[dict] = []
-    scanner = DirectScanner(verbose=True)
-    if probing.refuse_unfiled(scanner):
+    if probing.refuse_unfiled(DirectScanner):
         return 2
+    scanner = DirectScanner(verbose=True)
     reference = None
     guard = probing.Guard(scanner)
     try:

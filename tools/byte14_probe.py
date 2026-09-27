@@ -145,9 +145,9 @@ def main() -> int:
     results: list[dict] = []
     images: dict[int, list[np.ndarray]] = {}
     scales: list[float] | None = None
-    scanner = DirectScanner(verbose=True)
-    if probing.refuse_unfiled(scanner):
+    if probing.refuse_unfiled(DirectScanner):
         return 2
+    scanner = DirectScanner(verbose=True)
     print(advice)
     guard = probing.Guard(scanner)
     try:

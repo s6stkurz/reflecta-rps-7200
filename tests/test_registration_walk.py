@@ -23,11 +23,17 @@ walk_tool = load_tool("roll_registration_walk")
 class FakeScanner:
     """Records every move, answers every prescan with a flat frame."""
 
+    #: It files, as the walk requires of the scanner it is given.
+    debug = True
+
     def __init__(self):
         self.moves: list[float] = []
         self.advances = 0
         self.prescans = 0
         self._position = 0
+
+    def ensure_shading(self, path, reuse=False, skip=False):
+        return {"reference": object(), "summary": "calibrated"}
 
     def prescan(self, resolution=300, keep_raw=False):
         self.prescans += 1

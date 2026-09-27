@@ -57,9 +57,18 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
                          "measured it")
 
 
-def refuse_unfiled(scanner: Any) -> bool:
-    """True, having said why, when this scanner will file none of its passes."""
-    if getattr(scanner, "debug", False):
+class _Unopened:
+    """A transport that is never used: the gate reads a setting, nothing more."""
+
+
+def refuse_unfiled(factory: Any) -> bool:
+    """True, having said why, when a scanner from `factory` would file nothing.
+
+    Asked of a scanner built on a transport that is never opened, so the
+    gate reads the variable exactly as the driver does and nothing -- not
+    even the USB library -- is touched before it has said yes.
+    """
+    if getattr(factory(transport=_Unopened()), "debug", False):
         return False
     print("refusing to run without RPS7200_DEBUG=1 (or true/yes/on): a probe "
           "that files nothing cannot be re-analysed, and none of these is "

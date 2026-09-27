@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -53,6 +52,7 @@ from rps7200.console import use_utf8_stdout                    # noqa: E402
 from rps7200.direct import DirectScanner                       # noqa: E402
 from rps7200.framing import frame_contrast                     # noqa: E402
 from rps7200.session import FINE_MIN_MM                        # noqa: E402
+from tools import probing                                      # noqa: E402
 
 #: One ladder rung: the smallest move the transport has. Every rung is this,
 #: so the abscissa is a lattice point and not a rounding of one.
@@ -125,7 +125,11 @@ class Walk:
         sent = self.scanner.nudge(mm)
         self.travel += abs(mm)
         time.sleep(0.4)                   # the settle the hold loop uses
-        return dict(sent, asked_mm=mm)
+        # The driver's `asked_mm` is what the command travels on its lattice,
+        # the ground truth this corpus exists for; the request is kept beside
+        # it. This overwrote the one with the other, so every rung's "asked"
+        # distance was the request, 0.034 mm off what was sent.
+        return dict(sent, requested_mm=mm)
 
     def frame(self, number: int) -> dict:
         """Two prescans, nothing moved between them."""
@@ -150,22 +154,31 @@ class Walk:
         rungs, excursion = [], 0.0
         sent = self._nudge(-RUNGS * RUNG_MM, excursion)
         excursion += -RUNGS * RUNG_MM
+        # Where the commands put the film, summed from what each one travels
+        # on the driver's lattice. `excursion` is what was requested, and the
+        # first leg -- three rungs in one command, which pays the ramp once --
+        # travels 0.034 mm more than three rungs.
+        commanded = float(sent.get("asked_mm", -RUNGS * RUNG_MM))
         for step in range(2 * RUNGS + 1):
             image, _meta, name = self._prescan(
                 f"{self.label}{number:02d}_L{step:02d}.tif")
             rungs.append({
                 "step": step,
-                "commanded_mm": round(excursion, 4),
+                "commanded_mm": round(commanded, 4),
+                "requested_mm": round(excursion, 4),
                 "pass": name,
                 "contrast": round(frame_contrast(image), 4),
                 "sent": sent,
             })
-            print(f"    rung {step}: commanded {excursion:+.4f} mm")
+            print(f"    rung {step}: commanded {commanded:+.4f} mm")
             if step < 2 * RUNGS:
                 sent = self._nudge(RUNG_MM, excursion)
                 excursion += RUNG_MM
-        # Put it back. Measured against where the frame started, not summed
-        # from the commands, because backlash means the two differ.
+                commanded += float(sent.get("asked_mm", RUNG_MM))
+        # Put it back. Summed from the requests, not measured -- this said
+        # "measured against where the frame started", and nothing measures
+        # it: the film ends about `commanded` less the lattice of this one
+        # command from home, which the log now shows.
         back = self._nudge(-excursion, excursion)
         record = {"number": number, "rungs": rungs, "restore": back,
                   # What the film was asked to travel in total, and how far
@@ -199,6 +212,9 @@ def main() -> int:
                          "re-walking a strip the previous walk left further "
                          "down, without unloading it")
     ap.add_argument("--json", type=Path, default=None)
+    ap.add_argument("--overwrite", action="store_true",
+                    help="write over a walk already under this label")
+    probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
@@ -239,16 +255,20 @@ def main() -> int:
         print("\ndry run: no device was opened")
         return 0
 
-    if not os.environ.get("RPS7200_DEBUG"):
-        print("refusing to run without RPS7200_DEBUG=1: a walk that files "
-              "nothing cannot be re-analysed, and this one is the corpus",
-              file=sys.stderr)
+    # A label used again wrote over the earlier walk's TIFFs and its log --
+    # a corpus is the one thing here that cannot be taken again.
+    if out.exists() and any(out.iterdir()) and not args.overwrite:
+        print(f"refusing: {out} already holds a walk; give another --label, "
+              f"or --overwrite", file=sys.stderr)
         return 2
 
-    out.mkdir(parents=True, exist_ok=True)
+    if probing.refuse_unfiled(DirectScanner):
+        return 2
     scanner = DirectScanner(verbose=True)
+    out.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     walk = None
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         state = scanner.read_state()
@@ -261,6 +281,9 @@ def main() -> int:
             return 2
         scanner.session_start()
         scanner.wait_warm()
+        # A prescan is a corrected pass, and a session with no reference
+        # refuses one: without this the walk died on its first frame.
+        probing.ensure_reference(scanner, args)
 
         walk = Walk(scanner, out, args.resolution, args.label)
         walk.log["state_before"] = {"position": int(state.position)}
@@ -326,6 +349,7 @@ def main() -> int:
             walk.log["error"] = str(exc)
         return 1
     finally:
+        guard.release()
         try:
             scanner.close()
         except Exception:                                 # noqa: BLE001
