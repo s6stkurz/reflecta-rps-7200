@@ -3357,12 +3357,18 @@ class ScanSession:
             paths=paths,
             # A single scan or prescan is filed with the scanner open and idle
             # between jobs, and compressing then -- gzip, and TIFF deflate --
-            # is what preceded a wedge (CLAUDE.md). So those are written plain
-            # and compressed when the session closes. A roll's frames keep
-            # compressing on the writer thread while the next frame scans: the
-            # device is busy there, which is the exception CLAUDE.md argues
-            # and `tools/filing_load_test.py` exists to measure. Not its last
-            # frame, which has no next one (`plain`).
+            # is what preceded a wedge (CLAUDE.md). So its library entry is
+            # written plain and compressed when the session closes. A roll's
+            # frames keep compressing on the writer thread while the next
+            # frame scans: the device is busy there, which is the exception
+            # CLAUDE.md argues and `tools/filing_load_test.py` exists to
+            # measure. Not its last frame, which has no next one (`plain`).
+            #
+            # The library entry only. The copy in the output folder is still
+            # deflated -- or encoded as a JPEG -- as it is written, idle device
+            # or not: writing it plain would hand the operator a file twice
+            # the size, or one rewritten under him at close, and which of
+            # those is better is not settled here.
             compress=bool(roll) and not plain,
             rotate=turn,
             flip=flip,
