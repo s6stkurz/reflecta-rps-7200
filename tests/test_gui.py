@@ -869,6 +869,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         session=types.SimpleNamespace(submit=submitted.append,
                                       rolls=str(tmp_path / "rolls")),
         _working=lambda: False, _hand_over=submitted.append,
+        _scanned_in=lambda folder: set(),
     )
 
 
@@ -5402,6 +5403,50 @@ def test_a_double_click_on_a_frame_leaves_its_tick_alone(window, tmp_path):
     _press(picture, "<Button-1>")                   # a click still ticks
     assert sheet.ticks[2].get() is False
     sheet.top.destroy()
+
+
+def test_return_through_the_strip_does_not_tick_a_scanned_frame(window, tmp_path):
+    """A resumed roll opens its scanned frames unticked so they are not
+    scanned twice. Return in the position window -- "keep this one, next" --
+    ticked every frame it passed, scanned or not."""
+    app, root = window
+    out = gui.read_survey(_walked_folder(tmp_path, count=3))
+    sheet = gui._ContactSheet(app, out["results"], done={2})
+    root.update()
+    assert sheet.ticks[2].get() is False
+    sheet.ticks[1].set(False)
+    sheet.adjust(0)
+    for _ in range(2):
+        sheet._adjuster._accept()
+    assert sheet.ticks[1].get() is True, "a frame not yet scanned is ticked"
+    assert sheet.ticks[2].get() is False, "a scanned one is left as it was"
+    sheet.top.destroy()
+
+
+def test_the_commission_names_frames_it_would_scan_again(window, monkeypatch,
+                                                        tmp_path):
+    """"All" ticks a scanned frame as readily as any other, and the question
+    before the film moves gave only a count. It names them now -- the ones
+    the reopened roll said were done, and those its roll.json says since."""
+    app, root = window
+    app.calibrated = True
+    folder = tmp_path / "rolls" / "resumed"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [{"number": 3, "done": True}]}),
+        encoding="utf-8")
+    app._sheet_roll = folder
+    app._sheet_done = {1}
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or False)
+    app.on_scan_chosen((1, 2, 3))
+    assert "scanned again if you go on: 1, 3." in asked[0]
+    asked.clear()
+    app._sheet_done = set()
+    app._sheet_roll = tmp_path / "rolls" / "fresh"
+    app.on_scan_chosen((1, 2))
+    assert "scanned again" not in asked[0]
 
 
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):

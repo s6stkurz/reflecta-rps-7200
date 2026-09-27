@@ -3223,6 +3223,12 @@ class ScannerGui:
         walked = len(self.survey)
         per = self._per_frame_seconds(dpi=dpi, ir=infrared, fast_ir=fast_ir)
         move, move_s = seek_note(self._transport, start_at)
+        folder = self._roll_folder()
+        # Named before anything is spent: "All", or Return through the
+        # position window, ticks a frame already scanned as readily as any
+        # other, and the count alone did not say that hours of it were
+        # scans being taken a second time.
+        again = [n for n in numbers if n in self._scanned_in(folder)]
         if not messagebox.askokcancel(
             "Scan chosen frames",
             f"Scan {len(numbers)} of the {walked} frames walked: "
@@ -3231,12 +3237,14 @@ class ScannerGui:
             f"At {dpi} dpi{' with infrared' if infrared else ''}, {film}, "
             f"roughly {_duration(per * len(numbers) + move_s)}. The frames "
             "nobody ticked cost their advance only."
+            + (f"\n\nAlready scanned, and scanned again if you go on: "
+               f"{number_spans(again)}. Each new take replaces its "
+               "frameNN.tif; the library keeps both." if again else "")
             + self._approved_note(approved, correct)
             + self._options_note(options) + self._edges_pending()
             + "\n\nStart?",
         ):
             return
-        folder = self._roll_folder()
         self._show_roll_name(
             folder.name,
             ours=folder.name != self.fields["roll"].get().strip())
@@ -3275,6 +3283,21 @@ class ScannerGui:
             out=str(folder),
             notes=self._notes(), tags=self._tags(),
         ))
+
+    def _scanned_in(self, folder) -> set[int]:
+        """The frames of the sheet's roll that are already scanned.
+
+        What the reopened roll said, and what its roll.json says now -- a
+        commission earlier in this session has scanned frames since.
+        """
+        done = set(self._sheet_done)
+        try:
+            progress = read_manifest(Path(folder) / "roll.json")
+        except ValueError:
+            return done
+        if progress.get("numbering") == NUMBERING:
+            done |= scanned_frames(progress)
+        return done
 
     def _options_note(self, options) -> str:
         """Name the settings this roll uses that the window does not show.
@@ -7566,11 +7589,16 @@ class _FrameAdjuster:
         is the whole of the job this window exists for, done one key at a time
         rather than one mouse round trip at a time.
 
+        Not a frame already scanned: a resumed roll opens those unticked so
+        they are not scanned twice, and reviewing the strip with Return,
+        Return, ... ticked every one of them again.
+
         The last frame closes the window, because there is nowhere further to
         go and leaving it open invites a press that does nothing.
         """
-        self.v_tick.set(True)
-        self._tick_changed()
+        if self.number not in self.sheet.done:
+            self.v_tick.set(True)
+            self._tick_changed()
         if self.index >= len(self.sheet.frames) - 1:
             self.gui._say("that was the last frame of the strip")
             self.top.destroy()
