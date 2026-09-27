@@ -120,6 +120,11 @@ def provenance() -> dict[str, Any]:
         # while it runs -- and the fields above describe the tree now.
         "driver_commit_at_import": _AT_IMPORT.get("commit"),
         "driver_dirty_at_import": _AT_IMPORT.get("dirty"),
+        # The package's own source, hashed as it was imported. A commit says
+        # which code only when the tree was clean; "dirty" says only that it
+        # was not. Two entries filed from one dirty tree, or from a copy with
+        # no git at all, can still be told the same code or not.
+        "driver_source_sha256_at_import": _AT_IMPORT.get("source_sha256"),
         "versions": versions,
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
     }
@@ -145,7 +150,19 @@ def _identity_now() -> dict[str, Any]:
         return {}
 
 
-_AT_IMPORT: dict[str, Any] = _identity_now()
+def _source_digest() -> str | None:
+    """One hash over every module of this package, name and bytes, in order."""
+    try:
+        digest = hashlib.sha256()
+        for module in sorted(Path(__file__).resolve().parent.glob("*.py")):
+            digest.update(module.name.encode("utf-8") + b"\0")
+            digest.update(module.read_bytes())
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+_AT_IMPORT: dict[str, Any] = {**_identity_now(), "source_sha256": _source_digest()}
 
 
 def _plain(value: Any) -> Any:

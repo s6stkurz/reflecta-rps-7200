@@ -90,6 +90,9 @@ def test_an_entry_keeps_everything_needed_to_use_it_again(tmp_path):
     # which build produced it, so a decode change can be attributed
     assert "driver_commit" in record["provenance"]
     assert "numpy" in record["provenance"]["versions"]
+    # and which code, when git cannot say: a dirty tree, or none at all
+    source = record["provenance"]["driver_source_sha256_at_import"]
+    assert isinstance(source, str) and len(source) == 64
 
 
 def test_values_json_cannot_hold_are_kept_whole_not_printed(tmp_path):
