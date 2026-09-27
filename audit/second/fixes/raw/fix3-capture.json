@@ -1,0 +1,152 @@
+{
+ "type": "result",
+ "key": "v2:abfc43a4f636ca05de4bf5ab1de52d991e2bab03520873e5ac0782111c5eb742",
+ "agentId": "a0a1d21ecd8730ca6",
+ "result": {
+  "branch": "fix3/capture",
+  "commits": [
+   "f4ef116d72561e212d5868e74225c7ca21d057ff Keep a claimed debug pass until its caller has filed it (audit DBG-1, SR-01)",
+   "abc3bb34c8385370979f2981b7fef19d68687e5f File every prescan a roll takes raw, in an entry of its own (audit LIB-01, SR-04)",
+   "2aded37683dbe668f1eda44e781fa0a727083648 File a pass read in full that then fails, tagged failed (audit P07, DBG-4)",
+   "a95b93de13d32813d2732f9206883d34895bcff7 Say what a debug-filed probe or hold prescan was, and on which film (audit DBG-A1, DBG-13)",
+   "fd87136bd1f31fbd4b6954c7a94447f0e79fe525 Read RPS7200_DEBUG one way, the driver's, in every probe's guard (audit DBG-10)",
+   "4685464775965c5ec79058063520a3a7d9dd44a9 File a debug spool left behind, from sidecars that say whose files are whose (audit DBG-8, P03 (2) (3))",
+   "25d120dd91107246f22f2621265b1d9bddf2b0b3 Record a read the device ended early, and the lines it declared (audit DBG-5)",
+   "7fb75d4dbec7c4635a573ad5dca7dd1960fb0abe Spool guard judges height; refuse unsendable gain; count waits; drop stop_scan (audit P02 (3), DBG-14, DBG-15, DBG-18)",
+   "5fd5c4c25f827d3bb4415000ceb661a24dc3166e Write the shading reference plain wherever the device is open (audit DBG-17)",
+   "3e9664735683866262857c60420e851d9c2a0e3f Keep the lines of a read given up part way, filed tagged failed (audit P07)",
+   "5fe8d1c805c99ad26d7f3b636eb0c14b10849053 End a calibration on end of data only, and only on its whole (audit DBG-7)",
+   "46664932b3ba0800075a6691655c3d353c06f8f5 Archive a failed calibration's lines; write the archive as an entry is (audit DBG-6)",
+   "f758694efb79279ba8951a250a6ede2e056ec81c File a spooled pass under the time it was taken (audit P03 (4))",
+   "1ee856fd63c600963d135ef7ecfbb2dc838ae090 Tag a debug-filed probe or hold pass for what it was (audit P08 (3))"
+  ],
+  "done": [
+   {
+    "item": "P03 new problem / DBG-1 / SR-01 / CSA-02 (claim deleted the spooled copy before the claimant filed)",
+    "change": "f4ef116: debug_claim returns a receipt. The spooled copy is deleted only when the caller answers with the entry it wrote. If the caller answers None, debug filing files the pass after all. close() files nothing while a claim is unanswered, and debug_settle() (called by the session, tools/scan.py and tools/scan_roll.py after their own filing) files what is left. tools/scan.py files each pass in its own try."
+   },
+   {
+    "item": "DBG-2 / CSA-01 (claimed passes held in the spool for the whole session) and P03 (1) / DBG-9 (spool in system temp; debug filing into the wrong library)",
+    "change": "f4ef116: a claimed pass's spool files go when its receipt comes back, not at close(). The spool now lives in <library>/.spool instead of tempfile. debug_root is set by the session and both tools, so debug entries go into the caller's library. Spool files are numbered by a counter, not by the queue length."
+   },
+   {
+    "item": "P03 (5) (force_abort skipped close(), so the debug spool was never filed)",
+    "change": "f4ef116: the session settles the spool after the writer, whether or not close() ran."
+   },
+   {
+    "item": "LIB-01, SR-04, FR-02, DOC-01 code side, DBG-3 prescan part, P08 (1) and (4), T-04 (raw prescan cluster)",
+    "change": "abc3bb3: every prescan a roll takes is now its own library entry, filed raw with its own bytes, mask and reference through ScanSession._file with roll_membership kind 'prescan'. This covers real rolls and walks, failed frames, and the picture a hold or an aim replaced (tagged 'before'), from both ScanSession._roll and tools/scan_roll.py. The capture record is taken by the driver when the prescan is read (RollFrame.prescan_capture / prescan_before_capture), not read off the scanner when the frame is yielded. The hold now keeps its before-picture. prescan.corrections_applied labels the frame entry's corrected prescan.tif. The CLI writes a walk's prescanNN.tif on the writer thread. The session's survey record names prescan_before. The FrameWriter queue is 4. Tests that pinned the old arrangement were rewritten, and test_a_real_roll_does_not_file_its_prescans_separately was replaced by a test that checks each prescan against its own bytes via reconstruct."
+   },
+   {
+    "item": "P07 / DBG-4 (a pass read in full that then fails was lost), P02 (1) (stale last_raw), DBG-A4 (failed pass's command log kept recording)",
+    "change": "2aded37: a wrapper on scan() and calibrate_shading() keeps what a failed pass leaves behind. A pass whose lines were all read is spooled even with debug off (unless the caller keeps no bytes) and filed after close() tagged 'failed', with bytes, mask, reference and command log, and extra.failed giving the stage and the error. It keeps its decoded pixels, or the lines as they arrived if the decode failed. The command log is stopped (last_failed_commands). last_raw, its layout, last_pixels_raw and last_scan_meta are cleared when a pass starts."
+   },
+   {
+    "item": "P07 (read given up part way dropped its chunks)",
+    "change": "3e96647: while the pass is in flight, _in_flight holds read_planes' line list. A timeout, refused read or Ctrl-C now files the lines that did arrive, tagged failed with stage 'during the read', decoded to the rows every plane reached. The device is still marked suspect."
+   },
+   {
+    "item": "DBG-A1, DBG-13, DBG-16",
+    "change": "a95b93d: metering probes and hold/aim verification prescans record the roll's film and meta['pass_role'] (probe round; or hold source, roll index and move). The spool keeps the live meta, so fields a caller adds later (bracket index, roll registration) reach the entry. The auto_exposure comment about SET GAIN OFFSET persisting is corrected."
+   },
+   {
+    "item": "DBG-10 (probe guards accepted RPS7200_DEBUG=0)",
+    "change": "fd87136: debug_from_env() is now the only place RPS7200_DEBUG is read. The guards of seven probes use it."
+   },
+   {
+    "item": "DBG-8, P03 (2) (3) (a spool left behind could not be filed)",
+    "change": "4685464: each sidecar names its own image, raw, mask and reference files, its tags and notes, and whether it is claimed. rps7200.direct.file_spool() and `tools/library.py file-spool` file a leftover spool, including older spools that name files only by number."
+   },
+   {
+    "item": "DBG-5 (early end of data looked like a normal pass)",
+    "change": "25d120d: every pass's meta records lines_declared and short_read."
+   },
+   {
+    "item": "P02 (3), DBG-14, DBG-15, DBG-18",
+    "change": "7fb75d4: the spool guard uses raw_bytes_disagree, which also judges height; the function moved to direct and session re-exports it. set_gain_offset refuses gain or offset above 255 instead of masking it; the values sent in ordinary use do not change. NoDataYet waits are counted in image_reads['waits'] instead of being listed. The unused stop_scan() is removed."
+   },
+   {
+    "item": "DBG-17 (shading reference compressed with the device open)",
+    "change": "5fd5c4c + 4685464: the spool copy, the cache (save_shading), the calibration archive and a compress=False library entry now write shading.npz uncompressed."
+   },
+   {
+    "item": "DBG-7 (calibration took any refused read as finished)",
+    "change": "5fe8d1c: only EndOfData ends the calibration read loop. Any other refusal marks the device suspect and builds no reference. If fewer lines arrive than the device's own descriptor declares, no reference is installed (corrected scans are refused until a calibration succeeds, which is the existing no-usable-lines behaviour). The result, the archive record and the summary give the reason and lines_declared/lines_arrived. No command changes in normal operation; after an abnormal refusal the mask is no longer read. Tests: a refusal part way marks the device suspect and leaves the old reference; ending short of the declared count installs nothing; a whole calibration still builds a two-point reference. The tests fail without the fix."
+   },
+   {
+    "item": "DBG-6 direct.py parts (failed calibration discarded its bytes; archive written in place)",
+    "change": "4666493: calibrate_shading leaves the lines that arrived in last_failed_calibration. ensure_shading archives them next to the good calibrations, with the command log, failed stage and error in calibration.json, its own measured_utc and no reference. archive_calibration now writes INCOMPLETE first, writes calibration.json to a temp file and renames it over, then removes INCOMPLETE. Tests fail without the fix."
+   },
+   {
+    "item": "P03 (4) (entry id and created were the flush time)",
+    "change": "f758694: library.save takes created= (defaults to now). The debug flush and file_spool pass the time each pass was spooled, so the id and created reflect the capture. The test fails without the fix."
+   },
+   {
+    "item": "P08 (3) (debug-filed passes tagged only 'debug')",
+    "change": "1ee856f: the spool adds a tag from pass_role: 'probe' for metering probes, 'hold' for verification prescans (the aim goes through the hold loop too). The test fails without the fix."
+   }
+  ],
+  "left": [
+   {
+    "item": "Merge overlap with fix3/library 1dbc0ff (prescan.corrections_applied)",
+    "why": "abc3bb3 labels a frame entry's prescan.tif in library.save with its own helper, _corrections_of(prescan_meta). fix3/library's 1dbc0ff labels the same field with a prescan_corrections= parameter, and the tests differ. library.save's signature will conflict anyway, because this branch also adds created= and passes compress to reference.save.",
+    "proposal": "On merge, keep fix3/library's labelling hunk and drop _corrections_of and test_a_frames_prescan_says_whether_it_was_corrected from abc3bb3. Keep this branch's created= parameter and the compress=compress on reference.save. session.py and tools/scan_roll.py here do not pass prescan_corrections, so both versions derive the label from the prescan's meta. tools/scan_roll.py will also conflict with fix3/filing (7b257c7, abbf7ce), which touches the same walk-prescan code."
+   },
+   {
+    "item": "P02 (2): library.save never decodes raw bytes to check them against the image",
+    "why": "This belongs to the library subsystem and is a trade-off. The stale-bytes path is closed at its source: last_raw is cleared per pass, prescans carry their own capture records, and both the spool guard and the session/CLI check height with raw_bytes_disagree. A full decode inside save would double CPU and memory for a 7200 dpi filing (about 570 MB), and the window files with the device open. `make reconstruct` already does the full decode-and-compare offline.",
+    "proposal": "Add a shape-only raw_bytes_disagree check in library.save, which is cheap, and record raw.disagrees rather than refuse. Leave pixel equality to reconstruct."
+   },
+   {
+    "item": "P08 (2) / DBG-3 remainder: with debug off, metering probes and intermediate hold/aim verification prescans are still not filed",
+    "why": "Decision for Stefan. CLAUDE.md says debug off by default is deliberate so ordinary use is not burdened. Every framing prescan, before-picture and failed frame's prescan is now filed raw regardless.",
+    "proposal": "File metering probes and verification prescans by default in the window and tools, as prescans now are. They are 300 dpi passes of a few MB each, and they are the evidence behind every exposure and hold decision. Mechanism: have the session and tools file the passes a debug spool would otherwise hold, i.e. keep debug filing on for passes with a pass_role and off for everything else. That would let debug-off stay the default for ad-hoc scripts only."
+   },
+   {
+    "item": "P08 (3) remainder: link a debug-filed verification pass to its frame entry by id",
+    "why": "pass_role records the roll index and move, and the tags now say probe or hold. The roll name and the frame entry's id are known only above the seam (the session's writer receipt), and the driver's scan_roll does not know the roll name.",
+    "proposal": "Give scan_roll the roll name and put it in pass_role. Or have the session, after the frame's receipt, write the ids of that frame's debug-filed passes into the frame's registration record."
+   },
+   {
+    "item": "DBG-6 remainder: the calibration archive sits beside the cache, not in the library, and a cache-loaded reference records no archive link",
+    "why": "Where the archive lives is a choice for Stefan; fix3/library already put it in TODO. fix3/library's calibration_of finds a cache-loaded reference's archive by content, which covers the missing link.",
+    "proposal": "Move calibration/<UTC>/ under <library>/calibration/ so moving or copying the library keeps it, and record the archive's data.bin sha256 in shading_origin, including on load, via a small sidecar written beside the cache."
+   },
+   {
+    "item": "DBG-12: apply_shading corrects only mask-mapped columns; scan() does not refuse a partial correction",
+    "why": "This needs a measurement first. At 600 and 900 dpi the device returns 860/862 and 1292 columns. If a real mask maps a column or two fewer than the pass width, making scan() refuse would throw away (file as failed) operator scans that today are corrected except for an edge column. The report already records columns against width.",
+    "proposal": "Run an offline pass over the library counting entries whose extra.shading.columns < width. If there are none, make scan() refuse a partial correction the way it refuses a too-narrow reference (the wrapper then files the pass tagged failed). If there are some, record shading.partial and let library.corrected say so."
+   },
+   {
+    "item": "DBG-A3: image reads use retries=1, so a stray one-shot sense ends or abandons the pass",
+    "why": "Retrying a refused READ changes what is sent to the device, and the risk (a retry asking for lines that do not exist stalls the bulk transfer) can only be judged on the hardware.",
+    "proposal": "First count, offline, the refusals other than NoDataYet recorded in the entries' extra.commands (_CommandLog now lists every refusal except waits). If none appear, leave it. If they do, allow one retry only for a readable, non-0x20 unit-attention sense before the first line, bump PROTOCOL_REVISION, and check it once with Stefan."
+   },
+   {
+    "item": "DBG-5 remainder: whether an early end of data should mark the device suspect",
+    "why": "Needs a hardware measurement. It is now recorded (lines_declared, short_read), but nothing shows whether the device is left mid-scan.",
+    "proposal": "Check the library for entries with short_read true. If any exist, look at their next pass's behaviour before deciding whether to mark suspect."
+   },
+   {
+    "item": "DBG-11: the transport drops a payload followed by CHECK CONDITION",
+    "why": "usb_transport.py belongs to the device subsystem (fix3/device), and the second reader found no evidence the device ever does this.",
+    "proposal": "In the transport, return (payload, check) or raise CheckCondition carrying .payload, and have read_lines append the bytes before reading the sense. Owner: fix3/device."
+   },
+   {
+    "item": "DBG-19: the demo stand-in has no debug spool, claim or flush",
+    "why": "Demo subsystem (fix3/demo-framing-outputs), and a sizeable refactor rather than a local fix.",
+    "proposal": "Move the spool/claim/receipt/flush code into a mixin that DemoScanner shares, so make run-demo exercises the claim, receipt and failed-pass paths."
+   },
+   {
+    "item": "DBG-20: defects.py is not used by any delivered path",
+    "why": "Decision for Stefan (info severity); nothing is broken today.",
+    "proposal": "Move it to research/, or mark it experimental in its docstring and remove its names from direct.__all__. If it is ever wired in, round rather than truncate on the way back to integers."
+   },
+   {
+    "item": "DBG-A2",
+    "why": "Observation only; no fix is needed for exposure. Gain and offset were handled under DBG-14 (7fb75d4)."
+   }
+  ],
+  "tests": "All green at 1ee856f:\n- Full suite (`.venv/bin/python -m pytest -q -p no:cacheprovider --no-cov tests/`): 1380 passed, 32 skipped, 9 deselected.\n- RPS7200_NO_TIFFFILE=1 suite: 1314 passed, 98 skipped, 9 deselected.\n- GUI suite (`xvfb-run -a <guienv>/python -m pytest ... -n 2 tests/test_gui.py`): 390 passed.\n- `ruff check .`: all checks passed.\n- ty: the given command (`ty check --exclude tests/ --exclude tools/`) reports 51 diagnostics when run from this worktree. All of them are unresolved imports of numpy, PIL, tifffile and libusb_package, because the worktree has no .venv of its own. With `--python /home/user/reflecta-rps-7200/.venv` added: all checks passed.\n\nEach behaviour change in this run's four commits has a test that fails without the fix. I checked this by reverting only the rps7200/ changes and running the new tests, which failed:\n- 3 in tests/test_failed_pass.py for DBG-7\n- 2 in tests/test_failed_pass.py for DBG-6\n- tests/test_roll.py::test_a_spooled_pass_is_filed_under_the_time_it_was_taken for P03 (4)\n- tests/test_roll.py::test_a_debug_filed_probe_or_hold_pass_is_tagged_for_what_it_was for P08 (3)\n\nNo hardware was touched. No command sent in normal operation changed, so PROTOCOL_REVISION was not bumped. After an abnormal refusal mid-calibration, the CCD mask is no longer read; this is stated in 5fe8d1c."
+ }
+}
