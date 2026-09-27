@@ -107,6 +107,21 @@ def infrared_path(path: str | Path) -> Path:
     return Path(path).with_suffix(dng.SUFFIX)
 
 
+def outputs(path: str | Path) -> tuple[Path, ...]:
+    """Every file :func:`write` may leave for this name.
+
+    A JPEG's infrared goes to ``<stem>.dng`` beside it, and without Pillow the
+    picture itself becomes ``<stem>.tif``: a name is free only when all of
+    these are. Checking the one name asked for is how a Save all promising
+    "nothing already there is overwritten" replaced an earlier export's DNG,
+    or its TIFFs.
+    """
+    path = Path(path)
+    if format_of(path) == "jpeg":
+        return (path, infrared_path(path), path.with_suffix(SUFFIXES["tiff"]))
+    return (path,)
+
+
 def _write_jpeg(path: Path, image: np.ndarray, quality: int,
                 resolution: int | None = None) -> None:
     """The picture alone. Anything past three channels leaves in the DNG.

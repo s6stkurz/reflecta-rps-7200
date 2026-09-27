@@ -2984,12 +2984,23 @@ def _unclaimed(wanted: Path) -> Path:
 
     A frame rescanned after a failure would otherwise land on the file the
     first attempt wrote, and the better of the two is not always the second.
+
+    Free means free for every file `export.write` may leave under the name
+    -- a JPEG's companion DNG, its TIFF fallback -- not only the one asked
+    for; any other name is only its own.
     """
-    if not wanted.exists():
+    def taken(candidate: Path) -> bool:
+        try:
+            names = export.outputs(candidate)
+        except ValueError:
+            names = (candidate,)
+        return any(p.exists() for p in names)
+
+    if not taken(wanted):
         return wanted
     for n in range(2, 1000):
         candidate = wanted.with_name(f"{wanted.stem}-{n}{wanted.suffix}")
-        if not candidate.exists():
+        if not taken(candidate):
             return candidate
     return wanted
 
