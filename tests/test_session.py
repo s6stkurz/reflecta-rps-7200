@@ -516,6 +516,85 @@ def test_a_roll_writes_its_manifest_after_every_frame(tmp_path):
     assert recorded["frames"][0]["registration"]["offset_mm"] == 0.04
 
 
+def _manifest_of(tmp_path, name, survey=False):
+    return json.loads((tmp_path / "rolls" / name /
+                       ("survey.json" if survey else "roll.json"))
+                      .read_text(encoding="utf-8"))
+
+
+def test_a_roll_says_when_it_ran_and_that_it_finished(tmp_path):
+    """Frames 1-9 done and 10-38 missing said nothing about whether frame 10
+    was the end of the film, a Stop, or a device gone suspect -- which is what
+    decides whether a resume is safe."""
+    run(Roll(frames=2, resolution=600, name="ran"), tmp_path)
+    manifest = _manifest_of(tmp_path, "ran")
+    assert manifest["started"] and manifest["finished"]
+    assert "stopped" not in manifest
+
+
+def test_a_roll_says_it_was_stopped(tmp_path):
+    holder = {}
+
+    def press_stop(index):
+        if index == 0:
+            holder["s"].request_stop()
+
+    run(Roll(frames=3, resolution=600, name="halted"), tmp_path,
+        scanner=FakeScanner(frames=3, on_yield=press_stop),
+        extra=lambda s, _scanner: holder.update(s=s))
+    assert "as asked" in _manifest_of(tmp_path, "halted")["stopped"]
+
+
+def test_a_roll_says_what_ended_it(tmp_path):
+    from rps7200.protocol import DeviceSuspect
+
+    class Suspect(FakeScanner):
+        def scan_roll(self, **kw):
+            yield from super().scan_roll(**kw)
+            raise DeviceSuspect("a read was abandoned")
+
+    _s, _scanner, events = run(Roll(frames=1, resolution=600, name="suspect"),
+                               tmp_path, scanner=Suspect())
+    assert "DeviceSuspect" in _manifest_of(tmp_path, "suspect")["stopped"]
+    assert kinds(events, "failed")
+
+
+def test_a_roll_that_ends_short_of_what_was_asked_says_so(tmp_path):
+    """A frame with no picture in it reads as the end of the film, and the
+    roll finished like any other."""
+    class EndsEarly(FakeScanner):
+        def scan_roll(self, frames=None, **kw):
+            for rf in super().scan_roll(frames=frames, **kw):
+                if rf.index == 2:
+                    return
+                yield rf
+
+    _s, _scanner, events = run(Roll(frames=5, resolution=600, name="short"),
+                               tmp_path, scanner=EndsEarly(frames=5))
+    said = _manifest_of(tmp_path, "short")["stopped"]
+    assert "ended after 2 of the 5" in said
+    assert any("ended after 2 of the 5" in e.text
+               for e in kinds(events, "finished"))
+
+
+def test_a_walk_names_its_picture_from_before_the_aim(tmp_path):
+    """Named in its record, as the roll tool names it; unnamed, carrying the
+    walk to another folder left it behind."""
+    class Aimed(FakeScanner):
+        def scan_roll(self, first_index=0, **kw):
+            yield RollFrame(
+                index=first_index, position=self.pos, image=None, meta={},
+                prescan=np.full((24, 36, 3), 50, np.uint8), registration={},
+                prescan_before=np.full((24, 36, 3), 20, np.uint8),
+                prescan_meta={"resolution_dpi": 300,
+                              "channel_order": list("RGB")})
+
+    run(Roll(frames=1, dry_run=True, name="aimed"), tmp_path, scanner=Aimed())
+    (record,) = _manifest_of(tmp_path, "aimed", survey=True)["frames"]
+    assert record["prescan_before"] == "prescan01-before.tif"
+    assert (tmp_path / "rolls" / "aimed" / record["prescan_before"]).exists()
+
+
 def test_a_roll_records_what_it_would_take_to_finish_it(tmp_path):
     """A roll that dies at frame 11 of 24 has to be finishable -- a year later,
     by which time the window's own settings have moved on to other film. So the

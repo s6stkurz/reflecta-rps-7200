@@ -1105,6 +1105,22 @@ class RollManifest:
             self._keep()
             return self.unsaved is None
 
+    def ended(self, how: str | None) -> None:
+        """Say when this run ended and, when it did not simply finish, why.
+
+        As the roll tool's manifest does. Without it a roll.json read a year
+        later -- frames 1 to 9 done, 10 to 38 missing -- could not say whether
+        frame 10 was the end of the film, a Stop, a disk that filled or a
+        device that went suspect, which decides whether resuming is safe.
+        """
+        with self._lock:
+            self.data["finished"] = _utc_now()
+            if how:
+                self.data["stopped"] = how
+            else:
+                self.data.pop("stopped", None)
+            self._keep()
+
     def named_by_others(self, number: int) -> set[str]:
         """The files this manifest's records of other frames name.
 
@@ -2721,6 +2737,9 @@ class ScanSession:
             start_at, count = walk_span(earlier, job.start_at, job.frames)
         manifest: dict[str, Any] = {
             "roll": name,
+            # When this run began; `RollManifest.ended` says when and how it
+            # ended, as the roll tool's manifest does.
+            "started": _utc_now(),
             # Says the numbers below are places on the strip, so a reader can
             # tell this file from one written before they were.
             "numbering": NUMBERING,
@@ -2853,10 +2872,13 @@ class ScanSession:
         # as it arrives; see `last` below.
         ends = DirectScanner.roll_ends(first, 0, job.frames, only)
         stopped = None
+        #: Frames the roll reached, scanned, walked or failed.
+        covered = 0
         self._rolling = True
         try:
             for rf in frames:
                 number = rf.index + 1
+                covered += 1
                 # Nothing is scanned after this frame: the count is reached,
                 # the last chosen frame is in, or a stop was asked for. Its
                 # entry is filed plain and compacted once the device closes,
@@ -2870,6 +2892,8 @@ class ScanSession:
                 walked_as: tuple[int, bool] | None = None
                 #: What that file is called: see where it is written.
                 surveyed_name = f"prescan{number:02d}.tif"
+                #: And the picture from before its aim, where there is one.
+                before_name: str | None = None
                 if rf.position is not None and plausible(rf.position):
                     # Already read for this frame, so the readout follows the
                     # roll without asking the device anything more.
@@ -2933,6 +2957,8 @@ class ScanSession:
                             # indistinguishable from one that worked, and the
                             # only account of either would be the detector's
                             # own -- which is the thing under test.
+                            before_name = _free_name(
+                                f"prescan{number:02d}-before.tif", taken)
                             self._file(
                                 seq, number, rf.prescan_before,
                                 dict(rf.prescan_meta or {
@@ -2943,8 +2969,7 @@ class ScanSession:
                                 tuple(job.tags) + ("gui", "roll", "prescan",
                                                    name),
                                 kind="prescan",
-                                path=out / _free_name(
-                                    f"prescan{number:02d}-before.tif", taken),
+                                path=out / before_name,
                                 roll=name,
                                 file_entry=False,
                                 # Its own name in the output folder too. Named
@@ -3035,6 +3060,11 @@ class ScanSession:
                     record["rotation"], record["flipped"] = arranged
                 if job.dry_run and rf.prescan is not None:
                     record["prescan"] = surveyed_name
+                    if before_name is not None:
+                        # Named, as the roll tool names it: a picture no
+                        # record names is left behind when the walk is
+                        # carried to another folder (the window's carry_walk).
+                        record["prescan_before"] = before_name
                     # How that file was turned, per frame, as it was written:
                     # the pair `_file` applied, not the session's asked for
                     # again afterwards. The manifest's one `rotation` is the
@@ -3058,7 +3088,22 @@ class ScanSession:
                     stopped = f"stopped after frame {number}, as asked"
                     self._emit("log", text=stopped)
                     break
+            else:
+                # Ended by the driver short of what was asked: a frame with no
+                # picture in it reads as the end of the film, and so does the
+                # end of the transport. It used to finish like any roll.
+                asked = [n for n in (job.frames, None if job.only is None
+                                     else len(job.only)) if n]
+                if asked and covered < min(asked):
+                    stopped = (f"ended after {covered} of the {min(asked)} "
+                               "frames asked for -- the log says why")
+        except BaseException as exc:
+            # Said in the file too, not only to the window: a device gone
+            # suspect, a transport fault. See `RollManifest.ended`.
+            stopped = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
+            record_of.ended(stopped)
             # Ends the generator at its yield rather than leaving it suspended
             # with the device half-way through a roll.
             frames.close()
@@ -3364,6 +3409,11 @@ def _safe(name: str, fallback: str = "roll") -> str:
     if cleaned and cleaned.split(".")[0].lower() in _RESERVED:
         cleaned = f"{cleaned}-roll"
     return cleaned
+
+
+def _utc_now() -> str:
+    """Now, as the roll tool writes its manifests' times."""
+    return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
 
 
 def _free_name(wanted: str, taken: set[str]) -> str:
