@@ -2707,7 +2707,15 @@ class ScannerGui:
         return out
 
     def _store_sheet_state(self, state: dict) -> None:
-        """Keep the sheet's decisions past the window that made them."""
+        """Keep the sheet's decisions past the window that made them.
+
+        Filed under the folder's name *and* the walk it holds (`walk_stamp`).
+        By the name alone, a fresh walk into a folder of that name -- a name
+        typed again for the next strip of the same film, a name reused after
+        a Delete or a Rename -- opened its sheet on the last strip's ticks,
+        turns and hand-set positions, positions measured against prescans
+        that were no longer there.
+        """
         self.sheet_state = state
         key = self._sheet_key()
         if key is None:
@@ -2715,7 +2723,7 @@ class ScannerGui:
         sheets = self.remembered.setdefault("sheet", {})
         if not isinstance(sheets, dict):
             sheets = self.remembered["sheet"] = {}
-        sheets[key] = state
+        sheets[key] = dict(state, walk=walk_stamp(self._sheet_roll))
         self._remember()
 
     def _recall_sheet_state(self) -> dict:
@@ -2727,11 +2735,25 @@ class ScannerGui:
         """
         if self.sheet_state:
             return self._clean_sheet_state(self.sheet_state)
+        return self._clean_sheet_state(self._stored_sheet())
+
+    def _stored_sheet(self) -> dict | None:
+        """The settings file's decisions for the walk the sheet's folder holds.
+
+        None where it has none for that walk -- nothing stored, or stored for
+        a walk the folder no longer holds, or by a version that did not say
+        which walk it was for, which is the case that leaked.
+        """
         key = self._sheet_key()
         if key is None:
-            return self._clean_sheet_state(None)
-        return self._clean_sheet_state(
-            (self.remembered.get("sheet") or {}).get(key))
+            return None
+        stored = (self.remembered.get("sheet") or {}).get(key)
+        if not isinstance(stored, dict):
+            return None
+        walk = walk_stamp(self._sheet_roll)
+        if walk is None or stored.get("walk") != walk:
+            return None
+        return stored
 
     def _roll_is_busy(self, summaries, what: str) -> bool:
         """Refuse to touch a roll the scanner or the window is using."""
@@ -2903,6 +2925,11 @@ class ScannerGui:
                 self._say(f"deleted roll folder {summary['roll']}")
             except OSError as exc:
                 self._say(f"could not delete {summary['roll']}: {exc}")
+                continue
+            sheets = self.remembered.get("sheet")
+            if isinstance(sheets, dict):
+                sheets.pop(Path(summary["folder"]).name, None)
+        self._remember()
 
     def on_rename_roll(self, summary) -> None:
         """Rename the folder. The manifests keep the roll's own name inside."""
@@ -2923,6 +2950,12 @@ class ScannerGui:
         except OSError as exc:
             messagebox.showerror("Rename", f"Could not rename: {exc}")
             return
+        # The sheet's decisions for a walk not yet commissioned are filed
+        # under the folder's name, so they go with it; see `_store_sheet_state`.
+        sheets = self.remembered.get("sheet")
+        if isinstance(sheets, dict) and source.name in sheets:
+            sheets[target.name] = sheets.pop(source.name)
+            self._remember()
         self._say(f"renamed {source.name} to {target.name}")
 
     def on_reveal_roll(self, summary) -> None:
@@ -3050,6 +3083,21 @@ class ScannerGui:
             # options across would override the ones just restored.
             "options": {},
         }
+        # A walk never commissioned has nothing in approved.json, and what
+        # was decided on its sheet lived only in the settings file -- which no
+        # reopen read, so a restart lost every tick, turn and position the
+        # quit had said it was keeping. Read back now, for this walk only
+        # (`_stored_sheet`), and never as a tick on a frame already scanned.
+        stored = (None if (folder / "approved.json").exists()
+                  else self._stored_sheet())
+        if stored is not None:
+            self.sheet_state = self._clean_sheet_state(stored)
+            for number in done:
+                self.sheet_state["ticks"].pop(int(number), None)
+            self._say("the sheet comes back as it was left: "
+                      f"{len(self.sheet_state['offsets'])} positioned, "
+                      f"{len(self.sheet_state['rotations'])} turned")
+        state = self.sheet_state
         # Re-proposed, not merely restored. `approved.json` holds positions
         # that were *committed*; a roll walked and then closed without
         # commissioning has none, so this used to reopen with nothing at all --
@@ -3063,9 +3111,15 @@ class ScannerGui:
         self.edge_watch.load(
             [(r.number, r.image) for r in self.survey if r.image is not None],
             self._survey_film or self.v_film.get())
-        self._open_sheet(out["offsets"], out.get("sources"),
-                         rotations=out["rotations"], flips=out["flips"],
-                         done=done)
+        if stored is not None:
+            self._open_sheet(state["offsets"], state["sources"],
+                             rotations=state["rotations"], flips=state["flips"],
+                             ticks=state["ticks"], options=state["options"],
+                             done=done)
+        else:
+            self._open_sheet(out["offsets"], out.get("sources"),
+                             rotations=out["rotations"], flips=out["flips"],
+                             done=done)
         # The film is almost certainly not where the walk left it, and that no
         # longer matters: the roll goes to each frame by the transport's own
         # counter. What does matter, and only Stefan can see it, is that the
@@ -6058,6 +6112,21 @@ def carry_walk(source, target) -> list[str]:
         shutil.copyfile(source / name, target / name)
     write_manifest(target / "survey.json", manifest)
     return [*names, "survey.json"]
+
+
+def walk_stamp(folder) -> int | None:
+    """Which walk a roll folder holds: its survey.json's modification time.
+
+    A walk writes survey.json and nothing rewrites it until the next walk
+    into that folder, so a sheet's decisions filed with this are found again
+    for the same walk -- after a restart, or in a copy made with its times
+    kept -- and for no other. In nanoseconds, so it survives JSON exactly.
+    None for a folder with no walk.
+    """
+    try:
+        return (Path(folder) / "survey.json").stat().st_mtime_ns
+    except (OSError, TypeError):
+        return None
 
 
 def folder_note(folder, dry: bool) -> str:

@@ -4104,11 +4104,12 @@ def test_a_walk_reopened_is_measured_again_not_remembered(tmp_path):
 
 
 def test_a_stale_remembered_sheet_cannot_reach_a_reopened_walk(tmp_path):
-    """`open_roll` reads disk and nothing else.
+    """The detector's positions are measured again on every launch.
 
-    The sheet cache is real and it is a feature -- within one run, reopening
-    the sheet gives back the frames that were dragged. It must not survive into
-    a fresh launch, or the demo would replay last time's answer and call it a
+    The sheet cache is real and it is a feature -- reopening the sheet gives
+    back the frames that were dragged, and a walk not yet commissioned comes
+    back as it was left. What it must not carry into a fresh launch is the
+    machine's answer, or the demo would replay last time's and call it a
     measurement.
     """
     from rps7200 import settings as settings_mod
@@ -4633,6 +4634,81 @@ def test_opening_another_roll_keeps_what_the_open_sheet_held(window, tmp_path,
     app.open_roll(second)
     assert app.remembered["sheet"]["first"]["rotations"][2] == 90
     app.sheet.top.destroy()
+
+
+def _leave_a_sheet(app, folder):
+    """What a sheet closed on this walk files in the settings: frame 1
+    unticked, frame 2 put where he wanted it, frame 3 turned."""
+    app._sheet_roll = folder
+    app._store_sheet_state({
+        "ticks": {1: False, 2: True, 3: True},
+        "offsets": {2: gui.snap_offset(1.5)}, "sources": {2: "operator"},
+        "rotations": {3: 90}, "flips": {}, "options": {}})
+    app.sheet_state, app._sheet_roll = {}, None
+
+
+def test_a_new_walk_in_a_folder_of_that_name_starts_a_clean_sheet(window,
+                                                                  tmp_path):
+    """The decisions were filed by folder name alone, so a fresh walk into a
+    folder of that name -- the film stock typed again for the next strip, or
+    a name reused after a Delete -- opened on the last strip's ticks, turns
+    and positions, the positions measured against prescans since replaced."""
+    import os
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app._sheet_roll = folder
+    assert app._recall_sheet_state()["rotations"] == {3: 90}, "the same walk"
+    # The next strip walked into the same folder writes its own survey.
+    later = (folder / "survey.json").stat().st_mtime_ns + 10**9
+    os.utime(folder / "survey.json", ns=(later, later))
+    recalled = app._recall_sheet_state()
+    assert recalled["rotations"] == {} and recalled["offsets"] == {}
+    assert recalled["ticks"] == {}
+
+
+def test_a_walk_not_yet_commissioned_reopens_as_it_was_left(window, tmp_path,
+                                                           monkeypatch):
+    """Quit said it was keeping the sheet of a walk not yet commissioned,
+    and no reopen ever read it back: after a restart every tick, turn and
+    hand-set position was gone. A commissioned roll still comes back from
+    its approved.json."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.open_roll(folder)
+    sheet = app.sheet
+    assert sheet.ticks[1].get() is False
+    assert sheet.rotations.get(3) == 90
+    assert sheet.offsets.get(2) == gui.snap_offset(1.5)
+    sheet.top.destroy()
+
+    (folder / "approved.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": []}), encoding="utf-8")
+    _leave_a_sheet(app, folder)
+    app.open_roll(folder)
+    assert app.sheet.ticks[1].get() is True, "approved.json is the record"
+    assert app.sheet.rotations.get(3) is None
+    app.sheet.top.destroy()
+
+
+def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    monkeypatch.setattr(gui.simpledialog, "askstring", lambda *a, **k: "holiday")
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_rename_roll({"folder": folder, "roll": "walk"})
+    moved = folder.with_name("holiday")
+    assert "walk" not in app.remembered["sheet"]
+    app._sheet_roll = moved
+    assert app._recall_sheet_state()["rotations"] == {3: 90}
+    app._sheet_roll = None
+    app.on_delete_rolls([{"folder": moved, "roll": "walk", "size": 0}])
+    assert not moved.exists() and "holiday" not in app.remembered["sheet"]
 
 
 def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
