@@ -1,0 +1,185 @@
+{
+ "type": "result",
+ "key": "v2:fac1560d879c6abd81ebecd99538d39654829213fc7e49c79869f7bdbafc778d",
+ "agentId": "acaa5f1d08a5d2881",
+ "result": {
+  "verdicts": [
+   {
+    "id": "DEMO-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "demo.py:392-393 calls _new_frame() on every in-roll advance, and scan_roll calls it at demo.py:749. _new_frame (demo.py:403-405) zeroes _last_way, so the backlash branch at demo.py:448 (`elif way != self._last_way and self._last_way`) never fires on a frame's first move. The driver's own reasoning says the transport enters each frame loaded forward and a backward move loses its first commands: _hold_to_approved docstring at direct.py:3332-3337, hold_plan at framing.py:1191-1195, and the session comment at session.py:100-101 ('A roll leaves the transport loaded forward'). The demo's comment at demo.py:275-277 claims 'two to three commands are swallowed' and 'Modelled because it is the reason the loop iterates at all'. What it actually swallows is `min(abs(asked), 2.2 * 0.1057)` (demo.py:451), which is 2.2 units. That is less than one param-1 command (2.84 units), and 0.1057 is MM_PER_UNIT (protocol.py:260) retyped instead of self.STEP_MM. hold_plan refuses reversals within a frame (would_reverse), so inside a roll the branch cannot fire at all. tests/test_demo.py:686 even asserts 'an offset should cost exactly one move'. The film model is input, which the demo may change, but this model contradicts both the driver's stated premise and the demo's own comment, and it makes the hold loop look better than the hardware allows."
+   },
+   {
+    "id": "DEMO-02",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Confirmed: gui.py:8816-8818 and 8885-8890 accept --library and --rolls under --demo with no check. session.root and session.rolls are then the real folders, and DemoScanner entries (extra.demo, extra.demo_source, device description 'DEMO ... (no scanner attached)') are filed with ordinary ids. With --rolls rolls plus --open-roll, _roll_folder (gui.py:2462-2468) finds the sheet folder inside session.rolls and returns the real walk folder. on_scan_chosen then writes approved.json there (gui.py:3164-3166) and submits Roll(out=str(folder)) (gui.py:3210). The code comment at gui.py:8868-8874 claims '--demo pins that under demo/, so nothing the window does afterwards can write back into the walk it is showing'; that is false once --rolls is given. Overstated: the Delete scenario. on_delete (gui.py:4465-4490) asks 'Keep the library entry?' exactly as in non-demo use, so removing a real entry still needs an explicit No. That is not a demo-specific hazard. Also, index.json carries no demo flag (library.py:1048-1060), but scan.json does, and the device description names the demo.",
+    "corrected_description": "Under --demo, the --library and --rolls overrides are accepted without a guard. Synthetic demo entries (resampled or shifted pixels, bytes encoded by the demo, a synthetic IR plane, fabricated exposure and metering) can then be filed into the real library under ordinary ids. index.json does not mark them; they are distinguishable only by extra.demo and device.description in scan.json. `verify` uses the flag to excuse them rather than report them (library.py:1119-1121). With --rolls pointing at the real rolls folder, a roll commissioned from a sheet opened with --open-roll writes approved.json, roll.json and frames into the real walk folder. That contradicts the safety claim in the comment at gui.py:8868-8874.",
+    "corrected_locations": [
+     "tools/gui.py:8816-8818",
+     "tools/gui.py:8828",
+     "tools/gui.py:8868-8874",
+     "tools/gui.py:8885-8890",
+     "tools/gui.py:2462-2468",
+     "tools/gui.py:3164-3166",
+     "rps7200/library.py:1119-1121",
+     "rps7200/library.py:1048-1060"
+    ]
+   },
+   {
+    "id": "DEMO-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_hold_to_approved calls self.prescan(resolution=..., keep_raw=..., shading=...) at direct.py:3377-3378 without film, so DirectScanner.prescan's default film=FILM_NEGATIVE (direct.py:2058) is passed to scan and recorded in meta. _aim_frame reaches the same helper (direct.py:3509). scan_roll then replaces prescan_meta with `dict(self.last_scan_meta or {})` after a hold (direct.py:4031-4036) and after an aim (direct.py:4063-4067). The session's dry-run walk files that meta as the entry (session.py:2550-2559), and library.save records scan.film from it (library.py:330, SCAN_FIELDS includes film). tools/scan_roll.py:669 files frame.prescan_meta the same way, so the CLI walk is affected too. The comment at direct.py:3971-3972 says this very bug was fixed for the first prescan; the hold/aim prescan was missed. library.signature reads scan.film (library.py:954), and the demo's _source_for, _pool_for and _pictures_for select by scan.film. On a non-dry roll only read_direction and carriage_state of the prescan meta are kept (library.py:381), so the wrong film lands only on walk (dry-run) entries.",
+    "corrected_locations": [
+     "rps7200/direct.py:3377-3378",
+     "rps7200/direct.py:3509",
+     "rps7200/direct.py:2053-2058",
+     "rps7200/direct.py:4031-4036",
+     "rps7200/direct.py:4063-4067",
+     "rps7200/session.py:2550-2559",
+     "tools/scan_roll.py:669",
+     "rps7200/library.py:330",
+     "rps7200/library.py:954"
+    ]
+   },
+   {
+    "id": "DEMO-04",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`self.pair` is set from --demo-entry (demo.py:267). Its only uses are the open() log (demo.py:328-331) and the final fallback in _source_for, `self._by_film[film] = best or self.pair` (demo.py:1107). Any entry of the requested film with raw bytes becomes `best`, chosen nearest 1800 dpi (demo.py:1103-1104), so the named entry is ignored. Inside a roll the strip overrides it anyway (demo.py:1074-1078). The path is never checked for existence. The help at gui.py:8823-8826 and the comment at demo.py:263-266 claim otherwise."
+   },
+   {
+    "id": "DEMO-05",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "demo.py:669-674 retypes the refusal. It compares against the literal \"bw\" and omits the '(Chromogenic C-41 black and white ...)' sentence that direct.py:2924-2929 carries. tests/test_demo.py:158-160 matches only the 'infrared is blind' prefix. The module docstring (demo.py:39) claims 'in the driver's own words'. The condition itself is supports_infrared, which is shared, so only the wording has drifted."
+   },
+   {
+    "id": "DEMO-06",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "Points 1-3 hold. The demo's ensure_shading (demo.py:500-508) answers 'loaded' in 1/speed s for reuse=True whether or not a cache exists. The real one calibrates when the file is missing (direct.py:835-887). The demo never writes the cache or an archive, so gui.py:1984-1991 and 2083-2090 never see a cached reference under the demo. The demo returns no 'reference' key, so session.py:2057-2058 always sets calibrated=True, and the branch where a calibration yields no usable reference is unreachable in the demo. Point 4 is refuted: the real DirectScanner.ensure_shading and calibrate_shading do not refuse for want of film either. The real scan only logs a note when media_loaded is false (direct.py:3005-3012). A demo calibration that succeeds with no_film therefore matches the driver, and the module docstring's 'every pass and every move' is about transport refusals, not calibration.",
+    "corrected_description": "The demo's ensure_shading differs from the driver's in three ways. It reports 'loaded' for reuse even when no cache exists, where the driver would calibrate for about 3.5 minutes. It never writes the cached reference or the calibration archive, so the window's cached-reference prompt and the 'Use the cached one' path cannot be exercised in the demo. It never returns a 'reference' key, so the session's 'calibration ended with no usable reference' branch cannot be reached. (Succeeding with no film is not a divergence: the driver does not refuse that either.)",
+    "corrected_locations": [
+     "rps7200/demo.py:500-508",
+     "rps7200/direct.py:835-887",
+     "rps7200/session.py:2057-2058",
+     "tools/gui.py:1984-1991",
+     "tools/gui.py:2083-2090"
+    ]
+   },
+   {
+    "id": "DEMO-07",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "demo.py:433-437 and 467-470 repeat, line for line, the driver's asked, short and clamped arithmetic and its return dict (direct.py:3622-3643). Only param_for_mm, STEP_MM and OVERHEAD_MM are borrowed (demo.py:805, 811-812). The values agree today, but this is the same 'second home' pattern CLAUDE.md forbids and that demo.py's own docstring (demo.py:425-430) records as having gone stale before."
+   },
+   {
+    "id": "DEMO-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The driver reports progress_hook(got, channels*params.lines) (direct.py:1824, 1872-1874). The demo passes lines=int(resolution*0.957) (demo.py:587, 693) and reports against that total (demo.py:1056-1057), which is a single plane's height from a retyped constant instead of session._LINES_PER_DPI (session.py:1266). The GUI shows these as 'N/M lines'. A related detail: the demo calls progress_hook and log_hook without the driver's try/except (demo.py:1043-1045, 1056-1057, against direct.py:1873-1876)."
+   },
+   {
+    "id": "DEMO-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_sign_pictures catches only (OSError, ValueError, KeyError) around np.load (demo.py:1258-1262). numpy raises EOFError for an empty file and zipfile.BadZipFile for a truncated npz; neither is caught, so the daemon thread dies before it fills _signatures or rewrites the cache. np.savez writes demo/pictures.npz in place (demo.py:1278-1279) on a daemon thread that is killed at interpreter exit. _pictures_for then finds no signatures, and _next_strip falls back to _pool_for (demo.py:1244-1245) for every later strip."
+   },
+   {
+    "id": "DEMO-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "(a) With no entries, _shape_for returns None and the test card has dpi None, so _fit keeps 574x862 at any resolution (demo.py:935-943, 1498). A shading=True pass then returns uncorrected with UNCALIBRATED_SOURCE (demo.py:890-891). (b) When _source_for returns None (no raw-byte entry of that film and no pair), _stored calls _pixels (demo.py:1356-1357), and _pixels advances _next on every call (demo.py:1380-1381), so the prescan, the probes and the scan come from different entries. (c) A finished source asked for shading=False only logs (demo.py:876-880). All are input-side, reached only with an empty or unusual library."
+   },
+   {
+    "id": "DEMO-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:257-260 says scan_roll is something 'each backend has its own copy of'. The demo binds `_drivers_roll = DirectScanner.scan_roll` (demo.py:790). direction.reverse_lines' docstring (direction.py:146-153) says it is what the demo hands over, but the demo uses encode_index(raw, reversed=...) (demo.py:624), and reverse_lines is referenced only in tests/test_decode.py:222,296."
+   },
+   {
+    "id": "DEMO-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:93-94 says 'for param 1 and param 8', and plan_nudges' docstring (session.py:1207, 1222-1223) says 'integer param in 1..8' and 'clamps silently at param 8'. The code uses DirectScanner.MAX_CORRECTION_PARAM = 87 (direct.py:3596, session.py:96-97)."
+   },
+   {
+    "id": "DEMO-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_take's meta carries only demo=True and demo_source {entry, file} (demo.py:903-907). The fitted shape, the row and column index maps, the shift from _film_mm (demo.py:947), the synthetic CLEAR_INFRARED plane (demo.py:958-964) and the synthesized _pass_reference (demo.py:973-974) are not recorded. The raw record carries no synthetic marker. Mitigation not mentioned by the reader: device.description is 'DEMO  MF Scanner ... (no scanner attached)' (demo.py:193 via library._describe_inquiry), which also marks the entry. The entry cannot be re-derived from its source, but by default it lives only under demo/library."
+   },
+   {
+    "id": "DEMO-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_shape_for (demo.py:1122-1133) takes the first entry in sorted order whose resolution_dpi matches and that has a height and width. It never looks at scan.frame, and the result is memoised for the session. An entry with a narrower window, a trimmed height or a probe crop fixes the 'device shape' for every demo pass at that dpi, and _fit then scales each axis independently (demo.py:944-947)."
+   },
+   {
+    "id": "DEMO-15",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "The fallbacks exist (session.py:2072-2074, 2555-2557, 2576-2578). Both DirectScanner (sets last_scan_meta in scan) and DemoScanner (demo.py:598, 709) always publish last_scan_meta after a successful pass, so the fallbacks are unreachable with either backend today. This is a latent design risk rather than a defect, so info."
+   },
+   {
+    "id": "DEMO-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tests/test_demo.py:659-670 and 692-706 construct DemoScanner('library') and skip when it has no entries. library/ is gitignored, so these skip in CI. The autouse fixture (tests/test_demo.py:58-65) sets _calibrated=True on the class. ensure_shading is exercised only directly (tests/test_demo.py:84), never through ScanSession's Calibrate job with the demo."
+   },
+   {
+    "id": "DEMO-17",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "DemoScanner.scan (demo.py:652-664) takes **kw and silently drops depth, advance, require_media, skip_shading, byte14 and slide_init_param, which DirectScanner.scan honours (direct.py:2842-2860). Its default resolution is 1800 where the driver's is 300. The demo's _log has no try/except (demo.py:1043-1045). No current caller (session._scan at session.py:2101-2111, scan_roll at direct.py:4124-4133, auto_exposure at direct.py:2491-2504) passes the dropped arguments, so this is latent."
+   },
+   {
+    "id": "DEMO-18",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "DemoScanner has no debug, debug_claim, _debug_capture, archive_calibration or read_state, and its suspect is a constant None (demo.py:819). session.py:2872-2875 therefore sees claim=None under the demo. With RPS7200_DEBUG=1 the demo files no metering probes or hold prescans, where the driver would. These paths cannot be reached with no device."
+   },
+   {
+    "id": "DEMO-19",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "The driver's metering loop runs up to budget = max(rounds, rounds+1) = 3 rounds (direct.py:2484 area). It continues past `rounds` while any channel is clipped (direct.py:2562-2563) and multiplies a clipped channel by 0.25 each round (direct.py:2578-2579). The demo's stored pictures do not respond to exposure_scale (demo.py:543-547, 556-559), so each round measures the same levels. A clipped channel ends at 0.25^3 ≈ 1/64, clamped at 0.01. Those scales and probe rounds are filed as metering and device_settings in demo entries (demo.py:701-708)."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "DEMO-V01",
+    "title": "In `make run-sheet` (--look-only) the sheet's scan path can be reached only by ticking 'The film is in the transport', which is false there",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:3097-3100",
+     "tools/gui.py:2075-2100",
+     "rps7200/demo.py:500-508",
+     "tasks.py:184-185"
+    ],
+    "evidence": "on_scan_chosen: `if self._calibration_missing(self.sheet.top if ...): return` before anything else. The calibration prompt says: \"The calibration frame is the lower part of the transport, which the film does not cover ... Calibrating an empty transport is a state the vendor never creates, and once it preceded a wedge.\" It shows an unticked `loaded = tk.BooleanVar(master=top, value=False)` checkbox. DemoScanner.ensure_shading does not consult self._no_film.",
+    "description": "The documented purpose of --look-only is to let on_scan_chosen run so the backend's 'no film' refusal is exercised. In a fresh demo session the path first stops at the calibration prompt. To get past it, the operator must tick an assertion that film is loaded, which is exactly what --look-only says is untrue. The demo then calibrates happily with no film. The driver's behaviour is matched, because it does not refuse either. What is lost is the one exercise meant to rehearse the correct habit: calibration with the film in, never on an empty transport. In the demo it becomes 'tick the box whatever is true'.",
+    "failure_scenario": "Stefan runs `make run-sheet`, ticks frames and presses Scan. He is asked to confirm the film is in the transport and ticks it to continue. The demo calibrates with no film, and only then does the advance refuse. The demo has trained the click-through that on the hardware precedes calibrating an empty transport.",
+    "recommendation": "Let DemoScanner.ensure_shading raise the same UsbError via _need_film('calibrate') when no_film is set. The refusal then arrives through the failed-job path, as CLAUDE.md prescribes, and the operator is never asked to assert something false. Alternatively, have the prompt say that under --look-only the tick is a formality."
+   },
+   {
+    "id": "DEMO-V02",
+    "title": "Picture-signature cache is keyed by path only, so a re-filed or migrated entry keeps a stale likeness",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "rps7200/demo.py:1263-1274"
+    ],
+    "evidence": "`key = entry.as_posix(); signature = known.get(key); if signature is None: signature = picture_signature(entry)`",
+    "description": "The cache under demo/pictures.npz never invalidates. There is no mtime, checksum or size check. An entry whose prescan.tif or scan.tif is rewritten (migrate-raw, migrate_direction flipping a bottom-up prescan, a deleted-and-reused path) keeps its old signature. _next_strip then groups photographs from the stale value.",
+    "failure_scenario": "After `tools/library.py migrate-raw --write` rewrites entries, or migrate_direction flips a prescan, a later demo 'new strip' treats two different photographs as one, or one photograph as two. The strip then repeats pictures or shows a frame out of place.",
+    "recommendation": "Key the cache on (path, mtime_ns and size of the file signed), or store the sha256 recorded in scan.json alongside each signature."
+   }
+  ],
+  "persisted_state_corrections": "1) \"Demo entry record\" says film is 'negative' on hold/aim replacement prescans. That holds only for dry-run walk entries, where rf.prescan_meta is filed as the entry (session.py:2550-2559). On a scanning roll only read_direction and carriage_state of the prescan meta are kept (library.py:381). The same bug affects real walks filed by tools/scan_roll.py:669, not only demo ones.\n2) The record does carry a second demo marker the table omits: device.description = \"DEMO  MF Scanner  fw 1.70  (no scanner attached)\" (demo.py:193 via library._describe_inquiry). \"carries no marker that it is synthetic\" is true of the raw block only, not of the entry as a whole.\n3) \"Demo roll and walk folders\" and \"Real walk shown by run-sheet\": under --demo with --rolls pointing at the real rolls folder, the real walk is written to, not only read: approved.json (gui.py:3164-3166) and the roll's frames and roll.json via Roll(out=folder). The comment at gui.py:8868-8874 claiming otherwise is wrong in that configuration.\n4) \"Demo calibration cache\": the GUI reads session.reference, which is `--reference` if given. Under --demo with `--reference calibration/shading.npz`, the real cache's existence and age are read, but it is never loaded or written, because the demo's ensure_shading ignores `path`.\n5) Demo shading.npz: when the reference is synthesized by _pass_reference, its arrays are float64 and pixels_per_line equals the pass width. When the source reference is passed through unchanged, its original dtype is kept. It is written by ShadingReference.save through np.savez_compressed (shading.py:75-91), as the table states."
+ }
+}

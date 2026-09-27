@@ -1,0 +1,174 @@
+{
+ "type": "result",
+ "key": "v2:958a8f23cc5697d16ddcba13181f4886fc0509f94959a61acc659a8bd4de764f",
+ "agentId": "adc550d9fc2985874",
+ "result": {
+  "verdicts": [
+   {
+    "id": "FR-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Checked at HEAD f193920. gui.py:1502-1504 creates the Transport-panel 'reverse the direction' tick. gui.py:141 puts it in REMEMBERED and gui.py:5243 in RESTORABLE, so it comes back from gui-settings.json and from a reopened roll's settings.reverse_hold (session.py:2445). gui.py:3194 hands it to every sheet-commissioned Roll as reverse_hold. session.py:2512 passes it on, and direct.py:4008 gives it to _hold_to_approved, where direct.py:3344 negates the target: `target = -approved.offset_mm if reverse else approved.offset_mm`.\n\nThe hold loop is closed-loop in picture space. measure_shift_mm compares the current prescan with the approved reference, so negating the target drives the picture to the mirror position whatever the transport's physical sense. The wrong_way check at direct.py:3390 compares motion with the commanded `want`, which follows the negated target, so it never trips, and the outcome reads 'held'.\n\nThe tick is advertised as a fix for manual moves: the help text at gui.py:1959 says 'If it goes the wrong way, tick reverse the direction', and gui.py:3403 and 5057 apply it to Move and Aim. _approved_note (3226-3263) never mentions it, and the sheet's OPTIONS (7805) omit it.\n\nTwo small corrections to the reader's account:\n- It is not wholly unrecorded. Each frame's registration.approved carries reverse_applied, and target_mm already negated (direct.py:3346-3347).\n- The same flag is honoured inconsistently. _aim_frame never passes it (direct.py:3509-3514), and tools/scan_roll.py:605-632 never passes reverse_hold. So the GUI sheet path is the only one that mirrors."
+   },
+   {
+    "id": "FR-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Approved branch, direct.py:4031-4036: the arrival prescan_image is overwritten with fix['prescan'], and prescan_before is not set. Correct branch, direct.py:4061-4063: prescan_before is kept, but session.py:2567-2590 writes it only inside `if job.dry_run:`, as a corrected TIFF with file_entry=False and no raw bytes.\n\nThe hold and aim verification passes (direct.py:3377) are never filed unless debug filing is on. For the frame entry, session.py:2627 passes prescan=rf.prescan, the corrected image from DirectScanner.prescan (shading=True by default, direct.py:2053-2083), and no raw prescan. library.py:269-270 writes it, and the record's prescan block (377-382) holds only file, read_direction and carriage_state, with nothing marking it corrected.\n\nlibrary.save's docstring admits 'prescan.tif has no raw bytes of its own', but the record does not label the pixels as corrected. The numeric history survives in registration.approved.history. The images behind it do not."
+   },
+   {
+    "id": "FR-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The arithmetic checks out:\n- APERTURE_MM = 10344 × 25.4 / 7200 = 36.4913 mm (framing.py:373). At 428 columns that is 0.08526 mm per pixel, so framing.py:1063 gives reach = int(9.0 / 0.08526) = 105.\n- uniformity.register fills its window only for dx in ±min(max_shift, w // 2) = ±105 (uniformity.py:378-383).\n- FINE_MAX_MM = 0.1057 × 87 + 0.1057 × 1.84 = 9.390 mm, about 110 columns (session.py:96-97). gui.py:241 sets MAX_TRAVEL_MM to that, and snap_offset clamps to it (gui.py:5897).\n\ndirect.py:3592's own comment records that param 87 moved 109 px, which is outside a ±105 search. A target near the top of the allowed range therefore lands the true peak outside the correlation window. The framing.py:854-855 claim 'Just over MAX_TRAVEL_MM, so any displacement the transport can produce is inside the window' is stale from the param-8 era.\n\ntools/scan_roll.py hold_from_walk (293-297) does not clamp at all, so its targets can exceed even 9.39 mm."
+   },
+   {
+    "id": "FR-04",
+    "verdict": "partly",
+    "severity": "low",
+    "corrected_description": "The legacy 36.0 mm frame model, still used when there is no edge reader, disagrees with FRAME_WIDTH_UNITS. The pieces are FRAME_WIDTH_MM (framing.py:586), TARGET_GAP_MM (740), the right-edge reading through frame_mm (720) and right_gap_closure's 36.0±0.3 mm closure test (1366-1368, 1430). The framing.py:3-7 module header still describes a 36 mm frame in a 36.5 mm aperture with half a millimetre of slack.\n\nCLAUDE.md openly documents that rolls with no reader aim on the 36.0 mm model, so the fallback itself is disclosed. What is unguarded is the operator side. unread_at returns None for positive and Kodachrome (propose.py:74), so neither the Roll dialog (gui.py:2224-2229) nor scan_roll (387-389) says that edges are not read on this film when 'correct' is ticked. The roll silently aims with a detector calibrated on C-41 bright base.",
+    "corrected_locations": [
+     "rps7200/framing.py:3-7",
+     "rps7200/framing.py:586",
+     "rps7200/framing.py:720",
+     "rps7200/framing.py:740",
+     "rps7200/framing.py:1366-1368",
+     "rps7200/framing.py:1426-1434",
+     "rps7200/direct.py:3896",
+     "tools/frame_edges/propose.py:74",
+     "tools/gui.py:2224-2229",
+     "tools/scan_roll.py:387-389"
+    ],
+    "reasoning": "The code does what the finding describes: StripWalk(reader=None) falls back to frame_offset_mm, right_gap_closure and predict_offset (framing.py:1796-1802). But CLAUDE.md states this fallback explicitly ('A roll with no edge reader ... still aims on the older 36.0 mm model'), so the design is disclosed rather than hidden.\n\nThe failure scenario, in which dark slide gaps calibrate a base and produce agreeing votes that nudge the film, is speculative. film_base_from may simply fail to arm on a positive, and nothing in the code shows it arming. What is real is the missing warning or refusal for 'correct' on films the edge reader does not read, and the stale module header."
+   },
+   {
+    "id": "FR-05",
+    "verdict": "partly",
+    "severity": "low",
+    "corrected_description": "The --approved help text openly says positions are 'proposed for the whole strip', so ignoring approved.json matches what it advertises. The real divergences from the sheet's commission are three:\n- hold_from_walk's offsets are neither snapped (snap_offset) nor clamped to MAX_TRAVEL_MM, so they can exceed one command and the ±105-column verification reach.\n- Frames the detector left at 'none' get no Approved (scan_roll.py:293-297). They are not held to their survey position at all, where the sheet would hold them at 0 relative to the reference, which corrects rewind error.\n- reverse_hold is never passed.\nSo the claim that 'what runs here is what runs there' is only approximately true.",
+    "corrected_locations": [
+     "tools/scan_roll.py:134-140",
+     "tools/scan_roll.py:293-297",
+     "tools/gui.py:6436-6452"
+    ],
+    "reasoning": "Checked hold_from_walk (scan_roll.py:223-307): it never opens approved.json, never calls snap_offset, and only includes `n in offsets`. The sheet builds an Approved for every ticked frame with snap_offset(offsets.get(n, 0.0)) (gui.py:6438-6440). The help text promises re-proposal rather than replaying the operator's positions, so the approved.json part is documented behaviour rather than a mismatch."
+   },
+   {
+    "id": "FR-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Offsets are carried and persisted in mm:\n- centre.py:325 columns_to_mm\n- the Approved.offset_mm field\n- gui.py:3314 writes offset_mm to approved.json\n- framing.registration's *_mm keys (framing.py:260-273)\n- HOLD_TOLERANCE_MM and ROLL_TRAVEL_LIMIT_MM\n\nprotocol.py:228 itself narrows CLAUDE.md's rule to 'anything an operator reads'. The two unit models differ as described:\n- 428 / 1.2423 = 344.5 units per aperture\n- 36.4913 / 0.1057 = 345.2 units per aperture\ncentre.py's docstring deliberately uses the APERTURE_MM/width scale so that the hold loop verifies in the same scale. Landing is therefore correct, and only the open-loop param picked is about 0.2% larger. The substance, stored records in mm against the owner's stated rule and with no unit model recorded, stands."
+   },
+   {
+    "id": "FR-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "direct.py:3985-3993 returns from the generator whenever frame_contrast < BLANK_CONTRAST (0.02), with no check of `frames`, the counter or `only`. The blank prescan is never yielded, so it is never filed (session.py files only yielded RollFrames).\n\nIn addition, frame_contrast returns 0.0 when the mean level is ≤ 0 (framing.py:69-71). A fully black prescan (dense slide, lamp problem) therefore also ends the roll as 'end of film'.\n\nThe demo inherits this unchanged via _drivers_roll = DirectScanner.scan_roll."
+   },
+   {
+    "id": "FR-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The only prescan call that passes film is the first one (direct.py:3968-3974). _hold_to_approved's verification prescan at direct.py:3377 takes the default FILM_NEGATIVE (2057), and direct.py:3158 writes film into scan meta.\n\nAfter a hold or aim, direct.py:4035 and 4066 replace prescan_meta with that pass's meta. On a dry run session.py:2555-2566 files it as the walk prescan's library entry, so scan.film reads 'negative' on a B&W walk.\n\nOne correction to the reader's account: for a real roll's frame entry, the film in scan.json comes from the frame scan's own meta, and the prescan block records only read_direction and carriage_state. The frame entry is therefore not mislabelled; only walk prescan entries are.\n\ndemo.py:1326 does select pools by scan.film."
+   },
+   {
+    "id": "FR-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Python evaluates min(M, nan) to M, so max(-M, min(M, nan)) = M: NaN becomes +MAX_TRAVEL_MM (gui.py:5897).\n\nNothing checks for non-finite values on the way in:\n- read_approved uses bool(nan), which is True, then float(...) (gui.py:5461-5463).\n- _clean_sheet_state casts with float() (2632-2639).\n- centring and decide have no isfinite check.\n\nThe realistic source is a hand-edited file, because detector outputs are built from integer base widths. Low."
+   },
+   {
+    "id": "FR-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "A grep over rps7200, tools and tests finds no caller of command_for, describe_command, framing.edge_band, Band or _row_runs. tools/roll_registration_study.py has its own edge_band. CORRECTION_DEADBAND_MM (direct.py:3575) is never read.\n\nThe dead code carries MAX_VERIFIABLE_PARAM = 160 (framing.py:1969), which direct.py:3592-3596 explicitly says is unverifiable (confidence 27 against a floor of 55)."
+   },
+   {
+    "id": "FR-11",
+    "verdict": "partly",
+    "severity": "low",
+    "corrected_description": "These constants have a second, typed home:\n- COMMAND_COST (framing.py:1939) and COMMAND_UNITS (protocol.py:276) are both 1.84, and nothing pins them equal. The only test that names them, tests/test_roll.py:1129-1138, still says COMMAND_COST 'describes the same command with a 17% larger ramp', which is stale.\n- demo.py:451 retypes 0.1057.\n- framing.py:1368 retypes 36.0.\n- verify_protocol.py:484 keeps the retired 0.1662 ramp, and 1203 picks a SLIDE param with the retired 1.5724.\n- MAX_DY_MM uses 24.3053 rather than APERTURE_HEIGHT_MM (24.2993), leaving a 0.00004 mm margin at dy = 2 on 287 rows.\n- HOLD_TOLERANCE_MM's comment gives a stale reason: framing already imports protocol.\n\nThe reader's failure scenario for MAX_DY_MM is wrong. Replacing 24.3053 with APERTURE_HEIGHT_MM would make both sides the same float expression, 2 × (A / 287), and the gate is `dy_mm > MAX_DY_MM`, so equality passes. It would not flip on rounding. HOLD_TOLERANCE_MM is pinned by tests/test_roll.py:1350 (abs = 1e-3).",
+    "corrected_locations": [
+     "rps7200/framing.py:902",
+     "rps7200/framing.py:1117",
+     "rps7200/framing.py:1151",
+     "rps7200/framing.py:1368",
+     "rps7200/framing.py:1939",
+     "rps7200/protocol.py:276",
+     "rps7200/demo.py:451",
+     "tools/verify_protocol.py:484",
+     "tools/verify_protocol.py:1203",
+     "tests/test_roll.py:1129-1138"
+    ],
+    "reasoning": "All the retyped copies are verified in code. The claimed hair-trigger failure does not happen with the `>` comparison at framing.py:1118. The unpinned COMMAND_COST/COMMAND_UNITS pair and the stale verify_protocol ramp are the real items."
+   },
+   {
+    "id": "FR-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Each stale text is in the code:\n- protocol.py:290 says 'param 1 travels 2.57'; it is 2.84.\n- gui.py:5929 says 'lattice is 2.57 units off zero'.\n- session.py:94 and 1208 say 1..8.\n- session.py:1222 says 'clamps silently at param 8'.\n- gui.py:5893 says 'what eight commands can chain', but MAX_TRAVEL_MM is one command (gui.py:241).\n- The Aim dialog at gui.py:5050 says 'more than {MAX_FINE_STEPS}' (8) moves for anything past one command.\n- shortcuts.py:148-149 labels the adjuster keys 'Move the film one step left/right', while gui.py:7400-7417 shows _step only sets the sheet offset."
+   },
+   {
+    "id": "FR-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gui.py:2219-2229 only appends the unread_at text to the question; a single OK proceeds. scan_roll.py:388-389 calls ap.error for --correct at an unreadable dpi. propose._downscaled returns None for 860- or 1292-column passes (propose.py:94-95), so every frame is refused."
+   },
+   {
+    "id": "FR-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "shortcuts.resolve accepts any str (193). _bind_shortcuts calls self.root.bind(sequence, ...) with no try (gui.py:907), from __init__ at gui.py:567 after session.start(). An invalid Tk sequence raises TclError there. in_scope builds a dict keyed by sequence, so a duplicate silently drops an action (shortcuts.py:236-240)."
+   },
+   {
+    "id": "FR-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "demo.py:947 builds the column map with np.roll, so the picture wraps. demo.py:451 retypes 0.1057 instead of using MM_PER_UNIT. The real hold and aim code runs on this input (demo.py:787, 795). It is an input simplification rather than an `if demo` branch, but it makes verification optimistic."
+   },
+   {
+    "id": "FR-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "framing.py:1584-1588 takes max over tuples (float, Reading, Reading). Reading is @dataclass(frozen=True) without order (1284), so a tie on the float compares Readings and raises TypeError. That is outside the per-frame except at direct.py:4147. Ties need exact float equality among three members, so the crash is very rare.\n\nThe message is certainly wrong: max picks the pair that disagrees most and calls it 'closest'."
+   },
+   {
+    "id": "FR-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "StripWalk.record adds abs(travelled_mm) (framing.py:1763), and affordable compares against ROLL_TRAVEL_LIMIT_MM = 12.0, about 113 units (1775, 1169). _aim_frame stops aiming when it is exceeded (direct.py:3480-3490). The justifying comment is about net creep. Per-frame re-centring against a systematic advance error accumulates absolute travel while the net position stays centred."
+   },
+   {
+    "id": "FR-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_errors is popped only in add (watch.py:136) and in begin. _run sets _errors[number] on a failed summary or read (244), and a later successful read of the same version, such as the finish-time re-read against a larger context, never clears it. _progress then reports FAILED whenever _errors is non-empty (281-282).\n\nThread safety is otherwise sound. The Condition wraps an RLock, so load → begin/add re-entry is fine, and superseded work is discarded by generation and version checks."
+   },
+   {
+    "id": "FR-19",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "_write_approved records only number, offset_mm, rotation, flipped, reference_entry, source and as_walked (gui.py:3312-3322). EdgeWatch notes (edges, units, columns) exist only in memory (watch.py:268-284). The in-walk correct path does persist its note under registration.correction.ensemble (direct.py:4057-4058 via _aim_frame's 'ensemble' key), so the two paths differ as described."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "FR-A1",
+    "title": "The 'reverse' flag is honoured by one path only: sheet commissions mirror their targets, while scan_roll --approved and in-walk aiming ignore it",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "rps7200/direct.py:3344",
+     "rps7200/direct.py:3509-3514",
+     "tools/scan_roll.py:605-632",
+     "tools/gui.py:3194"
+    ],
+    "evidence": "direct.py:3509-3514 `fix = self._hold_to_approved(index, image, prescan_resolution, _Aim(offset_mm=decision, reference=image), keep_raw=keep_raw, should_stop=should_stop, source=\"ensemble\", ...)` (no reverse); tools/scan_roll.py:605-632 s.scan_roll(... approved={n - 1: a for n, a in held.items()}, ...) with no reverse_hold; gui.py:3194 `reverse_hold=self.v_reverse.get()`.",
+    "description": "One setting, three meanings. A sheet commission from the window negates every approved target when the tick is on. The same walk held through tools/scan_roll.py --approved does not negate them, and neither does the in-walk 'aim each frame' hold. Because the hold loop verifies in picture space, the negation is the wrong behaviour in any case (see FR-01). The split also means the window and the CLI place the same frames differently for the same walk.",
+    "failure_scenario": "With the tick on, a roll commissioned from the sheet lands every frame at the mirror of its target. The same walk run through scan_roll --approved lands them correctly. Comparing the two outputs looks like transport nondeterminism rather than a flag.",
+    "recommendation": "Remove reverse_hold from the hold path, since the loop is closed in picture space. If a transport-sense switch is really needed, apply it to the command in nudge, consistently for every caller."
+   }
+  ],
+  "persisted_state_corrections": "1. Frame entry `prescan.tif` film label: FR-08 does not reach the frame entry. Its scan.json film comes from the frame scan's own meta (session.py:2622-2626), and the prescan block stores only file, read_direction and carriage_state (library.py:377-382). The mislabelled film='negative' lands on walk prescan library entries (dry runs, session.py:2555-2566) whose prescan was replaced by a hold or aim pass.\n2. Missing row: reverse_hold is persisted in rolls/<roll>/roll.json and survey.json under settings.reverse_hold (session.py:2445). It is read back into the window's 'reverse' control through RESTORABLE and restorable() (gui.py:5243, 5296-5320), and in gui-settings.json as the 'reverse' control (gui.py:141). Per frame, registration.approved.reverse_applied and target_mm, already negated, are written (direct.py:3346-3347). approved.json's offset_mm is the un-negated sheet value, so the two files disagree in sign whenever reverse was on.\n3. Walk prescan library entries (dry runs): the raw bytes and meta filed are those of the last pass, the post-hold or post-aim replacement (direct.py:4034-4035, 4065-4066). They are consistent with prescanNN.tif, but the arrival pass is not stored raw anywhere unless debug filing is on.\n4. prescanNN-before.tif is written only on a dry run that took the correct/aim branch, never on the approved-hold branch and never on a real roll (session.py:2536, 2567). The claimed table says this; the 'dry runs with correct only' wording is right.\n5. tools/scan_roll.py --approved reads rolls/<roll>/survey.json or roll.json and prescanNN.tif via walked_prescans and prescan_arrangement (scan_roll.py:262-283). It never reads approved.json; the table states that correctly."
+ }
+}

@@ -1,0 +1,187 @@
+{
+ "type": "result",
+ "key": "v2:e4b74a51396dcae26b361211e0eeb05113a6a4bdecac75afb5483b1c812bce46",
+ "agentId": "ad711b4f6957bf6de",
+ "result": {
+  "verdicts": [
+   {
+    "id": "LIB-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:2620-2628 passes `prescan=rf.prescan, prescan_meta=rf.prescan_meta` and `raw_image=rf.raw_image`, so the frame gets its raw pixels and the prescan does not. rf.prescan is `prescan_image, _ = self.prescan(... shading=shading ...)` (direct.py:3968-3975), which is the corrected return, while `raw_prescan = self.last_pixels_raw` is carried and never filed on a real roll. The prescan's raw bytes are gone as well, because the frame pass overwrites last_raw. library.save writes the prescan with `tiff.write(... \"prescan.tif\", prescan ...)` (269), and the record keeps only file, read_direction and carriage_state (376-382). No field labels its correction state. scan_roll.py:752-755 does the same. demo._taken_raw (demo.py:1473-1485) states the unrecorded convention in its own docstring. prescan_before is never a library entry on either path. A dry run writes it only as a corrected TIFF in the roll directory: session.py:2567-2587 with `file_entry=False`, and scan_roll.py:686-694 with plain `tiff.write`. On a real roll it is not written at all. With debug on, the prescan pass is debug-filed with its bytes, because only the frame's raw pixels are claimed (session.py:2872-2875).",
+    "corrected_description": "As described, with one refinement: prescan_before is not a library entry on any path. A dry run writes it only as a corrected TIFF in the roll directory (file_entry=False, or tiff.write in scan_roll.py). A real roll writes nothing."
+   },
+   {
+    "id": "LIB-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "In FrameWriter._write, `entry = library.save(...)` (session.py:1656) runs before the `for path in job.get(\"paths\")` loop (1673), with no try around it. `_run` (1594-1598) catches the exception, appends an error and drops the job, which held the raw bytes in `capture`. `_filed` then calls request_stop for a Roll (2003-2015). The protection is also weaker than it looks with debug on. `_file` calls `claim(raw_image)` at submit time (session.py:2872-2875), before the save is known to succeed, and `_debug_flush` unlinks claimed spool files without filing them (direct.py:1055-1059). So even with RPS7200_DEBUG=1 the spooled copy is deleted. In tools/scan.py:366-375, `for held in pending: entries.append(library.save(...))` has no per-pass guard, and the scanner has already been closed and flushed with those passes claimed (hold() calls debug_claim, scan.py:294-296).",
+    "corrected_locations": [
+     "rps7200/session.py:1632-1668",
+     "rps7200/session.py:1671-1694",
+     "rps7200/session.py:1587-1600",
+     "rps7200/session.py:2003-2015",
+     "rps7200/session.py:2872-2875",
+     "rps7200/direct.py:1055-1059",
+     "tools/scan.py:294-300",
+     "tools/scan.py:366-375"
+    ]
+   },
+   {
+    "id": "LIB-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "tools/library.py:151-153 counts any verdict that starts with 'could not' as unreadable. reconstruct returns `could not decode: {exc}` for KeyError, ValueError, TypeError and ScanReadError (library.py:719-720), and `could not read scan.tif` (748-749) and `could not read scan.json` (700) for the other failures. The summary (164-168) then says 'every entry that can be decoded still decodes to exactly what was stored' and 'had nothing to decode from -- not a regression', and `return 1 if changed else 0` exits 0. A decode_index change that raises ScanReadError for every RGBI pass therefore passes the one named regression gate. Each line does print a '-' with the error, but the exit code and the summary are both wrong."
+   },
+   {
+    "id": "LIB-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "save() calls `reindex(root)` after the record rename and the INCOMPLETE unlink (library.py:397-399). reindex writes with a plain `index.write_text(...)` (1064), and no code reads index.json (grep finds none). A failed write raises out of save(). FrameWriter then skips the copies and stops the roll, and _debug_flush sets `failed += 1` and keeps the spool, so re-filing it by hand duplicates the entry. A concurrent reindex is reachable. The session's finally block calls `self._scanner.close()`, which runs _debug_flush and so library.save, before `self._writer.finish()`, while the writer thread may still be filing (session.py:1972-1979). _reserve prevents directory collisions but not a torn index.json."
+   },
+   {
+    "id": "LIB-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The entry stores only `reference.save(path / \"shading.npz\")` (library.py:271-272). archive_calibration runs only from ensure_shading (direct.py:848-860), and its `str(archive)` is `Path(job.reference).parent/<stamp>`, which is relative to the CWD with the default 'calibration/shading.npz' (session.py:1367). load_shading records `{\"action\": \"loaded\", \"path\": ...}` with no archive and no hash (direct.py:724-729). That path is the cache, which every calibration overwrites, so after the next calibration the link names a file that no longer holds this reference. The origin is recorded only when the pass was shaded (3209-3211). tools/uniformity.py:735 calls `calibrate_shading()` without keep_data, so nothing is archived, and it saves the reference with a plain `reference.save` (743). verify() never looks at calibration/. Nothing in the code reads data.bin or calibration.json. The library.py:28 claim that 'nothing refers out' is true only in that the entry can be corrected without the archive; re-reducing the calibration needs it, and it lives outside the library."
+   },
+   {
+    "id": "LIB-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "For `applied == [\"shading\"]`, the guard at tools/library.py:247 is skipped, and every entry whose reconstruct returned a non-None image is planned. That includes the 'reference is missing, so it cannot be reproduced' verdict, which returns `image` (library.py:738-742), and any 'decode CHANGED' verdict. The write sequence is `os.replace(scan.tif -> KEPT)`, then `os.replace(fresh -> scan.tif)`, then the record (273-284). A crash between the two replaces leaves no scan.tif. A crash after the second leaves raw pixels labelled ['shading'] with a stale sha. On a rerun that entry is still 'applied' and is planned again, and `os.replace(scan.tif, KEPT)` overwrites the kept corrected file with the raw decode. KEPT is not in `files`, is not checksummed, and nothing reads it. When the reference is missing, corrected() goes from 'already' to 'no reference'."
+   },
+   {
+    "id": "LIB-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "cmd_capture builds a fresh DirectScanner (`_shading = None`, direct.py:578; open() loads nothing, 1129-1132) and calls `auto_exposure(target=..., infrared=..., film=\"positive\")` with the default `shading=True` (2397). The probe calls `self.scan(... shading=shading ...)` (2492-2505), and scan() raises `self.uncalibrated(reason)` when `self._shading is None` (2948-2963). One set_gain_offset is sent before that. No test runs cmd_capture: tests/test_scan_tool.py:485-492 only inspects the source of one_pass."
+   },
+   {
+    "id": "LIB-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "tools/uniformity.py:700-703 asks for an empty transport for metering, and 731-737 then calibrates with no prompt in between. With --exposure-scale, which is today the only way past LIB-07, calibration runs before any transport instruction has been printed, so the transport is in whatever state it happens to be. CLAUDE.md records empty-transport calibration as preceding a wedge. The metering path to it is currently blocked by LIB-07, but the --exposure-scale path is live."
+   },
+   {
+    "id": "LIB-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The check `if args.ir and 3 not in reference.ref:` (746) comes after the canary prompt (683-689), the metering and the calibration. The calibration pass is `passes=ONE_PASS_COLOR` (direct.py:2227-2233), so calculate_shading only ever sees RGB tags, and the project's own statement is that the calibration pass is RGB. Phase 2 is therefore refused on every run, after scanner time has been spent. The prompt text still describes a ~212 s IR floor, while scan() defaults to fast_infrared=True. PHASE2 also says nothing in the transport changes, yet the metering step still asks for it to be emptied."
+   },
+   {
+    "id": "LIB-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The redo branch (640-646) adds a 'rejected' tag and a REJECTED file and keeps args.tag. select() (161-171) keeps any entry carrying the tag and never checks for 'rejected'. It sorts oldest first (by directory name, which is the filing time), so the rejected pass comes before its redo. decompose uses `base = by_orientation[AS_IS][0]` (454) and `it8[by_orientation[name][0]]` (476). check_orientations takes the first as-is claim as origin (248), and a rejected, mis-inserted pass adds problems that refuse the whole study. The redo rewrites scan.json with a plain write_text, not _write_atomic, and never reindexes."
+   },
+   {
+    "id": "LIB-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "compact() swaps the gzip in, then each TIFF, then writes the record, then unlinks raw.bin (library.py:434-453). The only caller is the session close loop (session.py:1989-1995), and the CLI has no compact action (tools/library.py:74-77). A kill after a TIFF swap and before the record is written leaves image.sha256 stale, so verify reports a checksum mismatch on intact pixels. In migrate_direction, a crash after `_replace_tiff` and before `_write_atomic` means the rerun takes the `plain and np.array_equal(stored, decoded)` branch (824-826), which records the entry without refreshing image.sha256."
+   },
+   {
+    "id": "LIB-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The comparison at library.py:753-763 is a shape check followed by `np.array_equal(image, stored)`, and array_equal compares values regardless of dtype. apply_shading derives depth_scale from `np.iinfo(image.dtype).max` (shading.py:241-243), so a dtype-only change would move every corrected view while reconstruct still says 'identical'."
+   },
+   {
+    "id": "LIB-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "read_raw returns None on `(OSError, EOFError, gzip.BadGzipFile)` (library.py:604-624), and reconstruct maps None to 'no raw bytes stored for this entry' (696-699), which the CLI counts as benign. reconstruct never checks raw.sha256, so a corrupted plain raw.bin decodes and is reported as 'decode CHANGED'. Only verify compares the raw checksum."
+   },
+   {
+    "id": "LIB-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`if (path / name).exists() and _sha256(path / name) != digest:` (library.py:1104-1106) skips missing files. Only calibration.shading and calibration.ccd_mask get existence checks (1099-1103), and record.prescan.file is never checked."
+   },
+   {
+    "id": "LIB-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "save() writes scan.tif, prescan.tif, shading.npz and ccd_mask.bin before the raw block (library.py:268-304). tiff.write raises on empty, odd-dtype or non-2D/3D images (tiff.py:125-131), and any such raise aborts the save before the raw bytes are written. Only _write_atomic fsyncs, and only scan.json. Neither the data files nor the directory are fsynced before INCOMPLETE is unlinked. How reachable an empty-image pass is depends on scan() guards upstream, so this is low."
+   },
+   {
+    "id": "LIB-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "ScanReadError subclasses RuntimeError (protocol.py:341). decode_index raises it for missing or wrong-count tags (direct.py:1952-1965). decode_raw catches `(OSError, KeyError, ValueError, TypeError, json.JSONDecodeError)` only (library.py:683). migrate_direction calls decode_index directly (library.py:817-818), and the CLI catches only `(OSError, ValueError, KeyError)` (tools/library.py:304), so one bad entry aborts the run before reindex. In migrate-raw the reconstruct call screens such entries first, so the impact there is small."
+   },
+   {
+    "id": "LIB-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_debug_flush uses `root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT` (direct.py:1049), which is CWD-relative Path('library'), whatever --library or session.root says. Nothing sets RPS7200_DEBUG_ROOT from a caller's root (grep finds it only in direct.py). tools/uniformity.py one_pass closes the scanner, which flushes an unclaimed spool item, and then files the same pass with library.save (586-621). It never calls debug_claim, so every pass is filed twice, and the two entries' film notes differ, which keeps them out of the same signature group."
+   },
+   {
+    "id": "LIB-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "corrected() calls `apply_shading(image, record[\"reference\"], record[\"ccd_mask\"])` and sets 'applied' unconditionally (library.py:595-599). With no mask, apply_shading uses `loc = np.arange(min(w, reference.pixels_per_line))` (shading.py:236-237), which maps columns one to one. verify flags a missing mask only when the record names one. Reachable only for legacy entries with a reference and no mask, so low."
+   },
+   {
+    "id": "LIB-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "DemoScanner is a standalone class (demo.py:196) with no _debug_capture, _debug_flush or debug_claim. Its close() only closes the transport and clears _decoded (342-344). The session gates on `getattr(self._scanner, \"debug_claim\", None)` (session.py:2872). verify's `demo = bool((record.get(\"extra\") or {}).get(\"demo\"))` exemption (library.py:1116-1121) is scoped to every demo entry, not to entries that are uncalibrated by design. The debug machinery lives in the scanner class, below the seam, so this is untested code rather than an `if demo` in the scan path. Low."
+   },
+   {
+    "id": "LIB-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`library.provenance().get('commit', 'unknown')` (tools/uniformity.py:377): provenance() returns driver_commit, driver_commit_full and the other driver_* keys, and has no 'commit' (library.py:101-115)."
+   },
+   {
+    "id": "LIB-21",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "reconstruct only re-decodes and compares against scan.tif. calibration.report (library.py:360) is stored and nothing reads it for comparison. No command re-runs corrected() against a baseline."
+   },
+   {
+    "id": "LIB-22",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "The record is written with `json.dumps(record, indent=2, default=str)` (library.py:397), and `extra` passes any non-recorded meta through (337). numpy integer scalars, arrays and bytes would be stringified silently. The device record comes from the dataclass fields of Inquiry (protocol.py:479-492), and the INQUIRY bytes are not kept. Commands are already hex (direct.py:480-491), so today's known fields are safe. Info."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "LIB-A1",
+    "title": "A corrupt shading.npz aborts reconstruct, migrate-raw and every export of the entry with an uncaught BadZipFile",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/library.py:731-744",
+     "rps7200/library.py:533-541",
+     "rps7200/shading.py:94-106",
+     "tools/library.py:60-63",
+     "tools/library.py:146-148"
+    ],
+    "evidence": "reconstruct legacy branch: `reference = ShadingReference.load(path / ref_file)` with no try; load(): `ShadingReference.load(path / ref_file) if ref_file and (path / ref_file).exists() else None`; ShadingReference.load is `with np.load(path) as z:`. _one_shading_explains catches only `(OSError, ValueError, KeyError)`; the reconstruct CLI loop has no try at all.",
+    "description": "np.load on a truncated or corrupt .npz raises zipfile.BadZipFile (or EOFError), and none of these callers catch it. The 'bytes that are not a pass are a verdict about this entry, not a reason to stop checking every entry after it' rule that reconstruct applies to ScanReadError does not cover the reference. One damaged reference on a legacy labelled entry stops `make reconstruct` with a traceback partway through. The same damage makes load()/corrected() raise for that entry in the GUI and make_comparison.",
+    "failure_scenario": "A sync tool truncates one legacy entry's shading.npz. `tools/library.py reconstruct` dies with BadZipFile at that entry, and none of the entries after it are checked.",
+    "recommendation": "Catch reference-load failures in reconstruct, load and _one_shading_explains, and report them as a per-entry verdict. verify already catches the checksum mismatch.",
+    "doc_reference": "rps7200/library.py:717-718 (comment: \"bytes that are not a pass at all are a verdict about this entry, not a reason to stop checking every entry after it\")"
+   },
+   {
+    "id": "LIB-A2",
+    "title": "A refused command is recorded only by its exception class name",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:483-488"
+    ],
+    "evidence": "`except Exception as exc:\n    entry[\"refused\"] = type(exc).__name__\n    self.record.append(entry)\n    raise`",
+    "description": "extra.commands is described as every command with what came back, but for a command that failed the entry keeps only e.g. 'ScanReadError' or 'USBError'. The message is dropped: sense data, bytes received before failure, LIBUSB error code. A pass that is later analysed for why it failed or was cut short cannot say what the device answered.",
+    "failure_scenario": "A READ fails with 'bulk read of 16384 bytes failed after 0 bytes: LIBUSB_ERROR_PIPE'. The filed record (debug spool, or a partially successful pass) says only 'refused': 'OSError', and the detail that told the known stall apart from others is gone.",
+    "recommendation": "Record `f\"{type(exc).__name__}: {exc}\"` (and any sense bytes the exception carries).",
+    "doc_reference": "CLAUDE.md 'Scans': \"The record carries ... every command the pass sent with what came back (`extra.commands`)\""
+   }
+  ],
+  "persisted_state_corrections": "Framing prescan beside a frame: prescan_before is never a library entry on any path. A dry run writes it as a corrected TIFF in the roll directory only (session `_file(..., file_entry=False)`; scan_roll.py `tiff.write`). A real roll does not write it at all. A dry-run walk's prescans are filed as their own entries, with raw pixels in scan.tif and their raw bytes; that path is correct. Debug spool: `_debug_flush` does not file claimed items. It unlinks them (direct.py:1055-1059), and claiming happens when the job is submitted (session.py:2872-2875, tools/scan.py:294-296), before the caller's library.save has succeeded, so a failed FrameWriter save loses the spooled copy too. 'Kept on a failed save' applies only to unclaimed items. Entry record: `created`, and the id timestamp, is filing time, not scan time. For debug-filed passes and tools/scan.py passes that is after close(); the scan time is extra.started_utc. extra.commands.sent[].refused holds only the exception class name. READ replies of 256 bytes or more are counted in image_reads, not kept. Calibration archive: written with the device still open (uncompressed, 1.7 MB) under `Path(reference).parent`, which is CWD-relative 'calibration/' by default. For a 'loaded' origin, shading_origin.path names the cache file that every calibration overwrites, so it no longer identifies the reference used, and no hash of the reference is recorded. Cached session reference (uniformity): written by a plain `reference.save`, not atomically. That part of the table is correct; also, uniformity never archives the calibration bytes. The rest of the table matches the code."
+ }
+}
