@@ -1648,9 +1648,10 @@ def test_the_advice_names_the_frames_a_roll_that_gave_up_never_reached(
     code = _driven(tmp_path, monkeypatch, "--frames", "8",
                    failing=(3, 4, 5))
     assert code == 1
+    out = scan_roll._quoted(tmp_path / "roll")
     assert _advice(capsys.readouterr().err) == [
-        "resume the unfinished frames with --out "
-        f"{tmp_path / 'roll'} --start-at 3 --only 3,4,5,6,7,8"]
+        f"resume the unfinished frames with --out {out} --start-at 3 "
+        "--only 3,4,5,6,7,8"]
 
 
 def test_the_advice_goes_on_to_the_end_of_a_strip_it_did_not_reach(
@@ -1659,7 +1660,7 @@ def test_the_advice_goes_on_to_the_end_of_a_strip_it_did_not_reach(
     at frame 5 is not that end: the rest has to be asked for as well."""
     code = _driven(tmp_path, monkeypatch, failing=(3, 4, 5))
     assert code == 1
-    out = tmp_path / "roll"
+    out = scan_roll._quoted(tmp_path / "roll")
     assert _advice(capsys.readouterr().err) == [
         f"resume the unfinished frames with --out {out} --start-at 3 "
         "--only 3,4,5",
