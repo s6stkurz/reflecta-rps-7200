@@ -633,6 +633,55 @@ def test_debug_filing_runs_after_this_tools_own(tmp_path, monkeypatch):
     assert order == ["filed", "claimed", "scanner exited"]
 
 
+def ctrl_c() -> None:
+    """A Ctrl-C now, taken by whatever handler is in force: the deferral's,
+    or Python's own, which raises KeyboardInterrupt where it lands."""
+    import signal
+
+    signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+
+
+@pytest.fixture
+def terminal_ctrl_c():
+    """SIGINT as a tool started from a terminal has it, for the test only."""
+    import signal
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, previous)
+
+
+def test_a_ctrl_c_while_filing_waits_for_every_pass_and_debug_filing(
+        tmp_path, monkeypatch, terminal_ctrl_c):
+    """The filing and debug filing ran outside the tool's Ctrl-C deferral
+    once `HeldOpen` moved debug filing after it. A Ctrl-C there raised in
+    the middle of them: the passes after it went unfiled, and the spool
+    debug filing had already taken off the scanner went nowhere."""
+    from rps7200 import library
+
+    order = []
+    real_save = library.save
+
+    def save(*a, **kw):
+        if not order:
+            ctrl_c()
+        order.append("filed")
+        return real_save(*a, **kw)
+
+    class Exiting(FakeCorrectingScanner):
+        def __exit__(self, *exc):
+            order.append("scanner exited")
+
+    monkeypatch.setattr(library, "save", save)
+    try:
+        _created, code = run_correcting(tmp_path, monkeypatch, "--bracket",
+                                        "2", scanner=Exiting)
+    except KeyboardInterrupt:
+        pytest.fail(f"one Ctrl-C cut the filing short, after {order}")
+    assert order == ["filed", "filed", "scanner exited"]
+    assert code == 0
+
+
 def test_an_empty_library_means_do_not_file(tmp_path, monkeypatch):
     """`--library ''` is `tools/scan_roll.py`'s way of saying skip. Here it
     filed into the current directory, where nothing looks for a library."""

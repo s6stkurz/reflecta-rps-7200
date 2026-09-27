@@ -74,6 +74,7 @@ from rps7200.session import (
     RollManifest,
     debug_filing_into,
     earlier_manifest,
+    filing_interrupt,
     keep_first_numbering,
     manifest_settings,
     plan_nudges,
@@ -1092,18 +1093,23 @@ def main() -> int:
         # structural; widening the roll's except tuple only moves the next
         # one. `ScanSession._run` has had this shape all along, which is why
         # the window never lost a frame this way.
-        writer.finish()
-        # Debug filing last, once every frame is filed and claimed: what it
-        # finds unclaimed is what this run did not keep -- probes, holds, and
-        # a frame whose filing failed.
-        if device is not None:
-            try:
-                # Into this run's library, beside the frames it is
-                # evidence for.
-                with debug_filing_into(args.library):
-                    device.release()
-            except Exception as exc:                     # noqa: BLE001
-                print(f"debug filing: {exc}", file=sys.stderr)
+        #
+        # Ctrl-C deferred through it as through the frames: see
+        # `session.filing_interrupt`.
+        with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
+                                                  flush=True)):
+            writer.finish()
+            # Debug filing last, once every frame is filed and claimed: what
+            # it finds unclaimed is what this run did not keep -- probes,
+            # holds, and a frame whose filing failed.
+            if device is not None:
+                try:
+                    # Into this run's library, beside the frames it is
+                    # evidence for.
+                    with debug_filing_into(args.library):
+                        device.release()
+                except Exception as exc:                 # noqa: BLE001
+                    print(f"debug filing: {exc}", file=sys.stderr)
     # Only the entries: a walk's -before picture is written with none.
     filed = {n: e for n, e in writer.done if e is not None}
     for record in manifest["frames"]:

@@ -1280,6 +1280,53 @@ def test_debug_filing_runs_once_every_frame_is_filed(tmp_path, monkeypatch):
     assert all(int(p.max()) == RAW_LEVEL for p in created[0].claimed)
 
 
+def test_a_ctrl_c_while_filing_waits_for_the_filing_and_debug_filing(
+        tmp_path, monkeypatch):
+    """The writer's last frames and debug filing ran after the roll's Ctrl-C
+    deferral had ended, once `HeldOpen` moved debug filing after the writer.
+    A Ctrl-C while the last frames gzipped raised there: debug filing never
+    ran, and what it had spooled was left where nothing names it."""
+    import signal
+
+    from rps7200 import session
+
+    created = []
+
+    class Patched(_Claiming):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    real_finish = session.FrameWriter.finish
+
+    def finish(self):
+        # A Ctrl-C now, taken by whatever handler is in force.
+        signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+        created[0].order.append("writer finished")
+        return real_finish(self)
+
+    monkeypatch.setattr(session.FrameWriter, "finish", finish)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "ordered", "--frames", "2"],
+    )
+    # SIGINT as a tool started from a terminal has it, for this test only.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        code = scan_roll.main()
+    except KeyboardInterrupt:
+        pytest.fail("one Ctrl-C cut the filing short: "
+                    f"{created[0].order}")
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert created[0].order == ["writer finished", "scanner exited"]
+    assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 2
+    assert code == 0
+
+
 def test_a_walks_prescans_are_written_off_the_scanning_thread(tmp_path,
                                                              monkeypatch):
     """Deflated on the thread that drives the scanner, each prescan held the

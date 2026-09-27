@@ -37,6 +37,7 @@ from rps7200.library import FilmNotes
 from rps7200.session import (
     HeldOpen,
     debug_filing_into,
+    filing_interrupt,
     keep_unfiled,
     reference_refused,
     say_reused,
@@ -382,46 +383,52 @@ def main() -> int:
     entries = []
     #: Passes the library would not take, said once filing is over.
     unfiled: list[str] = []
-    try:
-        for n, held in enumerate(pending, 1):
-            # Each pass on its own. A bare loop let the first refusal -- a
-            # full disk, --library naming a file -- escape as a traceback, and
-            # every pass after it, the bracket's merge and --out went with it:
-            # all of them held only here, in memory.
-            pixels, meta = held.pop("image"), held.pop("meta")
-            claim = held.pop("claim", None)
-            filing = dict(film=FilmNotes(stock=args.stock, frame=args.frame,
-                                         subject=args.subject, notes=args.notes),
-                          tags=args.tags, **held)
-            try:
-                entry = library.save(pixels, meta, root=args.library, **filing)
-            except Exception as exc:                     # noqa: BLE001
-                # Its raw data kept elsewhere, whole, where it can be moved
-                # into the library later -- beside --out, or in the system's
-                # temporary directory. See `session.keep_unfiled`.
-                kept, elsewhere = keep_unfiled(pixels, meta,
-                                               near=[Path(args.out).parent],
-                                               **filing)
-                said = (f"pass {n} could not be filed in {args.library} "
-                        f"({exc}); ")
-                said += (f"its raw data is kept in {kept} -- move that folder "
-                         "into the library to file it" if kept is not None
-                         else "and could not be kept anywhere else either ("
-                         + "; ".join(elsewhere) + ")")
-                print(said, file=sys.stderr, flush=True)
-                unfiled.append(said)
-                continue
-            entries.append(entry)
-            if claim is not None:
-                claim(pixels)
-    finally:
-        # Debug filing last, once every pass here is filed and claimed: what
-        # it finds unclaimed is what this run did not keep -- metering probes,
-        # and a pass whose filing failed.
-        if device is not None:
-            # Into this run's library, beside the passes it is evidence for.
-            with debug_filing_into(args.library):
-                device.release()
+    # Ctrl-C deferred through the filing as through the passes, and
+    # through debug filing after it: see `session.filing_interrupt`.
+    with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
+                                              flush=True)):
+        try:
+            for n, held in enumerate(pending, 1):
+                # Each pass on its own. A bare loop let the first refusal --
+                # a full disk, --library naming a file -- escape as a
+                # traceback, and every pass after it, the bracket's merge and
+                # --out went with it: all of them held only here, in memory.
+                pixels, meta = held.pop("image"), held.pop("meta")
+                claim = held.pop("claim", None)
+                filing = dict(film=FilmNotes(stock=args.stock, frame=args.frame,
+                                             subject=args.subject, notes=args.notes),
+                              tags=args.tags, **held)
+                try:
+                    entry = library.save(pixels, meta, root=args.library, **filing)
+                except Exception as exc:                     # noqa: BLE001
+                    # Its raw data kept elsewhere, whole, where it can be
+                    # moved into the library later -- beside --out, or in the
+                    # system's temporary directory. See
+                    # `session.keep_unfiled`.
+                    kept, elsewhere = keep_unfiled(pixels, meta,
+                                                   near=[Path(args.out).parent],
+                                                   **filing)
+                    said = (f"pass {n} could not be filed in {args.library} "
+                            f"({exc}); ")
+                    said += (f"its raw data is kept in {kept} -- move that folder "
+                             "into the library to file it" if kept is not None
+                             else "and could not be kept anywhere else either ("
+                             + "; ".join(elsewhere) + ")")
+                    print(said, file=sys.stderr, flush=True)
+                    unfiled.append(said)
+                    continue
+                entries.append(entry)
+                if claim is not None:
+                    claim(pixels)
+        finally:
+            # Debug filing last, once every pass here is filed and claimed:
+            # what it finds unclaimed is what this run did not keep --
+            # metering probes, and a pass whose filing failed.
+            if device is not None:
+                # Into this run's library, beside the passes it is evidence
+                # for.
+                with debug_filing_into(args.library):
+                    device.release()
 
     if trouble is not None:
         for e in entries:

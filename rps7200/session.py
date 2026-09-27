@@ -48,6 +48,7 @@ from typing import Any
 import numpy as np
 
 from . import export, library, preview
+from .console import DeferredInterrupt
 from .direct import (
     METER_EACH,
     METER_MODES,
@@ -2094,6 +2095,26 @@ class HeldOpen:
         entered, self._entered = self._entered, None
         if entered is not None:
             entered.__exit__(None, None, None)
+
+
+def filing_interrupt(say: Callable[[str], None]) -> DeferredInterrupt:
+    """Ctrl-C deferred while a tool files what it scanned, as during a pass.
+
+    The scanner's own exit -- debug filing -- ran inside the tool's
+    `DeferredInterrupt` while the ``with`` that owned the scanner ended it.
+    `HeldOpen` moved it after the tool's filing, which runs once that block
+    is over, and so out of the deferral: a Ctrl-C there raised in the middle
+    of `_debug_flush`, which has already taken the spooled passes off the
+    scanner, so those still to be filed were left in a temporary directory
+    nothing names, and the entry being written stayed INCOMPLETE. A tool
+    holds this over its own filing and `HeldOpen.release` both. A fresh one:
+    the Ctrl-C that stopped the scanning is not counted, so the next one is
+    asked again rather than taken at its word.
+    """
+    return DeferredInterrupt(say=lambda _said: say(
+        "\nstopping once what was scanned is filed -- cut short, a library "
+        "entry is left half written and the passes debug filing kept go "
+        "nowhere. Press Ctrl-C again to abort anyway."))
 
 
 class _Stopped(Exception):
