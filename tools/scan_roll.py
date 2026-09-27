@@ -61,7 +61,7 @@ from rps7200.direct import (
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
 from rps7200.library import FilmNotes
-from rps7200.protocol import FILM_NEGATIVE
+from rps7200.protocol import FILM_NEGATIVE, MM_PER_UNIT, say_units
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
 from rps7200.session import (
@@ -134,12 +134,15 @@ def build_parser() -> argparse.ArgumentParser:
                          "one landed. With --frames 0 it rewinds and stops. "
                          "A roll no longer needs it: --start-at goes to its "
                          "frame from wherever the film is.")
-    ap.add_argument("--nudge", type=float, default=0.0,
-                    help="move the film this many mm before starting, after "
-                         "any --rewind. The window's fine-adjust buttons do "
-                         "the same thing; here it is for setting a strip "
-                         "deliberately badly, to see the correction work "
-                         "against something worth correcting.")
+    ap.add_argument("--nudge", type=float, default=0.0, metavar="UNITS",
+                    help="move the film this far before starting, after any "
+                         "--rewind, in units of the adjustment parameter -- "
+                         "the unit the window's fine adjust shows; one "
+                         "command of param 1 is 2.84, a frame about 350. The "
+                         "window's fine-adjust buttons do the same thing; "
+                         "here it is for setting a strip deliberately badly, "
+                         "to see the correction work against something worth "
+                         "correcting.")
     ap.add_argument("--prescan-dpi", type=int, default=None,
                     help="resolution of the survey prescan (default 300; with "
                          "--approved, the one its walk was made at, and "
@@ -702,14 +705,19 @@ def main() -> int:
                 # measures against where the film is now, so a displacement
                 # nobody knows about would read as the film's own error.
                 #
-                # Through `plan_nudges` because one command reaches only
-                # 1.0118 mm and `param_for_mm` clamps there silently -- a
-                # request for 2 mm would otherwise deliver half of it and say
-                # nothing. The planner raises instead, and it is the same
-                # planner the window's adjuster and the hold loop size
-                # themselves from.
+                # Through `plan_nudges` because one command reaches only the
+                # largest correction, param 87 (88.8 units), and
+                # `param_for_mm` clamps there silently -- a request past it
+                # would otherwise deliver part of it and say nothing. The
+                # planner raises instead, and it is the same planner the
+                # window's adjuster and the hold loop size themselves from.
+                #
+                # Taken in units, as the window shows them. It took
+                # millimetres, which CLAUDE.md prohibits for transport
+                # distances, and a value read off the window and typed here
+                # moved the film about 9.5 times as far as meant.
                 try:
-                    steps = plan_nudges(args.nudge)
+                    steps = plan_nudges(args.nudge * MM_PER_UNIT)
                 except ValueError as exc:
                     print(f"cannot offset the film: {exc}", file=sys.stderr)
                     return 1
@@ -718,8 +726,8 @@ def main() -> int:
                     asked = s.nudge(step)
                     sent += asked["asked_mm"]
                     time.sleep(0.5)
-                print(f"offset the film by {sent:+.3f} mm in {len(steps)} "
-                      f"command(s) (asked {args.nudge:+.3f})")
+                print(f"offset the film by {say_units(sent)} in {len(steps)} "
+                      f"command(s) (asked {args.nudge:+.1f} units)")
                 if args.nudge < 0:
                     print("  backward, so the first two or three commands may "
                         "have gone into backlash -- the prescan below is what "
@@ -905,17 +913,22 @@ def main() -> int:
                     # returning a fallback zero, these keys go missing. Formatting
                     # a None with `:+.2f` raises, and it would raise in the middle
                     # of a walk, after the scanner time had been spent.
+                    # Said in units, never millimetres (CLAUDE.md); the
+                    # records keep what the driver measured.
                     offset = r.get("offset_mm")
-                    said = "offset --" if offset is None else f"offset {offset:+.2f} mm"
+                    said = ("offset --" if offset is None
+                            else f"offset {say_units(offset)}")
                     print(f"picture {number}: contrast {r.get('contrast')}, "
                           f"x{r.get('x0')}..{r.get('x1')}, {said}"
-                          + (f", SHORT BY {short:.2f} mm -- the film has drifted"
+                          + (f", SHORT BY {say_units(short, signed=False)} "
+                             "-- the film has drifted"
                              if short and short > 0.85 else ""))
                     fix = r.get("correction")
                     if fix:
                         aimed = fix.get("decision_mm")
                         print(f"    aim: {fix.get('outcome')}"
-                              + ("" if aimed is None else f" {aimed:+.2f} mm")
+                              + ("" if aimed is None
+                                 else f" {say_units(aimed)}")
                               + (f" ({fix['ensemble'].get('chose')})"
                                  if fix.get("ensemble", {}).get("chose") else "")
                               + (f" -- {fix['reason']}" if fix.get("reason")

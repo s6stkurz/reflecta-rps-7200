@@ -1601,3 +1601,33 @@ def test_a_real_roll_costs_its_scans(tmp_path, monkeypatch, capsys):
                          "--frames", "3")
     assert code == 0
     assert "background" in capsys.readouterr().err
+
+
+def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
+                                                   capsys):
+    """--nudge took millimetres, which CLAUDE.md prohibits for transport
+    distances; a value read off the window, which shows units, moved the film
+    about 9.5 times as far as meant."""
+    from rps7200.protocol import units
+
+    sent = []
+
+    class Nudged(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+
+        def nudge(self, millimetres):
+            sent.append(millimetres)
+            return {"asked_mm": millimetres}
+
+    monkeypatch.setattr(scan_roll.time, "sleep", lambda s: None)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Nudged)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--no-shading", "--roll", "nudged", "--nudge", "20", "--frames", "1"],
+    )
+    assert scan_roll.main() == 0
+    assert abs(units(sum(sent)) - 20) < 2.84, "not the 20 units asked for"
+    out = capsys.readouterr().out
+    assert "units" in out and " mm" not in out
