@@ -1,0 +1,171 @@
+{
+ "type": "result",
+ "key": "v2:c40b482374cfe77635eb27716144632d88a2d010ff13b46ba8923388ce0a33fe",
+ "agentId": "a4c3de569b53a54d9",
+ "result": {
+  "verdicts": [
+   {
+    "id": "CSA-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The code is as described. `_debug_capture` (direct.py:908-998) runs from scan() at direct.py:3222 for every pass. It unconditionally does `np.save(image_path, image)` (941) and `raw_path.write_bytes(raw)` (961). `_read_pass` forces `keep_raw=keep_raw or bool(getattr(self, \"debug\", False))` (3278-3279). `debug_claim` (1000-1016) only sets `item[\"claimed\"] = True`. Claimed files are unlinked only inside `_debug_flush` (1055-1058), and that runs only from `close()` (1145). The window uses `debug=None` (session.py:1905) and closes the scanner only in `_run`'s finally (1972-1974). scan_roll.py:475 and scan.py:266 hold the device for the whole run. The comments at scan_roll.py:461-464, scan.py:244-248 and session.py:1900-1903 claim the claim mechanism removed the '43 GB of duplicate'. It removed only the duplicate library entries: the duplicate bytes still sit in the spool for the whole session. The `_debug_flush` comment about keeping the 'peak' down (1034-1038) is therefore also misleading, because the peak happens at capture time, not during the flush. The effect is conditional on RPS7200_DEBUG being on, but CLAUDE.md makes that mandatory for Claude-run sessions. ENOSPC inside `_debug_capture` is swallowed, but the library write that follows on the same volume is not."
+   },
+   {
+    "id": "CSA-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan.py:294-300 claims the pass in `hold` and appends it to `pending`. The filing loop (366-375) runs after both `with` blocks have exited, and it is outside any try. close() has already run `_debug_flush`, which unlinks the claimed spool files. session.py:2872-2875 claims before `self._writer.submit`. In `_run`'s finally, `self._scanner.close()` (1972-1974) runs before `self._writer.finish()` (1978). A FrameWriter job that fails (session.py:1590-1595) is dropped with only an error string. The flush cannot tell a claimed-and-filed pass from a claimed-and-failed one, so the spool copy of a failed frame is deleted anyway. scan_roll.py claims at 675 and 730 and only runs writer.finish() at 803, after close()."
+   },
+   {
+    "id": "CSA-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`DeferredInterrupt._handler` (console.py:74-81) only sets a flag and prints 'stopping after the pass in flight'. In scan.py the only check is `if args.bracket and interrupt.requested()` inside `hold` (301). Nothing checks after `ensure_shading` (273), and nothing between metering and the pass, because `scan()` takes no should_stop. In scan_roll.py, `wait_warm`, `rewind`, `seek`, the nudge loop and `calibrate(s, args)` (491-568) never consult the flag. Only `scan_roll(should_stop=interrupt.requested)` (627) does. A first Ctrl-C during calibration therefore still leads to a full pass, or in scan_roll to a 3-4 minute calibration. That invites the second Ctrl-C, which raises mid-read and wedges the scanner. CLAUDE.md:421-422 says Ctrl-C 'finishes the pass in flight and stops there'."
+   },
+   {
+    "id": "CSA-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "In scan_roll.py, `with interrupt, DirectScanner(...)` (475) exits, restoring the default SIGINT handler, before `writer.finish()` (803). FrameWriter's thread is `daemon=True` (session.py:1584). A Ctrl-C during `self._thread.join()` raises KeyboardInterrupt out of main(). The daemon thread is then killed at interpreter exit, possibly mid-`library.save`, leaving INCOMPLETE. The queued job (depth 2) is never written, and `record_of.save()` and the finished/stopped fields are never reached. The comment at 783-788 claims a second Ctrl-C can no longer skip `writer.finish()`, but that holds only inside the try. scan.py's filing loop (366-375) is likewise outside `with interrupt`: a Ctrl-C mid-gzip abandons the remaining in-memory passes, and with debug on their spool copies are already gone (CSA-02)."
+   },
+   {
+    "id": "CSA-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_refuse_if_suspect` is called only at direct.py:1523 (slide), 1623 (start_scan) and 2178 (calibrate_shading). scan() sends set_exposure_time, set_highlight_shadow, set_scan_frame, cmd_17, get/set_gain_offset and set_mode (3016-3059), plus test_unit_ready, before `self.slide(SLIDE_INIT, ...)` (3062) raises DeviceSuspect. auto_exposure's probes go through the same scan(). ScanSession has no suspect handling at all (no match for 'suspect' in session.py), so the window keeps accepting Scan and Prescan jobs after a roll ended on DeviceSuspect. The refusal text comes from slide(): 'not starting a film move (init)'. The DeviceSuspect docstring (protocol.py:355-364) and CLAUDE.md:418-420 say every driving command is refused."
+   },
+   {
+    "id": "CSA-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`library._write_atomic` (484-491) and `_replace_tiff` (503-511) call plain `os.replace` with no PermissionError retry. So do `compact` (438), `save_shading` (direct.py:746) and tools/library.py:275-276. session.py:859-883 documents the Windows sharing-violation hazard and retries in `_replace`, but only for manifests. `save` writes every data file, then `_write_atomic(scan.json)` (397), then removes INCOMPLETE. A PermissionError at the rename leaves a complete entry that `entries()` cannot see, and FrameWriter reports the frame as failed. The session's `_filed` then stops the roll."
+   },
+   {
+    "id": "CSA-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "session.py:2827-2831 adds an output-folder path for every job. `compress=bool(roll)` (2887) governs only `library.save`. `FrameWriter._write` still calls `export.write(str(path), delivered, ...)` (session.py:1676-1678) for each path. That goes to `tiff.write(..., resolution=resolution)` with its default `compress=True` (export.py:192, tiff.py:102), or to a JPEG plus DNG. For a single window Scan or Prescan the device is open and idle while this runs. The comment at 2880-2886 ('those are written plain') and CLAUDE.md:188-190 describe only the entry. The same pattern exists, pre-existing, in the window's Save all and Export rolls (gui.py:4291-4307, 2757-2777, `_start_writing`), which re-correct from the library and write deflate/JPEG on a thread while the session holds the device open."
+   },
+   {
+    "id": "CSA-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_CommandLog.command` (direct.py:476-497) appends the entry with `refused` in its `except Exception` branch before the bulk-count test. `NoDataYet` is raised by the transport itself (usb_transport.py:755) when a READ gets zero bytes. `read_planes` retries every `poll=0.02` s (1847-1860). So every wait poll during a pass becomes a listed entry in `meta['commands']`, then in `extra.commands` in scan.json and in the spool meta.json. The docstring says image READs are 'counted, not listed'. The second part is also right. scan() calls start() at ~2991, but stop() sits in the finally around `_read_pass` only (3074-3076). calibrate_shading calls start() at 2182 and stop() only after its try/finally (2345). An exception in between, including DeviceSuspect from slide(), leaves recording on until the next start()."
+   },
+   {
+    "id": "CSA-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`load_shading` (713-734) sets an origin without any archive link. Only the fresh-calibration path adds `archive` (859-860). `archive_calibration` (749-804) writes data.bin, ccd_mask.bin, shading.npz and calibration.json with plain writes and no INCOMPLETE marker, into `path.parent`. No code reads calibration.json or data.bin: grep finds them only in direct.py. `library.verify` (1068-1140) checks library entries only. An entry corrected with a reused reference therefore cannot be tied to the calibration bytes it came from."
+   },
+   {
+    "id": "CSA-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`compact` (library.py:414-452) replaces raw.bin.gz, then each TIFF in turn, updating only the in-memory record. The record is written once, at the end (451). If `_replace_tiff` for prescan.tif raises after scan.tif was swapped, scan.json keeps the uncompressed scan.tif's sha256. `verify` (1098-1099) then reports 'scan.tif does not match its checksum' on pixel-identical data. `.part` temp files are not cleaned up. session.py:1989-1995 logs 'it stays uncompressed and complete', which is not accurate here."
+   },
+   {
+    "id": "CSA-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`save` calls `reindex(root)` (399) after the commit. `entries()` (1030-1042) catches only `(OSError, json.JSONDecodeError)`. A UnicodeDecodeError is a ValueError, not a JSONDecodeError, so it escapes. A non-dict JSON makes `record[\"_dir\"] = ...` raise TypeError. Either one makes every later save raise after a fully committed entry. `reindex` writes index.json in place (1064). At session close the debug flush (in close()) and the still-running FrameWriter thread can both call it concurrently."
+   },
+   {
+    "id": "CSA-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`force_abort` (session.py:1855-1875) sets `dead`, and `_run`'s finally skips `self._scanner.close()` when dead (1973). `_debug_flush` is reachable only from close() (direct.py:1145). No code reads `NNN-meta.json` or knows the `rps7200-debug-` prefix beyond its creation (grep). The spool path is never logged at capture time. The 'filed later by hand' promise at 969-971 has no tool behind it."
+   },
+   {
+    "id": "CSA-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "calibrate_shading treats `except (EndOfData, ScanReadError)` as a normal end (2309-2312). `read_lines` with retries=1 raises ScanReadError for any non-end-of-data sense (1792-1794). The descriptor's declared line total is only logged (2255-2259) and never compared with `blocks`/`drained`. So a premature refusal builds a reference from partial data, and the origin records `action: calibrated`. The deadline guard (2323-2332) covers only the timeout case."
+   },
+   {
+    "id": "CSA-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The real-roll paths pass `prescan=rf.prescan` (session.py:2627) and `prescan=frame.prescan` (scan_roll.py:752). That is `prescan()`'s return, i.e. scan()'s corrected image when shading is on. `library.save` writes it as prescan.tif and records only file, read_direction and carriage_state (library.py:375-380). Nothing says it is corrected. Its `files` checksum is kept but its own CCD mask is not, and the entry's ccd_mask.bin belongs to the frame pass. `rf.raw_prescan` is filed only on the walk path (session.py:2563, scan_roll.py:662-685). In a real roll it is kept only if RPS7200_DEBUG leaves it unclaimed. That breaks the 'library holds raw pixels' rule for a stored pass, with no label, so severity is raised to medium."
+   },
+   {
+    "id": "CSA-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`DemoScanner.suspect = None` is a fixed class attribute (demo.py:816-819). The stand-in has no `debug`, `_debug_capture` or `debug_claim`, so `getattr(self._scanner, \"debug_claim\", None)` in session.py:2872 is None under --demo. `ensure_shading(reuse=True)` returns 'loaded' without checking the cache (500-507), where the real one calibrates when the cache is missing. `_take`'s meta (846-909) carries no commands, mode, shading_origin, carriage_state, filter_offsets or protocol_revision. UNCALIBRATED_SOURCE returns uncorrected pixels where DirectScanner would raise `uncalibrated`. The new suspect, spool and claim paths are therefore unreachable from `make run-demo`."
+   },
+   {
+    "id": "CSA-16",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "`load` treats any OSError other than FileNotFoundError like corruption and calls `_keep_aside` (settings.py:72-74). The aside name has 1-second resolution (95-96). The GUI is not told. The description says 'Nothing is lost on disk', but `_keep_aside` swallows its own OSError and returns None. If the file is held so it cannot be read, the rename usually fails too. The window then runs on defaults, and the next `save` (116) replaces the good file, which loses it. The Defender-at-read scenario is itself unlikely, because scanners normally share-read.",
+    "corrected_description": "settings.load treats a transient OSError like corruption. If the rename aside also fails, which is likely under the same lock, the window opens on defaults without saying so and the next save overwrites the intact settings file, so it is lost rather than set aside. Two asides within one second collide.",
+    "corrected_locations": [
+     "rps7200/settings.py:68-77",
+     "rps7200/settings.py:88-101",
+     "rps7200/settings.py:104-119",
+     "tools/gui.py:388"
+    ]
+   },
+   {
+    "id": "CSA-17",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "This is real, and worse than described. tools/library.py:273-284 renames scan.tif to KEPT, then fresh to scan.tif, then computes the sha, and only then writes the record. Between the two renames there is no scan.tif. Between the second rename and `_write_atomic`, which includes hashing a potentially huge TIFF, scan.tif holds raw pixels while the record still says `corrections_applied: [\"shading\"]` for a labelled entry. `library.corrected` returns stored pixels unchanged when 'shading' is in applied (library.py corrected, line ~+37-40). An interruption in that window therefore makes every export silently deliver uncorrected pixels. A re-run then plans the entry again (the applied branch skips the `_one_shading_explains` guard) and does `os.replace(path/\"scan.tif\", path/KEPT)`. That overwrites the kept corrected rendition, possibly the only one, with the raw file. KEPT is never checksummed.",
+    "corrected_description": "migrate-raw --write swaps scan.tif in two renames and updates the record last. An interruption leaves either no scan.tif, or raw pixels under a record that still says corrections_applied=['shading']. library.corrected then serves raw pixels as corrected. A re-run overwrites scan.before-migrate-raw.tif (the kept corrected rendition) with the raw file. No rename retries on Windows, and KEPT has no checksum.",
+    "corrected_locations": [
+     "tools/library.py:265-284",
+     "rps7200/library.py:corrected (corrections_applied short-circuit)"
+    ]
+   },
+   {
+    "id": "CSA-18",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "`PROTOCOL_REVISION = 6` at protocol.py:40, both in 83dbb22 and now. The command-relevant lines in the direct.py diff are the removal of the in-pass `self.calibrate_shading()` fallback and the move of start_scan/get_ccd_mask/get_parameters into `_read_pass` in the same order (old direct.py ~2655 vs new 3248-3270). The suspect checks, command log, idle timeouts and archive are host-side. No command change needs a bump."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "CSA-A1",
+    "title": "Transport distances are still millimetres throughout the driver and tools, contrary to CLAUDE.md's 'Millimetres are prohibited' rule; new code in this range adds more",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/direct.py:3569-3570",
+     "rps7200/direct.py:3599",
+     "rps7200/direct.py:3611",
+     "rps7200/session.py:1204",
+     "tools/scan_roll.py:117-120",
+     "tools/scan_roll.py:541-551",
+     "rps7200/demo.py:417"
+    ],
+    "evidence": "`STEP_MM = MM_PER_UNIT`, `OVERHEAD_MM = MM_PER_COMMAND` (direct.py:3569-3570); `def param_for_mm(millimetres: float)` (3599); `def nudge(self, millimetres: float)` (3611); `def plan_nudges(millimetres: float)` (session.py:1204); `ap.add_argument(\"--nudge\", type=float, ... help=\"move the film this many mm ...\")` (scan_roll.py:117-118); `print(f\"offset the film by {sent:+.3f} mm ...\")` (551). The diff 83dbb22..03aacba adds `self._film_mm`/`self._owed_mm` in demo.py and `offset_mm` fields written by the GUI.",
+    "description": "CLAUDE.md ('Do not use millimetres for transport distances') says every sub-frame distance must be held in units of the SLIDE param, because mm conversions have hidden two mistakes. The executable API still takes and records mm everywhere: nudge, plan_nudges, the --nudge CLI flag, registration/approved `offset_mm` in manifests and records, and the demo's film position. The fixes in this range extended the mm-based state rather than moving off it. This is not a regression in behaviour, but the rule claims a state of the code that does not exist.",
+    "failure_scenario": "An operator or agent passes `--nudge 2` believing it is in units, as CLAUDE.md implies every distance is. They get 2 mm, about 700 units, which `plan_nudges` spreads over several commands. Or a stored `offset_mm` is read as units.",
+    "recommendation": "Either migrate the transport API and persisted offsets to param units (keeping mm only for display), or amend CLAUDE.md to say which interfaces still take mm and why.",
+    "doc_reference": "CLAUDE.md 'Do not use millimetres for transport distances': 'Millimetres are prohibited ... express every sub-frame distance in units of the adjustment parameter'"
+   },
+   {
+    "id": "CSA-A2",
+    "title": "'Written uncompressed' calibration archive and plain window entries still run savez_compressed with the device open",
+    "severity": "info",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/direct.py:749-760",
+     "rps7200/direct.py:783-784",
+     "rps7200/direct.py:735-746",
+     "rps7200/direct.py:980-989",
+     "rps7200/library.py:267-268",
+     "rps7200/shading.py:91"
+    ],
+    "evidence": "archive_calibration docstring: 'Written uncompressed: the device is still open ...'; then `result[\"reference\"].save(folder / \"shading.npz\")`, and ShadingReference.save is `np.savez_compressed(path, **arrays)` (shading.py:91). `save_shading` likewise compresses the cache. `library.save(compress=False)` still calls `reference.save(path / \"shading.npz\")` (267-268). The debug spool saves `NNN-shading.npz` compressed from inside scan() (984-985).",
+    "description": "The payload is a few hundred kB, so the risk is small. But the docstring and CLAUDE.md say that nothing is compressed with the device open and idle, and a small compressed write does happen after every calibration, every window single scan, and the first debug-spooled pass of each reference.",
+    "failure_scenario": "None observed. Noted because the wedge rule is stated in absolute terms and the code does not follow it absolutely.",
+    "recommendation": "Use np.savez (uncompressed) on those device-open paths, or reword the docstrings to 'nothing large is compressed'.",
+    "doc_reference": "rps7200/direct.py:757-758 'Written uncompressed: the device is still open'; CLAUDE.md:185-190"
+   }
+  ],
+  "persisted_state_corrections": "- **Library `shading.npz`.** It is always np.savez_compressed, including on window entries filed with compress=False. So a \"plain\" entry is not wholly uncompressed while the device is open. See library.py:267-268 and shading.py:91.\n- **Calibration archive.**\n  - `shading.npz` there is compressed, which contradicts the archive's \"Written uncompressed\" docstring.\n  - `calibration.json` is written in place with no INCOMPLETE marker.\n  - The root is `path.parent` of whatever reference path the caller passes: the default is `calibration/` relative to CWD.\n- **Cached shading reference.** `save_shading` compresses it with the device open. Its temp file is `.shading.part.npz`, as claimed.\n- **Debug spool.**\n  - `NNN-shading.npz` is written once per reference, not once per pass, and compressed.\n  - It is removed only by rmtree of the whole spool, never by `_debug_unlink`.\n  - A claimed pass's files persist until close(). This is the core of CSA-01.\n- **`prescan.tif` in roll-frame entries.** It is the corrected prescan() output, and its record block has no correction flag. The entry's `ccd_mask.bin` belongs to the frame pass, not the prescan. Walk prescans, by contrast, are filed as their own raw entries with bytes (session.py:2563, scan_roll.py:662-685).\n- **`scan.before-migrate-raw.tif`.** It is overwritten, by the raw file, if migrate-raw is re-run after an interrupted swap (CSA-17). It is not simply \"exact but unchecksummed\".\n- **`gui-settings.json`.** If the rename aside fails as well, no `.unreadable` file is produced and the next save overwrites the intact file (CSA-16).\n- **`index.json`.** It is also rewritten by tools/library.py migrate-raw (`library.reindex(root)`). Its writers can run concurrently: the debug flush inside close() and the FrameWriter thread before `finish()`.\n- **Output-folder copies and roll deliverables.** The window's Save all and Export rolls (gui.py `_start_writing`) also write them, re-corrected from the library, with the session's device open."
+ }
+}

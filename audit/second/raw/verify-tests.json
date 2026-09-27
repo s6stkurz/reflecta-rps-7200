@@ -1,0 +1,295 @@
+{
+ "type": "result",
+ "key": "v2:e98f91978f901ebd8a75c6be5561b66266ffdb635ddcee92bf0802f7a1710bc1",
+ "agentId": "a53f4f5cd6deadd0a",
+ "result": {
+  "verdicts": [
+   {
+    "id": "T-01",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "This is mostly accurate. FakeTransport.command answers every opcode it has not been given with b\"\" (conftest.py:89-103). test_roll.py:724-749 pins scan() by source grep. test_fast_infrared.py:185-199 and test_scanner_api.py:238-241 swallow every exception, and test_library.py:433-441 types its meta by hand. No test drives DirectScanner.scan(), prescan() or calibrate_shading() to the end; test_device_suspect.py:95 only checks that calibrate_shading refuses. One claim is wrong: _read_pass does run to completion. test_device_suspect.py:132-136 (test_the_pass_that_was_read_is_returned_whole) runs it with start_scan/get_parameters/read_planes/get_ccd_mask stubbed out, although that only covers the orchestration. The core point stands. Nothing checks end to end that the meta assembled in scan(), last_raw/last_raw_layout, last_pixels_raw and the _debug_capture spool describe the same pass and reconstruct. I rate it medium rather than high: it is a coverage gap, not a defect anyone has observed.",
+    "corrected_description": "DirectScanner.scan(), prescan() and calibrate_shading() never run to completion in the suite. _read_pass is run whole once, but only with its device primitives stubbed (test_device_suspect.py:132-136). The meta dict at direct.py:3155-3212, the raw/corrected split, last_raw_layout (lines_received), the command log, and the debug spool of a real pass are checked only by source grep (test_roll.py:724-749) and by hand-typed metas (test_library.py:423-455).",
+    "corrected_locations": [
+     "rps7200/direct.py:2842-3235",
+     "rps7200/direct.py:2128-2383",
+     "tests/test_roll.py:724-749",
+     "tests/test_library.py:423-455",
+     "tests/test_fast_infrared.py:185-199",
+     "tests/test_scanner_api.py:229-241",
+     "tests/conftest.py:70-103",
+     "tests/test_device_suspect.py:132-136"
+    ]
+   },
+   {
+    "id": "T-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The window fixture (test_gui.py:1107-1130) builds ScannerGui(root, session, demo=True) with no settings_path. ScannerGui then calls settings.load(settings_path) (gui.py:387-388), and settings.path(None) falls back to DEFAULT_PATH = Path(\"gui-settings.json\") unless RPS7200_SETTINGS is set (settings.py:25-53). No conftest or test_gui fixture sets that variable; the only autouse fixture in test_gui.py:39 patches DemoScanner._calibrated. The fixture's teardown does not call _remember, but several tests do reach it: open_roll leads to _note_roll_opened, which calls _remember (gui.py:2591-2602; tests at 4374, 4503-4505, 4518, 4930-4991), and on_close calls _remember (test_gui.py:4521, gui.py:3453). The live repo-root gui-settings.json has rolls {'first','walk'} and sheet keys 2026-09-25-003904 and so on, which matches the folder names those tests create. The mechanism is real. The specific failure scenario the finding gives (a test sets v_film to bw and then saves) is speculative, but the controls saved on each open_roll are whatever the test left, so leakage of that kind is possible. There is also a doc-mismatch the reader missed. settings.py:27-28 says PATH_ENV exists \"so a test never writes the real one\", but no test uses it.",
+    "corrected_description": "The GUI window fixture loads and, through open_roll/_note_roll_opened and on_close, rewrites the operator's repo-root gui-settings.json: controls, output, window, rolls and sheet. The live file carries test residue. The comment at settings.py:27-28 claims the RPS7200_SETTINGS variable exists so tests never write the real file, but no test sets it.",
+    "corrected_locations": [
+     "tests/test_gui.py:1107-1130",
+     "tools/gui.py:386-388",
+     "tools/gui.py:692-719",
+     "tools/gui.py:2591-2602",
+     "tools/gui.py:3430-3456",
+     "rps7200/settings.py:25-53",
+     "tests/test_gui.py:4495-4523"
+    ]
+   },
+   {
+    "id": "T-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "This matches the code. In FrameWriter._write, library.save (session.py:1650-1662) runs before the copy loop (1667+). An exception from save propagates to _run (1587-1599), so no frameNN.tif and no output copy is written. _file calls claim(raw_image) at 2872-2876 before self._writer.submit. _run's finally calls self._scanner.close() at 1973-1974 before self._writer.finish() at 1979. DirectScanner.close runs _debug_flush (direct.py:1145), which unlinks claimed items unconditionally (direct.py:1055-1059). In tools/scan.py, hold() calls s.debug_claim(raw) inside the device context (294-296). The library.save loop at 366-375 has no try, and --out is written after that loop, so a save failure loses the corrected output as well. test_session.py:469-489 injects OSError(28) but asserts only on the manifest. Without RPS7200_DEBUG=1 there is no spool at all, so the pass is lost in either case.",
+    "corrected_locations": [
+     "rps7200/session.py:1587-1599",
+     "rps7200/session.py:1650-1673",
+     "rps7200/session.py:2868-2876",
+     "rps7200/session.py:1970-1980",
+     "rps7200/direct.py:1055-1059",
+     "rps7200/direct.py:1134-1145",
+     "tools/scan.py:280-300",
+     "tools/scan.py:366-375",
+     "tests/test_session.py:469-489"
+    ]
+   },
+   {
+    "id": "T-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session._roll files a prescan with raw_image=rf.raw_prescan only under `if job.dry_run:` (session.py:2536-2565). A real roll passes prescan=rf.prescan (corrected) and prescan_meta into the frame's _file call (2610-2616). library.save records only file, read_direction and carriage_state for the prescan (library.py:376-382), and writes prescan.tif from the corrected array (270). tools/scan_roll.py does the same (prescan=frame.prescan, prescan_meta=frame.prescan_meta at ~745-750); it files raw prescans only on --dry-run (662-686). The prescan-before image is written with file_entry=False (session.py:2586) and in scan_roll.py with a plain tiff.write. test_session.py:828-833 and 887-890 assert this arrangement. With debug off, which is the default, a real roll's prescan raw pixels and bytes are discarded even though RollFrame.raw_prescan holds the raw pixels. That conflicts with the owner's requirement that the exact bits of every scan be kept.",
+    "corrected_locations": [
+     "tests/test_session.py:828-833",
+     "tests/test_session.py:887-890",
+     "rps7200/session.py:2527-2587",
+     "rps7200/session.py:2605-2616",
+     "rps7200/library.py:266-270",
+     "rps7200/library.py:376-382",
+     "tools/scan_roll.py:655-700",
+     "tools/scan_roll.py:728-756"
+    ]
+   },
+   {
+    "id": "T-05",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The doubles do carry placeholder bytes: test_session.py:111-119 (64 bytes for a 36x24x4 layout), test_scan_tool.py:73-74, test_scan_roll_tool.py:47-48, test_roll_writer.py:32-37 and test_scan_roll_calibration.py:38-39. raw_bytes_disagree (session.py:734-766) compares lines, width and channels only. The claim that no test shows a session or FrameWriter entry reconstructs is wrong, though. test_demo.py:1238-1279 runs the real ScanSession with DemoScanner at the seam through Prescan, several Scans and an RGBI Scan. It asserts library.reconstruct(path) starts with 'identical' and that corrected() equals the shown image. test_demo.py:1307-1335 does the same for session prescans, and 1352-1380 for a dry-run walk, both through the real FrameWriter. Still uncovered: a real (non-dry-run) roll frame through the session, tools/scan.py single passes and brackets, tools/scan_roll.py frames and dry-run prescans, and DirectScanner's own capture_record pairing.",
+    "corrected_description": "The session's Scan, Prescan and walk-prescan filing paths, through the real ScanSession and FrameWriter, are shown to reconstruct identically, but only with DemoScanner at the seam (test_demo.py:1238-1380). Real roll frames through the session, tools/scan.py, tools/scan_roll.py and roll_writer are tested only with placeholder raw bytes that cannot decode to the filed pixels. raw_bytes_disagree compares shape alone.",
+    "corrected_locations": [
+     "tests/test_session.py:111-119",
+     "tests/test_session.py:232-238",
+     "tests/test_scan_tool.py:73-74",
+     "tests/test_scan_roll_tool.py:47-48",
+     "tests/test_roll_writer.py:32-37",
+     "rps7200/session.py:734-766",
+     "tests/test_demo.py:1238-1380"
+    ]
+   },
+   {
+    "id": "T-06",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The substance is right. test_roll.py:756 (`is None or True`) and :791 (`.exists() or True`) are tautologies. No test flushes a spool that holds raw bytes and then checks read_raw, raw_layout, shading.npz, ccd_mask.bin or reconstruct on the filed entry. test_scans_are_spooled_to_disk_not_held_in_ram (899-920) spools raw but never closes the scanner. test_a_spooled_pass_describes_itself (836-859) checks only the spool side. test_a_pass_its_caller_files_is_not_filed_twice checks only scan.tif. The code locations are wrong: direct.py:469-559 is the command-recording wrapper and 592-686 is __init__ state. The debug code is at direct.py:908-1128.",
+    "corrected_description": "_debug_capture/_debug_flush (direct.py:908-1128) are tested for spooling, claiming, cleanup and failure retention. No test files a spooled pass that carries raw bytes, a reference and a mask, and then checks that the entry's raw.bin.gz, raw_layout, shading.npz and ccd_mask.bin match and that it reconstructs. Two asserts in test_roll.py (756, 791) are tautologies.",
+    "corrected_locations": [
+     "tests/test_roll.py:752-758",
+     "tests/test_roll.py:771-791",
+     "tests/test_roll.py:836-859",
+     "tests/test_roll.py:899-920",
+     "rps7200/direct.py:908-998",
+     "rps7200/direct.py:1031-1128"
+    ]
+   },
+   {
+    "id": "T-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "compact (library.py:414-453) runs os.replace on raw.bin.gz at 438, then _replace_tiff and an in-memory sha update for each TIFF (440-449), and writes scan.json only at 451. If it is interrupted after a TIFF swap, record image.sha256 or files[prescan.tif] describes the old file, and verify compares file sha256 (library.py:1068+ lines 30-39 of the function), so it reports a checksum mismatch. The plain raw.bin survives and would let compact finish, but compact's only caller is session.py:1986-1994, for the current writer's list, and there is no CLI. archive_calibration writes data.bin, the mask, the npz and then calibration.json with plain writes and no marker (direct.py:781-803). reindex uses index.write_text (library.py:1064), but index.json is derivable. The only INCOMPLETE test builds the directory by hand (test_library.py:746-763). compact is tested only on the happy path (test_library.py:818-842).",
+    "corrected_locations": [
+     "rps7200/library.py:414-453",
+     "rps7200/library.py:257-264",
+     "rps7200/library.py:394-399",
+     "rps7200/library.py:1045-1064",
+     "rps7200/direct.py:749-803",
+     "rps7200/session.py:1986-1994",
+     "tests/test_library.py:746-763",
+     "tests/test_library.py:818-842"
+    ]
+   },
+   {
+    "id": "T-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "A repository-wide grep finds no reader of data.bin. calculate_shading is called only at direct.py:2351, apart from the tests. test_scanner_api.py:245-275 archives b\"\\x01\\x02\"*100 unrelated to the reference and checks only the bytes and the files' existence. The finding also understates the problem. An entry corrected by a reused reference gets _shading_origin = {action: loaded, path, file_modified_utc, loaded_utc} from load_shading, with no 'archive' key. Only the calibrating ensure_shading sets 'archive' (direct.py:858-860). The cache file itself is replaced by every new calibration (save_shading). So every entry scanned with a reused reference has no record of which archived calibration bytes produced its reference. calibration.json holds pixels_per_line and bytes_per_line but no split ratio and no reduction code version.",
+    "corrected_description": "No code or test reduces a kept calibration's data.bin again, or checks that it reproduces the archived shading.npz. Entries link to the archive only through extra.shading_origin.archive, which is set only when that session calibrated. An entry corrected by a reused (loaded) reference records only the cache path, which the next calibration overwrites, so its calibration bytes cannot be identified.",
+    "corrected_locations": [
+     "rps7200/direct.py:749-803",
+     "rps7200/direct.py:806-862",
+     "rps7200/direct.py:2345-2356",
+     "rps7200/direct.py:load_shading (shading_origin 'loaded' without archive)",
+     "tests/test_scanner_api.py:245-275"
+    ]
+   },
+   {
+    "id": "T-09",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The parity tests are weak: they check hasattr, identity, param_for_mm and key presence (test_demo.py:318-414, 1695-1710). The claim that the demo retypes nudge's arithmetic is overstated. STEP_MM, OVERHEAD_MM, param_for_mm and MAX_CORRECTION_PARAM are taken from DirectScanner (demo.py:811-812; test_demo asserts their identity), and only the three-line asked/short/clamped formula is repeated (demo.py:434-436 vs direct.py:3624-3630). The driver itself repeats that formula at direct.py:3496. The backlash literal `2.2 * 0.1057` (demo.py:451) is a simulation input, not a driver decision, and HOLD_SETTLE_S = 0.0 only affects time. The real divergences are these. The demo's pass meta (_take at 846-914 plus _settings_meta) has no protocol_revision, filter_offsets, mode, commands or shading_origin, all of which scan() records (direct.py:3155-3212). demo.ensure_shading answers 'loaded' for reuse whether or not the file exists, and never writes the cache (demo.py:500-508), while the real one calibrates and caches (direct.py:835-870). The window gates on _cached_reference() (gui.py:1984-1990), so in the demo the reuse path is never reachable after a demo calibration. I rate it low because the hold loop, the roll loop and metering are the driver's own methods borrowed by the demo.",
+    "corrected_description": "The demo-parity tests check attribute presence and object identity, not results. Real divergences: DemoScanner's pass meta lacks protocol_revision, filter_offsets, mode, commands and shading_origin. demo.ensure_shading neither checks for nor writes the cached reference, so the window's reuse path behaves differently in the demo. nudge repeats the driver's three-line asked/clamped formula, though its constants and param come from DirectScanner.",
+    "corrected_locations": [
+     "tests/test_demo.py:318-414",
+     "tests/test_demo.py:1695-1710",
+     "rps7200/demo.py:417-475",
+     "rps7200/demo.py:500-508",
+     "rps7200/demo.py:831-914",
+     "rps7200/direct.py:3155-3212",
+     "rps7200/direct.py:806-870",
+     "tools/gui.py:1984-1990"
+    ]
+   },
+   {
+    "id": "T-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The conftest docstring (conftest.py:73-77) refers to FakeUsb, and grep finds that name nowhere else in the repository. No test references _command, _send_command, _wait_not_busy, _control_out, _control_in or ieee_command. test_transport_reads.py's ScriptedTransport overrides only _announce_length and _bulk_read_into, to test _read_payload. The retry/BUSY/READ/CHECK state machine in Transport._command (usb_transport.py:799-866) therefore has no offline coverage. The vendor-capture comparisons skip without captures/ (test_usbpcap.py:345, 370, 397), and the hardware tests are deselected by addopts.",
+    "corrected_locations": [
+     "rps7200/usb_transport.py:693-716",
+     "rps7200/usb_transport.py:799-866",
+     "tests/conftest.py:70-77",
+     "tests/test_transport_reads.py:26-55",
+     "tests/test_usbpcap.py:333-400",
+     "pyproject.toml:90"
+    ]
+   },
+   {
+    "id": "T-11",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "_deliver_one (gui.py:4309) has no test; grep finds no reference to it. tools/scan.py's out.tif is checked only for existence (test_scan_tool.py:123, 170, 190), and tools/scan_roll.py's frameNN.tif is checked only by name, never against CORRECTED_LEVEL. The claim that no test checks a delivered file is corrected is wrong for FrameWriter, however. test_demo.py:1352-1380 reads the delivered rolls/walk/prescan0N.tif and asserts np.array_equal(library.corrected(path)[0], picture). The demo's calibrated_entry makes raw and corrected differ (test_demo.py:1036-1071; 1202 asserts a correction ran). FrameWriter._write builds `delivered` the same way for every kind of job, so the example refactor (raw_image passed into delivered) would fail that test.",
+    "corrected_description": "FrameWriter's delivered file is checked against library.corrected() only for demo walk prescans (test_demo.py:1352-1380). The GUI's Save As, Save all and Export path (_deliver_one) is untested, tools/scan.py's --out file is checked only for existence, and tools/scan_roll.py's frameNN.tif content is never compared with the corrected pixels.",
+    "corrected_locations": [
+     "tools/gui.py:4309-4348",
+     "tests/test_scan_tool.py:109-123",
+     "tests/test_scan_tool.py:290-367",
+     "tests/test_scan_roll_tool.py:27-90",
+     "tests/test_scan_roll_tool.py:115-125",
+     "tests/test_demo.py:1352-1380"
+    ]
+   },
+   {
+    "id": "T-12",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The skips are real. test_demo.py:659-727 uses DemoScanner(\"library\") and skips when there are no entries. test_decode's BOTTOM_UP and TOP_DOWN tests skip without stored entries. test_usbpcap skips without captures/, frame_edges_parity needs FRAME_EDGE_PARITY and the study data, and test_tiff skips without scans/. conftest.py:463-466 says GitHub's macOS runner has no Tk, while test.yml:57-58 says the other two runners have a display, and the code cannot settle which is true. The failure scenario is wrong, though. _hold_to_approved convergence and not_converged are tested on synthetic data everywhere, in test_roll.py:1403-1436 (held with moves==1; not_converged with MAX_HOLD_MOVES) and test_roll.py:647-658. So a change that breaks convergence would fail CI. What only the skipping tests cover is the demo-specific nudge, backlash and slipping-frame simulation.",
+    "corrected_description": "Several data-dependent tests skip wherever the suite runs automatically: the demo hold loop, bottom-up detection on stored passes, vendor-capture equivalence, frame-edge parity and the TIFF cross-check. The driver's hold loop itself is covered on synthetic data in test_roll.py. What is lost in CI is the demo's own motion simulation and the real-data checks. Whether the GUI tests run on macOS CI is contradicted between conftest.py and test.yml.",
+    "corrected_locations": [
+     "tests/test_demo.py:659-727",
+     "tests/test_decode.py:300-345",
+     "tests/test_usbpcap.py:333-400",
+     "tests/test_frame_edges_parity.py:34-40",
+     "tests/test_tiff.py:444-464",
+     "tests/conftest.py:455-466",
+     ".github/workflows/test.yml:55-58",
+     "tests/test_roll.py:1403-1436"
+    ]
+   },
+   {
+    "id": "T-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Counting inspect.getsource uses gives 126: test_gui 115, test_frame_edges 4, test_roll 3, test_session 2, test_demo 1, test_scan_tool 1. The cited asserts exist at test_gui.py:127-128, test_session.py:1358-1364 and test_roll.py:724-749. The tautologies are at test_roll.py:756 and 791. test_session.py:1090 is trivially true for a 24x36 image. test_a_roll_stops_when_a_frame_cannot_be_filed relies on time.sleep(0.05) (test_session.py:994-998). The session's FakeScanner.scan_roll (test_session.py:154) takes **kw and ignores should_stop. conftest's strip double accepts should_stop but its loop at conftest.py:218-240 never calls it. The driver's own should_stop is tested in test_roll.py:1006-1039, but the session-to-driver hand-off is covered only by the grep.",
+    "corrected_locations": [
+     "tests/test_gui.py:127-128",
+     "tests/test_session.py:1358-1364",
+     "tests/test_roll.py:724-749",
+     "tests/test_roll.py:756",
+     "tests/test_roll.py:791",
+     "tests/test_session.py:1090",
+     "tests/test_session.py:983-1012",
+     "tests/test_session.py:154-166",
+     "tests/conftest.py:218-240"
+    ]
+   },
+   {
+    "id": "T-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "on_delete (gui.py:4465-4497) runs shutil.rmtree(entry) when askyesnocancel returns False. The only tests are the outside-library refusal and Cancel (test_gui.py:5084-5122). scanned_frames (gui.py:5837-5858) trusts record['done'] and never checks that the entry exists, and on_delete does not touch roll.json. That is mild, because frameNN.tif still exists in the roll folder, so treating the frame as done for resume is arguable. on_close's busy branch (3431-3444), _wait_to_quit (3463-3485) and on_abort (3416-3428) have no behavioural tests. force_abort is tested only while the session is idle (test_session.py:1015-1029). tools/library.py duplicates --delete (167-196, rmtree at 191) has no CLI test; library.prunable and duplicates are tested in test_library.py:210-320. The dialog does state that the raw bytes cannot be recovered, so the mis-read scenario is a UX risk rather than a missing guard.",
+    "corrected_locations": [
+     "tools/gui.py:4465-4497",
+     "tools/gui.py:3416-3485",
+     "tools/gui.py:5837-5858",
+     "tools/library.py:167-196",
+     "tests/test_gui.py:5084-5122",
+     "tests/test_session.py:1015-1029"
+    ]
+   },
+   {
+    "id": "T-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_debug_scanner() with no debug argument reads RPS7200_DEBUG (direct.py:545-557), so test_filing_is_off_by_default (test_roll.py:752-758) fails whenever RPS7200_DEBUG=1 is exported, which CLAUDE.md tells Claude always to do. conftest has no autouse fixture that clears it; the only autouse fixtures are test_demo.py:58 (calibrated), test_gui.py:39 and test_transport_reads.py:58. The window fixture (test_gui.py:1122) and test_demo.py:653-727 use DemoScanner(\"library\"), which is relative to the working directory. DemoScanner.open starts _sign_pictures on a thread (demo.py:316-323). The settings leak is T-02.",
+    "corrected_locations": [
+     "tests/test_roll.py:713-758",
+     "rps7200/direct.py:534-557",
+     "tests/test_gui.py:1122",
+     "tests/test_demo.py:647-727",
+     "rps7200/demo.py:316-323"
+    ]
+   },
+   {
+    "id": "T-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "test_gui.py:1-7 says the window is tested without being opened and that it hangs on macOS, yet 46 tests use the Tk window fixture, and 1101-1104 still says \"These two need real Tk widgets\". conftest.py:76 names a FakeUsb that does not exist. test_scan_roll_calibration.py:3-8 describes a lazy calibration inside prescan(); prescan() now calls scan() (direct.py:2076), which raises self.uncalibrated(reason) (direct.py:2963). That docstring reads partly as history, but it describes the mechanism as current. test_library.py:430 claims to track scan()'s meta over a hand-typed dict. conftest.py:463-466 and test.yml:57-58 contradict each other about macOS Tk. The only timeout is CI's timeout-minutes: 40 (test.yml:26); pyproject has no pytest-timeout.",
+    "corrected_locations": [
+     "tests/test_gui.py:1-11",
+     "tests/test_gui.py:1099-1104",
+     "tests/conftest.py:73-77",
+     "tests/test_scan_roll_calibration.py:1-8",
+     "tests/test_library.py:423-431",
+     "tests/conftest.py:463-466",
+     ".github/workflows/test.yml:26",
+     ".github/workflows/test.yml:57-58"
+    ]
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "T-A1",
+    "title": "After a force abort the session never calls close(), so debug-spooled passes are never filed and nothing says where they are",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1855-1875",
+     "rps7200/session.py:1969-1976",
+     "rps7200/direct.py:1134-1145",
+     "rps7200/direct.py:1031-1128",
+     "tests/test_session.py:1015-1029"
+    ],
+    "evidence": "session._run finally: `try:\n    if not self.dead:\n        self._scanner.close()` (session.py:1972-1974). DirectScanner.close is the only caller of the flush: `if self._own_transport: self.t.close()\n# Only now, with the device closed, is it safe to spend time writing.\nself._debug_flush()` (direct.py:1142-1145). force_abort sets `self.dead = True` and closes only the transport (session.py:1863-1869). The test asserts the resulting state: `# A dead session does not politely close the device it just yanked.\nassert scanner.closed is False` (test_session.py:1028-1029).",
+    "description": "With RPS7200_DEBUG=1, every pass the window and tools do not keep themselves, such as metering probes, hold/aim prescans and the replaced before-prescan, reaches the library only through _debug_flush, which runs only from DirectScanner.close(). Once the operator has used Force abort, the session skips close() entirely. The transport has already been closed by force_abort, so the flush would be safe. The pending spool in the system temp directory is never filed. No log line names the spool directory, because the 'left unfiled in ...' message exists only inside _debug_flush. No test runs a force abort with pending debug items.",
+    "failure_scenario": "A roll run with RPS7200_DEBUG=1 wedges mid-read. The operator types ABORT, and the session is marked dead. At shutdown, _run skips close(), so the metering probes and hold prescans spooled earlier in the session stay as NNN-image.npy/raw.bin in /tmp/rps7200-debug-XXXX. They are never filed, the operator is not told about them, and they disappear at the next temp cleanup or reboot. Those are exactly the passes the investigation of the wedge would need.",
+    "recommendation": "On a dead session, still run the scanner's filing half. Split close() into device close and _debug_flush, and call _debug_flush (or a public flush()) in the dead branch, or at least log the spool path. Add a test that captures a debug pass, calls force_abort, shuts down, and asserts the pass was filed into RPS7200_DEBUG_ROOT."
+   },
+   {
+    "id": "T-A2",
+    "title": "settings.py claims the RPS7200_SETTINGS variable keeps tests off the real file; no test sets it",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/settings.py:27-28",
+     "tests/test_gui.py:1107-1130",
+     "tests/test_settings.py"
+    ],
+    "evidence": "`#: Environment variable that moves it, so a test never writes the real one.\nPATH_ENV = \"RPS7200_SETTINGS\"` (settings.py:27-28). A grep for RPS7200_SETTINGS or settings_path across tests/ finds uses only inside test_settings.py. The window fixture calls `gui_mod.ScannerGui(root, session, demo=True)` with no settings_path.",
+    "description": "The code comment asserts a safety property that the test suite does not use. Every window test runs against the working directory's gui-settings.json (see T-02), and the live repo-root file carries test residue.",
+    "doc_reference": "rps7200/settings.py:27 -- \"Environment variable that moves it, so a test never writes the real one.\"",
+    "failure_scenario": "A maintainer relies on the comment and assumes that `make test` cannot touch their remembered window state. It can: opening a roll in a window test rewrites controls, rolls and sheet in ./gui-settings.json.",
+    "recommendation": "Add an autouse fixture in conftest.py that sets RPS7200_SETTINGS (and RPS7200_DEBUG_ROOT, with RPS7200_DEBUG removed) to tmp_path, so that the comment becomes true."
+   }
+  ],
+  "persisted_state_corrections": "Calibration archive: calibration.json does not record a \\\"width\\\". It records measured_utc, resolution, pixels_per_line, bytes_per_line, index_header, bytes, sha256, duration_s, commands, reference, ccd_mask and protocol_revision (direct.py:787-800). It is written last, with a plain write_text, after data.bin, ccd_mask.bin and shading.npz, and with no INCOMPLETE marker. Missing row: the shading cache (<reference path>, normally calibration/shading.npz), written by DirectScanner.save_shading through a write-beside-then-replace, and read by load_shading on reuse. It is exercised in test_scanner_api and replaced by every calibration, so an entry whose shading_origin says \\\"loaded\\\" points at a file that may since have been overwritten. Operator GUI settings: besides open_roll and on_close, the file is also written by the presets save and delete actions and by shortcut changes (gui.py:948, 986, 996). Library entries produced by tests: the claim that raw bytes are exact only in the test_library and test_demo fixtures is too narrow. test_demo also runs the real ScanSession and FrameWriter with DemoScanner and files encode_index bytes that reconstruct identically (test_demo.py:1238-1380), so the session and FrameWriter single-scan, prescan and walk paths are verified exact through the demo. Real roll frames, tools/scan.py, tools/scan_roll.py and roll_writer are not. Debug-filing spools: these are also left unfiled in system temp after a force abort, because close() is skipped for a dead session (see T-A1). Roll folders: frameNN.tif content and prescanNN.tif are corrected. A walk's prescanNN.tif is compared against library.corrected() in test_demo.py:1376-1380, so \\\"never asserted to be corrected\\\" is too strong."
+ }
+}
