@@ -4277,8 +4277,20 @@ class ScannerGui:
             filetypes=save_as_types(self.session.out_format))
         if not path:
             return
-        said = self._deliver_one(result, path, jpeg_quality(self.v_jpegq.get()),
-                                 self.v_mono.get(), self.v_mono_channel.get())
+        # Said in the window, as Save all says it. Unwrapped, a name like
+        # `best.png`, a full disk or an entry that would not read went to
+        # Tk's default handler -- a traceback on the launching terminal and
+        # nothing here, so the operator believed the file was saved.
+        try:
+            said = self._deliver_one(result, path,
+                                     jpeg_quality(self.v_jpegq.get()),
+                                     self.v_mono.get(),
+                                     self.v_mono_channel.get())
+        except Exception as exc:                         # noqa: BLE001
+            self._say(f"could not save {Path(path).name}: {exc}")
+            messagebox.showerror("Save as", f"{Path(path).name} was not "
+                                 f"saved.\n\n{exc}", parent=self.root)
+            return
         if said:
             self._say(f"saved {said}")
 
@@ -5337,6 +5349,12 @@ def batch_name(result, fmt: str) -> str:
     dpi = meta.get("resolution_dpi") or 0
     channels = meta.get("channels") or len(meta.get("channel_order") or "")
     ir = "_ir" if channels and int(channels) >= 4 else ""
+    # A pass whose full-resolution pixels are not filed yet is written from
+    # the reduced copy on screen, and under the scan's full dpi it later
+    # passed for the real delivery. The name says what it is.
+    entry = getattr(result, "entry", ...)
+    if entry is not ... and not (entry and (Path(entry) / "scan.tif").exists()):
+        ir += "_preview"
     end = export.suffix_for(fmt)
     kind = _safe(result.kind or "scan")
     if result.number:

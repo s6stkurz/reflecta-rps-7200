@@ -3343,6 +3343,46 @@ def test_a_batch_name_says_what_the_file_is():
     assert gui.batch_name(loose, "tiff") == "scan_012_300dpi.tif"
 
 
+def test_a_reduced_preview_is_named_as_one(tmp_path):
+    """Save all right after a roll writes the passes not yet filed from the
+    1400-pixel copy on screen, and named them with the scan's full dpi --
+    so the copy later passed for the delivery."""
+    unfiled = types.SimpleNamespace(
+        kind="frame", number=38, seq=40, entry=None,
+        meta={"resolution_dpi": 3600, "channels": 3})
+    assert gui.batch_name(unfiled, "tiff") == "frame38_3600dpi_preview.tif"
+    filed = tmp_path / "entry"
+    filed.mkdir()
+    (filed / "scan.tif").write_bytes(b"")
+    unfiled.entry = filed
+    assert gui.batch_name(unfiled, "tiff") == "frame38_3600dpi.tif"
+
+
+def test_a_save_as_that_fails_says_so_in_the_window(monkeypatch):
+    """`best.png`, a full disk, an entry that will not read: each went to
+    Tk's default handler, a traceback on a terminal nobody watches, and the
+    window said nothing at all."""
+    said, shown = [], []
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **kw: "/somewhere/best.png")
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **kw: shown.append(a))
+
+    def refuse(*a):
+        raise ValueError("cannot tell what format 'best.png' should be")
+
+    stub = types.SimpleNamespace(
+        session=types.SimpleNamespace(out_format="tiff"), root=None,
+        v_jpegq=types.SimpleNamespace(get=lambda: 95),
+        v_mono=types.SimpleNamespace(get=lambda: False),
+        v_mono_channel=types.SimpleNamespace(get=lambda: "G"),
+        _deliver_one=refuse, _say=said.append)
+    result = types.SimpleNamespace(label="scan 1")
+    gui.ScannerGui.on_save_as(stub, result)
+    assert shown and "best.png" in shown[0][1]
+    assert said and "could not save best.png" in said[0]
+
+
 # --- the rolls table -------------------------------------------------------
 
 
