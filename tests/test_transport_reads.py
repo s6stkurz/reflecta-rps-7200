@@ -244,3 +244,16 @@ def test_a_window_that_is_not_a_number_does_not_break_the_import():
 def test_a_transport_refuses_a_window_before_touching_libusb():
     with pytest.raises(ValueError, match="max_window"):
         Transport(max_window=0)
+
+
+def test_nothing_here_offers_an_ieee1284_reset():
+    """The vendor never sends one, and one left the scanner working for a
+    single session and wedged for the next. `open(reset=True)` and a public
+    `reset()` invited exactly the cleanup handler that would send it."""
+    import inspect
+
+    from rps7200 import usb_transport
+
+    assert not hasattr(Transport, "reset")
+    assert "reset" not in inspect.signature(Transport.open).parameters
+    assert "ieee_command(IEEE1284_RESET)" not in inspect.getsource(usb_transport)

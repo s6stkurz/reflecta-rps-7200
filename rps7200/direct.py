@@ -1702,8 +1702,9 @@ class DirectScanner:
         CyberView never sends STOP SCAN. It reads all the data and then polls
         READ_STATE while the scanner settles. Sending STOP SCAN after a
         successful read appears to be what leaves this scanner unresponsive to
-        the next session, so it is reserved for cancelling a scan that is still
-        running.
+        the next session, and CLAUDE.md lists it among the commands never to
+        send -- not to cancel a scan still running either: the recovery from
+        an abandoned pass is a power cycle (`suspect`).
         """
         self._scanning = False
         for _ in range(polls):

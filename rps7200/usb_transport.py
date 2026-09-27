@@ -50,6 +50,7 @@ _C1284_NSTROBE = 0x01
 _C1284_NINIT = 0x04
 
 IEEE1284_ADDR = 0x00
+#: Named so a capture can be read, and never sent: see `Transport.open`.
 IEEE1284_RESET = 0x30
 IEEE1284_SCSI = 0xE0
 
@@ -524,38 +525,23 @@ class Transport:
             "root to confirm that is what it is."
         )
 
-    def open(self, reset: bool = False) -> Transport:
+    def open(self) -> Transport:
         """Open the scanner.
 
-        No reset by default. Captures of the vendor software show it never
-        sends IEEE1284 RESET (0x30) at all -- only 0x00 and 0xE0 -- and issuing
-        one here left the scanner working for exactly one session and wedged for
-        the next. Pass ``reset=True`` only to recover a device that is already
-        unresponsive.
+        No reset, ever. Captures of the vendor software show it never sends
+        IEEE1284 RESET (0x30) at all -- only 0x00 and 0xE0 -- and issuing one
+        here left the scanner working for exactly one session and wedged for
+        the next. A ``reset=True`` stayed here "to recover a device that is
+        already unresponsive", with a public ``reset()`` beside it: nothing
+        called either, and they were the way in to a command CLAUDE.md lists
+        as leaving the device unresponsive -- which is how a well-meant
+        cleanup handler would have come to send it. The recovery is a power
+        cycle.
 
         Never calls ``libusb_reset_device`` either: on macOS a port reset makes
         this device drop off the bus for good until it is power-cycled.
         """
         self._raw_open()
-
-        if reset:
-            # Clear a stalled bulk endpoint first: while it is halted every
-            # control transfer times out, so the bridge reset below cannot get
-            # through until this succeeds.
-            try:
-                self.clear_halt()
-            except Exception:
-                pass
-            try:
-                self.reset()
-            except UsbError as exc:
-                self.close()
-                raise UsbError(
-                    "the scanner is not responding to control transfers "
-                    f"({exc}). It is wedged from an earlier failed session; "
-                    "power-cycle it and try again."
-                ) from exc
-
         self._log(
             f"opened, bulk-in ep {self.bulk_in_ep:#04x}, "
             f"max packet {self.max_packet_size}"
@@ -713,11 +699,6 @@ class Transport:
             return
         rc = _lib.libusb_clear_halt(self._handle, self.bulk_in_ep)
         self._log(f"clear_halt on ep {self.bulk_in_ep:#04x}: {_err(rc) if rc else 'ok'}")
-
-    def reset(self) -> None:
-        """Reset the bridge's IEEE1284 layer (not a USB port reset)."""
-        self._log("bridge reset")
-        self.ieee_command(IEEE1284_RESET)
 
     # -- SCSI ---------------------------------------------------------------
 
