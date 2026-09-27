@@ -415,6 +415,9 @@ class ScannerGui:
         self._levels: list = []              # coarser copies, finest last
         self._levels_seq = None
         self._loading = None
+        #: The pass shown while another's full-resolution read was in flight,
+        #: read next -- one read at a time; see `_load_full`.
+        self._load_next = None
         self._redraw_job = None
         self._settle_job = None
         self._drawn_at = 0.0
@@ -4704,10 +4707,21 @@ class ScannerGui:
         screen should be the scan itself wherever it can be. At 3600 dpi that
         is 142 MB, which would freeze the window for seconds if it were read
         here.
+
+        **One read at a time.** Each is a correction of the whole scan, with a
+        float copy per channel on the way -- 1.5-2 GB at 7200 dpi RGBI -- and a
+        read started for every pass clicked past in the filmstrip ran them all
+        at once, beside a scanner held open mid-roll: several gigabytes, swap,
+        or the process killed with a read in flight. A pass shown while one is
+        reading waits its turn, and only the last one shown is read next.
         """
         if self._loading == r.seq or self._levels_seq == r.seq:
             return
+        if self._loading is not None:
+            self._load_next = r
+            return
         self._loading = r.seq
+        self._load_next = None
 
         def work(entry: Path, seq: int) -> None:
             image = problem = None
@@ -4729,6 +4743,9 @@ class ScannerGui:
 
     def _loaded(self, seq: int, image) -> None:
         self._loading = None
+        waiting, self._load_next = self._load_next, None
+        if waiting is not None and waiting is self.current:
+            self._load_full(waiting)
         if self.current is None or self.current.seq != seq or image is None:
             return
         # Nothing is adjusted: the zoom and the view are measured against the

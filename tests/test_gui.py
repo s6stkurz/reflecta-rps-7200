@@ -517,6 +517,40 @@ def test_the_loader_thread_never_touches_tk():
         "and the main loop has to collect it")
 
 
+def test_one_full_resolution_read_at_a_time(window, monkeypatch):
+    """Each read is a correction of the whole scan -- 1.5-2 GB on the way at
+    7200 dpi RGBI -- and clicking through the filmstrip started one for every
+    pass passed over, all at once, beside a scanner held open. The pass on
+    screen when the read in flight comes back is the one read next; those
+    clicked past on the way are not read at all."""
+    import threading
+
+    app, root = window
+    started, release = [], threading.Event()
+
+    def corrected(entry):
+        started.append(entry)
+        release.wait(10)
+        return np.zeros((4, 4, 3), np.uint16), {"corrected": "applied"}
+
+    monkeypatch.setattr(gui.library, "corrected", corrected)
+    passes = [types.SimpleNamespace(seq=n, entry=f"e{n}", label=f"pass {n}",
+                                    image=np.zeros((2, 2, 3), np.uint8))
+              for n in (1, 2, 3)]
+    for shown in passes:
+        app.current = shown
+        app._load_full(shown)
+    time.sleep(0.2)
+    assert started == ["e1"]
+    release.set()
+    deadline = time.monotonic() + 10
+    while started != ["e1", "e3"] and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    assert started == ["e1", "e3"]
+    app.current = None
+
+
 def test_a_moving_frame_is_drawn_coarse_and_a_still_one_sharp():
     """Both the sampling and the image Tk shows cost in proportion to the pixel
     count, so a moving frame draws a quarter of them. The only moment the
