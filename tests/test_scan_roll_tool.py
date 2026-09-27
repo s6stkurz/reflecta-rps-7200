@@ -1631,3 +1631,24 @@ def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
     assert abs(units(sum(sent)) - 20) < 2.84, "not the 20 units asked for"
     out = capsys.readouterr().out
     assert "units" in out and " mm" not in out
+
+
+@pytest.mark.parametrize("argv, channels", [
+    (["--film", "bw"], 1),
+    (["--film", "bw", "--no-mono"], 3),
+    (["--film", "negative"], 3),
+    (["--film", "negative", "--mono"], 1),
+])
+def test_a_black_and_white_roll_is_delivered_in_one_channel(
+        tmp_path, monkeypatch, argv, channels):
+    """The same B&W strip came out RGB from here and mono from the window
+    and tools/scan.py, and was taken for colour negative by what read it."""
+    from rps7200 import library, tiff
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1", *argv)
+    assert code == 0
+    delivered = tiff.read(tmp_path / "roll" / "frame01.tif")
+    assert (1 if delivered.ndim == 2 else delivered.shape[2]) == channels
+    (entry,) = [p.parent for p in (tmp_path / "lib").glob("*/scan.json")]
+    image, _record = library.load(entry)
+    assert image.shape[2] == 3, "the library keeps all three regardless"

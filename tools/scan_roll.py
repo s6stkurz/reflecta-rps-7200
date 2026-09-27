@@ -61,6 +61,7 @@ from rps7200.direct import (
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
 from rps7200.library import FilmNotes
+from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, wants_mono
 from rps7200.protocol import FILM_NEGATIVE, MM_PER_UNIT, say_units
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
@@ -184,6 +185,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="what is in the transport, for metering (default: "
                          "negative; with --approved, the film its walk was "
                          "made on)")
+    ap.add_argument("--mono", dest="mono", action="store_true", default=None,
+                    help="deliver each frame as one channel. On by default for "
+                         "--film bw, as in tools/scan.py and the window: a "
+                         "black and white scan is an RGB scan on this "
+                         "hardware, and a consumer cannot tell it from colour "
+                         "negative by its pixels. The library keeps all three")
+    ap.add_argument("--no-mono", dest="mono", action="store_false",
+                    help="deliver all three channels even for --film bw")
+    ap.add_argument("--mono-channel", default=MONO_CHANNEL,
+                    choices=list(MONO_CHOICES),
+                    help="what a monochrome frame carries (default: "
+                         "%(default)s)")
     ap.add_argument("--reference", default="calibration/shading.npz")
     ap.add_argument("--reuse", action="store_true",
                     help="load the cached shading reference instead of "
@@ -560,6 +573,11 @@ def main() -> int:
                      + "; ".join(differs)
                      + ". Give the flags its earlier frames were taken with, "
                      "or scan into a new --roll.")
+    # Each frame's delivered file in one channel or three. This tool wrote
+    # three always, so the same B&W strip came out RGB from here and mono
+    # from the window and tools/scan.py -- and was then taken for colour
+    # negative by whatever read it next.
+    mono = wants_mono(args.mono, args.film)
 
     manifest = {
         "roll": roll_name,
@@ -593,6 +611,8 @@ def main() -> int:
             "correct": args.correct,
             "correct_dry_run": args.correct_dry_run,
             "max_failures": args.max_failures,
+            "mono": mono,
+            "mono_channel": args.mono_channel,
         },
         "held": held_note,
         "frames": [],
@@ -969,6 +989,10 @@ def main() -> int:
                         raw_image=frame.raw_image,
                         meta=dict(frame.meta, roll_membership=roll_membership(
                             roll_name, number, "frame", out)),
+                        # One channel for black and white, as the window and
+                        # tools/scan.py deliver it; see --mono.
+                        mono=mono,
+                        mono_channel=args.mono_channel,
                         prescan=frame.prescan,
                         # Which way the prescan was read; it has no raw bytes
                         # of its own to say so in the entry.
