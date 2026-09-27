@@ -5185,6 +5185,99 @@ def test_deleting_a_reopened_frames_entry_says_what_it_is_first(window,
     assert entry.exists() and result in app.results, "Cancel is cancel"
 
 
+@pytest.mark.parametrize("keep", [True, False])
+def test_keep_the_library_entry_means_what_it_says(window, monkeypatch, keep):
+    """The one question in the window whose wrong answer destroys raw bytes.
+    Only Cancel and the entry-outside-the-library case were tested, so a
+    change that made Yes delete too -- or No keep -- would have gone
+    unnoticed. Yes keeps the entry; No removes it and rebuilds the index;
+    either way the frame leaves the window."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    entry = library.save(np.zeros((4, 6, 3), np.uint16),
+                         {"resolution_dpi": 300, "channels": 3},
+                         root=session_root)
+    result = _reopened_with_entry(app, entry)
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or keep)
+    app.on_delete(result)
+
+    assert "Keep the library entry?" in asked[0]
+    assert "cannot be recovered" in asked[0]
+    assert entry.exists() is keep
+    assert result not in app.results
+    indexed = {r["id"] for r in json.loads(
+        (session_root / library.INDEX).read_text(encoding="utf-8"))}
+    assert (entry.name in indexed) is keep
+
+
+@pytest.mark.parametrize("answer", [None, True, False])
+def test_quitting_mid_pass_asks_and_never_abandons_the_read(window, monkeypatch,
+                                                            answer):
+    """Cancel keeps working; Yes stops after the frame in flight and then
+    quits; No lets the queue finish. None of the three may tear the window
+    down while the worker still has the device: that is an abandoned read,
+    and a power cycle. The busy branch had no test; the one on_close test
+    stubbed out the wait."""
+    app, root = window
+    app.busy = True
+    calls = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: answer)
+    real_shutdown, real_thread = app.session.shutdown, app.session._thread
+    monkeypatch.setattr(app.session, "request_stop",
+                        lambda: calls.append("stop"))
+    monkeypatch.setattr(app.session, "shutdown",
+                        lambda: (calls.append("shutdown"), real_shutdown()))
+    monkeypatch.setattr(app, "_quit", lambda: calls.append("quit"))
+
+    class Working:
+        """The worker as `_wait_to_quit` sees it: still on the device until
+        the test says otherwise. Joining reaches the real one, so the
+        fixture still ends the session it started."""
+        alive = True
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=None):
+            real_thread.join(timeout)
+
+    worker = Working()
+    monkeypatch.setattr(app.session, "_thread", worker)
+    app.on_close()
+
+    if answer is None:
+        assert calls == [] and not app.closing
+        return
+    assert calls == (["stop", "shutdown"] if answer else ["shutdown"])
+    assert app.closing
+    app._wait_to_quit()
+    assert "quit" not in calls, "quit with the worker still on the device"
+    worker.alive = False
+    app._wait_to_quit()
+    assert calls[-1] == "quit"
+
+
+@pytest.mark.parametrize("typed,aborted", [
+    (None, False), ("", False), ("yes", False), ("abort it", False),
+    ("ABORT", True), ("  abort ", True)])
+def test_force_abort_needs_the_word_typed(window, monkeypatch, typed, aborted):
+    """Closing the transport under a read almost certainly costs a power
+    cycle, so only the word itself does it -- not Enter, not "yes"."""
+    app, root = window
+    fired = []
+    monkeypatch.setattr(gui.simpledialog, "askstring", lambda *a, **k: typed)
+    monkeypatch.setattr(app.session, "force_abort", lambda: fired.append(1))
+    app.on_abort()
+    assert bool(fired) is aborted
+
+
 def test_a_plain_roll_is_not_shown_with_the_sheets_turns(window, monkeypatch):
     """The Roll button's frames are written the session's way; turns a sheet
     left against frame numbers put this roll's frames of the same number on

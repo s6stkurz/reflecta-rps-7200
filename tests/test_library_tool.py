@@ -166,3 +166,59 @@ def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
     assert "left alone" in done.stdout + done.stderr
     assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
     assert not (path / "scan.before-migrate-raw.tif").exists()
+
+
+# -- duplicates --delete, the one command-line rmtree over entries ------------
+
+
+def _pass(root: Path, seed: int) -> Path:
+    """One 300 dpi pass filed as the scanner files it: raw bytes and all.
+    The same seed is the same picture; the request is the same for every
+    seed, so they all share one signature."""
+    import numpy as np
+
+    from rps7200 import library
+    from rps7200.direction import encode_index
+
+    image = np.random.default_rng(seed).integers(
+        0, 65535, (6, 8, 3), dtype=np.uint16)
+    return library.save(
+        image, {"resolution_dpi": 300, "channels": 3, "width": 8, "height": 6,
+                "depth": 16, "channel_order": list("RGB"),
+                "exposure_metered": True, "protocol_revision": 6},
+        root=root, raw=encode_index(image),
+        raw_layout={"format": "index", "bytes_per_line": 16, "width": 8,
+                    "lines": 6, "channels": 3})
+
+
+def _duplicates(root: Path, *argv):
+    return subprocess.run(
+        [sys.executable, str(TOOL), "duplicates", "--root", str(root), *argv],
+        capture_output=True, text=True, cwd=REPO)
+
+
+def test_duplicates_deletes_a_twin_and_nothing_else(tmp_path):
+    """Two filings of one pass, and a different picture asked for the same
+    way. Only the twin may go: a shared request is not a shared photograph,
+    and this command once destroyed every such picture but one, raw bytes
+    included. Without --delete it removes nothing at all."""
+    from rps7200 import library
+
+    root = tmp_path / "library"
+    first, twin, other = _pass(root, 1), _pass(root, 1), _pass(root, 2)
+
+    dry = _duplicates(root)
+    assert dry.returncode == 0, dry.stderr
+    assert first.exists() and twin.exists() and other.exists()
+    assert "would be freed" in dry.stdout
+
+    done = _duplicates(root, "--delete")
+    assert done.returncode == 0, done.stderr
+    left = {p.name for p in (first, twin, other) if p.exists()}
+    assert other.name in left, "a different picture was deleted as a duplicate"
+    assert len(left) == 2 and len({first.name, twin.name} & left) == 1
+    indexed = {r["id"] for r in json.loads(
+        (root / library.INDEX).read_text(encoding="utf-8"))}
+    assert indexed == left, "the index still lists what was removed"
+    for name in left:
+        assert library.reconstruct(root / name)[1].startswith("identical")
