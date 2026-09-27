@@ -2227,7 +2227,8 @@ class DirectScanner:
                 opened_on = self.read_state()
                 if not opened_on.warming_up:
                     break
-            except (CheckCondition, ScanReadError):
+            # Empty is "not yet" here too, as in `scan`'s opening polls.
+            except (CheckCondition, NoDataYet, ScanReadError):
                 pass
             time.sleep(1)
         # What byte 8 said as the calibration began, said and kept with its
@@ -3121,15 +3122,22 @@ class DirectScanner:
             try:
                 if not self.read_state().warming_up:
                     break
-            except (CheckCondition, ScanReadError):
+            # An empty answer too: `position()` already takes it as "not yet",
+            # and the READ STATE after a film move comes back empty every
+            # time, so a hold's prescan 0.4 s after its nudge failed the frame
+            # here over a status query the next poll would have answered.
+            except (CheckCondition, NoDataYet, ScanReadError):
                 pass
             time.sleep(1)
         self.wait_warm()
         self.test_unit_ready()
 
         if require_media:
-            state = self.read_state()
-            if not state.media_loaded:
+            try:
+                state: State | None = self.read_state()
+            except (CheckCondition, NoDataYet, ScanReadError):
+                state = None             # a note, not worth the pass
+            if state is not None and not state.media_loaded:
                 # Reported, not enforced: byte 8 was measured against the film
                 # once, with one variable changed, and no capture can
                 # corroborate it -- every one was taken with film in. This
