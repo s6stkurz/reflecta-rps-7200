@@ -314,6 +314,28 @@ def test_migrate_direction_carries_on_past_bytes_it_cannot_decode(tmp_path):
     assert f"! {bad.name}" in done.stdout
 
 
+def test_calibrations_re_reduces_every_archive_and_fails_on_damage(tmp_path):
+    from test_library import archived
+
+    cal = tmp_path / "calibration"
+    good, _ = archived(cal, seed=1)
+    bad, _ = archived(cal, seed=2)
+
+    def run():
+        return subprocess.run(
+            [sys.executable, str(TOOL), "calibrations", "--calibrations",
+             str(cal), "--root", str(tmp_path / "no-library-needed")],
+            capture_output=True, text=True, cwd=REPO)
+
+    done = run()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "identical" in done.stdout
+    (bad / "data.bin").write_bytes(b"\x00" * 10)
+    done = run()
+    assert done.returncode == 1, done.stdout
+    assert f"! {bad.name}" in done.stdout
+
+
 # -- reconstruct: its exit status is the regression gate ----------------------
 
 

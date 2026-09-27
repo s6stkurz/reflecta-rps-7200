@@ -8,11 +8,19 @@
     uv run python tools/library.py duplicates --delete
     uv run python tools/library.py migrate-direction  # which way each pass was read
     uv run python tools/library.py compact            # gzip what a window left plain
+    uv run python tools/library.py calibrations       # re-reduce every calibration
     uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
 which entries no longer match what was saved.
+
+`calibrations` is its counterpart for the reference: every calibration's own
+lines, archived under `--calibrations` (default `calibration/`), are reduced
+again with today's `calculate_shading` and compared with the reference kept
+beside them. Worth running after any change to how calibration lines become
+a reference. Given ENTRY ids, it says instead which archived calibration
+each entry's reference came from.
 
 `duplicates` finds entries that are the same scan of the same picture at the
 same protocol revision *and* hold the same bytes -- the scanner was driven
@@ -83,13 +91,17 @@ def main() -> int:
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
                              "duplicates", "migrate-raw", "migrate-direction",
-                             "compact", "tag"])
+                             "compact", "calibrations", "tag"])
     ap.add_argument("entries", nargs="*", metavar="ENTRY",
-                    help="tag: the entry ids (directory names) to tag")
+                    help="tag: the entry ids (directory names) to tag; "
+                         "calibrations: the entries to find calibrations for")
     ap.add_argument("--add", action="append", default=[], metavar="TAG",
                     help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
                          "entry taken without a reference on purpose")
     ap.add_argument("--root", default="library")
+    ap.add_argument("--calibrations", default=str(library.DEFAULT_CALIBRATIONS),
+                    help="calibrations: where the calibrations are archived "
+                         "(default %(default)s)")
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
     ap.add_argument("--write", action="store_true",
@@ -101,7 +113,9 @@ def main() -> int:
     args = ap.parse_args()
     root = Path(args.root)
 
-    if not root.exists():
+    # Re-reducing the archived calibrations needs no library at all.
+    if not root.exists() and not (args.action == "calibrations"
+                                  and not args.entries):
         print(f"no library at {root}", file=sys.stderr)
         return 1
 
@@ -425,6 +439,38 @@ def main() -> int:
         if args.write and done:
             library.reindex(root)
         return 1 if failed else 0
+
+    elif args.action == "calibrations":
+        if args.entries:
+            # Which calibration's lines each entry's reference is a reduction
+            # of -- by the path the record names, or, for a reference loaded
+            # from the cache, which names none, by its content.
+            search = (Path(args.calibrations), root.parent / "calibration")
+            lost = 0
+            for name in args.entries:
+                path = root / name
+                if not (path / "scan.json").exists():
+                    print(f"! {name}: no such entry", file=sys.stderr)
+                    return 1
+                found = library.calibration_of(path, search=search)
+                lost += found is None
+                print(f"{name}: {found if found is not None else 'no archived calibration found'}")
+            return 1 if lost else 0
+        folders = library.calibrations(args.calibrations)
+        if not folders:
+            print(f"no archived calibrations under {args.calibrations}")
+            return 0
+        bad = 0
+        for folder in folders:
+            _, verdict = library.recalibrate(folder)
+            kind = verdict.kind
+            mark = {library.IDENTICAL: " ", library.NOTHING: "-"}.get(kind, "!")
+            bad += mark == "!"
+            print(f"{mark} {folder.name}: {verdict}")
+        print(f"\n{bad} of {len(folders)} no longer reduce to the reference kept"
+              if bad else f"\nall {len(folders)} still reduce to the reference "
+              "kept beside them, or had none to compare")
+        return 1 if bad else 0
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

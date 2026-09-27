@@ -8,6 +8,7 @@ with, and must say so plainly when it no longer does.
 
 import gzip
 import json
+from pathlib import Path
 
 import numpy as np
 
@@ -1134,6 +1135,109 @@ def test_decode_raw_is_none_for_bytes_it_cannot_place(tmp_path):
                         {"resolution_dpi": 300, "channels": 3}, root=tmp_path,
                         raw=b"\x00" * (8 * 3 * 34), raw_layout=layout)
     assert library.decode_raw(path) is None
+
+
+# --- the calibration behind a reference, read back ---------------------------
+
+
+def calibration_lines(ppl=16, seed=0):
+    """Calibration bytes as the device sends them: 16-bit, tagged, unlit
+    lines then lit ones for every channel."""
+    rng = np.random.default_rng(seed)
+    out = bytearray()
+    for level in (170, 47000):
+        for _ in range(4):
+            for tag in b"RGB":
+                line = rng.normal(level, level * 0.01, ppl).clip(0, 65535)
+                out += bytes([tag, tag]) + line.astype("<u2").tobytes()
+    return bytes(out)
+
+
+def archived(root, ppl=16, seed=0):
+    """A calibration archived by the driver's own writer."""
+    from conftest import FakeTransport
+
+    from rps7200.direct import DirectScanner
+    from rps7200.shading import calculate_shading
+
+    data = calibration_lines(ppl, seed)
+    s = DirectScanner(transport=FakeTransport())
+    s.verbose = False
+    reference = calculate_shading(data, ppl)
+    folder = s.archive_calibration(
+        {"data": data, "reference": reference, "ccd_mask": bytes(ppl),
+         "pixels_per_line": ppl, "bytes_per_line": ppl * 2}, root)
+    return folder, reference
+
+
+def test_an_archived_calibration_reduces_again_to_its_reference(tmp_path):
+    """Nothing read the archive back: it was kept for a recomputation no
+    code could make."""
+    folder, reference = archived(tmp_path / "calibration")
+    assert library.same_reference(library.rebuild_reference(folder), reference)
+    _ref, verdict = library.recalibrate(folder)
+    assert verdict.kind == library.IDENTICAL, verdict
+
+
+def test_a_changed_reduction_is_reported(tmp_path, monkeypatch):
+    from rps7200 import shading
+
+    folder, _ = archived(tmp_path / "calibration")
+    monkeypatch.setattr(library, "calculate_shading",
+                        lambda data, ppl: shading.calculate_shading(
+                            data, ppl, split_ratio=1e9))       # one phase only
+    _ref, verdict = library.recalibrate(folder)
+    assert verdict.kind == library.CHANGED, verdict
+
+
+def test_damaged_calibration_bytes_are_refused_not_reduced(tmp_path):
+    import pytest
+
+    folder, _ = archived(tmp_path / "calibration")
+    data = bytearray((folder / "data.bin").read_bytes())
+    data[5] ^= 0xFF
+    (folder / "data.bin").write_bytes(bytes(data))
+    with pytest.raises(ValueError, match="checksum"):
+        library.rebuild_reference(folder)
+    assert library.recalibrate(folder)[1].kind == library.DAMAGED
+
+
+def _entry_corrected_by(tmp_path, reference, origin):
+    stream, image = index_stream(16, 8, 3)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    return library.save(image, {"resolution_dpi": 300, "channels": 3,
+                                "shading_origin": origin},
+                         root=tmp_path / "library", reference=reference,
+                         ccd_mask=bytes(16), raw=stream, raw_layout=layout)
+
+
+def test_an_entry_finds_the_calibration_behind_its_reference(tmp_path, monkeypatch):
+    """By the path its record names -- and, for a reference loaded from the
+    cache, which names none, by content."""
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("calibration"))
+    named = _entry_corrected_by(tmp_path, reference,
+                                {"action": "calibrated", "archive": str(folder)})
+    loaded = _entry_corrected_by(tmp_path, reference,
+                                 {"action": "loaded", "path": "calibration/shading.npz"})
+    assert library.calibration_of(named).resolve() == folder.resolve()
+    assert library.calibration_of(loaded).resolve() == folder.resolve()
+    _other, elsewhere = archived(tmp_path / "other", seed=3)
+    stranger = _entry_corrected_by(tmp_path, elsewhere, {"action": "loaded"})
+    assert library.calibration_of(stranger) is None
+
+
+def test_verify_reports_a_calibration_its_entries_name_and_lost(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("calibration"))
+    _entry_corrected_by(tmp_path, reference,
+                        {"action": "calibrated", "archive": str(folder)})
+    assert library.verify(tmp_path / "library") == []
+    shutil.rmtree(folder)
+    problems = library.verify(tmp_path / "library")
+    assert any("is missing" in p and folder.name in p for p in problems), problems
 
 
 def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):

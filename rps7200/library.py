@@ -52,10 +52,16 @@ import numpy as np
 from . import tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
 from .protocol import ScanReadError
-from .shading import ShadingReference, apply_shading
+from .shading import ShadingReference, apply_shading, calculate_shading
 
 DEFAULT_ROOT = Path("library")
 INDEX = "index.json"
+
+#: Where each calibration's own bytes are archived unless a caller says
+#: otherwise: beside the default cached reference, `calibration/shading.npz`,
+#: one folder per calibration (`DirectScanner.archive_calibration`).
+DEFAULT_CALIBRATIONS = Path("calibration")
+CALIBRATION_RECORD = "calibration.json"
 
 
 @dataclass
@@ -1335,11 +1341,15 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                 json.loads((folder / "scan.json").read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 problems.append(f"{folder.name}: scan.json cannot be read ({exc})")
+    archives: dict[str, int] = {}
     for record in entries(root):
         path = entry_path(root, record)
         if str(record.get("id")) != path.name:
             problems.append(f"{path.name}: records itself as {record.get('id')}")
         problems += [f"{path.name}: {p}" for p in damage(path, record)]
+        named = ((record.get("extra") or {}).get("shading_origin") or {}).get("archive")
+        if named:
+            archives[str(named)] = archives.get(str(named), 0) + 1
         image = record.get("image") or {}
         if not (path / str(image.get("file", "scan.tif"))).exists():
             continue
@@ -1378,6 +1388,23 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             problems.append(
                 f"{path.name}: no raw bytes, so it cannot be re-decoded"
             )
+    # The calibrations the entries name, once each. They live outside the
+    # library, behind a path recorded relative to wherever the scan ran from,
+    # and nothing checked that one was still there or still its own bytes --
+    # so deleting calibration/ cost every re-reduction silently.
+    for named, count in sorted(archives.items()):
+        found = next((c for c in (Path(named), root.parent / named)
+                      if (c / CALIBRATION_RECORD).exists()), None)
+        whose = f"named by {count} entr{'y' if count == 1 else 'ies'}"
+        if found is None:
+            problems.append(f"calibration {named} ({whose}) is missing: the "
+                            f"lines behind their reference cannot be reduced "
+                            f"again")
+            continue
+        try:
+            read_calibration(found)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            problems.append(f"calibration {named} ({whose}) is damaged: {exc}")
     return problems
 
 
@@ -1425,3 +1452,137 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
     for part in sorted(path.glob(".*.part")):
         found.append(f"{part.name} is a partial write left behind")
     return found
+
+
+# -- the calibration behind an entry's reference -------------------------------
+#
+# `shading.npz` is a reduction -- `calculate_shading`'s split into dark and
+# light and its averaging -- of the calibration's own lines, and a reduction
+# cannot be redone with better code once its input is gone. Those lines are
+# archived per calibration (`DirectScanner.archive_calibration`), and nothing
+# read them back: the archive was kept for a recomputation no code could make.
+
+
+def calibrations(root: Path | str = DEFAULT_CALIBRATIONS) -> list[Path]:
+    """Every archived calibration under `root`, oldest first."""
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    return sorted(p.parent for p in root.glob(f"*/{CALIBRATION_RECORD}"))
+
+
+def read_calibration(folder: Path | str) -> tuple[bytes, dict[str, Any]]:
+    """One archived calibration's bytes, exactly as read, and its record.
+
+    Raises OSError when a file is missing and ValueError when the bytes do not
+    match the checksum taken as they arrived: a reduction of damaged lines
+    would be a wrong reference presented as a better one.
+    """
+    folder = Path(folder)
+    record = json.loads((folder / CALIBRATION_RECORD).read_text(encoding="utf-8"))
+    data = (folder / "data.bin").read_bytes()
+    if record.get("sha256") and hashlib.sha256(data).hexdigest() != record["sha256"]:
+        raise ValueError(f"{folder.name}: data.bin does not match its checksum")
+    return data, record
+
+
+def rebuild_reference(folder: Path | str) -> ShadingReference | None:
+    """An archived calibration reduced again, by *today's* `calculate_shading`.
+
+    What a better split or average would be applied through: build the
+    reference from the lines, then correct an entry with it
+    (`apply_shading(load(entry)[0], reference, mask)`). None when today's
+    reduction finds no usable lines in them.
+    """
+    data, record = read_calibration(folder)
+    return calculate_shading(data, int(record["pixels_per_line"]))
+
+
+def same_reference(a: ShadingReference, b: ShadingReference) -> bool:
+    """Whether two references would correct every pixel identically."""
+    if (a.pixels_per_line != b.pixels_per_line or a.channels != b.channels
+            or sorted(a.dark) != sorted(b.dark)):
+        return False
+    return (all(np.array_equal(a.ref[c], b.ref[c]) and a.mean[c] == b.mean[c]
+                for c in a.channels)
+            and all(np.array_equal(a.dark[c], b.dark[c])
+                    and a.dark_mean[c] == b.dark_mean[c] for c in a.dark))
+
+
+def recalibrate(folder: Path | str) -> tuple[ShadingReference | None, Verdict]:
+    """:func:`reconstruct`, for the reference half of the correction.
+
+    Reduces an archived calibration's lines with today's code and says
+    whether that is still the reference kept beside them. A mismatch is
+    where a change to `calculate_shading` shows up -- on every calibration
+    ever archived, and through them on every entry each one corrects.
+    """
+    folder = Path(folder)
+    try:
+        data, record = read_calibration(folder)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return None, Verdict(f"could not read the calibration: {exc}", DAMAGED)
+    try:
+        rebuilt = calculate_shading(data, int(record["pixels_per_line"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        return None, Verdict(f"could not reduce: {exc}", FAILED)
+    kept = record.get("reference")
+    if not kept or not (folder / kept).exists():
+        return rebuilt, Verdict("no reference was kept beside it to compare "
+                                "with", NOTHING)
+    try:
+        stored = ShadingReference.load(folder / kept)
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile) as exc:
+        return rebuilt, Verdict(f"could not read {kept}: {exc}", DAMAGED)
+    if rebuilt is None:
+        return None, Verdict("reduction CHANGED: today's finds no usable "
+                             "lines", CHANGED)
+    if same_reference(rebuilt, stored):
+        return rebuilt, Verdict("identical to the kept reference", IDENTICAL)
+    return rebuilt, Verdict("reduction CHANGED: today's reference differs "
+                            "from the one kept", CHANGED)
+
+
+def calibration_of(path: Path | str, record: dict[str, Any] | None = None,
+                   search: tuple[Path | str, ...] = ()) -> Path | None:
+    """The archived calibration an entry's reference was reduced from.
+
+    Where the record names one (`extra.shading_origin.archive`), found as
+    written or beside the entry's library -- the path was recorded relative
+    to wherever the scan ran from. A reference *loaded* from the cache names
+    none, only the cache every calibration overwrites; those are matched by
+    content instead, against every archive under ``search`` (by default
+    `calibration/` here and beside the library), since the cache and the
+    archive are the same reference written twice. None when nothing matches.
+    """
+    path = Path(path)
+    if record is None:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    origin = (record.get("extra") or {}).get("shading_origin") or {}
+    named = origin.get("archive")
+    if named:
+        for candidate in (Path(named), path.parent.parent / named):
+            if (candidate / CALIBRATION_RECORD).exists():
+                return candidate
+    ref_file = (record.get("calibration") or {}).get("shading")
+    if not ref_file or not (path / ref_file).exists():
+        return None
+    try:
+        mine = ShadingReference.load(path / ref_file)
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+        return None
+    roots = search or (DEFAULT_CALIBRATIONS, path.parent.parent / "calibration")
+    seen: set[Path] = set()
+    for root in roots:
+        for folder in calibrations(root):
+            key = folder.resolve()
+            kept = folder / "shading.npz"
+            if key in seen or not kept.exists():
+                continue
+            seen.add(key)
+            try:
+                if same_reference(mine, ShadingReference.load(kept)):
+                    return folder
+            except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+                continue
+    return None
