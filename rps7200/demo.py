@@ -502,14 +502,35 @@ class DemoScanner:
     # -- the parts the session calls --------------------------------------
 
     def ensure_shading(self, path: Any, reuse: bool = False, skip: bool = False) -> dict:
+        """The driver's decision, at the calibration's cost, writing nothing.
+
+        Reuse loads only where a cached reference exists, as the driver's
+        does; otherwise it measures, three or four minutes on the hardware.
+        This answered "loaded" in a second whatever was on disk, so the
+        fallback an operator meets when the cache has gone never showed.
+
+        A measurement reaches for the transport, so an empty one refuses it
+        like any other pass or move. The calibration frame is below the film,
+        but the vendor only ever calibrates with the film in, and calibrating
+        an empty transport once preceded a wedge -- and under `--look-only`
+        the only way here was to tick "the film is in the transport", which
+        was false, and be thanked for it. Loading a cache touches nothing.
+        """
         if skip:
-            return {"action": "skipped", "summary": "shading off (demo)"}
-        self._work(210.0 if not reuse else 1.0)
+            return {"action": "skipped", "reference": None, "path": None,
+                    "summary": "shading off (demo)"}
+        if reuse and Path(path).exists():
+            self._work(1.0)
+            self._calibrated = True
+            return {"action": "loaded", "path": Path(path),
+                    "summary": f"shading loaded from {path} (demo)"}
+        self._need_film(
+            "calibrate against: the vendor only ever calibrates with the film "
+            "in, and calibrating an empty transport once preceded a wedge")
+        self._work(210.0)
         self._calibrated = True
-        return {
-            "action": "loaded" if reuse else "calibrated",
-            "summary": f"shading {'loaded' if reuse else 'calibrated'} (demo)",
-        }
+        return {"action": "calibrated", "path": None,
+                "summary": "shading calibrated (demo)"}
 
     def _refuse_uncalibrated(self, shading: bool) -> None:
         """Refuse a corrected pass before any calibration, as the real one does.

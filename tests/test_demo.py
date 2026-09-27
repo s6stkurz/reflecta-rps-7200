@@ -85,6 +85,40 @@ def test_an_uncalibrated_pass_is_refused_as_the_real_one_refuses_it(
     s.scan(resolution=900, infrared=False)       # calibrated: it scans
 
 
+def test_calibrating_through_a_session_follows_the_drivers_decision(
+        tmp_path, monkeypatch):
+    """Through the window's own job, with nothing bypassed. Reuse answered
+    "loaded" in a second whatever was on disk, where the driver measures when
+    the cache has gone; and an empty transport -- `make run-sheet` -- took a
+    measurement the operator could reach only by ticking that the film was
+    in, which it was not."""
+    from rps7200.session import Calibrate
+
+    monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
+    cache = tmp_path / "shading.npz"
+
+    def said(events):
+        return [e.text for e in events if e.kind in ("log", "failed")]
+
+    missing = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="reuse", reference=str(cache))])
+    assert any("calibrated" in t for t in said(missing)), said(missing)
+
+    cache.write_bytes(b"a reference")
+    present = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="reuse", reference=str(cache))])
+    assert any("loaded" in t for t in said(present)), said(present)
+
+    empty = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9, no_film=True), tmp_path,
+        [Calibrate(mode="measure", reference=str(tmp_path / "none.npz"))])
+    assert [e for e in empty if e.kind == "failed"], said(empty)
+    assert any("no film" in t for t in said(empty)), said(empty)
+    assert [e.done for e in empty if e.kind == "calibrated"] == [0]
+
+
 def test_it_decodes_the_raw_bytes_not_the_tiff(tmp_path):
     """Proved by corrupting the TIFF: the pixels must still come back right."""
     path, truth = entry(tmp_path)
