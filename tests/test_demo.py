@@ -1680,6 +1680,27 @@ def test_a_prescan_is_eight_bit_as_the_devices_is(tmp_path):
     assert image.dtype == np.uint8
 
 
+def test_a_scan_takes_the_drivers_depth_and_defaults(tmp_path):
+    """`depth` went into **kw and was dropped, so asking the stand-in for
+    8 bits gave 16; and its default resolution was 1800 where the driver's
+    is 300."""
+    import inspect
+
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import DEPTH_8
+
+    entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, meta = s.scan(resolution=900, infrared=False, depth=DEPTH_8)
+    s.close()
+    assert image.dtype == np.uint8 and meta["depth"] == 8
+    for name in ("resolution", "depth"):
+        assert (inspect.signature(DemoScanner.scan).parameters[name].default
+                == inspect.signature(DirectScanner.scan).parameters[name]
+                .default), name
+
+
 def test_a_demo_roll_prescans_at_the_resolution_it_is_given(tmp_path):
     """It prescanned at 300 dpi whatever `prescan_resolution` said, so the
     detectors read the demo's walks at settings the hardware never used."""

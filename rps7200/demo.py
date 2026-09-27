@@ -68,6 +68,8 @@ from .protocol import say_units
 from .framing import APERTURE_MM, FULL_FRAME
 from .protocol import (
     CHANNEL_ORDER,
+    DEPTH_8,
+    DEPTH_16,
     INDEX_HEADER,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
@@ -716,7 +718,7 @@ class DemoScanner:
 
     def scan(
         self,
-        resolution: int = 1800,
+        resolution: int = 300,
         infrared: bool = True,
         film: str = "negative",
         auto_exposure: bool = False,
@@ -725,8 +727,19 @@ class DemoScanner:
         frame: Any = None,
         keep_raw: bool = False,
         fast_infrared: bool = True,
+        depth: int = DEPTH_16,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        """A pass, as the driver's `scan` takes one, from the stored film.
+
+        Its defaults are the driver's -- 300 dpi, 16 bits -- and ``depth`` is
+        honoured: it was swallowed with the rest of ``**kw``, so a caller
+        asking for 8 bits got 16, and the default resolution was 1800 where
+        the driver's is 300. What else ``**kw`` takes (``advance``,
+        ``byte14``) the stand-in still ignores; no caller above the seam
+        passes them.
+        """
+        bits = 8 if depth == DEPTH_8 else 16
         if infrared and not supports_infrared(film):
             # The demo refuses exactly what the driver refuses, in its words.
             # A stand-in that accepts a combination the driver will not is
@@ -756,12 +769,12 @@ class DemoScanner:
         # Four planes whenever infrared was asked for, as the device sends:
         # an RGBI request used to come back three wide from an RGB entry.
         image, meta = self._take(
-            "scan", film, resolution, channels=4 if infrared else 3, depth=16,
-            shading=shading, keep_raw=keep_raw,
+            "scan", film, resolution, channels=4 if infrared else 3,
+            depth=bits, shading=shading, keep_raw=keep_raw,
             passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
         meta.update(self._settings_meta(exposure_scale, metered=auto_exposure,
                                         fast=fast),
-                    resolution_dpi=resolution, film=film, depth=16,
+                    resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1))
         # Only for a scan that did its own metering, as on the real one.
