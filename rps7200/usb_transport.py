@@ -667,13 +667,20 @@ class Transport:
             rc == LIBUSB_ERROR_TIMEOUT and transferred.value > 0
         ):
             # Drain the stall before it poisons every later control transfer.
+            #
+            # A departure from the vendor, and said so in the error: libusb
+            # sends a standard CLEAR_FEATURE(ENDPOINT_HALT), which no capture
+            # shows CyberView sending, into a device a pass just failed in.
+            # None of the three vendor shapes this module otherwise sends,
+            # and no command log sees it -- so the message has to.
             try:
                 self.clear_halt()
+                cleared = "; the endpoint's halt was cleared (CLEAR_FEATURE)"
             except Exception:
-                pass
+                cleared = "; clearing the endpoint's halt failed too"
             raise UsbError(
                 f"bulk read of {len(view)} bytes failed after "
-                f"{transferred.value} bytes: {_err(rc)}"
+                f"{transferred.value} bytes: {_err(rc)}{cleared}"
             )
         return transferred.value
 

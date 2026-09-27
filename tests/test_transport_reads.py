@@ -246,6 +246,34 @@ def test_a_transport_refuses_a_window_before_touching_libusb():
         Transport(max_window=0)
 
 
+def test_a_failed_bulk_read_says_it_cleared_the_halt(monkeypatch):
+    """CLEAR_FEATURE(ENDPOINT_HALT) is not one of the vendor's shapes and no
+    command log records it, so the error that follows it has to say so."""
+    import ctypes
+
+    from rps7200 import usb_transport
+
+    cleared = []
+
+    class Lib:
+        def libusb_bulk_transfer(self, handle, ep, buf, size, done, timeout):
+            return usb_transport.LIBUSB_ERROR_TIMEOUT      # and nothing read
+
+        def libusb_clear_halt(self, handle, ep):
+            cleared.append(ep)
+            return 0
+
+        def libusb_error_name(self, code):
+            return b"LIBUSB_ERROR_TIMEOUT"
+
+    monkeypatch.setattr(usb_transport, "_lib", Lib())
+    t = Transport.__new__(Transport)
+    t.verbose, t._handle, t.bulk_in_ep = False, ctypes.c_void_p(1), 0x81
+    with pytest.raises(UsbError, match="halt was cleared"):
+        t._bulk_read_into(memoryview(bytearray(64)), 1000)
+    assert cleared == [0x81]
+
+
 def test_nothing_here_offers_an_ieee1284_reset():
     """The vendor never sends one, and one left the scanner working for a
     single session and wedged for the next. `open(reset=True)` and a public
