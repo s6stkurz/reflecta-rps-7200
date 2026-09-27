@@ -2486,6 +2486,39 @@ def test_a_rewind_that_stops_short_files_nothing(tmp_path):
     assert failed and "nothing was scanned" in failed[0].text
 
 
+@pytest.mark.parametrize("job, said", [
+    (Roll(frames=3, resolution=7200, name="strip"), "cannot be corrected"),
+    (Roll(frames=3, resolution=600, infrared=True, film="bw", name="strip"),
+     "infrared is blind"),
+    (Roll(frames=3, resolution=600, meter="sometimes", name="strip"),
+     "unknown meter mode"),
+])
+def test_a_roll_the_driver_will_refuse_is_refused_before_the_film_moves(
+        tmp_path, job, said):
+    """Refused by the driver only at the roll's first frame -- after the seek
+    wound the film and the folder was made -- and at 7200 dpi frame by frame,
+    each prescanned and metered first: three frames of transport, then a roll
+    reported as finished."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=9)
+    events, frames = walk(job, tmp_path, scanner)
+    assert scanner.moves == [], "the film was wound for a roll that cannot run"
+    assert scanner.rolls == []
+    assert not (tmp_path / "rolls" / "strip").exists()
+    failed = kinds(events, "failed")
+    assert failed and said in failed[0].text
+
+
+def test_a_walk_at_7200_dpi_is_not_refused_for_its_scans(tmp_path):
+    """A walk takes prescans only; the resolution it carries is not scanned."""
+    from conftest import StripScanner
+
+    events, frames = walk(Roll(frames=1, resolution=7200, dry_run=True,
+                               name="strip"), tmp_path, StripScanner(at=0))
+    assert not kinds(events, "failed")
+
+
 def test_a_roll_refuses_when_the_transport_will_not_say(tmp_path, monkeypatch):
     """Where the film is unknown, frame 1 is a guess -- which is today's bug
     with a different number. Refused, through the failed-job path."""

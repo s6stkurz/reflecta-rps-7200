@@ -47,7 +47,13 @@ from typing import Any
 import numpy as np
 
 from . import export, library, preview
-from .direct import METER_EACH, DirectScanner
+from .direct import (
+    METER_EACH,
+    METER_MODES,
+    DirectScanner,
+    locks_white_balance,
+    supports_infrared,
+)
 from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
@@ -2587,6 +2593,23 @@ class ScanSession:
         # places on the strip now, and the film goes to the first one before
         # anything else happens.
         first = max(0, job.start_at - 1)
+        # And before the seek, what the driver refuses for certain. It says so
+        # only at the roll's first frame -- once the seek has wound the film
+        # and the folder exists -- and a 7200 dpi roll only frame by frame,
+        # after each was prescanned and metered: three frames and minutes of
+        # transport, then "giving up", reported as a roll that finished.
+        # `tools/scan_roll.py` refuses all of these before it opens anything.
+        if not job.dry_run and not DirectScanner.correctable_at(job.resolution):
+            raise DirectScanner.uncorrectable(job.resolution)
+        if job.meter not in METER_MODES:
+            raise ValueError(f"unknown meter mode {job.meter!r}; expected one "
+                             f"of {METER_MODES}")
+        locks_white_balance(job.film)          # raises for a film it does not know
+        if job.infrared and not supports_infrared(job.film):
+            raise ValueError(
+                f"infrared is blind to {job.film}: every frame would spend "
+                "its infrared pass and hand back the picture rather than the "
+                "dust. Scan it RGB.")
         try:
             seek(self._scanner, first, say=lambda m: self._emit("log", text=m))
         except FilmNotPlaced:
