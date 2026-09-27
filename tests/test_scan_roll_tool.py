@@ -1721,6 +1721,16 @@ def test_a_resume_that_asks_for_other_settings_is_refused(
     assert said in capsys.readouterr().err
 
 
+def test_a_rewind_alone_is_not_held_to_the_rolls_settings(tmp_path,
+                                                          monkeypatch):
+    """--frames 0 rewinds and stops, and scans nothing that could differ;
+    it was refused for a resolution it never asked for."""
+    _earlier_roll(tmp_path, {"dpi": 3600, "infrared": False,
+                             "film": "negative", "meter": "each"})
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "0")
+    assert code == 0
+
+
 def test_a_resume_with_the_same_settings_goes_ahead(tmp_path, monkeypatch):
     _earlier_roll(tmp_path, {"dpi": 1800, "infrared": False,
                              "film": "negative", "meter": "each"})

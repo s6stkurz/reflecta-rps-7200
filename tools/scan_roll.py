@@ -585,7 +585,10 @@ def main() -> int:
     # not share a file: the record of what was walked is what says which frames
     # are worth scanning, and writing the scan over it loses that.
     manifest_path = out / ("survey.json" if args.dry_run else "roll.json")
-    if not args.dry_run:
+    # Not for --frames 0, which rewinds and stops: nothing is scanned, so
+    # nothing can differ, and a rewind of a roll taken at 3600 dpi was
+    # refused for the 1800 it never asked for.
+    if not args.dry_run and args.frames != 0:
         differs = _differs_from_earlier(manifest_path, args)
         if differs:
             # A resume adds to the roll, and this run's frames would be
