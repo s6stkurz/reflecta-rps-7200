@@ -102,8 +102,10 @@ class FakeTransport:
 
     Stands in for `rps7200.usb_transport.Transport` wherever a test is about
     *which bytes the driver sends*, which is most of the protocol surface. It
-    deliberately implements only `command()`: anything reaching further into the
-    transport should be tested against `FakeUsb` instead, which fakes libusb.
+    deliberately implements only `command()`, and answers anything it was not
+    given with nothing: a test that needs a whole pass to run uses
+    `DeviceAtCommands`, and one about the transport's own retry and busy
+    handling uses `FakeUsb`, which fakes libusb underneath a real `Transport`.
     """
 
     def __init__(self, positions=(0,), replies=None):
@@ -428,6 +430,115 @@ class NoWaiting:
 
     def __getattr__(self, name):
         return getattr(self._real, name)
+
+
+class FakeUsb:
+    """libusb itself, scripted: the bridge's half of every transfer.
+
+    Installed as `usb_transport._lib`, so `Transport` runs unchanged down to
+    the ctypes buffers -- `_command`'s retry, busy and check-condition
+    decisions, `_send_command`'s IEEE1284 select, `_read_payload`'s windows --
+    and only the bus is imitated. Nothing of this was tested offline: every
+    other test replaces `command()` whole, and the control plane was checked
+    only on the hardware, only through INQUIRY and READ STATE, and only when
+    someone opted in. A mistake there -- a command re-sent while the device
+    is BUSY, a BUSY not drained after data-in -- is the class of fault this
+    project associates with wedges.
+
+    ``statuses`` answers each read of the status port, in order; running out
+    fails the test, because the driver asked something the script did not
+    expect. ``bulk`` is what the bulk endpoint delivers. ``transfers`` records
+    every control transfer as ``(direction, request, port, length, payload)``
+    -- the shapes `test_usbpcap` holds the vendor's captures to.
+    """
+
+    def __init__(self, statuses=(), bulk=b""):
+        self.statuses = list(statuses)
+        self.bulk = bytearray(bulk)
+        self.transfers: list[tuple] = []
+        self.bulk_reads: list[tuple[int, int]] = []
+        self.halts_cleared = 0
+
+    def transport(self, monkeypatch):
+        """A real `Transport` on this bus, already open."""
+        from rps7200 import usb_transport
+
+        monkeypatch.setattr(usb_transport, "_lib", self)
+        t = usb_transport.Transport()
+        t._handle = object()          # opened; `open()` walks a device list
+        return t
+
+    # -- the libusb calls `Transport` makes ----------------------------------
+
+    def libusb_init(self, ctx):
+        return 0
+
+    def libusb_exit(self, ctx):
+        pass
+
+    def libusb_release_interface(self, handle, interface):
+        return 0
+
+    def libusb_close(self, handle):
+        pass
+
+    def libusb_clear_halt(self, handle, endpoint):
+        self.halts_cleared += 1
+        return 0
+
+    def libusb_control_transfer(self, handle, request_type, request, value,
+                                index, buf, length, timeout):
+        if request_type & 0x80:
+            assert self.statuses, (
+                "the driver read the status port more often than the script "
+                f"answers; so far: {self.sequence()}")
+            status = self.statuses.pop(0)
+            buf[0] = status
+            self.transfers.append(("in", request, value, length, bytes([status])))
+        else:
+            self.transfers.append(("out", request, value, length,
+                                   bytes(buf[:length])))
+        return length
+
+    def libusb_bulk_transfer(self, handle, endpoint, buf, length, transferred,
+                             timeout):
+        import ctypes
+
+        n = min(length, len(self.bulk))
+        ctypes.memmove(buf, bytes(self.bulk[:n]), n)
+        del self.bulk[:n]
+        transferred._obj.value = n
+        self.bulk_reads.append((length, n))
+        return 0
+
+    # -- reading it back ---------------------------------------------------
+
+    def sequence(self) -> list:
+        """The transfers as the bridge sees them: ``"select"`` for each
+        IEEE1284 SCSI select, ``("byte", b)`` for each byte to the command
+        port -- the command block, then any data out -- ``("status", s)``,
+        and ``("length", n)`` for each bulk-length handshake."""
+        from rps7200 import usb_transport as u
+
+        out = []
+        for direction, _request, port, _length, payload in self.transfers:
+            if direction == "in":
+                out.append(("status", payload[0]))
+            elif port == u.PORT_SCSI_SIZE:
+                out.append(("length", int.from_bytes(payload[4:8], "little")))
+            elif port == u.PORT_SCSI_CMD:
+                out.append(("byte", payload[0]))
+            elif port == u.PORT_PAR_DATA and payload[0] == u.IEEE1284_SCSI:
+                out.append("select")
+        return out
+
+    def shapes(self) -> set:
+        """``(request_type, request, length)`` of every control transfer."""
+        from rps7200 import usb_transport as u
+
+        return {(u._REQUEST_TYPE_IN if d == "in" else u._REQUEST_TYPE_OUT,
+                 request, length)
+                for d, request, _port, length, _payload in self.transfers}
 
 
 def _inquiry_answer() -> bytes:
