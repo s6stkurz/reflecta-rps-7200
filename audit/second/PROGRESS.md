@@ -29,16 +29,15 @@ Not in the plan, by CLAUDE.md: anything that drives the scanner.
 
 | Step | State | Notes |
 |---|---|---|
-| 1. Second audit | running | continuation `rps7200-full-audit-2b` (run `wf_ea874017-29b`), started 2026-09-27 11:25 UTC |
-| 2. Write-up | partial | status.md, 2 areas and dataflow written from the first, cut-short run |
-| 3. Fix round 3 | not started | waits for step 1, so fixes do not move the code under the readers; script ready: `run/audit-fixes-wave3.js` |
+| 1. Second audit | nearly done | all 15 areas read and verified (361 findings, 1 refuted), critic done; the 6 gap readers run as `wf_8807e7b9-eec` (they hit the spend limit once) |
+| 2. Write-up | partial | `areas/*.md` for all 15 areas committed; summary and cross-cutting files follow once the gaps are in |
+| 3. Fix round 3 | running | base `e700609`; two workflows of `run/audit-fixes-wave3.js`: `wf_8316fb77-f1f` (capture, library, device, tests) and `wf_64d04286-f1a` (filing, window, demo-framing-outputs); branches `fix3/<group>`, each reviewed adversarially |
 | 4. Re-check | not started | |
 
-Done in step 1 so far: the status check of P01-P32 (all four readers), the
-dataflow tracer, and the area readers for transport-protocol,
-decode-and-debug-filing and demo-parity. The first run
-(`rps7200-full-audit-2`, `wf_05e4ee75-b95`) is stopped: its cache replays by call
-order, so resuming it re-ran finished readers.
+After step 3: merge `fix3/*` into this branch (resolve conflicts, act on the
+reviews), full suite with and without tifffile and under Tk, ruff, ty, push, CI
+on three systems; then a docs pass (README, CLAUDE.md facts, docs, TODO with the
+fix agents' proposals under "Decisions for Stefan"), then step 4.
 
 ## If this stopped
 
@@ -49,8 +48,12 @@ that says what is already done.
   `run/rps7200-full-audit-2b.js` with what it prints as `args`. It reads
   `audit/second/raw/` and skips every reader, verifier, critic and gap reader
   whose result is already there -- nothing is run twice.
-- **The checkpoint loop** (`run/checkpoint2.sh`, pointed at the running
-  workflow's `journal.jsonl`) commits each finished result to
-  `audit/second/raw/` and pushes; restart it with the new run's journal path.
+- **Fix round 3:** start `run/audit-fixes-wave3.js` again with the same `args`
+  plus `"skip": [groups already finished]` (their results are in
+  `audit/second/fixes/raw/fix3-<group>.json`). An agent whose branch
+  `fix3/<group>` exists continues it instead of starting over.
+- **The checkpoint loop** (`run/checkpoint3.sh`) follows every journal listed in
+  the scratchpad's `journals.txt` (`<journal> <out dir>` per line) and commits
+  finished results; add the new run's journal there when a workflow is restarted.
 - Fix branches (`fix3/*`) live only in the local clone until merged; the
   merged branch is what is pushed.

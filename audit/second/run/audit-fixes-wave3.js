@@ -10,9 +10,10 @@ export const meta = {
 const REPO = '/home/user/reflecta-rps-7200'
 const SP = '/tmp/claude-0/-home-user-reflecta-rps-7200/69e4bbe4-a038-5a75-8fd7-62a7b961a224/scratchpad'
 const BASE = args.base
+const SKIP = args.skip || []   // groups already merged or finished on a restart
 
 const COMMON = `
-You work in your own git worktree of ${REPO} (your current directory). FIRST run \`git checkout -B BRANCH ${BASE}\` with the branch name given below, so you start from the integration branch as it is now.
+You work in your own git worktree of ${REPO} (your current directory). FIRST: if the branch named below already exists (\`git branch --list BRANCH\`), an earlier run of this task was cut off -- run \`git checkout BRANCH\` (if git says it is checked out in another worktree, run \`git worktree prune\` and, if still refused, \`git checkout -B BRANCH-cont BRANCH\` and report that branch), read \`git log ${BASE}..HEAD\` to see what is already done, and continue from there without redoing it. Otherwise run \`git checkout -B BRANCH ${BASE}\`, so you start from the integration branch as it is now.
 Context: a first audit (audit/, problems P01-P32) was fixed in two rounds; a second audit (audit/second/) re-checked it. audit/second/status.md says, per first-audit problem, what the code does now and what is STILL OPEN; audit/second/areas/<area>.md lists the second audit's findings with their verdict (confirmed / partly / found-by-verifier / unverified). Commit messages since 83dbb22 say what was changed and why.
 Rules: no scanner is attached -- never run hardware tests or open a device, and never change what is sent to the device in normal operation without saying so and bumping PROTOCOL_REVISION in rps7200/protocol.py. Follow CLAUDE.md (comments explain why, in the surrounding voice; never reformat files; param units, never millimetres, for new transport code; the demo is the real software with different inputs -- no demo-only branches above the seam; file every scan with its raw bytes). Verify each item against the current code before changing anything: an item that is wrong or already fixed goes under "left" with the reason. Every behaviour change gets a test that fails without the change (check it: stash the fix and run the test). Keep each change minimal and local; do not refactor beyond what an item needs.
 Some items are decisions for Stefan rather than defects (a UI choice, a measurement only the hardware can make, a trade-off with no clear right answer): do not implement those; list them under "left" with a one-paragraph proposal, and they will be recorded in TODO.md.
@@ -58,7 +59,7 @@ ${g.extra ? `- Also: ${g.extra}` : ''}
 Other agents work in parallel on other subsystems; if an item needs a change mainly in another subsystem's files, make the smallest change here or leave it saying which subsystem owns it. Work in order of severity: data loss and wedge risks first.`
 
 const results = await pipeline(
-  args.groups,
+  args.groups.filter(g => !SKIP.includes(g.key)),
   g => agent(groupPrompt(g), { label: `fix3:${g.key}`, phase: 'Fix', schema: RESULT, isolation: 'worktree' }),
   (r, g) => r ? agent(`ADVERSARIAL REVIEWER, read-only (do not modify files or commit). Repository ${REPO}. Branch "${r.branch}" was made from ${BASE}. Review \`git -C ${REPO} diff ${BASE}..${r.branch}\` and the changed code in context. Look for bugs, regressions, tests that cannot fail (check by reasoning about the base code), CLAUDE.md violations, Windows-only failure modes (file replace while open, mkdir answers, path separators, encodings), anything that changes what is sent to the scanner in normal operation, and claimed fixes that do not fix the item. Claimed: ${JSON.stringify(r.done)}. Report only real issues with file, line and a concrete fix.`, { label: `review3:${g.key}`, phase: 'Review', schema: REVIEW, effort: 'high' }).then(v => ({ group: g.key, result: r, review: v })) : { group: g.key, result: null, review: null },
 )
