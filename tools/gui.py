@@ -397,6 +397,9 @@ class ScannerGui:
         self.results: list = []
         self.current = None
         self.busy = False
+        #: When this window opened: a cached reference older than this is
+        #: another power-on's, as far as the window can tell.
+        self._opened_at = time.time()
         #: A pass or a roll handed to the session whose start the worker has
         #: not reported yet. `busy` follows the worker's own "state" event,
         #: which the pump reads up to a tick after the job was taken, so a
@@ -1995,11 +1998,29 @@ class ScannerGui:
         scan without a calibration opens, where the film is confirmed before
         anything starts. Loading the cached reference reads a file and moves
         nothing, so that is not asked about.
+
+        Straight through only for a reference measured since this window
+        opened. "Reuse" is remembered across launches, so it used to load the
+        cached file whatever its age -- another power-on's, a lamp change
+        ago -- skipping the one prompt that says how old it is, and every
+        frame after was corrected with it. An older one goes through the
+        prompt, which offers it with its age beside it.
         """
-        if self.v_shading.get() == "reuse" and self._cached_reference():
+        if (self.v_shading.get() == "reuse" and self._cached_reference()
+                and self._cached_since_opened()):
             self.on_calibrate("reuse")
             return
         self.ask_to_calibrate(for_scan=False)
+
+    def _cached_since_opened(self) -> bool:
+        """Whether the cached reference was written while this window was open."""
+        try:
+            written = Path(self.session.reference).stat().st_mtime
+        except OSError:
+            return False
+        # Two seconds' grace: FAT keeps modification times to two seconds and
+        # HFS+ to one, so a file written just after opening can read as older.
+        return written >= self._opened_at - 2
 
     def _cached_reference(self) -> bool:
         """Whether "reuse" would load a file rather than measure.

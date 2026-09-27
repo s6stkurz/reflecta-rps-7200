@@ -1465,6 +1465,32 @@ def test_the_cached_reference_loads_without_the_question(window, monkeypatch,
     assert not _toplevels(root)
 
 
+def test_reuse_of_a_reference_from_before_this_window_shows_its_age_first(
+        window, monkeypatch, tmp_path):
+    """"Reuse" is remembered across launches, and the button then loaded the
+    cached file whatever its age -- another power-on's, a lamp change ago --
+    past the one prompt that says how old it is."""
+    import os
+
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _a_cache(app, tmp_path)
+    old = time.time() - 14 * 24 * 3600
+    os.utime(app.session.reference, (old, old))
+    app.v_shading.set("reuse")
+    app.b_calibrate.invoke()
+    root.update()
+    assert jobs == []
+    assert app._calibrate_prompt is not None
+    notes = [str(w.cget("text")) for w in gui._descendants(app._calibrate_prompt)
+             if w.winfo_class() == "TLabel"]
+    assert any("from a different power-on" in n for n in notes), notes
+    _prompt_button(app, "Use the cached one").invoke()
+    root.update()
+    assert [j.mode for j in jobs] == ["reuse"], "still his to choose"
+
+
 def test_reuse_with_nothing_cached_is_a_calibration_and_asks(
         window, monkeypatch, tmp_path):
     """`ensure_shading` measures when there is no file to reuse, so "reuse"
