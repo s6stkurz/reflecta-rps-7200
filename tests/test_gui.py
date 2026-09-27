@@ -1793,6 +1793,28 @@ def test_a_results_counter_no_strip_has_is_not_a_forecast(window):
     assert app._transport == 10
 
 
+def test_turning_an_old_frame_does_not_move_the_forecast(window):
+    """Turning a frame -- in the sheet or on the filmstrip -- set the window's
+    "where is the film" to that frame's walk position, and the Roll dialog
+    then forecast from there: the film on frame 17, the dialog saying frame
+    3 and nothing to wind. A pass arriving still says where it was taken."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    app._handle(Event(kind="transport", done=16))
+    old = Result(seq=-5, kind="prescan", label="frame 3 (reopened)",
+                 image=np.zeros((8, 8, 3), np.uint8), meta={}, position=2,
+                 number=3)
+    old.rotation, old.flipped, old.hidden, old.supersedes = 90, False, False, None
+    app.results.append(old)
+    app.remember_arrangement(old)
+    assert app._transport == 16
+    app._handle(Event(kind="result", result=Result(
+        seq=7, kind="prescan", label="prescan", meta={}, position=4,
+        image=np.zeros((8, 8, 3), np.uint8))))
+    assert app._transport == 4
+
+
 def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
                                                             monkeypatch):
     """First frame 45 was refused by the window, on the premise that the film

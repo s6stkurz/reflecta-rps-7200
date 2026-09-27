@@ -4384,6 +4384,14 @@ class ScannerGui:
             rotation, flipped = preview.compose(
                 (int(reversal[0]), bool(reversal[1])), (rotation, flipped))
         result.rotation, result.flipped = rotation, flipped
+        # A pass just taken says where the film is. Here, as it arrives, and
+        # not in `remember_arrangement`, which a turn also reaches: turning an
+        # old walk's frame 3 in the sheet told the Roll dialog the film was on
+        # frame 3 while it sat on 17. Through the same filter the session's
+        # readout reports use, so a counter no strip can have never becomes a
+        # forecast either.
+        if plausible(result.position):
+            self._transport = result.position
         # Whatever it turned out to be, the picture now has an answer, so the
         # next pass over it agrees with this one rather than with the session.
         self.remember_arrangement(result)
@@ -4412,10 +4420,6 @@ class ScannerGui:
         key = picture_of(result)
         if key is not None:
             self.orientations[key] = (result.rotation, result.flipped)
-        # Through the same filter the session's readout reports use, so a
-        # counter no strip can have never becomes a forecast either.
-        if plausible(result.position):
-            self._transport = result.position
         # Surveyed frames are exempt. The contact sheet displays these arrays
         # and the adjuster zooms into them, so decimating one in place would
         # quietly halve the picture the operator is deciding on -- and later,
