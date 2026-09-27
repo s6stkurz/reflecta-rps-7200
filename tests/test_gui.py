@@ -1243,6 +1243,19 @@ def test_the_infrared_tie_follows_the_infrared_box(window):
     assert str(app.c_fast_ir.cget("state")) == "disabled"
 
 
+def test_a_folder_typed_into_save_scans_to_is_used(window, tmp_path):
+    """Only Choose ... and Clear reached the session: a path typed or pasted
+    into the box was ignored for the rest of the session -- and saved, and
+    used from the next launch on."""
+    app, root = window
+    app.v_outdir.set(f"  {tmp_path / 'typed'}  ")
+    _press(app.e_outdir, "<Return>")
+    assert app.session.out_dir == tmp_path / "typed"
+    app.v_outdir.set("")
+    _press(app.e_outdir, "<FocusOut>")
+    assert app.session.out_dir is None, "and emptied by hand, it stops"
+
+
 def test_changing_the_monochrome_channel_changes_the_view(window):
     """Every setting the picker offers has to show what it will deliver --
     including the average, whose view is MONO rather than any one plane."""

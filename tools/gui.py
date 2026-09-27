@@ -1613,7 +1613,14 @@ class ScannerGui:
         box.pack(fill="x", pady=(8, 0))
         self.v_outdir = tk.StringVar(
             value=str(self.session.out_dir) if self.session.out_dir else "")
-        ttk.Entry(box, textvariable=self.v_outdir).pack(fill="x")
+        # Typed or pasted, it is taken on Return or on leaving the box. Only
+        # Choose ... and Clear reached the session, so a folder typed here
+        # went unused -- and was saved, and used from the next launch on.
+        self.e_outdir = ttk.Entry(box, textvariable=self.v_outdir)
+        self.e_outdir.pack(fill="x")
+        for sequence in ("<Return>", "<FocusOut>"):
+            self.e_outdir.bind(sequence, lambda _e: self._set_outdir(
+                self.v_outdir.get().strip()))
         row = ttk.Frame(box)
         row.pack(fill="x", pady=(4, 0))
         ttk.Button(row, text="Choose ...",
