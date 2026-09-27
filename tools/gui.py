@@ -3017,7 +3017,7 @@ class ScannerGui:
             for summary, items in plans:
                 for item in items:
                     try:
-                        path = _unclaimed(
+                        path = unclaimed_delivery(
                             out / f"{_safe(summary['roll'])}_"
                                   f"{batch_name(item, fmt)}")
                         said = self._deliver_one(item, path, quality,
@@ -4784,7 +4784,7 @@ class ScannerGui:
             written = 0
             for result, (mono, channel) in zip(passes, monos):
                 try:
-                    path = _unclaimed(out / batch_name(result, fmt))
+                    path = unclaimed_delivery(out / batch_name(result, fmt))
                     said = self._deliver_one(result, path, quality, mono,
                                              channel)
                 except Exception as exc:                 # noqa: BLE001
@@ -5854,6 +5854,34 @@ def batch_name(result, fmt: str) -> str:
     if result.number:
         return f"{kind}{int(result.number):02d}_{dpi}dpi{ir}{end}"
     return f"{kind}_{abs(int(result.seq)):03d}_{dpi}dpi{ir}{end}"
+
+
+def unclaimed_delivery(wanted: Path) -> Path:
+    """`wanted`, or the next free name beside it, counting what it brings.
+
+    Save all and Export promise that nothing already there is overwritten,
+    and `_unclaimed` checked the one name asked for. A JPEG can leave more:
+    `<stem>.dng` beside it for an infrared pass, or `<stem>.tif` in its place
+    where Pillow is missing (`export.write`). Either was written over without
+    a word -- a second Save all as JPEG into a folder of TIFFs replaced them
+    all. And past 999 clashes the asked-for name came back taken; this
+    raises instead, which costs that one file and says so.
+    """
+    def taken(path: Path) -> bool:
+        if path.exists():
+            return True
+        if path.suffix.lower() in (".jpg", ".jpeg"):
+            return (export.infrared_path(path).exists()
+                    or path.with_suffix(export.SUFFIXES["tiff"]).exists())
+        return False
+
+    if not taken(wanted):
+        return wanted
+    for n in range(2, 10_000):
+        candidate = wanted.with_name(f"{wanted.stem}-{n}{wanted.suffix}")
+        if not taken(candidate):
+            return candidate
+    raise FileExistsError(f"no free name beside {wanted}")
 
 
 def pixel_readout(x: int, y: int, values, exact: bool = True) -> str:

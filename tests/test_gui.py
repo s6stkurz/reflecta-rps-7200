@@ -3713,6 +3713,20 @@ def test_save_as_says_when_it_could_not_write(window, monkeypatch):
     assert "No space left" in app.log.get("1.0", "end")
 
 
+def test_a_delivered_name_is_free_of_the_files_it_may_bring(tmp_path):
+    """"Nothing already there is overwritten" checked only the name asked
+    for: a JPEG's infrared DNG beside it, or the TIFF it becomes without
+    Pillow, replaced whatever had that stem."""
+    wanted = tmp_path / "frame01_1800dpi.jpg"
+    assert gui.unclaimed_delivery(wanted) == wanted
+    (tmp_path / "frame01_1800dpi.dng").write_bytes(b"an earlier infrared")
+    assert gui.unclaimed_delivery(wanted).name == "frame01_1800dpi-2.jpg"
+    (tmp_path / "frame01_1800dpi-2.tif").write_bytes(b"an earlier tiff")
+    assert gui.unclaimed_delivery(wanted).name == "frame01_1800dpi-3.jpg"
+    tif = tmp_path / "frame02_1800dpi.tif"
+    assert gui.unclaimed_delivery(tif) == tif
+
+
 def test_approvals_are_read_without_loading_a_survey(tmp_path):
     """`approved.json` is the one thing in a roll folder the library cannot
     rebuild, so Delete has to be able to ask about it without reading pixels."""
