@@ -64,7 +64,7 @@ from . import library, tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
-from .protocol import say_units
+from .protocol import say_units, units
 from .framing import APERTURE_MM, FULL_FRAME
 from .protocol import (
     CHANNEL_ORDER,
@@ -314,6 +314,8 @@ class DemoScanner:
         #: prescan came back identical, so the loop could only ever be
         #: pretended at.
         self._film_mm = 0.0
+        #: How the last pass was drawn from its source, for its record.
+        self._fitted: dict[str, Any] = {}
         #: Backlash, as the transport really has it: after a direction change
         #: the gear train takes up `BACKLASH_MM` of slack before the film
         #: follows. `_last_way` is the way the train is loaded -- forward after
@@ -990,6 +992,13 @@ class DemoScanner:
             # bytes are the pass's own, so without it a demo entry could not
             # be traced to the photograph it shows.
             "demo_source": {"entry": source["entry"], "file": source["file"]},
+            # And how it was drawn, which is what makes it something other
+            # than a scan: the stored shape and the one fitted, how far the
+            # simulated film had moved it, whether its infrared plane was
+            # made up, and whether its reference is the source's or one
+            # resampled to these columns. None of that could be told from an
+            # entry before, nor the entry re-derived from its source.
+            "demo_fit": dict(self._fitted),
             **read,
         }
 
@@ -1035,6 +1044,13 @@ class DemoScanner:
         if (h, w) != (height, width):
             self._log(f"{source['entry'] or source['file']}: "
                       f"{height}x{width} fitted to {h}x{w} for {resolution} dpi")
+        self._fitted = {
+            "source_shape": [height, width], "shape": [h, w],
+            "column_shift": self._shift(w),
+            "film_units": round(units(self._film_mm), 3),
+            "infrared_synthesized": kept < channels,
+            "reference": None,
+        }
         if h == height and same_columns:
             raw = pixels[..., :kept]
         else:
@@ -1054,7 +1070,9 @@ class DemoScanner:
         added = set(range(kept, channels))
         if same_columns and not added & set(reference.ref):
             # Every column is still the one the stored calibration measured.
+            self._fitted["reference"] = "source"
             return raw, reference, mask
+        self._fitted["reference"] = "resampled"
         return raw, self._pass_reference(reference, mask, width, columns,
                                          drop=added), None
 

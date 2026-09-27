@@ -1297,6 +1297,29 @@ def test_a_resized_pass_is_corrected_where_its_columns_came_from(tmp_path):
     assert library.reconstruct(out)[1].startswith("identical")
 
 
+def test_a_demo_entry_says_how_it_was_drawn_from_its_source(tmp_path):
+    """Only `demo` and the source's name were recorded: not the fitted
+    shape, the simulated film's shift, a made-up infrared plane or a
+    reference resampled to the pass -- so a demo entry could not be told
+    from a scan by its parts, nor re-derived from its source."""
+    calibrated_entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    s.nudge(9.0)                  # a column of this 6-wide pass is 6 mm
+    _image, meta = s.scan(resolution=450, infrared=True, keep_raw=True)
+    capture = s.capture_record()
+    s.close()
+    fit = meta["demo_fit"]
+    assert fit["source_shape"] == [8, 12] and fit["shape"] == [4, 6]
+    assert fit["infrared_synthesized"] is True
+    assert fit["reference"] == "resampled"
+    assert fit["column_shift"] != 0 and fit["film_units"] > 0
+    out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
+                       film=FilmNotes(), **capture)
+    record = json.loads((out / "scan.json").read_text(encoding="utf-8"))
+    assert record["extra"]["demo_fit"] == fit
+
+
 def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
     """Only prescans used to move, so a frame held to its approved position
     was scanned where it had been before the hold."""
