@@ -209,3 +209,14 @@ def test_a_pass_that_failed_leaves_no_earlier_pass_bytes_behind():
         scan(s, shading=False, keep_raw=True)
     assert s.capture_record()["raw"] is None
     assert s.capture_record()["raw_layout"] is None
+
+
+def test_a_pass_records_what_it_was_taken_for_and_only_that_pass():
+    """Set by the loop that takes it -- a metering probe, a verification
+    prescan -- and recorded with that pass, never the next."""
+    s = OnePass(tagged(picture(8)) * 2, width=8)
+    s._pass_role = {"kind": "metering probe", "round": 1}
+    _, meta = scan(s, shading=False, keep_raw=True)
+    assert meta["pass_role"] == {"kind": "metering probe", "round": 1}
+    _, meta = scan(s, shading=False, keep_raw=True)
+    assert "pass_role" not in meta

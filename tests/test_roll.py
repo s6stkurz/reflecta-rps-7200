@@ -955,6 +955,76 @@ def test_a_claim_nobody_answers_for_is_filed_when_the_claimant_is_done(
     assert len(library.entries(tmp_path / "lib")) == 2
 
 
+def test_what_the_caller_adds_to_a_pass_reaches_its_debug_entry(
+        tmp_path, monkeypatch):
+    """A bracket's index and ratio, a roll frame's index and registration,
+    are added after `scan` returns. The spool copied the meta before, so a
+    bracket debug filing kept -- `--no-library` -- could not be merged again."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    meta = dict(_META)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), meta)
+    meta["bracket_index"] = 2                   # as scan_bracket does, after
+    s.close()
+    [record] = library.entries(tmp_path / "lib")
+    assert record["extra"]["bracket_index"] == 2
+
+
+class Probed(DirectScanner):
+    """`auto_exposure` with its probes answered, and what each was asked."""
+
+    def __init__(self):
+        self.verbose = False
+        self.seen = []
+
+    def get_gain_offset(self):
+        return settings(8000, 20000, 50000, 8000)
+
+    def set_gain_offset(self, s, infrared=False):
+        pass
+
+    def scan(self, **kw):
+        self.seen.append((kw.get("film"), self._pass_role))
+        self._pass_role = None
+        return np.full((40, 60, 3), 30000, np.uint16), {}
+
+
+def test_a_metering_probe_says_what_it_was_and_on_which_film():
+    """Filed by debug filing alone, every probe said "negative" -- on a slide
+    or a black and white roll too -- and nothing said it was a probe."""
+    s = Probed()
+    s.auto_exposure(film="bw", rounds=2, max_rounds=2)
+    assert [film for film, _ in s.seen] == ["bw"] * len(s.seen)
+    assert [role for _, role in s.seen] == [
+        {"kind": "metering probe", "round": n} for n in range(1, len(s.seen) + 1)]
+
+
+def test_a_verification_prescan_says_which_frame_it_served():
+    reference = _lit()
+
+    class Asked(FakeRoll):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.asked = []
+
+        def prescan(self, **kw):
+            self.asked.append((kw.get("film"), self._pass_role))
+            self._pass_role = None
+            return super().prescan(**kw)
+
+    scanner = Asked([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                           meter=METER_NONE, film="bw",
+                           approved={0: _approved(1, 0.5, reference)}))
+    verification = scanner.asked[1:]
+    assert verification == [("bw", {"kind": "verification prescan",
+                                     "for": "operator", "roll_index": 0,
+                                     "move": 1})]
+
+
 def test_debug_filing_goes_into_the_callers_library(tmp_path, monkeypatch):
     """With `--library D:/lib` the frames went there and the probes and
     prescans that explain them into `./library`, wherever that was."""

@@ -578,6 +578,10 @@ class DirectScanner:
     #: The command log of the last pass that raised, kept for a caller that
     #: wants to know what it sent. A pass read in full files its own.
     last_failed_commands: dict[str, Any] | None = None
+    #: What the next pass is being taken for, set by the loop that takes it
+    #: -- a metering probe, a hold's verification prescan -- and recorded in
+    #: its meta as ``pass_role``. Consumed by `scan`, so it describes one pass.
+    _pass_role: dict[str, Any] | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
     #: resolutions. Here, beside the read it guards, rather than only in the
@@ -1026,7 +1030,13 @@ class DirectScanner:
             # named a number a pass still waiting had -- whose files the next
             # one would have written over.
             n = self._debug_count = getattr(self, "_debug_count", 0) + 1
-            item: dict[str, Any] = {"meta": dict(meta), "captured": time.time()}
+            # The pass's meta itself, not a copy: its caller goes on to add
+            # what only it knows -- a bracket's index and ratio, a roll
+            # frame's index, position and registration -- and a copy taken
+            # here filed the pass without them, so a bracket debug filing
+            # kept could not be told apart or merged again. The sidecar
+            # below is the copy, as the pass stood when it was spooled.
+            item: dict[str, Any] = {"meta": meta, "captured": time.time()}
             item["tags"] = (["failed"] if failed else []) + (
                 ["debug"] if getattr(self, "debug", False) else [])
             item["notes"] = ("a pass read in full that then failed: "
@@ -2747,9 +2757,13 @@ class DirectScanner:
         limited = [False] * channels
         full = 65535.0
 
-        # The exposure every scale is relative to, read once. :meth:`scan`
-        # multiplies whatever the device currently holds, and SET GAIN OFFSET
-        # persists, so re-reading it each round would compound the scales.
+        # The exposure every scale is relative to, read once and written back
+        # before each round. On this device READ GAIN/OFFSET returns a fixed
+        # reference rather than what was last written -- the exposure fields
+        # hold 9604/6506/6506/7745 however different the value just written,
+        # see `scan_roll` -- so the scales cannot compound either way; reading
+        # it once and writing it back is what keeps that true if the device
+        # ever did echo, rather than a premise the arithmetic leans on.
         base = self.get_gain_offset()
         self._log(
             f"auto-exposure: film={film}, "
@@ -2766,10 +2780,15 @@ class DirectScanner:
         for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
             asked = list(scales)
+            self._pass_role = {"kind": "metering probe", "round": round_no}
             image, _ = self.scan(
                 resolution=resolution,
                 infrared=False,
                 exposure_scale=scales,
+                # The film in the transport, so a probe's entry says what it
+                # measured. It changes nothing sent: the probe is RGB, and it
+                # meters nothing itself. Every probe was filed "negative".
+                film=film,
                 # As the pass being metered: a scan taken raw on purpose is
                 # metered raw, rather than its probe asking for a correction
                 # the session has no reference for.
@@ -3187,6 +3206,9 @@ class DirectScanner:
         the one field here with no capture behind it -- `tests/test_fast_infrared.py`
         holds the payload byte by byte instead. See `docs/fast-infrared-plan.md`.
         """
+        # What the caller took this pass for (`_pass_role`), taken now so that
+        # a pass refused below cannot leave it to describe the next one.
+        role, self._pass_role = self._pass_role, None
         if infrared and not supports_infrared(film):
             # Refused rather than warned. This costs the ~212 s infrared floor
             # and returns a plane holding the photograph instead of the dust --
@@ -3370,6 +3392,8 @@ class DirectScanner:
             "started_utc": started_utc, "mode": mode,
             "carriage_state": carriage,
         }}
+        if role is not None:
+            flight["meta"]["pass_role"] = role
         self._in_flight = flight
         started = time.monotonic()
         try:
@@ -3525,6 +3549,12 @@ class DirectScanner:
         # the *previous* frame's metering against them.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = self.last_metering
+        # A pass only debug filing keeps -- a metering probe, a verification
+        # prescan -- says what it was for, where nothing else would: filed
+        # tagged `debug` and nothing more, it could not be told from any other
+        # pass, nor matched to the frame it served.
+        if role is not None:
+            meta["pass_role"] = role
         # The raw pixels, not the corrected ones: see `raw_pixels` above.
         self._debug_capture(raw_pixels, meta)
         # Done: the pass did not fail, and its bytes are not held twice.
@@ -3624,6 +3654,7 @@ class DirectScanner:
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
         source: str = "operator",
         shading: bool = True,
+        film: str = FILM_NEGATIVE,
     ) -> dict[str, Any]:
         """Move the film until this frame sits where it was decided to go.
 
@@ -3683,8 +3714,14 @@ class DirectScanner:
             out["spent_mm"] = round(spent, 4)
 
             time.sleep(self.HOLD_SETTLE_S)
+            # What this pass is and which frame it served, and the roll's
+            # film: filed by debug filing alone, it said "negative" and
+            # nothing else.
+            self._pass_role = {"kind": "verification prescan", "for": source,
+                               "roll_index": index, "move": out["moves"]}
             image, _ = self.prescan(resolution=prescan_resolution,
-                                    keep_raw=keep_raw, shading=shading)
+                                    keep_raw=keep_raw, shading=shading,
+                                    film=film)
             out["prescan"] = image
             measured, detail = measure_shift_mm(approved.reference, image)
             out["history"].append(detail)
@@ -3744,7 +3781,7 @@ class DirectScanner:
         self, index: int, image: np.ndarray, prescan_resolution: int,
         walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
         should_stop: Callable[[], bool] | None = None,
-        shading: bool = True,
+        shading: bool = True, film: str = FILM_NEGATIVE,
     ) -> dict[str, Any]:
         """Judge where this frame sits, put it there, and check the work.
 
@@ -3820,7 +3857,7 @@ class DirectScanner:
             _Aim(offset_mm=decision, reference=image),
             keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
             rejudge=self._rejudge_for(index, walk, decision),
-            shading=shading,
+            shading=shading, film=film,
         )
         out.update({k: v for k, v in fix.items() if k != "prescan"})
         out["prescan"] = fix.get("prescan")
@@ -4326,7 +4363,7 @@ class DirectScanner:
                         # `operator` -- the one thing `source`'s own docstring
                         # says the field exists to prevent.
                         source=getattr(held, "source", None) or "operator",
-                        shading=shading,
+                        shading=shading, film=film,
                     )
                     if fix.get("roll_abort"):
                         holding = False
@@ -4372,7 +4409,7 @@ class DirectScanner:
                     fix = self._aim_frame(
                         index, prescan_image, prescan_resolution, walk,
                         dry_run=correct_dry_run, keep_raw=keep_raw,
-                        should_stop=should_stop, shading=shading,
+                        should_stop=should_stop, shading=shading, film=film,
                     )
                     marks["correction"] = {k: v for k, v in fix.items()
                                            if k != "prescan"}
