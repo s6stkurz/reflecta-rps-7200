@@ -158,7 +158,7 @@ for a in AREAS:
               f"**Failure scenario:** {f['failure_scenario'].strip()}", "",
               f"**Fix:** {f['recommendation'].strip()}", ""]
         if f.get("verify_reasoning"):
-            L += [f"<details><summary>Second reader's check</summary>", "",
+            L += ["<details><summary>Second reader's check</summary>", "",
                   f["verify_reasoning"].strip(), "", "</details>", ""]
     L += ["## What this area persists", "",
           "| What | Path | Format | Raw or corrected | Written by | Read by | Exact? |",
