@@ -412,6 +412,70 @@ def test_a_nudge_answers_with_everything_the_hold_loop_reads():
         assert key in got, key
 
 
+def test_a_nudge_decides_exactly_what_the_drivers_would(monkeypatch, tmp_path):
+    """The keys being present, and `param_for_mm` being the driver's, still
+    left the demo's own copy of what a param delivers and when it falls short
+    free to drift -- the arithmetic whose stale copy once turned a one-command
+    hold into `not_converged`. So the two answers are compared whole, either
+    side of zero, the first rung, the ramp and the cap, with the driver's
+    run on its own code down to the SLIDE it sends."""
+    from conftest import scanner_at_commands
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import SCSI_SLIDE
+
+    scanner, device = scanner_at_commands(monkeypatch)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    step = DirectScanner.STEP_MM
+    for units in (0.0, 0.4, 1.0, 2.84, 3.5, 38.0, 88.8, 88.9, 150.0):
+        for sign in (1, -1):
+            millimetres = sign * units * step
+            driver = scanner.nudge(millimetres)
+            assert demo.nudge(millimetres) == driver, (units, sign)
+            sent = device.sent[-1]
+            assert sent[0] == SCSI_SLIDE and sent[1][1] == driver["param"]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-09: DemoScanner's pass meta lacks keys DirectScanner.scan records -- "
+    "protocol_revision, filter_offsets, mode, commands and shading_origin -- "
+    "so a demo entry does not describe itself as a real one does"))
+def test_a_demo_pass_says_everything_about_itself_a_real_one_does(
+        monkeypatch, tmp_path):
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    _, real = scanner.scan(resolution=300, infrared=True)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    demo.open()
+    try:
+        demo.ensure_shading(tmp_path / "shading.npz")
+        _, pretend = demo.scan(resolution=300, infrared=True)
+    finally:
+        demo.close()
+    assert sorted(set(real) - set(pretend)) == []
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-09: DemoScanner.ensure_shading(reuse=True) answers 'loaded' when no "
+    "cached reference exists and writes none, where the driver calibrates "
+    "and caches -- so the window's reuse path never behaves in the demo as "
+    "it does on the scanner"))
+def test_reusing_a_reference_that_is_not_there_calibrates_as_the_driver_does(
+        monkeypatch, tmp_path):
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    real = scanner.ensure_shading(tmp_path / "real" / "shading.npz",
+                                  reuse=True)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    pretend = demo.ensure_shading(tmp_path / "demo" / "shading.npz",
+                                  reuse=True)
+    assert real["action"] == "calibrated"
+    assert pretend["action"] == real["action"]
+    assert (tmp_path / "demo" / "shading.npz").exists()
+
+
 # -- what a roll walks, which is what a contact sheet shows -----------------
 
 
@@ -656,31 +720,53 @@ def test_nudging_the_demo_actually_moves_the_film():
     assert scanner._film_mm > before
 
 
-def test_the_demo_converges_on_an_approved_position():
+def textured_library(root, count=4):
+    """Stored frames with prescans a registration can lock onto.
+
+    The two tests below used `DemoScanner("library")` -- the checkout's own
+    library, relative to wherever pytest ran -- and skipped where there was
+    none, which is everywhere the suite runs by itself. So the demo's own
+    motion (its nudges, backlash and the frame whose transport slips) was
+    never exercised in CI. These are the synthetic negatives the frame-edge
+    tests read, filed as the demo expects to find a walked strip.
+    """
+    from conftest import negative_prescan
+
+    for seed in range(count):
+        prescan = negative_prescan(seed=seed)
+        scan = prescan.astype(np.uint16) * 257
+        meta = {"resolution_dpi": 300, "channels": 3, "film": "negative",
+                "channel_order": list("RGB"), "width": scan.shape[1],
+                "height": scan.shape[0], "bytes_per_line": scan.shape[1] * 2,
+                "depth": 16}
+        library.save(scan, meta, root=root, film=FilmNotes(frame=str(seed)),
+                     prescan=prescan)
+    return root
+
+
+def _dry_run(root, frames, approved=None):
+    """``{index: RollFrame}`` of one dry run of the demo over ``root``."""
     from rps7200.demo import DemoScanner
+
+    scanner = DemoScanner(str(root), speed=1e9)
+    scanner.open()
+    try:
+        return {rf.index: rf for rf in scanner.scan_roll(
+            frames=frames, resolution=300, infrared=False, dry_run=True,
+            approved=approved)}
+    finally:
+        scanner.close()
+
+
+def test_the_demo_converges_on_an_approved_position(tmp_path):
     from rps7200.session import Approved
 
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    if not scanner._entries:
-        # The test card the demo falls back to has nothing to correlate,
-        # so registration can only ever say "unverified". Same reason
-        # test_tiff skips without scans/: the data is not in a checkout.
-        scanner.close()
-        pytest.skip("no library entries in this checkout to register against")
-    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
-        frames=2, resolution=300, infrared=False, dry_run=True)}
-    scanner.close()
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    held = {}
+    root = textured_library(tmp_path / "library")
+    references = {i: rf.prescan for i, rf in _dry_run(root, 2).items()}
     approved = {0: Approved(1, 0.5, reference=references[0]),
                 1: Approved(2, 0.0, reference=references[1])}
-    for rf in scanner.scan_roll(frames=2, resolution=300, infrared=False,
-                                dry_run=True, approved=approved):
-        held[rf.index] = rf.registration["approved"]
-    scanner.close()
+    held = {i: rf.registration["approved"]
+            for i, rf in _dry_run(root, 2, approved).items()}
 
     assert held[0]["outcome"] == "held"
     assert held[0]["moves"] == 1, "an offset should cost exactly one move"
@@ -689,36 +775,20 @@ def test_the_demo_converges_on_an_approved_position():
     assert held[1]["moves"] == 0, "no offset asked for, so nothing to do"
 
 
-def test_one_frame_is_made_to_miss_on_purpose():
+def test_one_frame_is_made_to_miss_on_purpose(tmp_path):
     """A flag nobody has ever seen fire is a flag nobody trusts. The demo has
     a frame whose transport slips, so `not_converged` and the end-of-roll
     warning can be watched rather than taken on faith."""
     from rps7200.demo import DemoScanner
     from rps7200.session import Approved
 
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    if not scanner._entries:
-        # The test card the demo falls back to has nothing to correlate,
-        # so registration can only ever say "unverified". Same reason
-        # test_tiff skips without scans/: the data is not in a checkout.
-        scanner.close()
-        pytest.skip("no library entries in this checkout to register against")
-    slipping = scanner._slipping_index
-    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
-        frames=slipping + 1, resolution=300, infrared=False, dry_run=True)}
-    scanner.close()
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    out = {}
-    for rf in scanner.scan_roll(
-            frames=slipping + 1, resolution=300, infrared=False, dry_run=True,
-            approved={slipping: Approved(slipping + 1, 0.8,
-                                         reference=references[slipping])}):
-        if rf.index == slipping:
-            out = rf.registration["approved"]
-    scanner.close()
+    root = textured_library(tmp_path / "library")
+    slipping = DemoScanner(str(root))._slipping_index
+    references = {i: rf.prescan for i, rf in _dry_run(root, slipping + 1).items()}
+    out = _dry_run(root, slipping + 1, {
+        slipping: Approved(slipping + 1, 0.8,
+                           reference=references[slipping])})[slipping]
+    out = out.registration["approved"]
 
     assert out["outcome"] == "not_converged"
     assert out["moves"] == 3, "it tries, and stops at the cap"
