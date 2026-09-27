@@ -1171,6 +1171,28 @@ def window(tmp_path):
         root.destroy()
 
 
+def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
+    """They were moved aside and the window opened on its defaults with
+    nothing on screen to say so."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    broken = tmp_path / "broken-settings.json"
+    broken.write_text('{"controls": {"dpi": ', encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True, settings_path=broken)
+    try:
+        assert "could not be read" in other.log.get("1.0", "end")
+    finally:
+        other._alive = False
+        top.destroy()
+
+
 def test_the_monochrome_controls_follow_the_film(window):
     """Enabled only for black and white, because reducing a colour negative or
     a slide to one channel throws the picture away rather than a redundant copy

@@ -393,7 +393,9 @@ class ScannerGui:
         self.look_only = look_only
         # First, because the controls and the presets below start from it.
         self._settings_path = settings_path
-        self.remembered = settings.load(settings_path)
+        self._settings_notes: list[str] = []
+        self.remembered = settings.load(settings_path,
+                                        say=self._settings_notes.append)
         self.results: list = []
         self.current = None
         self.busy = False
@@ -580,6 +582,9 @@ class ScannerGui:
         self._watch_controls()
         self._restore()
         self._refresh_panels()
+        # Heard before there was a log to say it in.
+        for note in self._settings_notes:
+            self._say(note)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         # One binding at the root, dispatched by what the pointer is actually
         # over. Binding per widget did not work: the panel's children sit on
