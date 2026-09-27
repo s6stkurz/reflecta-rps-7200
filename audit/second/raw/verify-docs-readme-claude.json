@@ -1,0 +1,210 @@
+{
+ "type": "result",
+ "key": "v2:3a1226925de297ddd62d53d7270459b7d8ebe61b9288c2c71b183ab97a7c367c",
+ "agentId": "ab714a2b7e2fca035",
+ "result": {
+  "verdicts": [
+   {
+    "id": "DOC-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:2627 passes `prescan=rf.prescan` (the image returned by prescan(), which calls scan(... shading=shading ...) at direct.py:2076-2087, so it is corrected) and never passes rf.raw_prescan to the frame's _file. On a real roll the prescan is filed separately only when `job.dry_run` (session.py:2536). tools/scan_roll.py:752 does the same thing, and it files raw prescans only in its dry_run branch (660-684). library.py:269-270 writes the corrected array as prescan.tif. The record keeps only file/read_direction/carriage_state (library.py:378-382) and has no corrections label. The claimer (session.py:2872-2874) claims only raw_image, so with RPS7200_DEBUG=1 the raw prescan does get a debug entry. With debug off, which is the default, a real roll's framing prescans exist only as corrected 8-bit pixels. demo.py:1476-1479 concedes that a kept prescan is corrected."
+   },
+   {
+    "id": "DOC-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "In tools/scan.py the only `interrupt.requested()` check is inside `hold()` under `if args.bracket` (scan.py:301). A non-bracket run goes from ensure_shading (270-274) straight into s.scan(...) (350-359), which includes the auto-exposure probes. After the `with`, trouble is None and main returns 0. DirectScanner.scan_roll checks should_stop only at the top of a frame (direct.py:3913), before an advance (3931) and inside the hold/aim loops (3363). Nothing checks it between metering and `self.scan(...)` (4094-4121), so a roll finishes the frame's prescan, metering and full scan. console.py:80-81 promises 'after the pass in flight'. Severity lowered to medium: a wedge needs the operator to press Ctrl-C a second time after an explicit warning. The core defect is that the stop is silently deferred for minutes and the documentation misstates it."
+   },
+   {
+    "id": "DOC-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "session.py:1302-1303 computes `lines = resolution * 6888/7200` and `rgb = 8.0 + 0.036 * lines`, which gives 18.3/39.0/70.0/256 s at 300/900/1800/7200 dpi, against CLAUDE.md:394-402's medians of 22/72/85/314 s. scan.py:58-59 labels the result 'an estimate from the library's medians'. FOREGROUND_S = 480 s is compared with this under-estimate and has no headroom, although CLAUDE.md:404 says to budget above the median. README's table (534-537: 600 dpi ~34 s, 1800 dpi ~85 s) disagrees with its own formula at 544 (29 s, 70 s) and with CLAUDE.md (32 s at 600 dpi). README:625 says metering takes 'up to 48 s', but METERING_S = 66 s (scan.py:43)."
+   },
+   {
+    "id": "DOC-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_refuse_if_suspect is called only at direct.py:1523 (slide), 1623 (start_scan) and 2178 (calibrate_shading). scan() starts at 2842 with no guard. Before the SLIDE_INIT at ~3062 raises, it sends set_exposure_time, set_highlight_shadow, set_scan_frame, cmd_17, set_gain_offset and set_mode (offsets 137-183 in the 2880+ window). scan_roll calls set_gain_offset(baseline) and auto_exposure before scan() (4104-4118). Neither rps7200/session.py nor tools/gui.py references `suspect` or DeviceSuspect, so the window keeps accepting jobs. The class comment at direct.py:524-525 ('makes every command that would drive the device raise') and README.md:417-420 ('sends nothing more that could drive the device') are contradicted."
+   },
+   {
+    "id": "DOC-05",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "This holds for the window but not for the CLI: tools/scan_roll.py calls writer.finish() only after the device block has exited (scan_roll.py:791-803), and tools/scan.py files after close. In the window, FrameWriter is created once for the session (session.py:1946) and flushed only in the finally after close (1968-1996). The tail of a roll is therefore gzipped (compress=bool(roll), 2885) with the device open and idle. Single-scan output copies go through export.write -> tiff.write with the default compress=True (export.py:191-192, tiff.py:102). Export and Save all run on threads while the session is open (gui.py:2758-2776, 3457). archive_calibration's docstring says 'Written uncompressed', but it calls ShadingReference.save -> np.savez_compressed (direct.py:785, shading.py:91). _debug_capture also savez_compresses the reference with the device open (direct.py ~980-985), which contradicts CLAUDE.md's 'A single scan compresses nothing while the device is open'. The npz writes are a few hundred kB and trivial. The roll tail, the deflated output copies and Export are the substantive part.",
+    "corrected_description": "In the window only (the CLI tools file after close), heavy local work happens with the device open and idle: the gzip and deflate of a roll's last queued frames after the roll job ends, deflate of single-scan output-folder copies, and the Export and Save all re-correction threads. The FrameWriter docstring ('busy rather than idle throughout') and CLAUDE.md's 'a single scan compresses nothing while the device is open' are therefore not true of the window. The small savez_compressed writes (archive and debug spool reference) contradict the archive_calibration docstring but carry negligible risk.",
+    "corrected_locations": [
+     "rps7200/session.py:1553",
+     "rps7200/session.py:1946",
+     "rps7200/session.py:1968",
+     "rps7200/session.py:2885",
+     "rps7200/session.py:1683",
+     "rps7200/export.py:191",
+     "rps7200/tiff.py:102",
+     "tools/gui.py:2758",
+     "tools/gui.py:3457",
+     "rps7200/direct.py:757",
+     "rps7200/direct.py:785"
+    ]
+   },
+   {
+    "id": "DOC-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_debug_flush unlinks claimed items unconditionally (direct.py:1057-1061: `if item.get(\"claimed\"): ... stuck += self._debug_unlink(item); continue`). It runs from close() (1144-1145). tools/scan.py claims in hold() (294-296) and files after the `with` in an unguarded loop (366-375), so the first library.save exception propagates and skips the remaining pending passes and the delivery. In the window, _file claims at submit (session.py:2872-2874) and scanner.close() runs before writer.finish() (1973-1979), so a FrameWriter library.save failure leaves no spool copy. The README.md:601-603 promise does not hold for claimed passes."
+   },
+   {
+    "id": "DOC-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "direct.py:926-928 uses tempfile.mkdtemp(prefix=\"rps7200-debug-\") under the OS temp directory. The spool path is logged only inside _debug_flush (1044-1047, 1104-1115), which runs from close(). _debug_capture never logs where it spooled, and the only other reference is the attribute at direct.py:566. So in the 'crash before the session closed' case README.md:601-603 names, the log does not say where the spool is, which contradicts 'and the log says where'. The spool also sits in a location the OS may clear at reboot. The per-pass meta.json does make recovery possible if the directory is found."
+   },
+   {
+    "id": "DOC-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "gui.py:2811-2814 (docstring) and 2826-2831 (dialog) tell the operator that everything but approved.json can be rebuilt from the library. The window writes prescanNN-before.tif with file_entry=False (session.py:2567-2583), and scan_roll.py:686-694 writes it with a bare tiff.write, so neither gets an entry. The pass is only in the library under RPS7200_DEBUG=1, as an unclaimed aim prescan. Pre-2026-09-24 CLI walks' prescans exist only in the folder, which README.md:344-346 admits. The unticked sheet state is in gui-settings.json, not approved.json (see DOC-12), so the 'decided' count (gui.py:2822-2823) can also undercount."
+   },
+   {
+    "id": "DOC-09",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "It is true that nothing reads data.bin or calibration.json (a grep finds only the writes at direct.py:781 and 802), that library.verify walks only the library root (library.py:1068-1140), and that load_shading's origin has no archive key (direct.py:724-729). However, a session that calibrates does record the link: ensure_shading sets `self._shading_origin[\"archive\"] = str(archive)` (direct.py:854-860), so entries corrected in that session name their archive. The gap is confined to references loaded from the cache (--reuse, 'Use the cached one'). Those can still be matched by content, not only by timestamps, because each archive folder holds its own shading.npz and every entry holds a copy of the reference.",
+    "corrected_description": "The calibration archive (data.bin, calibration.json) is never read, re-derived from or verified by any code. `make verify` does not cover calibration/. An entry corrected by a reference loaded from the cache (--reuse or the window's cached option) records only the cache path and mtime, with no archive folder or reference checksum. Tracing it back needs a content comparison against each archive's shading.npz. Sessions that calibrate do record extra.shading_origin.archive.",
+    "corrected_locations": [
+     "rps7200/direct.py:724",
+     "rps7200/direct.py:856",
+     "rps7200/direct.py:781",
+     "rps7200/library.py:1068"
+    ]
+   },
+   {
+    "id": "DOC-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gui.py:127 offers 7200 in DPI_LADDER. correctable_at is used only by direct.scan (2943) and tools/scan_roll.py:333, and not by gui.py or session.py. In scan_roll the frame is prescanned (3968), metered (4104-4108) and then refused in scan() (2943-2947, before any command). The ShadingUnavailable is caught as a frame failure (4142-4155) and the loop advances until max_failures (default 3, session.py:1469). This is a wasted-time issue, not a data or safety one."
+   },
+   {
+    "id": "DOC-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "export.write calls _write_infrared only on the JPEG path (export.py:183-191). The TIFF path is `tiff.write(...)` alone (192). dng.py and export.py are the only modules that mention DNG. README.md:574-575 says the DNG is written 'beside the TIFF'."
+   },
+   {
+    "id": "DOC-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_store_sheet_state writes into self.remembered['sheet'][key] and calls _remember() (gui.py:2666-2676). _recall_sheet_state reads it back from the settings file (2684-2690). approved.json is written only by _write_approved from on_scan_chosen (3166). README.md:427-428 attributes this persistence to approved.json."
+   },
+   {
+    "id": "DOC-13",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "film_bounds (framing.py:86-106) is a level-step detector with no confidence. The 3850-pair measurement and CONFIDENCE_FLOOR=55 belong to register/measure_shift_mm (framing.py:858-883), so README.md:688-691 attributes them to the wrong function. The claim that 'no wrong match ever beat a confidence of 55' is not wrong, though: the worst wrong match was 30.2, which is below 55. That part is only imprecise, since it hides a 24.8-point margin.",
+    "corrected_description": "README.md:688-691 credits film_bounds() with the phase-correlation confidence floor, which belongs to the registration correlation (CONFIDENCE_FLOOR, framing.py:883). It also describes film_bounds as looking for 'the bright clear gap', while the code finds the film by how much light it stops. The 55/54.9 figures are numerically consistent with the code comment.",
+    "corrected_locations": [
+     "README.md:688",
+     "rps7200/framing.py:86",
+     "rps7200/framing.py:883"
+    ]
+   },
+   {
+    "id": "DOC-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "README.md:683 and 725 say nine captures and 8,133 commands. CLAUDE.md:438 says '3,955 commands across all six captures' and CLAUDE.md:569 says '3,987 commands parsed'. CLAUDE.md therefore disagrees with itself as well as with README. The captures are gitignored (.gitignore:29, 37), so none of these numbers can be checked from the repository."
+   },
+   {
+    "id": "DOC-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "scan_roll.py:117-118 has `--nudge` taking mm. Line 534 prints `offset the film by {sent:+.3f} mm`, and lines 701-705 print `offset {offset:+.2f} mm` and `SHORT BY {short:.2f} mm`. README.md:670-671 admits this, while CLAUDE.md:284-286 states the ban without the exception."
+   },
+   {
+    "id": "DOC-16",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "Confirmed: protocol.py:289 says 'param 1 travels 2.57' while the code computes 1 + COMMAND_UNITS (1.84) = 2.84. session.py:2229 ('~1.01 mm') and scan_roll.py:518-519 ('1.0118 mm') are stale against MAX_CORRECTION_PARAM = 87 (direct.py:3596). direct.py:2974-2975 still gives the 212 s probe cost as the reason. direct.py:3011-3013 prints `state.scanning` (byte 6, direct.py:1229) as the evidence, while the test is `media_loaded` (byte 8, protocol.py:568). Refuted: the UNTIED_INFRARED_IDLE_S comment (direct.py:518-521). Its value 227+60 matches 'the 227 s top ... and a minute', and read_idle_s (641-646) uses it as documented.",
+    "corrected_description": "Stale comments and log text: protocol.py:289 (param 1 = 2.57, actually 2.84), session.py:2229 and scan_roll.py:518-519 (a 1.01 mm single-command cap, actually param 87, 88.8 units), and direct.py:2974 (the 212 s IR-probe rationale that CLAUDE.md says has gone). The no-film note at direct.py:3011-3013 prints byte 6 (`state.scanning`) while the decision uses byte 8 (`media_loaded`).",
+    "corrected_locations": [
+     "rps7200/protocol.py:289",
+     "rps7200/session.py:2229",
+     "tools/scan_roll.py:518",
+     "rps7200/direct.py:2974",
+     "rps7200/direct.py:3011"
+    ]
+   },
+   {
+    "id": "DOC-17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "read_planes sets _read_complete and last_raw (direct.py:1881-1896) and then calls decode_index (1904), which can raise ScanReadError or ValueError (direct.py:1955, 1960 and a ValueError in the same function). The late ShadingUnavailable is raised at 3102-3112. _debug_capture runs only on the success path (3222). scan_roll's except yields a failed RollFrame with no raw bytes (4142-4155). Because _read_complete is True, the device is not marked suspect, so the bytes are cleanly held in memory and then dropped. CLAUDE.md:155-157 says debug mode files every scan."
+   },
+   {
+    "id": "DOC-18",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The decision is shared: both sites gate on `supports_infrared(film)` (demo.py:665 and the driver). What is retyped is the message text (demo.py:669-674 vs direct.py:2921-2929), which has already lost the chromogenic sentence. CLAUDE.md:236-238 concerns numbers and decisions, so this is text drift rather than divergent behaviour. README.md:247-249's 'in the driver's own words' is literally false for this refusal.",
+    "corrected_description": "DemoScanner's infrared refusal uses the shared supports_infrared() gate, but its message is a retyped copy that has already drifted from DirectScanner.scan's (it omits the chromogenic C-41 sentence). That contradicts README's 'in the driver's own words'. The uncalibrated and uncorrectable refusals are shared static methods; this one is not.",
+    "corrected_locations": [
+     "rps7200/demo.py:665",
+     "rps7200/direct.py:2921",
+     "README.md:247"
+    ]
+   },
+   {
+    "id": "DOC-19",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "(a) Confirmed: help at scan_roll.py:183-184 says 'consecutive', and direct.py:4121/4163 resets on success. (c) Confirmed: gui.py:1253-1255 excludes the output folder, while README.md:377-378 says 'puts everything back' and names only shortcuts and presets. (d) Confirmed: library.py:278-280 says 72%, README.md:613 says ~94%. (b) Weak: settings.DEFAULT_PATH and library.DEFAULT_ROOT are both relative to the cwd, so with defaults the file is beside the library. It is wrong only when --library is moved. (e) Partly: the `make run-sheet` target takes no argument (Makefile:66-67, tasks.run_sheet at 171). CLAUDE.md's 'names a different one' is ambiguous, and tasks.py's docstring gives the full gui.py command.",
+    "corrected_description": "Minor README and CLAUDE.md mismatches: --max-failures counts consecutive failures, not three bad frames. Restore settings also leaves the output folder alone. The code comment (72%) and README (94%) disagree on the raw gzip ratio. gui-settings.json lives in the working directory, which is 'beside the library' only while --library is left at its default. CLAUDE.md's '`--open-roll` names a different one' next to `make run-sheet` refers to a tools/gui.py flag, which the make target cannot take.",
+    "corrected_locations": [
+     "README.md:652",
+     "README.md:377",
+     "README.md:613",
+     "rps7200/library.py:278",
+     "README.md:445",
+     "CLAUDE.md:16"
+    ]
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "DOC-A1",
+    "title": "An interrupted library.compact leaves an entry that verify reports as damaged, and nothing ever compacts a plain entry later",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:436",
+     "rps7200/library.py:445",
+     "rps7200/library.py:451",
+     "rps7200/session.py:1990",
+     "tools/library.py:75"
+    ],
+    "evidence": "compact: `os.replace(temp, path / RAW_FILE)` (436), then `_replace_tiff(path / name, pixels, ...)` for scan.tif/prescan.tif with the new digest held only in memory (443-449), then `_write_atomic(path / \"scan.json\", ...)` (451) and `plain.unlink()` (452). The only caller is the session's close path, `for entry in self._writer.uncompressed: library.compact(entry)` (session.py:1990-1992). tools/library.py's actions are `list, verify, reconstruct, reindex, duplicates, migrate-raw, migrate-direction, tag` (75-77); there is no compact.",
+    "description": "CLAUDE.md says an entry the window was killed before compacting 'stays plain, complete and verifiable'. If the window is killed during compact, after scan.tif has been rewritten deflated and before scan.json is replaced, the record still holds the old image.sha256, so `make verify` reports 'scan.tif does not match its checksum' although the pixels are identical. The stray raw.bin.gz beside raw.bin is not reported. No tool re-runs compact on entries a previous session left plain, so they stay uncompressed (~2x size) for good.",
+    "doc_reference": "CLAUDE.md:188-192 \"An entry the window was killed before compacting stays plain, complete and verifiable.\"",
+    "failure_scenario": "The operator quits the window after a batch of 3600 dpi single scans and force-kills it while 'filing what is still queued' is compacting. The next `make verify` flags an intact entry as a checksum mismatch, which is a false alarm in the integrity check. The entry is never compacted.",
+    "recommendation": "Write the record with the new TIFF digests before, or atomically with, each TIFF swap, or have verify accept either the plain or the compressed digest while raw.bin is still present. Add `tools/library.py compact` to finish entries a killed session left plain."
+   },
+   {
+    "id": "DOC-A2",
+    "title": "The demo's nudge re-implements the driver's travel formula and retypes MM_PER_UNIT for backlash",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:433",
+     "rps7200/demo.py:452",
+     "rps7200/direct.py:3622"
+    ],
+    "evidence": "demo.py:433-434 `param = self.param_for_mm(millimetres)` / `asked = self.STEP_MM * param + self.OVERHEAD_MM` duplicates direct.py:3622-3624 rather than calling it. demo.py:452 `swallowed = min(abs(asked), 2.2 * 0.1057)` retypes protocol.MM_PER_UNIT (0.1057, protocol.py:260) as a literal.",
+    "description": "The constants are shared through class attributes (demo.py:805-813), but the asked/short/clamped arithmetic and the return shape are a second copy of DirectScanner.nudge, and the backlash term hard-codes the unit size. CLAUDE.md names this exact pattern ('nudge was retyped into demo.py') as the cause of a past divergence.",
+    "doc_reference": "CLAUDE.md:231-233 \"A number, cap, constant or decision the stand-in needs is taken from DirectScanner, never retyped.\"",
+    "failure_scenario": "MM_PER_UNIT is re-measured. The driver's travel updates, but the demo's backlash stays at 0.1057 mm per unit, and its hand-copied result dict can lose a field the driver adds (for example a new key that the hold loop reads), so the demo reports hold outcomes that the hardware would not.",
+    "recommendation": "Factor the travel computation into a DirectScanner static/class method used by both, and replace the literal with MM_PER_UNIT."
+   }
+  ],
+  "persisted_state_corrections": "- Calibration archive: the table says there is 'no link to the archive it came from'. That is true only for references loaded from the cache. A calibrating session sets extra.shading_origin.archive (direct.py:854-860), so its entries do name their archive folder. The archive's shading.npz is np.savez_compressed (shading.py:91), even though archive_calibration's docstring says 'written uncompressed'.\n- Debug spool: NNN-shading.npz is written once per reference, not once per pass (direct.py:~976-986), and it is savez_compressed while the device is open. The spool directory is logged only at flush, never at capture.\n- Roll delivered files: in tools/scan_roll.py, prescanNN.tif and prescanNN-before.tif are written by a bare tiff.write (deflate by default) on the scanning thread with the device open (scan_roll.py:660, 693), not by FrameWriter. In the window, both go through FrameWriter/_file, with prescan-before at file_entry=False.\n- The roll-frame prescan.tif row is correct, with one clarification: under RPS7200_DEBUG=1 the raw framing prescan is filed as a separate debug entry, because it is never claimed (session.py:2872-2874 claims only raw_image). With debug off, which is the default, no raw copy exists.\n- Library entry scan.json 'files': this map covers only shading.npz, ccd_mask.bin and prescan.tif (library.py:390-394). scan.tif is checksummed in image.sha256, and the raw bytes in raw.sha256, which is computed over the uncompressed stream.\n- Entries filed plain (raw.bin, uncompressed TIFF) by the window are compacted only by the same session's close (session.py:1990). There is no CLI compact, so an entry left plain by a killed session stays plain permanently.\n- About 70 claims from README.md and CLAUDE.md were checked against code: make targets and tasks.py bodies, the addopts hardware skip, the nine hardware tests, the tools/library.py actions and the migrate-raw --write default, the library defaults of scan.py and scan_roll.py, debug=None env handling, debug_claim, library.compact, INCOMPLETE and verify, the constants 345.2/344.5/350.6/0.80/2.84/88.8/1.84/87, READ_IDLE_S 120, UNTIED 287, INFRARED_FLOOR_S 212, INFRARED_UNTIED_S 219.8, PROTOCOL_REVISION in protocol.py re-exported by direct.py, BLUE_RGBI_HEADROOM 5.2/11.0, param_for_mm as a staticmethod shared with the demo, session._open_scanner, carriage_state recorded and unused, _note_reversal skipping known directions, frame_edges READ_AT_DPI=(300,), EdgeWatch, vote._member, unread_at refusal of --correct, FRAME_EDGE_PARITY, the make_comparison 'applied' refusal, filing_load_test's 5% limit and 300 dpi 8-bit passes, verify_protocol stage14, the uniformity analyse --tag, and the .gitignore entries. Everything outside the verdicts above matched."
+ }
+}

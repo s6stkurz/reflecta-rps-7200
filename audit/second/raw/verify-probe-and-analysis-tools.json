@@ -1,0 +1,178 @@
+{
+ "type": "result",
+ "key": "v2:4767e8e95e328d03c758800414a3f5a41ca8c3d1a9b86188120328aa044d4902",
+ "agentId": "a5b1216bf164a17d1",
+ "result": {
+  "verdicts": [
+   {
+    "id": "PAT-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "direct.py:2934-2963: when shading is true and self._shading is None, scan() raises self.uncalibrated(reason). This happens before metering and before anything is sent, and was introduced by 1492d2c on 2026-09-24. prescan() defaults shading=True (2059) and passes it through to scan(). auto_exposure defaults shading=True (2397), and its probes call self.scan(..., shading=shading) (2499). _shading is set only by calibrate_shading, load_shading, ensure_shading or the setter (701, 720, 2351). None of the eight probes calls any of these; grep for ensure_shading, load_shading and calibrate returns only hold_probe's printed claim at 105/135. Every probe's first corrected pass therefore raises ShadingUnavailable, a RuntimeError subclass (protocol.py:345). Four probes swallow it with 'probe stopped' and exit 1: exposure_probe, fast_ir_probe and its sweep, and gain_probe. roll_registration_walk swallows it as 'failed:'. byte14_probe re-raises it, because RuntimeError is not in its tuple, but only after its finally block raises a NameError on `scales`. hold_probe and transport_truth propagate it. transport_probe raises it from look() before any move. Last touched on 2026-09-20/21, the probes predate the refusal. The tests only exercise planning and report helpers, never main() against a refusing stand-in. No data is lost and no hardware is harmed; the cost is a warm-up and a wasted request for Stefan's time. Medium is right."
+   },
+   {
+    "id": "PAT-02",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The code matches the description. The probes gate on `if not os.environ.get(\"RPS7200_DEBUG\")` (hold_probe.py:114, byte14_probe.py:113, gain_probe.py:115, fast_ir_probe.py:177/430, exposure_probe.py:216 via DirectScanner.DEBUG_ENV, transport_truth.py:107, roll_registration_walk.py:242). The driver parses the value against {1,true,yes,on} (direct.py:556-560), and _debug_capture returns early when not self.debug (direct.py:922-923). So RPS7200_DEBUG=0, off or 2 passes the gate while filing stays off. transport_probe has no gate at all. I lowered the severity to low because triggering it needs a falsy but non-empty value already in the environment and the documented `RPS7200_DEBUG=1` prefix left off. When it does trigger, it loses the whole run's evidence."
+   },
+   {
+    "id": "PAT-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The only users of DeferredInterrupt are tools/scan.py:253 and tools/scan_roll.py:473 (console.py:50-100 defines it). No probe installs it. A Ctrl-C inside read_planes reaches _read_pass's `except BaseException` (direct.py:3280-3288), which calls _mark_suspect and re-raises, abandoning the pass. transport_probe (not in the cited list) is the same: its `with DirectScanner(...)` block closes the transport under the read. Estimates appear only on dry runs for exposure_probe (213) and fast_ir_probe (173-174). byte14_probe's dry run prints only the pass count, with no time estimate, and the real run prints none either. Note that PAT-01 currently stops every probe before its first pass, so this becomes live once PAT-01 is fixed."
+   },
+   {
+    "id": "PAT-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "byte14_probe.py:176-188 runs scanner.scan(...) unconditionally in finally. In scan(), the only suspect check is inside slide(SLIDE_INIT) (direct.py:3062 -> 1523). Before it come status polls, then set_exposure_time (3016), set_highlight_shadow (3017), set_scan_frame (3019), cmd_17 (3024), get_gain_offset plus set_gain_offset (3028-3029) and set_mode (3051), all sent to a device that _read_pass has just marked suspect. gain_probe.py:209-221 calls real_get() and then set_gain_offset(reference), and set_gain_offset (1709-1733) has no _refuse_if_suspect check. _refuse_if_suspect is called only at 1523, 1623 and 2178. On a clean run the final pass is a 14th full 600 dpi pass. When auto_exposure raised (as it does today, PAT-01), `scales` is unbound and the NameError is printed as 'final default pass failed'."
+   },
+   {
+    "id": "PAT-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "exposure_probe.py:195-199 filters the schedule by plan number, and the loop begins at `here = scanner.position()` (241) with no advance to frame lo. The finally block (317-327) rewinds by max(positions)-min(positions) by default, which returns the strip to the chunk's first frame. The last frame of a schedule is never advanced past (the guard is `index < len(schedule) - 1`), so a --no-rewind chunk leaves the transport on its own last frame. plan() puts ladders on (n-1)%4==0, so `--only 5-8` puts a ladder on physical frame 1 again. The JSON is rewritten whole with Path.write_text after every pass (277-285), not atomically and not merged. tests/test_exposure_probe.py::test_a_chunk_fits_under_the_ten_minute_foreground_kill endorses chunking, so this is the documented way to run it."
+   },
+   {
+    "id": "PAT-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "exposure_headroom.py:212-216 takes the 99.5th percentile of the whole corrected frame, whereas auto_exposure crops with metering_slice first (direct.py:2506-2523). The tool's own report says the gate 'saturates whatever the exposure' (269-271), so on a FULL_FRAME pass achieved can read near 1.0. k = target/achieved then comes out below 1, which understates clipping at higher targets. Blue: aims[2] uses MEASURED_BLUE_RATIO 4.98 / BLUE_RGBI_HEADROOM (5.2, negative only). blue_rgbi_headroom(film) gives 11.0 for positive, and positive supports infrared, so an RGBI positive entry is modelled wrongly, and for locked films that also moves the shared factor. That part is narrow. decode() duplicates library.decode_raw without _replay (stagger), which does not matter for percentile and clip statistics. It applies the reference whatever calibration.skipped says. For a full-width 7200 dpi pass with a 5172-column reference, apply_shading corrects only the first loc.size columns (shading.py:237-271), while clipped_pct divides by every sample. The '4 newest entries are FULL_FRAME' scenario cannot be checked: there is no library/ in this checkout."
+   },
+   {
+    "id": "PAT-07",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "Two differences are real. The tool registers one orientation only (registration_margin.py:194), while measure_shift_mm takes the stronger of upright and flipped (framing.py:1095-1099). The library cohort (165-177) uses library.corrected and never checks record['corrected'], and it also takes every entry at that dpi (prescans, metering probes, frame scans). library.py:357-358 says the tool 'reads them back', but it never reads record['registration']. Two other claimed differences are immaterial. Reach: the tool uses 106 px against production's 105 (int(9/(36.4913/428))), a 1% change in the searched window. The dy gate: MAX_DY_MM = 2*(24.3053/287) and a 300 dpi prescan has 287 rows, so the mm gate is exactly the 2 px gate at 300 dpi. The effect of the max-of-two-orientations on null pairs is plausible but unmeasured, and measure_shift_mm's own comment reports a wrong-way-up genuine pair at 4.9-8.9. Low."
+   },
+   {
+    "id": "PAT-08",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The noise-floor problem is confirmed. dpi_analysis.py:231-239 passes repeats[0] and repeats[1] straight to noise_split, which differences x - y pixel for pixel (metrics.py:107-110) and whose docstring assumes a registered pair. The tool's own docstring (17-20) says passes sit at column offsets. The inflated sigma feeds section C's ratios (338-343) and section A. The docstring names section B, which is shift-invariant spectra, as 'the one that decides it', and B does not use floors, so the tool's headline conclusion is unaffected. Accepting 'already' in the corrected domain (61-64) is a documented choice, commented as 'corrected, by older code', not a hidden defect, although it does admit old-code corrections. Real but narrower than stated, so low."
+   },
+   {
+    "id": "PAT-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "linearity.departures (258-278) takes np.median(y[band]/x[band]) on the two passes as stored, with no registration, and the bands are chosen on the bright pass alone. The tool's own docstring (44-46) says a per-pixel ratio needs 'the same picture at the same registration'. fast_ir_probe.report's docstring records carriage-start drift of 0 to -3 lines across consecutive passes. pixels() (102-104) discards library.corrected's record, so --corrected never checks for 'applied' and mixes 'deliberately raw', 'no reference' or 'already' entries without a word. It also measures a recomputation, not a delivered file, contrary to the '--corrected ... what the *file* does' claim. The tool is cited as the linearity evidence behind EXPOSURE_TARGET."
+   },
+   {
+    "id": "PAT-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "registration_margin.cohort (158-160) reads every prescan*.tif as it lies on disk, and roll_registration_study uses that cohort (861 via cohort) or a raw glob. session._file (2852-2857, rotate=turn at 2888) writes prescans arranged by _orientation_for, which for prescans returns the session's rotation and flip (2760-2780) composed with any reversal. prescan_arrangement (672-685) exists to undo this, and neither tool calls it. The walk writes prescanNN-before.tif (2584), and '-' sorts before '.', so it lands just before prescanNN.tif. That is harmless in registration_margin (a same-picture pair) but shifts walk order in report_ensemble. The per-frame variation happens only when the session rotation changed mid-walk or a reversal was composed, so it is narrower than 'per frame' suggests."
+   },
+   {
+    "id": "PAT-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "roll_registration_study.py:735 `scale = APERTURE_MM / 428.0`. Lines 767-776 compute `abs(r[\"final_mm\"] - arrived_mm) / abs(r[\"spent_mm\"])` with `(r[\"arrived_px\"] or 0) * scale` whatever the confidence; the table marks low-confidence arrivals '(refused)' (752-756), but the ratio ignores that. measure_shift_mm fills px even when it refuses (framing.py:1100-1109). The manifest is read raw (711-713) and paired with zip(rows, rows[1:]), with no renumbering and no consecutiveness check (the carry-over check does skip rows below the floor)."
+   },
+   {
+    "id": "PAT-12",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "FRAME_MM = 36.0 (95-99) and BASE_TOLERANCE = 0.12 (532-535) are retyped, against framing.FRAME_WIDTH_MM = 36.0 (586) and BASE_TOLERANCE = 0.15 (407). The 'nothing lost while |e| <= ...' band (262-270) contradicts FRAME_WIDTH_UNITS = 350.6 (1957). Calling the 36.0 mm model 'retired' overstates it: framing.FRAME_WIDTH_MM and TARGET_GAP_MM still exist and, per CLAUDE.md, still aim rolls with no edge reader. The study describes the older gap model and does not say so."
+   },
+   {
+    "id": "PAT-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The docstring (34-40) and the runtime print (100-101) both say SLIDE_INIT is 'NOT sent'. Every prescan() calls scan(), and scan() sends self.slide(SLIDE_INIT, param=slide_init_param), default 0x16, on every pass (direct.py:2860, 3062). The tool takes seven prescans, or eight with the restore, so SLIDE_INIT goes out on each. The literals max_shift=106 (71) and `conf < 55` (153) duplicate what measure_shift_mm and CONFIDENCE_FLOOR compute."
+   },
+   {
+    "id": "PAT-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "transport_probe.py has no --dry-run, no debug gate and no session_start or wait_warm (76-81). It sends non-vendor payloads, SLIDE_NEXT with value 0 and 2 (46-52). It measures with framing.registration, i.e. film_bounds x0 (58, 104), which abstains to the whole window on a loaded strip, so shift reads 0. Today it cannot even reach its first move: look() calls prescan() with default shading and raises ShadingUnavailable (PAT-01). The docstring's 'no shading calibration needed' (14-16) is false for the current driver."
+   },
+   {
+    "id": "PAT-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gain_probe.py:107-108 parses --ladder with no range check. set_gain_offset writes `int(s.gain[i]) & 0xFF` (direct.py:1721), while scan meta records `\"gain\": settings.gain` unmasked (direct.py:3174), and library.save copies that into device_settings.gain (library.py:341-342). So 300 is sent as 44 and filed as 300; extra.commands keeps the true bytes. byte14_probe parses with int(v, 0) and refuses only v > 0x31 (100-106), so -1 passes. set_mode then does `data[14] = byte14` on a bytearray (direct.py:1469), which raises ValueError after SET SCAN FRAME, cmd 0x17 and WRITE GAIN OFFSET have gone out. Values 0x00-0x0F also pass, contradicting the docstring's 'nothing invented'."
+   },
+   {
+    "id": "PAT-16",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The arithmetic holds. FINE_MIN_MM = 0.1057*2.84 = 0.30019. param_for_mm(0.90056) = round(6.68) = 7, and a param-7 command travels 0.93439 mm. Every rung's commanded_mm is therefore 0.0338 mm (0.32 units, 0.4 px) short, and the restore nudge(-0.9006) also sends param 7, for a net of about -0.068 mm. Label reuse overwrites the TIFFs and walk-X.json (out.mkdir(exist_ok=True), tiff.write, write_text). _prescan discards the meta, so neither started_utc nor an entry id is kept. load_walk reads TIFFs from log.parent. One point in the finding is wrong: the true command distance does NOT survive in sent.asked_mm. Walk._nudge returns `dict(sent, asked_mm=mm)` (roll_registration_walk.py:128), which overwrites the driver's lattice distance with the requested mm. Only sent.param (7) is left to recover it. Also, the restore comment (166-168) says 'Measured against where the frame started, not summed from the commands', but the code passes the summed `excursion`."
+   },
+   {
+    "id": "PAT-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "hold_probe: PROBE_MM = 0.5 with the comment '(0.272 mm)' minimum (60-63), --offset and the printed output in mm (74-80), and TOTAL_TRAVEL_LIMIT_MM compared only against args.offset (96-99). The --restore nudge(-net) (208-210) and the hold loops' spent_mm are never counted. transport_truth: 'Comfortably above the 0.2719 mm minimum' (64-66), STEP_MM 0.5, output in mm. transport_probe prints shift_mm. The walk prints RUNG_MM in mm. protocol.py:226-231 prohibits millimetres in operator-facing text and provides say_units. The finding misses one stale figure: hold_probe also tells the operator 'A floor of 40' (docstring 34-35) and prints 'offline data predicted 61-96, and the floor is 40' (196-198), while CONFIDENCE_FLOOR is 55 (framing.py:883)."
+   },
+   {
+    "id": "PAT-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "exposure_probe.levels_of (159-168) runs metering_slice on every delivered pass. auto_exposure deliberately measures the region once, on the first dark probe, and reuses it (direct.py:2506-2518). framing.metering_region's docstring explains that film_bounds loses its contrast once the film is metered bright, so the bounds fall back to the whole window. UNDER_TOLERANCE = 0.08 (120-122) is a retyped copy of auto_exposure's `tolerance: float = 0.08` (2392). The docstring's claim (62-66) that levels are read 'the way auto_exposure reads a probe' is therefore false."
+   },
+   {
+    "id": "PAT-19",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "None of the selectors tests extra.demo, which is true: exposure_headroom 312-324, linearity 133-153, registration_margin 165-177, dpi_analysis 79-97. However, the window now files demo runs under demo/ (gui.py:8783, 8856), and every tool defaults to library/, so this reaches only legacy demo entries in library/ or an explicit --root demo/library. Demo entries can carry a copied real reference and raw bytes (demo.py:880-908), so exposure_headroom could admit one as a duplicate of a real entry. The linearity collision with a metering probe's exposure triple is speculative, and by_frame reports multiple candidates as a note."
+   },
+   {
+    "id": "PAT-20",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "fast_ir_probe.py:10-14 says QUALITY_FAST_INFRARED 'has never once been sent', but scan() defaults fast_infrared=True (direct.py:2860) and gates it on infrared (3040-3041). byte14_probe.py:13-15 warns that a rerun 'will reproduce reversed passes', but decode_index now turns bottom-up passes upright from their line tags (direct.py:1923-1933). Both docstrings are stale. Neither is a defect in behaviour."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "PAT-A1",
+    "title": "roll_registration_walk overwrites the driver's commanded distance with the requested one, and the restore comment claims a measurement the code does not make",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "tools/roll_registration_walk.py:112-128",
+     "tools/roll_registration_walk.py:166-169",
+     "rps7200/direct.py:3611-3640"
+    ],
+    "evidence": "Walk._nudge: `sent = self.scanner.nudge(mm) ... return dict(sent, asked_mm=mm)`. nudge() returns `\"asked_mm\": round(asked if forward else -asked, 3)`, where asked = STEP_MM*param + OVERHEAD_MM is the lattice distance, and `\"requested_mm\": round(millimetres, 3)`. The restore: `# Put it back. Measured against where the frame started, not summed from the commands, because backlash means the two differ.` followed by `back = self._nudge(-excursion, excursion)`, where excursion is the running sum of requested mm.",
+    "description": "The corpus log is the walk's ground truth. The one field that would hold what the transport was commanded to travel is replaced by what was asked, so each rung's `sent.asked_mm` equals `sent.requested_mm`. The lattice distance can be rebuilt only from `sent.param` and the ramp constants. The restore is not measured at all: no prescan is compared with the frame's p1 before the nudge. With the 3-rung first leg this leaves the film about 0.068 mm (0.64 units) off home per ladder, and the log says nothing about it.",
+    "failure_scenario": "An analysis fits a detector's response against `rungs[].sent.asked_mm`, trusting the driver's key name. It gets requested distances with a constant 0.034 mm bias on every rung. A second ladder on a later frame starts from a position already displaced by the first ladder's unrecorded residual.",
+    "recommendation": "Keep the driver's asked_mm and store the request under another key, for example `dict(sent, requested_mm=mm)`. Record the cumulative commanded position from the returned asked_mm. Either measure the restore with measure_shift_mm against p1 or correct the comment.",
+    "doc_reference": "tools/roll_registration_walk.py:166-168 'Measured against where the frame started, not summed from the commands'"
+   },
+   {
+    "id": "PAT-A2",
+    "title": "hold_probe tells the operator the registration floor is 40 when CONFIDENCE_FLOOR is 55",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "tools/hold_probe.py:34-35",
+     "tools/hold_probe.py:193-198",
+     "rps7200/framing.py:883"
+    ],
+    "evidence": "Docstring: 'confidence, which offline data puts at 61-96 for a true match against 4.3-28.8 for two different photographs. A floor of 40 sits in that gap.' Runtime: `print(f\"confidence ran ... offline data predicted 61-96, and the floor is 40\")`. framing.py:883 `CONFIDENCE_FLOOR = 55.0`.",
+    "description": "The probe's verdict text judges real confidences against a floor the driver no longer uses. With a floor of 55, a true match at 41-54 is refused by the production hold loop, yet the probe's output tells the operator it clears the floor. The 61-96 'offline' range also predates the current SEARCH_MM reach, and the tool's own registration_margin docstring says confidence depends on the reach.",
+    "failure_scenario": "The hold at +0.5 comes back 'not_converged' with confidences of 45-50. The operator reads 'the floor is 40' and concludes the matches were good and the move failed, when the loop actually refused the matches.",
+    "recommendation": "Import CONFIDENCE_FLOOR and print it, and drop the hard-coded offline range, or re-derive it with registration_margin.",
+    "doc_reference": "tools/hold_probe.py:34-35"
+   },
+   {
+    "id": "PAT-A3",
+    "title": "exposure_headroom aborts the whole study on one unreadable scan.json",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "tools/exposure_headroom.py:89-94",
+     "tools/exposure_headroom.py:312-324"
+    ],
+    "evidence": "`record = json.loads((path / \"scan.json\").read_text(encoding=\"utf-8\"))` sits outside the try in decode(). main() iterates `sorted(root.glob(\"2*/\"), reverse=True)` and calls study(path) with no exception handling. The try in decode covers only the layout and deinterleave.",
+    "description": "An entry directory still marked INCOMPLETE, or with a truncated or half-written scan.json (the library now writes atomically, but legacy or interrupted entries exist, and `make verify` reports them), raises JSONDecodeError or OSError out of main. No other entry is studied. linearity and dpi_analysis catch this per entry.",
+    "failure_scenario": "The newest library directory is an INCOMPLETE entry from a killed window. `exposure_headroom.py` dies with a traceback on it instead of skipping it and studying the next four.",
+    "recommendation": "Catch OSError and JSONDecodeError in decode() and return None, and skip directories that still hold INCOMPLETE."
+   }
+  ],
+  "persisted_state_corrections": "Registration walk corpus: the ladder files are named <label>NN_L00.tif .. <label>NN_L06.tif (f\"{label}{number:02d}_L{step:02d}.tif\", roll_registration_walk.py:154-155), not '_LSS'. In the walk log, rungs[].sent.asked_mm is the requested millimetres, not the driver's commanded lattice distance, because Walk._nudge overwrites it (`dict(sent, asked_mm=mm)`, :128). The commanded distance survives only as sent.param. The persisted_state entry says the true value is 'inside sent.asked_mm'; that is wrong. travel_mm sums requested |mm|, not delivered distance. The walk log keeps no library join key (started_utc or entry id). hold_probe JSON: held/zero records carry the hold loop's output in mm, with no library entry ids. transport_probe: in its current state it writes nothing and files nothing. It has no debug gate, and with debug on its passes would be filed, but it raises ShadingUnavailable on its first prescan. registration_margin writes no file; it prints only. Library entries written by probes: device_settings.gain comes from meta['gain'] (library.py:341-342, direct.py:3174), which is the unmasked requested value; the byte actually sent is `& 0xFF`. Probe ladder passes (byte14, gain, fast_ir) are filed with calibration.skipped = SHADING_SKIPPED_EXPLICIT ('deliberately raw'), so library.corrected returns them raw. Any analysis using corrected() over them gets raw pixels labelled 'deliberately raw'. Every probe listed as a library writer currently files nothing but its pre-scan status traffic, because each one fails at its first corrected pass (PAT-01)."
+ }
+}
