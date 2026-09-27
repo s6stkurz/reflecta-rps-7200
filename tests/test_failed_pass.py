@@ -353,6 +353,28 @@ def test_a_calibration_ended_short_of_its_declared_lines_installs_nothing(
     assert result["data"], "the lines are kept all the same"
 
 
+def test_a_calibration_ended_at_the_phase_boundary_installs_nothing(
+        no_waiting):
+    """As many lines as the descriptor declares, every one of them dark: the
+    count passes it, no level gap splits it, and its single-point reference
+    was the ~170-count floor."""
+    s = Calibrating(calibration_lines(12, 12)[:12], declared=12)
+    result = s.calibrate_shading(keep_data=True)
+    assert s.shading is None and result["reference"] is None
+    assert "channels R, G, B did not split" in result["refused"]
+    assert result["data"], "the lines are kept all the same"
+
+
+def test_a_calibration_lit_in_only_some_channels_installs_nothing(
+        no_waiting):
+    """One lit line in, red's: red splits, green and blue are still the
+    dark floor alone, and a reference is per channel."""
+    s = Calibrating(calibration_lines(12, 12)[:13], declared=12)
+    result = s.calibrate_shading()
+    assert s.shading is None and result["reference"] is None
+    assert "channels G, B did not split" in result["refused"]
+
+
 def test_a_calibration_refused_part_way_keeps_its_lines(no_waiting, tmp_path):
     """They went with it: the only record of what the device sent before it
     stopped. Archived beside the good ones, saying where it failed, with no

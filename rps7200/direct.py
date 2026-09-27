@@ -2957,10 +2957,28 @@ class DirectScanner:
         # The lines are kept all the same (`archive_calibration`).
         arrived = len(data) // bpl
         refused = None
+        # Held to its two phases as well, channel by channel, because the
+        # count alone cannot see an end of data exactly at the phase
+        # boundary: as many lines as declared, every one of them dark, and
+        # no level gap to split. That reference is single-point on the dark
+        # floor, just as wrong. Every calibration on record split in every
+        # channel it returned (`docs/shading-calibration-plan.md`), so a
+        # channel that did not is one whose lit lines never came -- or,
+        # never seen, a device that sent only lit ones, where refusing costs
+        # a recalibration and not a roll divided by 170 counts.
+        unlit = ([] if reference is None else
+                 [c for c in reference.channels if c not in reference.dark])
         if reference is not None and lines_declared and arrived < lines_declared:
             refused = (f"{arrived} lines arrived where the descriptor declared "
                        f"{lines_declared}; a reference from them would be the "
                        "dark phase, or part of it")
+            reference = None
+        elif unlit:
+            names = ", ".join("RGBI"[c] if c < 4 else str(c) for c in unlit)
+            refused = (f"{arrived} lines arrived and channel"
+                       f"{'s' if len(unlit) > 1 else ''} {names} did not "
+                       "split into a dark and a lit phase; a reference from "
+                       "them would be one phase alone, most likely the dark")
             reference = None
         self._shading = reference
         self._shading_origin = {
