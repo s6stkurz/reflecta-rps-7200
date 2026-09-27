@@ -2175,15 +2175,26 @@ class ScanSession:
             raise _Stopped()
 
     def _run(self) -> None:
+        opened = False
         try:
             self._scanner = self._open_scanner()
             self._listen(self._scanner)
             self._scanner.open()
+            opened = True
             info = self._scanner.inquiry()
             self.inquiry_text = info.describe() if hasattr(info, "describe") else str(info)
             self._emit("state", text=self.inquiry_text)
         except Exception as exc:                         # noqa: BLE001
             self._emit("failed", text=f"could not open the scanner: {exc}")
+            if opened:
+                # Opened, and then INQUIRY failed. Left open, the interface
+                # stayed claimed until the window quit: no other session,
+                # and no other program -- `tools/check_scanner.py`, to find
+                # out what is wrong -- could reach the scanner meanwhile.
+                try:
+                    self._scanner.close()
+                except Exception as also:                # noqa: BLE001
+                    self._emit("log", text=f"close: {also}")
             self._emit("closed")
             return
         # Where the film is before anything has moved it. The window used to

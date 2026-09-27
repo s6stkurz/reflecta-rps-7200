@@ -1270,6 +1270,22 @@ def test_a_scanner_that_will_not_open_is_reported_not_raised(tmp_path):
     assert any("not on the bus" in e.text for e in kinds(events, "failed"))
 
 
+def test_a_scanner_that_opens_and_will_not_answer_is_closed_again(tmp_path):
+    """Opened, then INQUIRY failed: the interface stayed claimed until the
+    window quit, so nothing else could reach the scanner to see why."""
+    class Mute(FakeScanner):
+        def inquiry(self, refresh=False):
+            raise RuntimeError("no answer to INQUIRY")
+
+    scanner = Mute()
+    s = ScanSession(root=str(tmp_path), open_scanner=lambda: scanner,
+                    verbose=False)
+    s.start()
+    s.join(timeout=5.0)
+    assert any("no answer" in e.text for e in kinds(s.poll(), "failed"))
+    assert scanner.closed, "left open with its interface claimed"
+
+
 def test_the_device_closes_before_the_writer_spends_time_gzipping(tmp_path):
     """Gzipping a library entry with the device open and idle preceded a wedge.
 
