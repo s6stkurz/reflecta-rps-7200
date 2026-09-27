@@ -132,3 +132,20 @@ def test_an_odd_count_of_rounds_still_cancels_the_drift():
     quiet, loaded = rounds(Bench(drift=2.0, effect=3.0), 3)
     _outcome, why = tool.verdict(quiet, loaded)
     assert why.startswith("loaded passes +3.00s"), why
+
+
+@pytest.mark.parametrize("argv", [["--rounds", "0"], ["--rounds", "2"],
+                                  ["--mb", "0"], ["--limit", "-5"]])
+def test_what_cannot_give_a_verdict_is_refused_before_the_lamp(monkeypatch,
+                                                              argv):
+    """--rounds 0 warmed the lamp and then crashed on the mean of nothing."""
+    import sys
+
+    opened = []
+    monkeypatch.setattr(tool, "DirectScanner",
+                        lambda **kw: opened.append(kw) or None)
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", *argv])
+    with pytest.raises(SystemExit) as refused:
+        tool.main()
+    assert refused.value.code == 2
+    assert opened == []

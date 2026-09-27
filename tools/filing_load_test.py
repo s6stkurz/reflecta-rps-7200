@@ -196,6 +196,16 @@ def main() -> int:
                     help="the slowdown, in percent of a quiet pass, past which "
                          "loaded passes count as disturbed (default %(default)g)")
     args = ap.parse_args()
+    # Before the lamp is warmed, not after: --rounds 0 warmed it and then
+    # died on the mean of nothing, and fewer than MIN_ROUNDS spend the
+    # scanner's time on a run whose only verdict can be "inconclusive".
+    if args.rounds < MIN_ROUNDS:
+        ap.error(f"--rounds {args.rounds}: a verdict needs at least "
+                 f"{MIN_ROUNDS}")
+    if args.mb <= 0:
+        ap.error(f"--mb must be positive, got {args.mb}")
+    if args.limit <= 0:
+        ap.error(f"--limit must be positive, got {args.limit:g}")
 
     # Incompressible, so gzip works as hard as it would on scanner data.
     payload = np.random.default_rng(0).integers(
