@@ -58,9 +58,14 @@ YOUR ITEMS:
 ${g.extra ? `- Also: ${g.extra}` : ''}
 Other agents work in parallel on other subsystems; if an item needs a change mainly in another subsystem's files, make the smallest change here or leave it saying which subsystem owns it. Work in order of severity: data loss and wedge risks first.`
 
+// Groups whose fix finished on an earlier run but whose review did not: the
+// fixer's own report is on disk, and the reviewer reads it from there.
+const REVIEW_ONLY = args.reviewOnly || []
 const results = await pipeline(
   args.groups.filter(g => !SKIP.includes(g.key)),
-  g => agent(groupPrompt(g), { label: `fix3:${g.key}`, phase: 'Fix', schema: RESULT, isolation: 'worktree' }),
-  (r, g) => r ? agent(`ADVERSARIAL REVIEWER, read-only (do not modify files or commit). Repository ${REPO}. Branch "${r.branch}" was made from ${BASE}. Review \`git -C ${REPO} diff ${BASE}..${r.branch}\` and the changed code in context. Look for bugs, regressions, tests that cannot fail (check by reasoning about the base code), CLAUDE.md violations, Windows-only failure modes (file replace while open, mkdir answers, path separators, encodings), anything that changes what is sent to the scanner in normal operation, and claimed fixes that do not fix the item. Claimed: ${JSON.stringify(r.done)}. Report only real issues with file, line and a concrete fix.`, { label: `review3:${g.key}`, phase: 'Review', schema: REVIEW, effort: 'high' }).then(v => ({ group: g.key, result: r, review: v })) : { group: g.key, result: null, review: null },
+  g => REVIEW_ONLY.includes(g.key)
+    ? { branch: `fix3/${g.key}`, done: `(the fixer's report: read the "done" list in ${REPO}/audit/second/fixes/raw/fix3-${g.key}.json, under "result")` }
+    : agent(groupPrompt(g), { label: `fix3:${g.key}`, phase: 'Fix', schema: RESULT, isolation: 'worktree' }),
+  (r, g) => r ? agent(`ADVERSARIAL REVIEWER, read-only (do not modify files or commit). Repository ${REPO}. Branch "${r.branch}" was made from ${BASE}. Review \`git -C ${REPO} diff ${BASE}..${r.branch}\` and the changed code in context. Look for bugs, regressions, tests that cannot fail (check by reasoning about the base code), CLAUDE.md violations, Windows-only failure modes (file replace while open, mkdir answers, path separators, encodings), anything that changes what is sent to the scanner in normal operation, and claimed fixes that do not fix the item. Claimed: ${typeof r.done === 'string' ? r.done : JSON.stringify(r.done)}. Report only real issues with file, line and a concrete fix.`, { label: `review3:${g.key}`, phase: 'Review', schema: REVIEW, effort: 'high' }).then(v => ({ group: g.key, result: r, review: v })) : { group: g.key, result: null, review: null },
 )
 return results
