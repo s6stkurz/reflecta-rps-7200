@@ -984,7 +984,8 @@ class DirectScanner:
         # Beside, then over: a cache cut short by a kill or a full disk made
         # "reuse" fail to load and "Use the cached one" offer a broken file.
         temp = path.with_name(f".{path.stem}.part.npz")
-        self._shading.save(temp)
+        # Uncompressed: `ensure_shading` writes it with the device open.
+        self._shading.save(temp, compress=False)
         os.replace(temp, path)
         return path
 

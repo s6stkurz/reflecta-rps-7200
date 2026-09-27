@@ -888,6 +888,40 @@ def _left_behind(tmp_path, monkeypatch, claim=False):
     return spool, (first, second)
 
 
+def test_nothing_is_compressed_while_the_device_is_open(tmp_path, monkeypatch):
+    """CLAUDE.md's rule, held of the shading reference too: the spool's copy,
+    the session's cached one, the calibration archive's and a plain library
+    entry's were all compressed with the device open."""
+    import zipfile
+
+    from rps7200 import library
+    from rps7200.shading import ShadingReference
+
+    def stored(path):
+        with zipfile.ZipFile(path) as z:
+            return all(i.compress_type == zipfile.ZIP_STORED
+                       for i in z.infolist())
+
+    reference = ShadingReference(ref={0: np.full(16, 3.0)}, mean={0: 3.0},
+                                 pixels_per_line=16)
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s._shading = reference
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    assert stored(s._debug_pending[0]["reference_path"])
+    assert stored(s.save_shading(tmp_path / "cache" / "shading.npz"))
+    archive = s.archive_calibration(
+        {"reference": reference, "data": b"\x00" * 34, "ccd_mask": b"\x00" * 16,
+         "resolution": 3600, "pixels_per_line": 16, "bytes_per_line": 34},
+        tmp_path / "calibration")
+    assert stored(archive / "shading.npz")
+    entry = library.save(np.zeros((8, 16, 3), np.uint8), dict(_META),
+                         root=tmp_path / "plain", reference=reference,
+                         compress=False)
+    assert stored(entry / "shading.npz")
+    assert ShadingReference.load(entry / "shading.npz").pixels_per_line == 16
+
+
 def test_a_spooled_pass_names_its_own_files(tmp_path, monkeypatch):
     """The reference is written once per calibration, beside the first pass
     that used it: without its name, a spool filed by hand had to guess which

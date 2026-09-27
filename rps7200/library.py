@@ -284,7 +284,8 @@ def save(
     if prescan is not None:
         tiff.write(str(path / "prescan.tif"), prescan, compress=compress)
     if reference is not None:
-        reference.save(path / "shading.npz")
+        # Plain too, when the caller says the device is open (`compress`).
+        reference.save(path / "shading.npz", compress=compress)
     if ccd_mask is not None:
         (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
     raw_bytes = raw_sha = None
