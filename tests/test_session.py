@@ -373,6 +373,38 @@ def test_the_delivered_copy_of_a_single_scan_is_written_plain_too(
     assert delivered and all(delivered), written
 
 
+def test_an_aimed_walks_output_prescan_is_the_aimed_one(tmp_path):
+    """The prescan a correction replaced was given the output folder's name
+    for the frame, the same one the aimed prescan had just been given -- the
+    name is chosen before either is written -- and, written second, it
+    replaced the aimed one there."""
+    from rps7200 import tiff
+
+    aimed = picture(channels=3, seed=7)
+    before = picture(channels=3, seed=8)
+
+    class Aiming(FakeScanner):
+        def scan_roll(self, frames=None, first_index=0, **kw):
+            yield RollFrame(index=first_index, position=self.pos, image=None,
+                            meta={"resolution_dpi": 300,
+                                  "channel_order": ["R", "G", "B"]},
+                            prescan=aimed, prescan_before=before,
+                            registration={"offset_mm": 0.0})
+
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=Aiming, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, resolution=300, dry_run=True, name="aimed"))
+    s.shutdown()
+    s.join(timeout=15)
+    delivered = {p.name: tiff.read(str(p)) for p in out.rglob("*.tif")}
+    assert set(delivered) == {"aimed_frame01_300dpi.tif",
+                              "aimed_frame01_300dpi-before.tif"}, set(delivered)
+    assert np.array_equal(delivered["aimed_frame01_300dpi.tif"], aimed)
+    assert np.array_equal(delivered["aimed_frame01_300dpi-before.tif"], before)
+
+
 def test_a_prescan_is_filed_too(tmp_path):
     """CLAUDE.md says file every scan, without an exception for the cheap ones.
     A prescan is ~370 KB and it is the evidence about framing."""

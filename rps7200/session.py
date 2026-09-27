@@ -2835,7 +2835,17 @@ class ScanSession:
         if self.out_dir is not None:
             where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
                      else self.out_dir)
-            paths.append(_unclaimed(where / self._out_name(number, meta, roll)))
+            name = self._out_name(number, meta, roll)
+            if not file_entry:
+                # The prescan a correction replaced, named as the roll folder
+                # names it. Under the frame's own name it was given the same
+                # free name as the aimed prescan submitted just before it --
+                # `_unclaimed` looks at the disk, and neither was written yet
+                # -- and, written second, replaced it: the output folder held
+                # the framing from before the aim under the frame's name.
+                stem, dot, suffix = name.rpartition(".")
+                name = f"{stem}-before{dot}{suffix}"
+            paths.append(_unclaimed(where / name))
         capture = self._scanner.capture_record()
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
