@@ -122,6 +122,12 @@ def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None
 
     Written whole and replaced at the end, so an interrupted write leaves the
     previous settings rather than half of the new ones.
+
+    The replace waits out a brief hold, as `session.write_manifest` does. On
+    Windows it fails outright while any handle on the file lacks
+    FILE_SHARE_DELETE -- Defender and the indexer take one on every new file
+    -- and the window writes this one often: as a contact sheet's decisions
+    are made, not only when it closes.
     """
     target = path(where)
     try:
@@ -129,7 +135,17 @@ def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None
         temporary = target.with_name(target.name + ".part")
         temporary.write_text(json.dumps(values, indent=2, sort_keys=True),
                              encoding="utf-8")
-        temporary.replace(target)
-        return target
+        # The manifests' waits, from their one home.
+        from .session import REPLACE_RETRY_S                 # noqa: PLC0415
+
+        for wait in (*REPLACE_RETRY_S, None):
+            try:
+                temporary.replace(target)
+                return target
+            except PermissionError:
+                if wait is None:
+                    raise
+                time.sleep(wait)
     except (OSError, TypeError, ValueError):
         return None
+    return None

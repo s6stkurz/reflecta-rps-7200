@@ -123,6 +123,26 @@ def test_an_unreadable_file_is_kept_aside_not_written_over(tmp_path):
     assert len(kept) == 1 and "strip" in kept[0].read_text(encoding="utf-8")
 
 
+def test_a_save_waits_out_a_file_briefly_held_open(tmp_path, monkeypatch):
+    """On Windows a replace fails outright while any handle on the target
+    lacks FILE_SHARE_DELETE, which Defender and the indexer take on every new
+    file -- and the window saves this file as a sheet's decisions are made."""
+    from pathlib import Path
+
+    real, refused = Path.replace, []
+
+    def replace(self, target):
+        if len(refused) < 2:
+            refused.append(target)
+            raise PermissionError(13, "held open")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    target = tmp_path / "gui-settings.json"
+    assert settings.save({"output": "x"}, target) == target
+    assert len(refused) == 2 and settings.load(target)["output"] == "x"
+
+
 def test_setting_an_unreadable_file_aside_is_said(tmp_path):
     """Kept aside, and then nothing said it: the window opened on its
     defaults, its presets and any sheet not yet commissioned gone from view,
