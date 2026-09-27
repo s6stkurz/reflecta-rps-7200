@@ -62,6 +62,8 @@ lists of what an operator can do, should not do, and the mistakes nothing guards
 | [DOC-08](areas/docs-readme-claude.md#docs-readme-claude-doc-08) | medium | The roll Delete dialog says everything but approved.json can be rebuilt; prescanNN-before.tif and old walks' prescans are only in the folder |
 | [CSA-03](areas/changes-since-first-audit.md#changes-since-first-audit-csa-03) | medium | First Ctrl-C is not honoured between phases: scan.py proceeds from calibration/metering into the scan, scan_roll.py from the seek into a 3-4 min calibration |
 | [CSA-04](areas/changes-since-first-audit.md#changes-since-first-audit-csa-04) | medium | Filing after close() is outside DeferredInterrupt: a Ctrl-C while the last frames gzip kills the daemon writer and loses queued frames |
+| [FE-02](areas/frame-edges-member-detectors.md#frame-edges-member-detectors-fe-02) | medium | A slide read as a negative (the default film) comes out 'measured, centred'; stepline's 'not a negative' refusal is outvoted |
+| [PLAT-04](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-04) | medium | On Windows, 'another process holds the scanner' is diagnosed as the wrong driver and sends the operator to Zadig; on macOS the helpful text is attached to the wrong failure |
 | [TP-18](areas/transport-protocol.md#transport-protocol-tp-18) | low | RPS7200_MAX_WINDOW is not validated: 0 or a negative value loops forever mid-read; a non-integer breaks import |
 | [DBG-9](areas/decode-and-debug-filing.md#decode-and-debug-filing-dbg-9) | low | Debug entries are filed into RPS7200_DEBUG_ROOT or ./library, not the library the session or tool is using |
 | [DEMO-V01](areas/demo-parity.md#demo-parity-demo-v01) | low | In `make run-sheet` (--look-only) the sheet's scan path can be reached only by ticking 'The film is in the transport', which is false there |
@@ -87,6 +89,10 @@ lists of what an operator can do, should not do, and the mistakes nothing guards
 | [DOC-20](areas/docs-plans-todo.md#docs-plans-todo-doc-20) | low | Open window/roll problems listed in TODO are all still present (misleading dialogs, inert nudge tick, one-way approved.json, millimetres stored and printed) |
 | [CSA-16](areas/changes-since-first-audit.md#changes-since-first-audit-csa-16) | low | settings.load moves a valid settings file aside on any transient read error and silently reverts the window to defaults |
 | [T-14](areas/tests.md#tests-t-14) | low | Destructive and quit/abort operator paths are untested: 'No' to keep-entry, quit while busy, force abort mid-read, duplicates --delete |
+| [CRA-10](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-10) | low | Every writer creates missing roots with mkdir(parents=True), so a folder on an unmounted drive can be recreated on the system disk and filled there |
+| [CONC-07](areas/thread-and-process-concurrency.md#thread-and-process-concurrency-conc-07) | low | A window whose session could not claim the scanner accepts every job into a queue no thread reads, marks itself calibrated, starts a roll countdown and still writes approved.json |
+| [FE-06](areas/frame-edges-member-detectors.md#frame-edges-member-detectors-fe-06) | low | scan_roll --no-shading with --correct (or a --no-shading walk proposed later) feeds uncorrected prescans to a detector validated only on corrected ones, unguarded |
+| [PLAT-06](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-06) | low | Case-insensitive filesystems: case-only Rename is refused as 'already there', and a typed spelling of an existing roll splits keys and guards on macOS and makes a new roll on Linux |
 
 ## Per area: can do, should not do, unguarded
 
@@ -642,4 +648,185 @@ lists of what an operator can do, should not do, and the mistakes nothing guards
 - Quitting the window mid-pass, or typing ABORT: the protections (askyesnocancel, the no-timeout _wait_to_quit, typed confirmation, suspect after a closed transport) are untested.
 - Running `tools/library.py duplicates --delete`: the only command-line rmtree over library entries has no CLI test.
 - Running `tools/library.py migrate-raw --write` before `migrate-direction` on bottom-up legacy entries: they are reported as a decode change ('left alone') and the command exits 1. The ordering is untested.
+
+### Every writer: atomicity, crashes, full disks (gap pass)
+
+**Can do**
+
+- Kill the window or a CLI tool at any moment (Force Quit, closing the terminal, logoff, or a Force Abort that takes the process down); whatever was mid-write stays on disk as INCOMPLETE entries, truncated roll or delivered files, `.part` temps and orphan spool directories.
+- Run `make verify` (tools/library.py verify) to list INCOMPLETE directories, directories without scan.json and checksum mismatches.
+- Run `tools/library.py reindex` to rebuild index.json.
+- Duplicate, Rename or Delete a roll folder from the Rolls browser while the window holds the device open.
+- Set the library, rolls, reference and output folders to removable or network paths, including one the window remembers from a previous launch.
+- Re-walk frames into an existing walk's folder, or type an existing roll name for a new walk.
+- Start a roll, bracket or long series of single scans on a nearly full disk; nothing checks free space first.
+
+**Should not do**
+
+- Start a long roll without checking free space on the library, roll folder, output folder and (with RPS7200_DEBUG=1) the OS temp volume; nothing checks, and the first failure costs the frame in flight too.
+- Kill the window while it says 'closing ...': the debug flush, the writer's last frames and the compaction of single scans are running then.
+- Force-quit the window while Duplicate is copying (it looks hung because the copy runs on the UI thread).
+- Leave hours of contact-sheet decisions in an open sheet during a walk or roll; they reach disk only when the sheet closes.
+- Rely on 'can be exported again' after a delivered copy failed: the truncated file keeps its name and the retry lands at -2.
+- Delete library entries or roll folders by hand to free space mid-session without running verify afterwards.
+
+**Unguarded mistakes**
+
+- Starting a roll the disk cannot hold: no estimate of space, no check, and approved.json failing on the full disk only logs 'scanning anyway'.
+- Using a remembered output folder, or a --library or --rolls path, on a drive that is not mounted: on POSIX mount points owned by the user it is silently recreated on the system disk.
+- Quitting on a full settings disk: the 'could not save the window's settings' line goes into a log that is destroyed at once, and the sheet decisions are lost.
+- A walk whose prescan filing failed, reopened later, shows the previous walk's prescanNN.tif under the new record and proposes positions from it.
+- A failed or interrupted Duplicate leaves `<roll>-N` listed as a roll with only part of its files.
+- Relying on `make verify` after a crash: it does not see `.part` leftovers (a failed compact's `.raw.bin.gz.part` can be hundreds of MB), orphan rps7200-debug-* spools, calibration archives without calibration.json, or uncompacted plain entries.
+- A roll.json.legacy truncated by a failed copy is taken as done for good, and the original numbering is later lost.
+
+### Threads and processes sharing files (gap pass)
+
+**Can do**
+
+- Open a second window, make run-sheet or a --demo window while a window or tools/scan_roll.py holds the scanner. The second session fails to claim interface 0, but the window and its roll browser stay fully usable.
+- Rename, Delete or Duplicate a roll folder from the roll browser as soon as the status reads idle, including while FrameWriter is still filing that roll's last frames.
+- Rename, Delete or Duplicate a roll folder that tools/scan_roll.py or another window is scanning into.
+- Export a roll (or Save all), then close the window while the export is still writing.
+- Export a roll into the session's output folder (the dialog's default) while the same roll is being rescanned.
+- Run make verify, make reconstruct, tools/library.py tag, migrate-raw, migrate-direction or duplicates --delete while a window or scan_roll is filing into the same library.
+- Open a roll from the browser while this window's own walk is filing into it (GUI1-02), and read its survey before the prescans are written.
+- Delete a pass (rmtree of its library entry) while Save all, Export or a full-resolution load is reading that entry.
+- Press Calibrate, Scan, Prescan, Roll or 'Scan chosen frames' in a window whose session reported 'No scanner'.
+
+**Should not do**
+
+- Touch (rename, delete, duplicate) a roll folder until every frame of it has been filed, and never while another process is scanning into it.
+- Close the window before Save all or Export reports 'saved N of N'.
+- Run library maintenance or verification while any window or tool is filing, or act on its 'did not finish' and checksum reports then.
+- Export into the live output folder while a roll that delivers there is running.
+- Kill the window (terminal Ctrl-C, or closing the terminal) during a walk: survey.json already names prescans that are not yet written.
+- Use a window that could not open the scanner for anything but browsing.
+
+**Unguarded mistakes**
+
+- _roll_is_busy checks only `self.busy`, which clears when a job returns while FrameWriter is still writing frameNN.tif and roll.json into the folder. It sees nothing of other processes, so Rename recreates a split roll folder, Delete removes survey.json and approved.json of a live roll, and Duplicate copies a truncated last frame.
+- Quitting during Save all or Export: the 'closed' event handler calls _quit() without waiting for the writing threads, so the daemon export thread is killed and leaves a truncated file under its final name (CONC-01).
+- A scanner-less window enqueues every job into a queue no thread reads, marks itself calibrated, shows a roll countdown that never ends, and writes approved.json (CONC-07).
+- make verify reports an entry that another process is still writing as 'was being written and did not finish', and a mid-compaction entry as checksum-mismatched or missing raw.bin.
+- tools/library.py tag racing the window's close-time compact on the same entry loses one side's scan.json update.
+- duplicates --delete on Windows raises on the first file another process holds, leaving that entry half-deleted and the index unrebuilt.
+- One truncated prescanNN.tif (kill or disk-full mid-write) makes the whole walk unopenable in the window and crashes scan_roll --approved.
+- Export and FrameWriter can pick the same free output name (TOCTOU widened by library.save), and one silently overwrites the other.
+
+### The frame-edge detectors themselves (gap pass)
+
+**Can do**
+
+- Choose the film type in the window or with scan_roll --film. negative and bw get the four-member reader; positive and kodachrome get none (legacy 36 mm aiming, or SKIPPED on the sheet).
+- Walk a strip at 300 dpi and have EdgeWatch propose centred positions while the prescans arrive, or reopen a stored walk and have it re-proposed from rolls/<roll>/prescanNN.tif.
+- Extend a walk. The old frames stay and are re-read against the new ones once the walk finishes.
+- Run scan_roll --correct or --correct-dry-run to aim each frame in-walk through WalkReader, or --approved <walk> to hold frames to propose_centred's positions for an earlier walk.
+- Prescan at 600 or 900 dpi. Every frame is refused by width; the window warns (FR-13) and scan_roll refuses --correct.
+
+**Should not do**
+
+- Scan slides or positives with the film left at its default 'negative'. The detector then reports frames as measured and centred (FE-02) instead of refusing.
+- Combine --no-shading with --correct, or propose a sheet from a --no-shading walk. The detector was only ever fitted on shading-corrected prescans (FE-06).
+- Treat the green 'frame edges N/N' light as proof that all four members ran. A member that raises is dropped silently (FE-01).
+- Change framing.PRESCAN_COLUMNS, or relax propose._downscaled, without re-deriving the members' 428-column constants (FE-09) and fixing centring's k>1 scaling (FE-03).
+- Merge two walks with overlapping frame numbers into one roll folder and then use scan_roll --approved on it. Duplicates validate themselves (FE-08).
+
+**Unguarded mistakes**
+
+- scan_roll.py defaults --film to negative and the window defaults v_film to negative. A slide walk run without changing it gets 'measured, 0' proposals, and nothing warns.
+- Reopening a walk whose manifest has no recorded film uses whatever film the window is currently set to.
+- --no-shading together with --correct or --dry-run is accepted without comment.
+- A member failure, for example after a dependency upgrade, produces no message anywhere: not the log, not the light, not the manifest, not CI.
+- A blank or all-base frame that passes the contrast test is given an interpolated 'from neighbours' position rather than 'not placed' (FE-04).
+
+### Can each kind of pass be re-derived? (gap pass)
+
+**Can do**
+
+- Run `uv run python tools/library.py reconstruct` to re-decode every stored pass (turned upright, with the 7200 dpi stagger replayed) with current code, and `tools/library.py verify` to check each file's checksum.
+- Recompute any entry's corrected picture with today's correction code through `library.corrected(entry)`, from its raw scan.tif, shading.npz and ccd_mask.bin.
+- Set RPS7200_DEBUG=1 before a window session, `tools/scan.py` or `tools/scan_roll.py`, so that metering probes and hold/aim verification prescans are filed with their raw bytes and command logs.
+- Re-reduce a calibration by hand: `calculate_shading(open('calibration/<UTC>/data.bin','rb').read(), pixels_per_line)` with pixels_per_line from calibration.json (no tool does it).
+- Read what the scanner was sent for any scan() pass in scan.json `extra.commands`: MODE SELECT, frame, gain read-back and write, SLIDE INIT, mask, and PARAM replies.
+
+**Should not do**
+
+- Do not treat the prescan.tif inside a roll-frame entry as raw data; it is the corrected 8-bit picture with no bytes behind it.
+- Do not delete, move or rename the calibration/ folder or run the tools from a different working directory: `extra.shading_origin.archive` is a relative string, and verify never checks it.
+- Do not delete a walked roll folder: survey.json, approved.json (including reference_entry) and prescanNN-before.tif are the only record of walk and aim decisions.
+- Do not use 'Use the cached one' or `--reuse` when the reference's origin matters: such entries carry no archive link and no record of the reducing code.
+- Do not scan rolls or brackets for metering evidence: their entries carry no metering record.
+
+**Unguarded mistakes**
+
+- Metering each frame of a roll, or metering a bracket, files every frame with `exposure_metered: false` and `metering: null`, and nothing warns that the probe evidence was dropped.
+- Scanning a roll with tools/scan_roll.py instead of the window silently skips the reversal check for frames whose read direction is unknown (RDM-02).
+- A 'check this frame' warning (a scan that disagrees with its own prescan) is only logged. Closing the window loses it, and no entry records it (RDM-01).
+- Scanning at 7200 dpi requires `--no-shading`, which also skips calibration. The entry is filed with no shading reference at all and a CCD mask read at the 5172-byte default, and verify reports nothing because the skip is explicit.
+- Stopping a bracket with Ctrl-C between passes files the passes taken so far. Nothing marks the bracket incomplete, and no bracket id groups them (the missing id is reported elsewhere).
+- Nudging the film in the window before a Scan leaves no trace in the scan entry. Only READ STATE byte 2, inside `carriage_state.read_state`, shows which whole frame the film was on.
+
+### Windows and macOS on the data paths (gap pass)
+
+**Can do**
+
+- Type a roll name of any length, and any capitalisation, into the roll box; it becomes the folder name and the prefix of every delivered file.
+- Rename a roll folder from the roll browser (a case-only rename is refused on Windows and macOS as 'already there').
+- Keep the window open for days with RPS7200_DEBUG=1, spooling every unclaimed pass to the OS temp directory until quit.
+- Commission a multi-hour roll from the contact sheet and leave the machine unattended.
+- Run tools/check_scanner.py, pytest -m hardware or a second window while the first window holds the scanner.
+- Put the checkout, library, rolls and output folder anywhere, including deep OneDrive for Business paths, exFAT drives and network shares.
+- Copy library/ and rolls/ between Windows, macOS (APFS or HFS+) and Linux and open them there.
+- Open --open-roll with a spelling that differs in case from the folder.
+- Open frameNN.tif or prescanNN.tif in a viewer (or the Explorer preview pane) while re-scanning or re-walking into the same roll.
+
+**Should not do**
+
+- Let the host sleep, enter Modern Standby or restart for updates while a pass or roll runs: nothing prevents it, and it abandons the read in flight.
+- Follow the Windows 'replace the driver with Zadig' advice when another window or a leftover python.exe may hold the scanner.
+- Use a long roll name under a deep Windows root without LongPathsEnabled.
+- Rely on the OS temp dir to keep a debug spool across a long-running window session.
+- Match a delivered single-scan file to its library entry by the time in its name (local vs UTC).
+
+**Unguarded mistakes**
+
+- A 30-frame roll left running on a laptop with default power settings: the host sleeps mid-read, the frame is lost, and the scanner may need a power cycle (PLAT-01).
+- A roll name long enough to push the entry or roll folder past MAX_PATH: the failure comes after the seek has moved the film and after the scan. The first frame is lost (or filed invisibly as INCOMPLETE) and the roll stops (PLAT-03).
+- A roll name of 233 or more characters: every delivered and exported copy fails on every OS while the roll carries on (PLAT-03).
+- A window open over a weekend with debug on under macOS: Friday's probes and hold prescans are purged by the OS, the spool is not recreated, and the flush says they are 'kept' (PLAT-02).
+- Running check_scanner.py while the window holds the scanner on Windows yields 'replace the driver with Zadig'; doing so mid-roll reinstalls the driver under a live session (PLAT-04).
+- Typing 'portra' for an existing 'Portra' adds to that roll on Windows and macOS but makes a new roll on Linux. On macOS it also defeats the roll-in-use guard for a roll opened with that spelling (PLAT-06).
+- Previewing a roll's prescan in Explorer during a re-walk leaves the old strip's picture under the new walk's record (PLAT-11).
+- Moving a Windows-written library to a Mac leaves every reference_entry and calibration archive link unresolvable (backslash separators) (PLAT-09).
+- Filing from a checkout without git on PATH (GitHub Desktop) or on an exFAT drive: every entry records driver_commit null, with no warning (PLAT-10).
+
+### Measurement code no area read (gap pass)
+
+**Can do**
+
+- Import dark_mask, relative_noise, noise_split, ceiling, agreement_z, colour_deviation and fixed_pattern from .claude/skills/measure-scan-quality/scripts and call them on any (H, W, >=3) array that is 16-bit or float.
+- Run `uv run python tools/film_edge_study.py [--root R] [--json out.json]` offline, with no scanner; it reads library/ and rolls/ under R.
+- Run `uv run python tools/collect_vignette_study.py --out DIR [--root library] [--tag T] [--extra N] [--no-checksum] [--dry-run]` to copy a tagged study plus N spread entries to another machine.
+
+**Should not do**
+
+- Run column metrics (colour_deviation, fixed_pattern) on a delivered file that was turned or mirrored, or compare two deliveries with different per-frame orientations, without first un-orienting to sensor coordinates.
+- Pass library.load pixels (raw) or a library.corrected result whose record['corrected'] is not 'applied' (7200 dpi entries, 'no reference') to metrics documented as working on corrected samples, and then quote the number as corrected.
+- Call noise_split or agreement_z on a pair that has not been registered and gain-matched, or agreement_z on corrected bracket passes where one pass is near the rail.
+- Treat film_edge_study's probe statistics, meter_delta or R:B verdicts as what production metering sees.
+- Use --no-checksum and then treat the transfer as verified.
+- Reuse an --out directory from an earlier run with another tag: old entry folders stay, and only the manifest is replaced.
+
+**Unguarded mistakes**
+
+- A mistyped --tag makes collect_vignette_study copy only spread entries and exit 0.
+- One truncated or corrupt raw.bin.gz anywhere in the library, even an unrelated entry, crashes collect_vignette_study with EOFError or zlib.error.
+- collect_vignette_study refuses a complete plain (uncompacted) entry as 'missing raw.bin.gz', and copies entries without raw.layout that later make `analyse` exit.
+- A corrupted shading.npz, ccd_mask.bin or scan.tif, in the source or in the copy, is transferred without detection although the record carries their checksums.
+- A float array normalised to 0-1 passes metrics._check, and agreement_z then applies 16-bit gates to it.
+- A 90-degree delivered frame reads 'clean' in colour_deviation while its lines are visible.
+- One unreadable or truncated TIFF (an INCOMPLETE entry's prescan.tif, or a half-written roll prescan) aborts film_edge_study.
+- film_edge_study includes rotated window-walk prescans and demo entries in its corpus without warning.
+- film_edge_study --json overwrites the named file without asking.
 

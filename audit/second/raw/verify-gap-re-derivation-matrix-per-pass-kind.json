@@ -1,0 +1,146 @@
+{
+ "type": "result",
+ "key": "v2:46141f31020bb4f04daa136aa6c524c0da82b7d963b713a1e99d8baff5c4353e",
+ "agentId": "af7ecb8c0d672e791",
+ "result": {
+  "verdicts": [
+   {
+    "id": "RDM-01",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Most of the finding holds up in the code.\n- Metering: `region = metering_slice(image)` (direct.py:2517-2519) is never put into `last_metering` (direct.py:2631-2643).\n- Reversal: the known-direction disagreement only reaches `self._emit(\"log\", ...)` and `return meta` (session.py:2177-2186). The turned branch keeps only `reversal=[deg, mirrored]` and drops `detail` (session.py:2194-2201).\n- Hold: the record `out` (direct.py:3345-3350) and `marks[\"approved\"]` (direct.py:4029-4030) carry no reference identity. `Approved.reference_entry` (session.py:1348) is only written to approved.json by the GUI (tools/gui.py:3317).\n- Aim: `_Aim(offset_mm=decision, reference=image)` (direct.py:3509-3515) measures against the pre-aim prescan. On a real roll, `prescan_before` is written only on the dry-run branch (session.py:2562-2582). With debug off it is kept nowhere. With debug on it is filed as an unlinked 'debug' entry.\n\nOne point overreaches. For window roll frames, the prescan `_note_reversal` compares against is `rf.prescan` (session.py:2604-2608), and that same array is stored as the entry's own prescan.tif (session.py:2632). The 'judged prescan' is therefore identified, though it is stored corrected. The unlinked-reference problem applies to window single scans (`_prescan_here`, session.py:2134-2146), where the prescan was filed as a separate entry. The metering region matters less than stated: the round-1 probe is itself filed only under RPS7200_DEBUG, so without debug the levels cannot be re-derived whether or not the region is recorded.",
+    "corrected_description": "Three decisions are recorded by outcome only.\n- Metering does not record its crop region. This matters only when debug filing kept the round-1 probe, which is then unlinked.\n- Reversal keeps only the applied turn, not the scores or the margin. The 'check this frame' disagreement for known-direction passes exists only in the session log. For a window single scan, nothing names the prescan entry it was compared with. For a roll frame, the compared prescan is the entry's own prescan.tif.\n- The hold/aim record carries no reference identity. For operator holds the only link is approved.json's reference_entry. For aimed frames of a real roll, the pre-aim reference is not kept at all unless debug filing is on, and then it is unlinked.",
+    "corrected_locations": [
+     "rps7200/direct.py:2517-2519",
+     "rps7200/direct.py:2631-2643",
+     "rps7200/session.py:2175-2201",
+     "rps7200/session.py:2134-2146",
+     "rps7200/direct.py:3345-3350",
+     "rps7200/direct.py:4029-4030",
+     "rps7200/direct.py:3509-3515",
+     "rps7200/session.py:2562-2582"
+    ]
+   },
+   {
+    "id": "RDM-02",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/scan_roll.py never calls `_note_reversal` or `reversal_against`; a grep for reversal/rotate/match_prescan finds nothing in it. It submits `meta=dict(frame.meta, roll_membership=...)` directly (tools/scan_roll.py:731-756). The window roll calls `_note_reversal(rf.meta, rf.image, rf.prescan, ...)` (session.py:2604-2608), and `_file` composes `meta['reversal']` into the delivered arrangement (session.py:2853-2857). `match_prescan` defaults to True (session.py:1782).\n\nThe case is narrow. `read_direction` returns UNKNOWN only for a complete read whose two ends disagree, or for a pass with no R or no B tag (direction.py:103-117). A short read takes the direction from its first lines and counts as known. Low is right. The _note_reversal docstring overclaims ('every file that leaves is turned by it', session.py:2155-2158) for the CLI path.",
+    "corrected_description": "",
+    "corrected_locations": []
+   },
+   {
+    "id": "RDM-03",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The calibration.json record (direct.py:788-801) has no provenance or driver commit and no split_ratio. `ShadingReference.save` writes arrays only (shading.py:74-91). `calculate_shading(data, width)` is called with the default `split_ratio=5.0` (direct.py:2351, shading.py:109-111). A loaded reference's origin is `{action: loaded, path, file_modified_utc, loaded_utc}` (direct.py:724-729), and `provenance()` (library.py:385) is the filing process. So an entry whose reference came from the cache records no identity for the code that reduced it. The loaded case also has no `archive` link: only ensure_shading's measuring branch sets it (direct.py:858-860). The severity is low because re-reducing needs data.bin anyway, and nothing in code reads data.bin today.",
+    "corrected_description": "",
+    "corrected_locations": []
+   },
+   {
+    "id": "RDM-04",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "I spot-checked the producers.\n- scan meta casts width, height, bytes_per_line and filter_offsets to int (direct.py:3165-3172).\n- `Settings.scaled` produces ints (protocol.py:619-622).\n- `apply_shading`'s report is Python int (shading.py:250-279).\n- `carriage_record` stores hex strings and bools (direct.py:1249-1250).\n- `_CommandLog` stores cdb, out and in as hex (direct.py:480-494).\n- `film_base_from` casts (framing.py:554).\n- `vote()` casts every Side field to float (vote.py:65-80).\n- `lone_gap` passes member values through, but those members also produce Python floats or float subclasses: changepoint `float(...)` (changepoint.py:819-854), chroma `float(a)` / `round(float(...))` (chroma.py:675-690), stepline `_plateau_start` float and `_fit` floats (stepline.py:398-425).\n- Bracket `exposure_scale` elements are np.float64, a float subclass, which json encodes natively.\n\nNo np.int64, np.float32, bytes or Path reaches `default=str` on the traced paths. The protection is convention only.",
+    "corrected_description": "",
+    "corrected_locations": []
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "RDM-A1",
+    "title": "Every metered roll frame, and every auto-exposed bracket pass, is filed as 'not metered' with no metering evidence",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:4105-4112",
+     "rps7200/direct.py:4124-4133",
+     "rps7200/direct.py:2791-2795",
+     "rps7200/direct.py:2811-2820",
+     "rps7200/direct.py:3186",
+     "rps7200/direct.py:3219-3220",
+     "rps7200/library.py:344-349",
+     "rps7200/direct.py:2442-2444",
+     "rps7200/session.py:2659-2665"
+    ],
+    "evidence": "Roll loop: `scales = self.auto_exposure(target=exposure_target, infrared=infrared, film=film, shading=shading,)` (direct.py:4108-4111), then `image, meta = self.scan(resolution=resolution, infrared=infrared, frame=window, exposure_scale=scales, film=film, ...)` (4124-4133). No `auto_exposure=True` is passed, and scan()'s default is False (direct.py:2851). scan() then writes `\"exposure_metered\": bool(auto_exposure)` (3186) and attaches the evidence only `if auto_exposure and self.last_metering is not None: meta[\"metering\"] = self.last_metering` (3219-3220). scan_bracket does the same: `scales = self.auto_exposure(film=film, infrared=infrared, shading=shading)` then `self.scan(..., exposure_scale=pass_scale, ...)` (2791-2820). The roll manifest keeps only `for key in (\"exposure\", \"gain\", \"offset\")` (session.py:2662-2664). The default is `meter: str = METER_EACH` (session.py:1425; tools/scan_roll.py:152).",
+    "description": "By default a roll meters every frame. The rounds, levels, targets, `blue_headroom`, `base_exposure` and `limited` flags are computed and left in `last_metering`, but the frame scan is told nothing about them. Every roll frame entry therefore says `scan.exposure_metered: false` and `metering: null`. That is the exact state library.py:344-349 describes as 'a scan given its exposure rather than metering one', and it is false. direct.py:2442-2444 and 363-364 claim `scan` files the metering record 'with the entry' and that blue's RGBI headroom becomes 'checkable from ordinary scans'. Rolls are where RGBI scans are actually made, and none of them carry it. Auto-exposed brackets from tools/scan.py lose it the same way. The probes themselves are filed only under RPS7200_DEBUG, and nothing links them to the frame. A side effect: `signature()` counts these metered exposures as commanded (library.py:938-943), so repeat scans of the same roll frame never reduce to each other. That direction is conservative.",
+    "failure_scenario": "A 30-frame RGBI colour-negative roll is scanned from the window with the default METER_EACH. Later someone wants to check BLUE_RGBI_HEADROOM against the blue levels metering reached, or to find why frame 12 came out 20% under target (held by the timer ceiling, `limited`). All 30 entries have `metering: null` and `exposure_metered: false`, and roll.json has only the final exposure. The evidence is gone and the records claim the exposures were commanded.",
+    "recommendation": "Have scan() accept the metering record from a caller that metered separately, for example `scan(..., metering=self.last_metering)`, or set `meta['metering']` and `exposure_metered=True` in scan_roll right after scan(). For METER_ONCE, record that the scales were reused from frame N. For brackets, record the metered base scales and the metering block on each pass. Keep `exposure_metered` False there so `signature` still separates members, or add an explicit `bracket` key to the signature.",
+    "doc_reference": "rps7200/library.py:344-349 ('What the metering probe measured, when this scan did its own ... Absent on a scan given its exposure rather than metering one'); rps7200/direct.py:2442-2444 (':meth:`scan` files it with the entry ... checkable from ordinary scans'); rps7200/direct.py:363-364 ('last_metering records blue's achieved level on every metered scan')"
+   },
+   {
+    "id": "RDM-A2",
+    "title": "Hold and aim verification prescans are taken as film='negative' whatever the roll is, and that meta becomes the filed prescan's record",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:3377-3378",
+     "rps7200/direct.py:3968-3974",
+     "rps7200/direct.py:4031-4036",
+     "rps7200/direct.py:4056-4063",
+     "rps7200/session.py:2545-2552",
+     "rps7200/demo.py:1096",
+     "rps7200/demo.py:1297",
+     "rps7200/demo.py:1326"
+    ],
+    "evidence": "The frame's first prescan passes the roll's film, with the comment 'The roll's film, so the prescan's entry says what was in the transport; it was recorded as \"negative\" whatever it was.' (direct.py:3968-3974). The hold loop's verification pass does not: `image, _ = self.prescan(resolution=prescan_resolution, keep_raw=keep_raw, shading=shading)` (direct.py:3377-3378). `prescan()` defaults to `film: str = FILM_NEGATIVE` (direct.py:2058), and scan() records `\"film\": film`. When the replacement is kept, `prescan_meta = dict(self.last_scan_meta or {})` (direct.py:4034-4035, 4060-4061). On a walk the window then files `dict(rf.prescan_meta ...)` as the prescan entry's meta (session.py:2545-2552). The demo selects stored passes by `(record.get(\"scan\") or {}).get(\"film\")` (demo.py:1096, 1297, 1326).",
+    "description": "The first prescan fix was not carried into `_hold_to_approved`. Any walk with approved positions or `correct` on a black-and-white roll (which frame_edges does read) or on a positive gets its replaced prescans filed with `scan.film = \"negative\"`. So do the frame's `prescan_meta`, and under debug every verification prescan. The record then misstates what was in the transport. `signature()` includes `scan.film`, and the demo's pools classify stored passes by it, so a B&W walk's prescans would be offered as colour-negative film.",
+    "failure_scenario": "A B&W strip is walked in the window with 'correct' on. Frames 3, 7 and 9 are aimed, so their filed prescan entries come from the hold loop's last pass and record `scan.film: negative`. A later `--demo` session on film 'negative' draws those B&W prescans into its colour-negative pool, and library queries by film miscount them.",
+    "recommendation": "Thread `film` through `_hold_to_approved` and `_aim_frame` into `self.prescan(..., film=film)`, and add a test that a replaced prescan's meta carries the roll's film.",
+    "doc_reference": "rps7200/direct.py:3970-3972 (comment claims prescans now record the roll's film)"
+   },
+   {
+    "id": "RDM-A3",
+    "title": "Passes kept only by debug filing (metering probes, hold/aim prescans) go to ./library or RPS7200_DEBUG_ROOT rather than the caller's library, carry no role, and are not linked to the frame they served",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:1049",
+     "rps7200/direct.py:1064-1074",
+     "rps7200/library.py:53",
+     "tools/scan_roll.py:475",
+     "rps7200/session.py:2872-2875"
+    ],
+    "evidence": "`root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT` (direct.py:1049), and `DEFAULT_ROOT = Path(\"library\")` (library.py:53) is relative to the CWD. Filing uses `film=FilmNotes(notes=\"captured with RPS7200_DEBUG on\"), tags=[\"debug\"]` (direct.py:1067-1068). Nothing anywhere sets RPS7200_DEBUG_ROOT (grep). tools/scan_roll.py opens `DirectScanner(verbose=args.verbose, debug=None)` (475) and files its frames to `args.library`. The session files to `self.root`. The probe's own meta has no field saying it was a metering round or a hold verification: scan() is called with ordinary arguments (direct.py:2491-2503, 3377).",
+    "description": "CLAUDE.md makes debug filing the mechanism that keeps 'the passes they do not keep -- metering probes, hold and aim prescans'. Those are exactly the passes whose evidence RDM-01 and RDM-A1 find missing from the frame entries. When they are filed, it is into a different library whenever the operator passed `--library` or chose another root, or when the process runs from a different directory. They arrive with no roll membership, no frame label and no role, so the only way to tie a probe to the frame it metered, or a verification prescan to the hold history entry it produced, is to compare timestamps.",
+    "failure_scenario": "`RPS7200_DEBUG=1 uv run python tools/scan_roll.py --library /data/scans/library ...` from the repo root. The frames land in /data/scans/library. The 60 metering probes and 25 hold prescans land in ./library, tagged only 'debug'. Asked later which probe metered frame 14, nobody can answer from either library.",
+    "recommendation": "Give DirectScanner a `debug_root` that the tools and the session set to their library root. Tag each spooled pass with its role (`metering_round`, `hold_verify`, `aim_verify`, frame index, roll name) at the call site. Record the probe entries' `started_utc` in the frame's metering block and hold history so the link is explicit.",
+    "doc_reference": "CLAUDE.md 'Claude: always scan with debug filing on' section (claims debug filing adds 'the passes they do not keep -- metering probes, hold and aim prescans' to the library)"
+   },
+   {
+    "id": "RDM-A4",
+    "title": "Nothing proves re-derivability beyond the decode: no check that data.bin re-reduces to the stored shading.npz, and reconstruct never exercises correction, bracket merge, reversal or hold",
+    "severity": "info",
+    "category": "test-gap",
+    "locations": [
+     "rps7200/library.py:675-766",
+     "tests/test_scanner_api.py:271-314",
+     "rps7200/direct.py:781-803"
+    ],
+    "evidence": "`reconstruct` decodes the raw bytes and compares them with scan.tif (`if np.array_equal(image, stored): return image, \"identical to the stored image\"`, library.py:~755). It applies the stored reference only in the legacy `if \"shading\" in applied:` branch. The only reads of data.bin and calibration.json anywhere are tests/test_scanner_api.py:271-314, with synthetic bytes (`b\"\\x01\\x02\" * 100`) that check the archive was written. No code or test runs `calculate_shading(data.bin, pixels_per_line)` and compares the result with the archived or entry shading.npz. There is no test that re-merges a bracket from its entries, and none that recomputes a hold confidence from stored prescans.",
+    "description": "Checked against the pass-kind matrix, only one column is proven re-derivable end to end: raw bytes to scan.tif, including the 7200 dpi stagger and bottom-up turn, for every kind that has raw bytes. The shading reduction, the correction (`corrected()` is recomputed but never compared with anything), the bracket merge (deterministic from entries, but untested and with no bracket group id), the reversal decision and the hold confidences are recorded but never re-derived by any check. A regression in `calculate_shading`, or in the archive's line stride, would go unseen until someone tries to recompute.",
+    "failure_scenario": "A change to how calibration lines are collected makes data.bin drop the final partial block. Entries keep verifying, and reconstruct reports 'identical' on every entry. Only a person re-reducing data.bin months later finds the references cannot be reproduced.",
+    "recommendation": "Add `tools/library.py reconstruct --calibration`, which walks calibration/<UTC>/ folders, re-reduces data.bin with `calculate_shading(data, pixels_per_line)` and compares it with shading.npz. Add a test on a stored real calibration if one is committed as a fixture, and a bracket re-merge test from filed entries.",
+    "doc_reference": "rps7200/direct.py:850-853 ('a reduction cannot be redone with better code once its input is gone. Without this no correction in the library could ever be recomputed from scratch'): the input is kept, but recomputation is never exercised"
+   },
+   {
+    "id": "RDM-A5",
+    "title": "A deliberately uncorrected pass (shading=False) is filed with the session's shading.npz but no shading_origin",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:3207-3209",
+     "rps7200/direct.py:895-903",
+     "rps7200/library.py:262-263"
+    ],
+    "evidence": "`\"shading_origin\": (dict(origin) if shading and (origin := self._shading_origin) else None)` (direct.py:3207-3209). `capture_record()` hands over `\"reference\": self._shading` whether or not this pass used it (direct.py:~900). library.save writes `reference.save(path / \"shading.npz\")` whenever a reference is passed (library.py:262-263).",
+    "description": "A window Scan with correction off (`job.shading=False`) in a session that has a reference produces an entry holding shading.npz with `calibration.skipped='explicit'` and `extra.shading_origin: null`. The stored reference, which is what `library.corrected()` would use on export, then has no record of whether it was measured that session or loaded from a cache of another day. For every other pass that distinction is recorded.",
+    "failure_scenario": "An operator scans a frame raw on purpose for comparison, after 'Use the cached one'. The entry's shading.npz is a weeks-old cached reference, and nothing in scan.json says so. A later analysis that corrects it treats the reference as same-session.",
+    "recommendation": "Record `shading_origin` whenever a reference is stored with the entry, not only when the pass applied it.",
+    "doc_reference": ""
+   }
+  ],
+  "persisted_state_corrections": "Corrections to the claimed table:\n\n1. **Entry record (scan.json).**\n   - On every metered roll frame (default METER_EACH) and every auto-exposed bracket pass, `metering` is null and `scan.exposure_metered` is false, although metering ran (RDM-A1). \"metering: absent on a scan given its exposure\" is therefore not what distinguishes these entries.\n   - `extra.shading_origin` is null on a shading=False pass even when shading.npz is stored (RDM-A5).\n   - `extra.reversal` exists only for window-roll or window-scan passes of unknown direction. CLI roll frames never get one (RDM-02).\n   - `extra.rotation` and `extra.flipped` come from session `_file`.\n\n2. **Framing prescan (prescan.tif).** Correct as claimed. In addition, on walk entries whose prescan was replaced by the hold or aim loop, the entry's `scan.film` is \"negative\" whatever the roll is (RDM-A2).\n\n3. **Debug spool.** It is filed to `$RPS7200_DEBUG_ROOT` or the CWD-relative `./library` (direct.py:1049), not the caller's `--library` or session root. Entries carry `film.notes='captured with RPS7200_DEBUG on'` and `tags=['debug']`, with no roll membership, frame label or role (RDM-A3).\n\n4. **Calibration archive.**\n   - It is written only on ensure_shading's measuring branch.\n   - `extra.shading_origin.archive` links to it only for action 'calibrated' and only on passes with shading=True.\n   - It is read by nothing but tests with synthetic bytes, so the reduction is never re-checked (RDM-A4).\n\n5. **ccd_mask.** \"Duplicated as hex in extra.commands\" is correct: the COPY reply is not a SCSI_READ, so `_CommandLog` keeps it as `in` (direct.py:490-494).\n\n6. **tools/scan.py delivered sidecar.**\n   - The merge is not re-derivable from the sidecar.\n   - It is re-derivable in principle from the bracket's entries: raw pixels, reference, `bracket_index`, `bracket_ratio`, `bracket_passes` and `bracket_stops` are all in extra, and `merge_bracket` is deterministic.\n   - There is no bracket group id, so grouping relies on the film label and started_utc.\n   - The metered base scale is recoverable as exposure_scale / bracket_ratio. The metering evidence is not (RDM-A1).\n\n**Per-pass-kind matrix, as checked in code.**\n\n- **Window single scan:** raw, layout, commands, exposure/gain/offset, fast_ir, frame, read_direction, stagger, mask, reference and metering all recorded.\n- **Window prescan:** full entry via `_file` with its own meta.\n- **Bracket pass:** full entry plus the bracket_* fields; `metering` is lost.\n- **Roll frame:** full entry, with registration marks, hold/aim record and roll_membership. `metering` is lost. The prescan is stored corrected, keeping only read_direction and carriage_state.\n- **Roll prescan / prescan_before:**\n  - On a real roll there is no entry of its own.\n  - On a walk the prescan gets its own entry with raw bytes.\n  - prescan_before is a corrected TIFF only, with no entry.\n- **Metering probes and hold/aim verification prescans:** filed only under debug, unlinked and without a role.\n- **Dry-run walk prescan:** entry with raw bytes; its film is wrong if the prescan was replaced.\n- **Calibration:** data.bin plus calibration.json; no provenance, no split_ratio, never re-reduced.\n- **IR tied/untied:** fast_infrared recorded; the IR timer is in exposure[3] and in the WRITE GAIN OFFSET bytes in commands.\n- **7200 dpi:** `stagger_realigned` recorded and replayed by reconstruct.\n- **Bottom-up:** read_direction recorded and checked by reconstruct.\n- **Demo:** same filing path, flagged by extra.demo.\n\n**Moves.** SLIDE moves between passes (nudges) fall outside every pass's command window, because recording starts in scan() after metering. The hold record keeps only `moves` and `spent_mm`; nudge's returned param/forward is discarded apart from `clamped` (direct.py:3368-3374).\n\n**Re-derivation.** Only raw → scan.tif is proven re-derivable by reconstruct."
+ }
+}

@@ -1,0 +1,102 @@
+{
+ "type": "result",
+ "key": "v2:31051b5d98d75a7f6ca9adcafa56e1fe6885498508efafedc9fb5c19ee1902df",
+ "agentId": "ae06d95196409ff4d",
+ "result": {
+  "verdicts": [
+   {
+    "id": "CONC-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "gui.py:3692-3697: the 'closed' branch runs `if self.closing: self._quit()` with no look at `self._writing`. Only `_wait_to_quit` (3478-3484) checks for live writer threads, and this branch skips it. on_close (3453-3455) calls `self.session.shutdown()` straight away. The worker's finally block (session.py:1968-1996) closes the scanner, drains the writer, compacts `self._writer.uncompressed`, then emits 'closed'. With the session idle that takes a second or two. `_quit` destroys the root, `mainloop()` returns (gui.py:8911-8912), and the interpreter exits under the daemon export and save-all threads (3459). A file mid-write is left truncated under its final name, and the rest of the batch is never written. The compaction part holds too. compact (library.py:414-453) does `os.replace` for raw.bin.gz, then `_replace_tiff` for scan.tif, then `_write_atomic` for scan.json. On Windows an export thread with scan.tif open makes one of these replaces fail with PermissionError. session.py:1993 catches that as OSError and logs 'it stays uncompressed and complete', which leaves an orphan raw.bin.gz and `.scan.tif.part`. If the TIFF swap has already succeeded, it leaves a record whose image sha256 no longer matches. On POSIX the compaction half is harmless, because replace under a reader is fine. The truncation half applies on every platform."
+   },
+   {
+    "id": "CONC-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_roll_is_busy` (gui.py:2693-2707) checks only `self.busy` and `_loaded_roll`. `_loaded_roll` is set only by open_roll (2889), so a roll walked and commissioned in this session is not covered. `busy` clears at session.py:1967 when the job returns, but FrameWriter (queue depth 2, session.py:1569) is still filing. Its `_write` calls `Path(path).parent.mkdir(parents=True, exist_ok=True)` (1677), so it recreates a renamed or deleted folder, and `_tell` then rewrites the full roll.json from memory. A grep for fcntl/msvcrt/flock/O_EXCL/lock files across rps7200 and tools finds nothing. The only exclusion between processes is the libusb interface claim, and a window that loses it keeps its roll browser working (session.py:1936-1939). copytree (2804), rmtree (2839) and rename (2859) are unguarded against the writer and against another process. On Windows, rename and rmtree usually fail on the open file rather than race. copytree reads a partial frame and a stale roll.json on every platform."
+   },
+   {
+    "id": "CONC-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "direct.py:4108-4112 meters with a separate `self.auto_exposure(...)`. The frame's `self.scan(...)` (4124-4133) omits auto_exposure, whose default is False. So scan() records `\"exposure_metered\": bool(auto_exposure)` = False (3186) and skips `meta[\"metering\"]` (3219-3220). Grepping session.py and tools/scan_roll.py finds no code that sets metering or exposure_metered on a roll frame's meta afterwards. library.save files `meta.get(\"metering\")` (library.py:349), which is None here. signature() (library.py:938-945) then treats the metered exposure as commanded. The auto_exposure docstring (direct.py:2442-2444) says scan() files the metering 'with the entry', and that is false for every roll frame. The category is data-integrity rather than concurrency. With RPS7200_DEBUG on, the metering probe passes are still filed as separate debug entries, but their link to the frame and the `limited` and landing summary are not recorded."
+   },
+   {
+    "id": "CONC-04",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:2549-2566 submits the prescan to the writer. 2667-2668 puts `record[\"prescan\"] = f\"prescan{number:02d}.tif\"` into the record straight away, and 2686 `record_of.record(record, awaiting=scanned is not None)` writes and fsyncs the manifest (909-911). On a walk `scanned` is None, so no filing status follows. FrameWriter writes the TIFF only after library.save (1656-1690), in place and without a temp file (tiff.py:159-165). walked_prescans drops a missing file silently (666-667). read_survey calls `tiff.read(str(path))` per file (gui.py:5184) with no handling per file. Truncation raises TiffFileError, which is a ValueError subclass in the installed tifffile (tifffile.py:1605), and open_roll (2890-2898) turns that into refusing the whole folder. hold_from_walk (scan_roll.py:272-275) has no handler and dies with a traceback. It needs a kill or crash inside the write window, or a failed library.save, so low is right."
+   },
+   {
+    "id": "CONC-05",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_unclaimed` (session.py:2961-2973) is an existence check with no O_EXCL, called at submit time on T2 (2831). The file is written on T3 only after library.save (1656-1690). `_out_name` for a roll frame gives `{_safe(roll)}_frame{NN}_{dpi}dpi{ir}{end}` (2929). Export writes `_unclaimed(out / f\"{_safe(summary['roll'])}_{batch_name(item, fmt)}\")` with batch_name `frame{NN}_{dpi}dpi{ir}{end}` (gui.py:2762-2764, 5266-5267, kind='frame' at 5371), and the two names are identical. Export checks only `_saving` (2715), not `busy`, and its dialog opens on `session.out_dir` (2735). The collision needs Export of the same roll into the output folder while that frame is being rescanned. That is narrow, but the code allows it."
+   },
+   {
+    "id": "CONC-06",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "verify (library.py:1079-1080) reports any entry holding INCOMPLETE as 'was being written and did not finish', with no way to tell a live writer from a dead one. compact and add_tags each read scan.json, modify it and rewrite it with no lock, through the fixed temp name `.scan.json.part` (library.py:486, 424/451, 497/499). migrate-raw uses the fixed `.scan.tif.part` (tools/library.py:271), the same name as `_replace_tiff` (library.py:509). `duplicates --delete` runs `shutil.rmtree(path)` with no handler (tools/library.py:190-191), so a sharing violation on Windows aborts the loop before `library.reindex` at 196-197. A verify during compaction can see the new scan.tif against the old record digest, because the record is read at 1087 and the checksum at 1097."
+   },
+   {
+    "id": "CONC-07",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "When open fails, `_run` emits 'failed' and 'closed' and returns (session.py:1936-1939), so no thread drains `_jobs`. `submit` is a bare `self._jobs.put(job)` (1828). The 'closed' handler calls `_set_busy(False)` (gui.py:3694), which re-enables every run button (3802-3804). No path in gui.py checks `_session_closed` or the worker's liveness before submitting; the only uses are in `_wait_to_quit`. on_calibrate sets `self.calibrated = True` right after submit (2000-2002). The commission path runs `_write_approved`, starts the ETA clock, then submits the Roll (3164-3200)."
+   },
+   {
+    "id": "CONC-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The Grinder (filing_load_test.py:169-172) only runs `gzip.compress(self.payload, compresslevel=6)` in memory, and zlib releases the GIL for large buffers, so the load is CPU on another core with no disk writes and no GIL contention. Real filing on T3 calls library.save: TIFF writes, gzip to disk, `_write_atomic` with fsync (484-491), and `reindex(root)` (399). reindex parses every `*/scan.json` with json.loads (1030-1043), which holds the GIL and grows with library size. So a 'safe' verdict from this tool does not cover the load a roll actually puts on the read loop. This is a gap in the test, not a defect in the roll path."
+   },
+   {
+    "id": "CONC-09",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "preview.downscale returns `image` itself when the step is 1 (preview.py:467), and `np.ascontiguousarray` of an already contiguous array returns the same object, so for passes with a long side of 1400 px or less `working` is the filed array (session.py:2722). A grep for in-place writes (slice assignment, augmented assignment, `out=`) in gui.py, session.py, preview.py and frame_edges finds none. The debug spool writes its copy with np.save at capture time and keeps only a weakref (direct.py:936-941). One addition: the `_emit_result` docstring (session.py:2716-2718) says 'A copy rather than a view'. For small passes it is neither: it is the very object, which is a small doc mismatch."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "CONC-A1",
+    "title": "library.save reindexes after the entry is committed: any exception in reindex reports a filed entry as failed, skips frameNN.tif and the output copies, and marks the roll frame not done",
+    "severity": "medium",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/library.py:396-399",
+     "rps7200/library.py:1030-1043",
+     "rps7200/library.py:1045-1065",
+     "rps7200/session.py:1656-1690",
+     "rps7200/session.py:1588-1598",
+     "rps7200/session.py:1151-1159",
+     "rps7200/direct.py:1059-1079"
+    ],
+    "evidence": "library.py:396-399 `_write_atomic(path / \"scan.json\", ...); (path / INCOMPLETE).unlink(missing_ok=True); reindex(root); return path`. entries() catches only `except (OSError, json.JSONDecodeError): continue` (1037-1039) and then does `record[\"_dir\"] = candidate.parent.name` (1041). reindex ends `index.write_text(json.dumps(summary, indent=2), encoding=\"utf-8\")` (1064). FrameWriter: `entry = library.save(...)` (1657), with the delivered-copies loop only after it. On an exception, _run (1592-1597) appends the error and calls `on_done(..., None, str(exc))` and `_tell(job, None, str(exc), [])`. RollManifest._apply then sets `record[\"done\"] = False; record[\"filing_error\"] = str(error)` (1157-1158).",
+    "description": "The entry is complete and INCOMPLETE is gone before reindex runs, but reindex's exceptions escape save(). A scan.json that is not valid UTF-8 raises UnicodeDecodeError, which is a ValueError but not a JSONDecodeError. A scan.json whose top level is not an object raises TypeError at `record[\"_dir\"] = ...`. On Windows, an index.json held by the indexer or antivirus can raise PermissionError on write_text. Any of these makes save() raise after the commit, on every later filing into that library. FrameWriter then reports 'picture N: ...' as a failure. It never writes the roll's frameNN.tif or the output-folder copy, and never adds a window entry to `uncompressed`, so the entry is never compacted. The manifest marks the frame not done with a filing_error and no `entry`, so resume offers it for rescanning and roll_exports cannot find the entry. The debug flush likewise keeps the spool of an entry it did file. verify and entries() crash on the same file instead of naming it.",
+    "failure_scenario": "Someone hand-edits one old entry's scan.json in an ANSI editor and adds a note with an umlaut, which is saved as cp1252 byte 0xFC. On the next roll every frame is filed into library/ correctly, but each is logged as failed. No frameNN.tif appears in rolls/<name>/, roll.json marks every frame 'done: false' with a UnicodeDecodeError, and a resume rescans the whole roll, creating duplicate entries.",
+    "recommendation": "Do not let the derived index fail a save: wrap `reindex(root)` in save() (and in compact callers) in try/except Exception and log it. In entries(), catch ValueError (which covers UnicodeDecodeError and JSONDecodeError) and skip non-dict records. Have verify report such files instead of raising."
+   },
+   {
+    "id": "CONC-A2",
+    "title": "index.json is rewritten in place, with no temp file or lock, by up to three threads at once at session close and by any second process",
+    "severity": "low",
+    "category": "concurrency",
+    "locations": [
+     "rps7200/library.py:1063-1064",
+     "rps7200/session.py:1968-1981",
+     "rps7200/direct.py:1134-1145",
+     "tools/gui.py:4492-4495",
+     "tools/scan_roll.py:788-803"
+    ],
+    "evidence": "library.py:1063-1064 `index = root / INDEX; index.write_text(json.dumps(summary, indent=2), encoding=\"utf-8\")`. In the window's close path, `self._scanner.close()` (session.py:1975), which runs `_debug_flush` and so library.save and reindex on T2, executes while the FrameWriter thread is still filing and reindexing. `self._writer.finish()` is only called afterwards (1979). T1's Delete pass calls `library.reindex(entry.parent)` (gui.py:4495) whatever T3 is doing. scan_roll has the same ordering, with the flush on scanner exit before `writer.finish()` (803).",
+    "description": "Two write_text calls that overlap each truncate the file and write from offset 0, so the result can be one list with the other's tail appended (torn JSON), or an older snapshot that misses the newest entry. index.json is documented as derived and no code reads it, so the damage is limited to people and external tools that read it. On Windows, T1's rmtree during another thread's `read_text` of that entry's scan.json fails part-way, because Python's open lacks FILE_SHARE_DELETE (as session.py:860-865 notes for manifests). The pass the operator asked to delete is then half-removed: the files ahead of scan.json in the directory listing are gone and the record remains, so verify later reports its raw bytes as missing.",
+    "failure_scenario": "A 7200 dpi roll ends with RPS7200_DEBUG=1. At close the debug flush files three hold prescans while the writer files the last two frames. Both reindex at the same moment, and library/index.json ends with a second, partial JSON array appended, which json.load then rejects.",
+    "recommendation": "Write index.json with the same temp-and-rename `_write_atomic`, using a unique temp name per writer (pid plus thread id). Or rebuild it once after the writer and the flush have both finished, instead of from every save."
+   }
+  ],
+  "persisted_state_corrections": "1. Roll and walk manifests: `_replace` retries for 0.05+0.05+0.1+0.1+0.1 = 0.4 s in total (session.py:866), not 0.45 s. The retry covers only PermissionError. Library writes (`_write_atomic`, `_replace_tiff`, compact's `os.replace`, library.py:484-511) have no retry at all, so on Windows a concurrent reader turns them into immediate failures.\n2. Library entry directory: the filing is exact, but reindex runs after the commit, and a failure there makes save() raise although the entry is complete (CONC-A1). The caller then records it as failed and it is never compacted.\n3. Derived library index: besides a torn or stale file, an unreadable scan.json of the wrong kind (non-UTF-8 or not an object) makes reindex, and therefore every save, raise rather than skip it. entries() catches only OSError and JSONDecodeError (library.py:1037-1039).\n4. Debug spool: in the window, the flush runs on T2 inside `scanner.close()` before `writer.finish()` (session.py:1975-1979). Claimed items are therefore unlinked while the writer may still be filing, and so before its outcome is known. This matches the claimed \"regardless of whether the claimant's filing succeeded\".\n5. Answers to the area questions (a)-(e):\n   - (b) None exists. A grep for fcntl, msvcrt, flock, O_EXCL or lock files finds nothing. The only cross-process exclusion is `libusb_claim_interface` (usb_transport.py:459-463).\n   - (c) EdgeWatch never reads files. It is fed in-memory arrays through add and load (tools/frame_edges/watch.py:125, 145).\n   - (d) No array handed off is mutated afterwards (CONC-09).\n   - (e) `last_pixels_raw` and `last_scan_meta` are copied onto locals right after each pass inside scan_roll (direct.py:3975-3976, 4035-4036, 4066-4067, 4138). `capture_record()` is read in `_file` on T2 while the generator is suspended, before the next pass. The hold and aim loops' last pass is the prescan they return (direct.py:3377-3379). So no stale read was found. The one known blind spot, a replaced prescan against the verification pass, is handled by `file_entry=False`."
+ }
+}

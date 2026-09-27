@@ -62,6 +62,9 @@ They come down to a few themes, each reported independently by several areas:
    Open is not guarded while the scanner works (GUI1-02, GUI2-02).
 9. **"Reverse the direction"**, remembered across launches, mirrors every approved hold
    target of a commissioned roll (FR-01).
+10. **Nothing keeps the computer awake** during a pass or a roll, so idle sleep or a forced
+    restart interrupts the read -- an abandoned read (PLAT-01). And nothing checks free disk
+    space before a roll (CRA-01).
 
 ### By area
 

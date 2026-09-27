@@ -1,0 +1,124 @@
+{
+ "type": "result",
+ "key": "v2:b2d6bf900b2b85e89021c50e4230976e2b22ffc58c4319df70d4d5454db333f5",
+ "agentId": "aac44cd9ec69f92d2",
+ "result": {
+  "verdicts": [
+   {
+    "id": "PLAT-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Nothing in rps7200/ or tools/ takes a power assertion. A grep for caffeinate, SetThreadExecutionState, IOPMAssertion, systemd-inhibit and Inhibit finds nothing, and README, CLAUDE.md, TODO.md and docs/ say nothing about sleep or power settings. The worker runs jobs back to back with the device open (session.py:1946-1967). The read loop polls READ with an idle timeout (direct.py:1838-1861). If the host is suspended mid-pass, the read is abandoned, which is the documented wedge hazard. Whether a given OS idle-sleeps during active USB bulk I/O depends on its power plan, so the default-settings scenario is plausible rather than certain. The code gap itself is certain."
+   },
+   {
+    "id": "PLAT-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_debug_spool` is created only when it is None (direct.py:925-928) and is never checked for existence again. np.save and all other spool errors are swallowed with one log line (997-998). The flush's failure message always says the files are 'kept in {self._debug_spool}' (1079-1080), whether or not they exist. library.save reserves the entry, writes INCOMPLETE, scan.tif, the reference and the mask, and opens raw.bin.gz before it opens raw_path (library.py:259-303). A deleted raw.bin therefore leaves an INCOMPLETE entry holding an empty gzip. One refinement: the flush takes meta, the reference and the mask from memory (item['meta'], item['reference'], item['ccd_mask']), so only the loss of the .npy or raw.bin affects filing. It is reachable only when a window stays open with debug on for longer than the OS cleaner's age threshold (about 3 days on macOS, 10 on systemd), which is narrow but real."
+   },
+   {
+    "id": "PLAT-03",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The mechanism is real. `_slug` caps each part at 40 characters (library.py:151). `_safe` has no length cap (session.py:2952-2953). `_reserve` catches only FileExistsError. The seek happens before out.mkdir (session.py:2288 vs 2312). `_write_approved` swallows the error with 'scanning anyway'. The code has no long-path handling anywhere. The worked scenario overstates reachability, though. With a typical stock ('kodak-portra-400', 16 characters) and a 40-character frame slug, the id is about 83 characters. A root of about 140 characters then gives an entry directory of about 224 and `.prescan.tif.part` of about 242, still under 260. Failure needs a library root of roughly 155 characters or more with a long roll name, or about 130 when the stock slug is also 40 characters. The 233-character roll name case is far-fetched. It is real on deep OneDrive or Documents checkouts without LongPathsEnabled, and the resulting error (WinError 206 mapped to ENOENT) is misleading.",
+    "corrected_description": "Library ids reach about 110 characters in the worst case (about 85 typically), roll folder names and delivered names are uncapped, and nothing detects or explains Windows MAX_PATH. With a library root of about 155 characters or more (about 130 with a long stock name) and no LongPathsEnabled, the entry's longest temp file (.prescan.tif.part or .scan.json.part) crosses 260. The failure appears as FileNotFoundError after the pass was scanned and the film was moved. The roll stops after the frame in flight, which stays as an INCOMPLETE entry. Typical checkouts under Documents stay below the limit.",
+    "corrected_locations": [
+     "rps7200/library.py:149-164",
+     "rps7200/library.py:460-491",
+     "rps7200/session.py:2286-2312",
+     "rps7200/session.py:2929",
+     "rps7200/session.py:2952-2958",
+     "tools/gui.py:3333-3337"
+    ]
+   },
+   {
+    "id": "PLAT-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_raw_open` discards libusb's error code by using libusb_open_device_with_vid_pid (usb_transport.py:445-449). `_why_not_found` then branches only on bus presence and platform, and on win32 unconditionally blames the WIA driver and recommends Zadig (477-484). check_scanner's ScannerNotFound branch assumes a driver-binding problem (check_scanner.py:131-135). WinUSB permits one open per device, so a second process's open fails with ACCESS and gets the Zadig advice. On macOS and Linux the second opener fails at claim, and the window shows only 'could not claim interface 0: ...' (usb_transport.py:463-464). The darwin 'close other software' hint sits on the NULL-open branch. check_scanner's UsbError branch does give correct 'something else holds it' advice, but the window's does not."
+   },
+   {
+    "id": "PLAT-05",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_load_libusb` returns `_dll(path)` for the first candidate that exists, with no try/except (usb_transport.py:176-185), so an OSError from a wrong-architecture file ends the search. The order is /usr/local before /opt/homebrew and /usr/lib before /usr/lib64 (116-125). find_library runs before the bundled libusb-package copy, which pyproject makes a Windows dependency (pyproject.toml:31). LIBUSB_PATH is a workaround. There is no data risk."
+   },
+   {
+    "id": "PLAT-06",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Rename refuses when `target.exists()`, which is true for a case-only change on case-insensitive filesystems (gui.py:2855-2857). roll_dir returns the typed spelling when `as_typed.is_dir()` (session.py:829-832). `--open-roll` keeps the typed candidate (gui.py:8878-8880), and open_roll stores it as `_loaded_roll` (2889). `_roll_is_busy` compares resolve() results (2700-2702), and macOS realpath does not canonicalise case, so the open roll can be deleted or renamed. The `_manifests` key uses resolve() (session.py:2343). Settings keys use the basename as spelled (gui.py:2601, 2615). It is narrow, and Delete still asks for confirmation."
+   },
+   {
+    "id": "PLAT-07",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_slug` keeps Unicode alphanumerics (library.py:150). The record stores `id: path.name` as constructed (307). entries() records `_dir` from the glob result (1040), and verify compares the two strings directly (1090-1091). On HFS+, or with names copied from it, the directory name comes back NFD while the id is NFC, so verify reports a false mismatch. Loading is unaffected because entry_path uses `_dir`."
+   },
+   {
+    "id": "PLAT-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Roll folder names use localtime (session.py:804). Single-scan names use localtime (2931-2932). Library ids are UTC with a Z (library.py:156, 257). The window's manifests contain no timestamp field: a grep finds no isoformat, strftime or created/started in session.py's manifest data. Collisions are handled by the exists() loop and `_unclaimed`, so nothing is overwritten. The settings `.unreadable-<second>` aside (settings.py:95-96) can collide within one second, and os.replace overwrites the earlier file, though that is very narrow. This is a design gap in provenance, not a defect in any join the code performs."
+   },
+   {
+    "id": "PLAT-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`reference_entry` is written as `str(a.reference_entry)` (gui.py:3317). That value comes from `str(entry)` of a library.save path under the cwd-relative root 'library' (gui.py:8886, home=Path('.') at 8856). read_approved hands it back (gui.py:5471-5472) and read_survey turns it into `Path(entries[number])` (5196). A Windows backslash path is a single filename on POSIX, and a relative path breaks when launched from another cwd. The other links (roll.json frames[].entry at session.py:1155, roll_membership.folder at 785-786, and shading_origin path and archive at direct.py:724, 860) are written the same way but no code reads them back. They are record-only, which the finding already implies."
+   },
+   {
+    "id": "PLAT-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`git()` returns None on OSError or a nonzero return code, silently (library.py:83-90). `_identity_now` returns {} the same way (118-135). No fallback code identity (source hash or package version) is recorded, and nothing is logged. A missing git, or safe.directory's dubious-ownership refusal, therefore leaves driver_commit null in every entry. The python, numpy and tifffile versions and the platform are still recorded."
+   },
+   {
+    "id": "PLAT-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The roll's own files have fixed names (session.py:2549, 2629) and are written in place by export.write, which calls tifffile.imwrite or open(path, 'wb') (tiff.py:164, 167). A write failure becomes a note and the frame carries on (session.py:1673-1699). The manifest callback ignores `written` (`_written` at 2635-2636). A walk records `record['prescan'] = f\"prescan{number:02d}.tif\"` whenever rf.prescan is not None (2667-2668). On Windows, a viewer holding the old file without FILE_SHARE_WRITE makes the open fail, so the old take stays under the recorded name."
+   },
+   {
+    "id": "PLAT-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The comment at direct.py:1061-1062 says a 570 MB frame 'need not be resident'. The built-in writer, used when tifffile is absent (tifffile is only an optional extra), does `np.ascontiguousarray(...)` (a no-op on a native little-endian memmap) and then `fh.write(data.tobytes())` (tiff.py:190, 273), which allocates a full-size bytes copy. The failure is caught and the spool is kept, so no data is lost."
+   },
+   {
+    "id": "PLAT-13",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "The rule is exactly the single uaccess line (packaging/60-rps7200.rules:26). uaccess applies only to the active seat session. The Linux message always says to install the rule (usb_transport.py:489-494). TODO.md:720-721 says the rule has not been exercised. The rule's own header claim that a NULL open means permissions is right for Linux, because libusb_open returns ACCESS there. This is an observation, not a defect in the data path."
+   },
+   {
+    "id": "PLAT-14",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "The only mmap in the codebase is the flush's (direct.py:1063), which is dropped before unlinking. The full-resolution view reads into memory on a thread (gui.py:4587-4603). ShadingReference.load uses `with np.load` (shading.py:95). tiff.read closes its file (290-296). settings.save does `temporary.replace(target)` with no retry and swallows OSError (settings.py:113-119), where manifests go through `_replace` with REPLACE_RETRY_S (session.py:865-883). This accurately answers question (5)."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "PLAT-A1",
+    "title": "Ctrl-C, or closing the terminal or console that launched the window, kills the daemon worker mid-read; on_close's guarantee 'Quitting never abandons a read' covers only the title-bar close",
+    "severity": "medium",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/session.py:1819",
+     "rps7200/session.py:1584",
+     "tools/gui.py:557",
+     "tools/gui.py:8908-8912",
+     "tools/gui.py:3437",
+     "rps7200/console.py:74-99",
+     "tasks.py:154"
+    ],
+    "evidence": "The worker and the writer are daemon threads: `self._thread = threading.Thread(target=self._run, daemon=True, name=\"scanner\")` (session.py:1819), and FrameWriter `self._thread = threading.Thread(target=self._run, daemon=True)` (1584). main ends in `root = tk.Tk() ... root.mainloop(); return 0` (gui.py:8908-8912) with no KeyboardInterrupt handling and no atexit. The only protocol the window registers is `root.protocol(\"WM_DELETE_WINDOW\", self.on_close)` (557), whose dialog says 'Quitting never abandons a read -- that is what wedges the scanner.' (3437). The only signal deferral anywhere is `DeferredInterrupt`, which handles SIGINT alone and is used only by tools/scan.py:253 and tools/scan_roll.py:473.",
+    "description": "`make run` launches the window as a console child: `run([sys.executable, \"tools/gui.py\"])` (tasks.py:154). A Ctrl-C in that terminal reaches the window's process. _tkinter's mainloop checks for signals between events, and the window's poll timer keeps events coming, so KeyboardInterrupt ends mainloop and main. The interpreter then exits while the daemon worker is inside the READ loop and FrameWriter is filing. Closing the terminal has the same effect: on macOS and Linux it sends SIGHUP, which has no handler, and on Windows it sends CTRL_CLOSE_EVENT, which terminates the process after a few seconds. So do session logoff and an OS-initiated shutdown (only WM_DELETE_WINDOW is handled). The result is an abandoned read, the documented wedge. Scanned frames still queued in FrameWriter are lost, the debug spool is never flushed (close() never runs), and a window entry filed with compress=False is never compacted. The CLI tools defer only SIGINT, so SIGHUP from a dropped SSH session or a closed terminal, and CTRL_BREAK or console close on Windows, also kill them mid-pass.",
+    "failure_scenario": "On Windows the operator runs `make run` from PowerShell and commissions a 24-frame roll. Tidying the desktop, they close the PowerShell window the scanner window came from. Windows terminates python.exe in the middle of frame 9's READ. The scanner needs a power cycle, frames already scanned but not yet filed are gone, and the debug spool in %TEMP% is left unfiled.",
+    "recommendation": "Make the scanner worker non-daemon, or join it on exit. Wrap mainloop in try/except KeyboardInterrupt and route the interrupt to on_close's 'stop after the frame in flight' path. Install handlers for SIGHUP and SIGTERM on POSIX, and for SIGBREAK and a console control handler (SetConsoleCtrlHandler) on Windows, that request a stop and wait for the pass in flight. Register WM_SAVE_YOURSELF / session-end handling in Tk. Extend DeferredInterrupt to SIGHUP, SIGTERM and SIGBREAK for the CLI tools. Adjust the on_close text so it does not promise more than the title-bar path delivers."
+   }
+  ],
+  "persisted_state_corrections": "- **Debug spool.** Only NNN-image.npy (through np.load mmap_mode='r') and NNN-raw.bin (through raw_path) are read back by _debug_flush (direct.py:1063-1072). meta, the shading reference and the CCD mask are filed from the in-memory item (item['meta'], item['reference'], item['ccd_mask']). The spooled NNN-meta.json, NNN-shading.npz and NNN-ccd_mask.bin exist only for manual recovery, so deleting them does not affect filing. _debug_unlink removes image, raw, meta and mask per pass but never the shared shading.npz, which goes only when the spool is removed with rmtree. The spool's shading.npz is written by ShadingReference.save with np.savez_compressed (float64 means, plus arrays in their own dtypes), not as a float64-only file.\n- **Roll manifests.** Among the path links, only approved.json frames[].reference_entry is read back as a Path, by read_approved and then read_survey (gui.py:5471-5472, 5196). roll.json frames[].entry (session.py:1155), roll_membership.folder in entries (785-786) and extra.shading_origin path and archive (direct.py:724, 860) are written but no code reads them back.\n- **`.unreadable` asides.** A manifest's `.unreadable` aside goes through _unclaimed, so it never collides (session.py:964). Only settings' `.unreadable-<local second>` can collide (settings.py:95-96).\n- **Calibration cache temp file.** The temp file is `.shading.part.npz`, from `.{stem}.part.npz` (direct.py:744).\n- **Window settings.** Default path: cwd-relative gui-settings.json unless overridden. Not otherwise re-verified."
+ }
+}

@@ -42,7 +42,7 @@ decode that now raises (LIB-03). Both undermine the promise from the other side.
 
 ## Every finding about exactness or completeness
 
-88 findings in the categories data-integrity and library-completeness, all areas:
+114 findings in the categories data-integrity and library-completeness, all areas:
 
 | Finding | Severity | Title | Problem |
 |---|---|---|---|
@@ -58,6 +58,7 @@ decode that now raises (LIB-03). Both undermine the promise from the other side.
 | [DOC-01](areas/docs-readme-claude.md#docs-readme-claude-doc-01) | high | Roll frames' prescan.tif is stored corrected, without raw bytes, mask, commands or a label | -- |
 | [CSA-01](areas/changes-since-first-audit.md#changes-since-first-audit-csa-01) | high | Debug spool keeps every pass (claimed ones included) in the OS temp dir until close(): GUI lifetime / whole roll, tens of GB | -- |
 | [T-04](areas/tests.md#tests-t-04) | high | Tests enforce that a real roll's prescans (and every pass only debug filing keeps) are stored without raw bytes, corrected, with their pass record dropped | -- |
+| [CRA-A1](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-a1) | high | debug_claim marks a pass as filed when it is only queued; the debug flush at close() then deletes the spool copy of a pass whose library.save failed, and close runs before the writer has finished | -- |
 | [TP-02](areas/transport-protocol.md#transport-protocol-tp-02) | medium | EndOfData mid-read marks the pass complete: truncated pass returned as success, device not marked suspect | -- |
 | [TP-06](areas/transport-protocol.md#transport-protocol-tp-06) | medium | A failed or abandoned pass leaves no record: its command log, sense bytes and partial raw bytes are discarded | -- |
 | [TP-07](areas/transport-protocol.md#transport-protocol-tp-07) | medium | Raw calibration bytes are kept outside the library, read by nothing, and not kept at all on the non-ensure_shading path | -- |
@@ -93,6 +94,14 @@ decode that now raises (LIB-03). Both undermine the promise from the other side.
 | [T-03](areas/tests.md#tests-t-03) | medium | A failed library filing loses the pass everywhere (no delivered copy, claimed debug spool deleted), and no test covers it | -- |
 | [T-08](areas/tests.md#tests-t-08) | medium | The kept calibration bytes are never shown to reproduce the reference, and nothing in the code reads them | -- |
 | [T-A1](areas/tests.md#tests-t-a1) | medium | After a force abort the session never calls close(), so debug-spooled passes are never filed and nothing says where they are | -- |
+| [CRA-03](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-03) | medium | A window walk writes survey.json naming prescanNN.tif before the writer has written it; a failed filing or kill leaves the survey pointing at a missing file or at the previous walk's picture | -- |
+| [CRA-04](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-04) | medium | Contact-sheet decisions reach disk only when the sheet closes; a crash or kill while it is open loses them, and a save that fails at quit is reported into the window being destroyed | -- |
+| [CRA-05](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-05) | medium | Duplicate roll is a copytree on the UI thread; a failure or force-quit leaves a partial copy that lists as a roll, and Delete's rmtree can half-delete one | -- |
+| [CONC-03](areas/thread-and-process-concurrency.md#thread-and-process-concurrency-conc-03) | medium | Roll frames never file the metering that set their exposure, and every metered roll frame is recorded as exposure_metered=False | -- |
+| [RDM-01](areas/re-derivation-matrix-per-pass-kind.md#re-derivation-matrix-per-pass-kind-rdm-01) | medium | Decisions drawn from other passes are recorded by outcome only: no metering region, no reversal evidence, no 'check this frame' flag, no hold reference identity | -- |
+| [RDM-A1](areas/re-derivation-matrix-per-pass-kind.md#re-derivation-matrix-per-pass-kind-rdm-a1) | medium | Every metered roll frame, and every auto-exposed bracket pass, is filed as 'not metered' with no metering evidence | -- |
+| [PLAT-02](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-02) | medium | A debug spool that the OS temp cleaner deletes mid-session is never recreated, and the flush reports deleted passes as 'kept in' the spool | -- |
+| [MES-03](areas/unread-analysis-and-measurement-code.md#unread-analysis-and-measurement-code-mes-03) | medium | collect_vignette_study verifies only the source's raw bytes: it ignores the record's other checksums and never checks the copies | -- |
 | [TP-03](areas/transport-protocol.md#transport-protocol-tp-03) | low | Transport drops a fully received READ payload when the trailing status is CHECK; FAIL/ERROR trailing statuses are ignored | -- |
 | [TP-19](areas/transport-protocol.md#transport-protocol-tp-19) | low | Command log fills with refused NoDataYet READs and omits every successful image READ | -- |
 | [TP-31](areas/transport-protocol.md#transport-protocol-tp-31) | low | A failed CCD-mask read after a complete calibration throws away the whole calibration, bytes included | -- |
@@ -130,7 +139,24 @@ decode that now raises (LIB-03). Both undermine the promise from the other side.
 | [CSA-10](areas/changes-since-first-audit.md#changes-since-first-audit-csa-10) | low | compact() interrupted after replacing scan.tif leaves a record whose checksum no longer matches: verify raises a false corruption alarm | -- |
 | [CSA-12](areas/changes-since-first-audit.md#changes-since-first-audit-csa-12) | low | force_abort (and any process kill) orphans the debug spool silently; nothing can file it | -- |
 | [CSA-13](areas/changes-since-first-audit.md#changes-since-first-audit-csa-13) | low | Calibration ends 'successfully' on any refused read; the new guard catches only the timeout | -- |
+| [CRA-06](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-06) | low | A delivered copy that fails or is interrupted part-way stays under its final name; the next export or rescan routes the good copy to `-2` | -- |
+| [CRA-07](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-07) | low | An INCOMPLETE entry cannot be completed: nothing describing the pass (layout, meta, commands) reaches disk before the last step, and the marker says nothing about which pass it was | -- |
+| [CRA-09](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-09) | low | The `.legacy` numbering copy and the per-run `.bak` are plain copyfiles; an interrupted `.legacy` is never redone, so the original numbering can be lost | -- |
+| [CRA-A2](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-a2) | low | A kill during quit-time compaction leaves an entry whose scan.tif no longer matches its recorded checksum, and nothing ever finishes the compaction | -- |
+| [CRA-A3](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-a3) | low | tools/uniformity.py 'redo' rewrites scan.json in place with write_text, bypassing _write_atomic | -- |
+| [CONC-04](areas/thread-and-process-concurrency.md#thread-and-process-concurrency-conc-04) | low | A walk's survey.json names prescanNN.tif (fsynced) before the writer thread has written it; a missing prescan is silently dropped and a truncated one makes the whole walk unopenable | -- |
+| [FE-05](areas/frame-edges-member-detectors.md#frame-edges-member-detectors-fe-05) | low | In-walk detector decisions cannot be re-derived: the record keeps neither the member answers nor which frames formed the roll context | -- |
+| [RDM-03](areas/re-derivation-matrix-per-pass-kind.md#re-derivation-matrix-per-pass-kind-rdm-03) | low | No record says which code reduced a shading reference: calibration.json has no provenance or reduction parameters, and a loaded reference records only a path and an mtime | -- |
+| [RDM-A2](areas/re-derivation-matrix-per-pass-kind.md#re-derivation-matrix-per-pass-kind-rdm-a2) | low | Hold and aim verification prescans are taken as film='negative' whatever the roll is, and that meta becomes the filed prescan's record | -- |
+| [RDM-A3](areas/re-derivation-matrix-per-pass-kind.md#re-derivation-matrix-per-pass-kind-rdm-a3) | low | Passes kept only by debug filing (metering probes, hold/aim prescans) go to ./library or RPS7200_DEBUG_ROOT rather than the caller's library, carry no role, and are not linked to the frame they served | -- |
+| [RDM-A5](areas/re-derivation-matrix-per-pass-kind.md#re-derivation-matrix-per-pass-kind-rdm-a5) | low | A deliberately uncorrected pass (shading=False) is filed with the session's shading.npz but no shading_origin | -- |
+| [PLAT-03](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-03) | low | No path-length handling: Windows MAX_PATH failures surface as misleading ENOENT after the scan (and after the seek has moved the film), and roll names are unbounded | -- |
+| [PLAT-09](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-09) | low | Links between rolls, entries and calibrations are stored as OS-native, cwd-relative path strings, and one of them is read back as a Path | -- |
+| [PLAT-10](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-10) | low | Provenance depends on a `git` on PATH that accepts the checkout; without one every entry silently records driver_commit null | -- |
+| [PLAT-11](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-11) | low | On Windows, a roll's frameNN.tif or prescanNN.tif held open by another program is not rewritten; the old picture stays under the name the new take's manifest records | -- |
+| [MES-05](areas/unread-analysis-and-measurement-code.md#unread-analysis-and-measurement-code-mes-05) | low | collect_vignette_study refuses plain raw.bin entries, does not check raw.layout, and leaves out prescan.tif | -- |
 | [LIB-22](areas/library.md#library-lib-22) | info | The record is serialised with `default=str`: non-JSON values in meta are silently stringified | -- |
 | [FR-19](areas/framing-units.md#framing-units-fr-19) | info | approved.json records only the snapped offset; the detector's reading behind a sheet proposal is not persisted | -- |
 | [OUT-18](areas/outputs.md#outputs-out-18) | info | The library's TIFF path is bit-exact on both implementations | -- |
 | [CLI-29](areas/cli-operator-tools.md#cli-operator-tools-cli-29) | info | No tool compacts plain entries left by a window that was killed before compacting | -- |
+| [RDM-04](areas/re-derivation-matrix-per-pass-kind.md#re-derivation-matrix-per-pass-kind-rdm-04) | info | Serialisation check: no traced meta field reaches json.dumps(default=str) as numpy, bytes or Path; the risk is latent | -- |

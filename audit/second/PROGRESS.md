@@ -29,8 +29,8 @@ Not in the plan, by CLAUDE.md: anything that drives the scanner.
 
 | Step | State | Notes |
 |---|---|---|
-| 1. Second audit | nearly done | all 15 areas read and verified (361 findings, 1 refuted), critic done; the 6 gap readers run as `wf_8807e7b9-eec` (they hit the spend limit once) |
-| 2. Write-up | partial | `areas/*.md` for all 15 areas committed; summary and cross-cutting files follow once the gaps are in |
+| 1. Second audit | **done** | 15 areas and 6 gap passes, every finding verified: 437 findings (0 critical, 24 high), 1 refuted |
+| 2. Write-up | **done** | README, status.md, areas/, dataflow, persisted state, library exactness, demo, user errors, doc mismatches; regenerate with `run/gen/merge2.py` then `run/gen/gen3.py` |
 | 3. Fix round 3 | running | base `e700609`; two workflows of `run/audit-fixes-wave3.js`: `wf_8316fb77-f1f` (capture, library, device, tests) and `wf_64d04286-f1a` (filing, window, demo-framing-outputs); branches `fix3/<group>`, each reviewed adversarially |
 | 4. Re-check | not started | |
 

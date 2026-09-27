@@ -62,7 +62,7 @@ problem, with the code it was checked against: **[status.md](status.md)**.
 
 ## What this audit found
 
-361 findings: 0 critical, 22 high, 113 medium, 205 low, 21 info. Verdicts: 284 confirmed, 41 partly (re-described), 36 added by the second reader, 1 refuted and dropped, 0 unverified.
+437 findings: 0 critical, 24 high, 132 medium, 249 low, 32 info. Verdicts: 341 confirmed, 45 partly (re-described), 51 added by the second reader, 1 refuted and dropped, 0 unverified.
 
 ### High severity
 
@@ -90,6 +90,8 @@ problem, with the code it was checked against: **[status.md](status.md)**.
 | [DOC-01](areas/docs-readme-claude.md#docs-readme-claude-doc-01) | docs-readme-claude | high | confirmed | Roll frames' prescan.tif is stored corrected, without raw bytes, mask, commands or a label |
 | [CSA-01](areas/changes-since-first-audit.md#changes-since-first-audit-csa-01) | changes-since-first-audit | high | confirmed | Debug spool keeps every pass (claimed ones included) in the OS temp dir until close(): GUI lifetime / whole roll, tens of GB |
 | [T-04](areas/tests.md#tests-t-04) | tests | high | confirmed | Tests enforce that a real roll's prescans (and every pass only debug filing keeps) are stored without raw bytes, corrected, with their pass record dropped |
+| [CRA-A1](areas/crash-recovery-atomicity-inventory.md#crash-recovery-atomicity-inventory-cra-a1) | crash-recovery-atomicity-inventory | high | found-by-verifier | debug_claim marks a pass as filed when it is only queued; the debug flush at close() then deletes the spool copy of a pass whose library.save failed, and close runs before the writer has finished |
+| [PLAT-01](areas/platform-portability-windows-macos.md#platform-portability-windows-macos-plat-01) | platform-portability-windows-macos | high | confirmed | Nothing keeps the host awake during a pass or a roll: OS idle sleep, Modern Standby or a forced restart interrupts the read in flight |
 
 They come down to a few themes, each reported independently by several areas:
 
@@ -118,6 +120,9 @@ They come down to a few themes, each reported independently by several areas:
    Open is not guarded while the scanner works (GUI1-02, GUI2-02).
 9. **"Reverse the direction"**, remembered across launches, mirrors every approved hold
    target of a commissioned roll (FR-01).
+10. **Nothing keeps the computer awake** during a pass or a roll, so idle sleep or a forced
+    restart interrupts the read -- an abandoned read (PLAT-01). And nothing checks free disk
+    space before a roll (CRA-01).
 
 ### By area
 
@@ -138,23 +143,29 @@ They come down to a few themes, each reported independently by several areas:
 | [docs/*.md and TODO.md vs the code](areas/docs-plans-todo.md) | 25 | 0 | 0 | 6 | 18 | 1 |
 | [The fixes themselves (83dbb22..03aacba)](areas/changes-since-first-audit.md) | 20 | 0 | 1 | 9 | 8 | 2 |
 | [The test suite](areas/tests.md) | 18 | 0 | 1 | 10 | 7 | 0 |
+| [Every writer: atomicity, crashes, full disks (gap pass)](areas/crash-recovery-atomicity-inventory.md) | 14 | 0 | 1 | 5 | 7 | 1 |
+| [Threads and processes sharing files (gap pass)](areas/thread-and-process-concurrency.md) | 11 | 0 | 0 | 4 | 6 | 1 |
+| [The frame-edge detectors themselves (gap pass)](areas/frame-edges-member-detectors.md) | 11 | 0 | 0 | 3 | 6 | 2 |
+| [Can each kind of pass be re-derived? (gap pass)](areas/re-derivation-matrix-per-pass-kind.md) | 9 | 0 | 0 | 2 | 5 | 2 |
+| [Windows and macOS on the data paths (gap pass)](areas/platform-portability-windows-macos.md) | 15 | 0 | 1 | 3 | 9 | 2 |
+| [Measurement code no area read (gap pass)](areas/unread-analysis-and-measurement-code.md) | 16 | 0 | 0 | 2 | 11 | 3 |
 
 ### By category
 
 | Category | Findings |
 |---|---|
-| data-integrity | 79 |
-| doc-mismatch | 62 |
-| user-error | 45 |
-| bug | 41 |
-| design | 29 |
-| hardware-safety | 28 |
-| error-handling | 27 |
-| demo-divergence | 23 |
-| test-gap | 11 |
-| library-completeness | 9 |
-| concurrency | 4 |
-| dead-code | 3 |
+| data-integrity | 104 |
+| doc-mismatch | 65 |
+| bug | 51 |
+| user-error | 51 |
+| design | 38 |
+| error-handling | 36 |
+| hardware-safety | 30 |
+| demo-divergence | 25 |
+| test-gap | 14 |
+| library-completeness | 10 |
+| concurrency | 9 |
+| dead-code | 4 |
 
 ### Refuted
 
