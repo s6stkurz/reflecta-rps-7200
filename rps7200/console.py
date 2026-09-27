@@ -131,3 +131,44 @@ class DeferredInterrupt:
 
     def __exit__(self, *exc) -> None:
         self._restore()
+
+
+#: What a tool says before a calibration it has not been told the film is in
+#: for. CLAUDE.md's rule, in the operator's terms.
+FILM_QUESTION = (
+    "A calibration runs first, and it runs with the film in the transport, "
+    "as the vendor's does: calibrating an empty one preceded a wedge, and "
+    "nothing the scanner reports can say which it is. Is the film in the "
+    "transport? [y/N] ")
+
+
+def film_unconfirmed(asserted: bool, ask=input, interactive=None) -> str | None:
+    """Why a calibration may not start, or None once the film is said to be in.
+
+    Only the operator can see the transport: READ STATE's byte 8 was measured
+    against it once, with one variable changed, and every capture was taken
+    with film in, so nothing corroborates it. The window asks with a box
+    that starts unticked. The tools calibrated without a word -- `scan.py`
+    straight after INQUIRY, `scan_roll.py` after a seek that, on frame 1,
+    moves nothing and so proves nothing.
+
+    ``asserted`` is the tool's ``--film-loaded``. Without it the question is
+    asked where someone can answer it, and refused where nobody can -- a run
+    in the background -- with the flag named.
+    """
+    if asserted:
+        return None
+    if interactive is None:
+        interactive = sys.stdin is not None and sys.stdin.isatty()
+    if interactive:
+        try:
+            answer = ask(FILM_QUESTION)
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() in ("y", "yes"):
+            return None
+        return "not calibrating: the film was not said to be in the transport"
+    return ("a calibration runs first, with the film in the transport -- "
+            "calibrating an empty one preceded a wedge, and only someone at "
+            "the scanner can see which it is. Say so with --film-loaded, or "
+            "scan raw with --no-shading")

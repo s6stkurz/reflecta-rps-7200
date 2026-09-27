@@ -588,7 +588,7 @@ def _tool(tmp_path, monkeypatch, *argv, make):
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
          "--reference", str(tmp_path / "shading.npz"), "--roll", "roll",
-         *argv])
+         "--film-loaded", *argv])
     return scan_roll.main(), created
 
 

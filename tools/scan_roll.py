@@ -163,6 +163,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "describes the sensor at the exposure that measured it)")
     ap.add_argument("--no-shading", action="store_true",
                     help="skip calibration entirely; scans come back striped")
+    ap.add_argument("--film-loaded", action="store_true",
+                    help="the film is in the transport, so the calibration "
+                         "may run without asking. Without it the tool asks, "
+                         "and refuses where nobody can answer")
     ap.add_argument("--roll", default=None,
                     help="name for this roll (default: the date and time, "
                          "new for every run). Made safe to be a folder name, "
@@ -336,6 +340,17 @@ def main() -> int:
             f"calibration never gives a reference wider than "
             f"{_Driver.MAX_SHADING_COLUMNS} columns, so every frame would "
             f"be refused. Scan at 3600 dpi or below.")
+    # Before the device opens. The seek before the calibration protects only
+    # a roll that starts past frame 1: on an empty transport the counter
+    # reads 0, a seek to frame 1 moves nothing and succeeds, and the
+    # calibration ran on nothing -- the state that preceded a wedge.
+    if (args.frames != 0 and not args.no_shading
+            and not (args.reuse and Path(args.reference).exists())):
+        from rps7200.console import film_unconfirmed
+
+        unconfirmed = film_unconfirmed(args.film_loaded)
+        if unconfirmed:
+            ap.error(unconfirmed)
 
     held: dict[int, Approved] = {}
     held_note: dict = {}

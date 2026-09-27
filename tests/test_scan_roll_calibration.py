@@ -82,7 +82,8 @@ def run(tmp_path, monkeypatch, *argv):
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"),
-         "--library", "", "--roll", "cal", "--frames", "2", *argv],
+         "--library", "", "--roll", "cal", "--frames", "2", "--film-loaded",
+         *argv],
     )
     code = scan_roll.main()
     return created[0], code

@@ -328,6 +328,12 @@ changed; the captures cannot corroborate it, because every one of them was taken
 with film in. Neither is a view of the transport. Only Stefan can see the
 transport. Ask him.
 
+So the tools ask too. `tools/scan.py` and `tools/scan_roll.py` will not start a
+calibration until told the film is in: they ask at a terminal, and refuse where
+nobody can answer -- a run in the background -- unless given `--film-loaded`.
+Pass it only once Stefan has said so. A calibration logs and records what
+byte 8 said (`media_loaded` in `calibration.json`), and does not refuse on it.
+
 ## Ask before driving the scanner
 
 **Presence is not permission.** Finding the device on the bus says only that it

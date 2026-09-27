@@ -791,6 +791,7 @@ class DirectScanner:
             "measured_utc": (result.get("measured_utc")
                              or (self._shading_origin or {}).get("measured_utc")),
             "incomplete": result.get("incomplete"),
+            "media_loaded": result.get("media_loaded"),
             "resolution": result.get("resolution"),
             "pixels_per_line": result.get("pixels_per_line"),
             "bytes_per_line": result.get("bytes_per_line"),
@@ -2220,13 +2221,26 @@ class DirectScanner:
         logger = getattr(self.t, "start", None)
         if callable(logger):
             logger()
+        opened_on: State | None = None
         for _ in range(4):
             try:
-                if not self.read_state().warming_up:
+                opened_on = self.read_state()
+                if not opened_on.warming_up:
                     break
             except (CheckCondition, ScanReadError):
                 pass
             time.sleep(1)
+        # What byte 8 said as the calibration began, said and kept with its
+        # bytes. Not acted on: it was measured against the film once, with one
+        # variable changed, and nothing corroborates it -- whoever started
+        # this was asked instead (the window's box, the tools' --film-loaded).
+        # It lay only in the READ STATE reply among the calibration's commands,
+        # where nothing read it.
+        media_loaded = None if opened_on is None else opened_on.media_loaded
+        if media_loaded is False:
+            self._log("note: READ STATE byte 8 says the transport is empty. "
+                      "A calibration runs with the film in; if it is not, "
+                      "stop and load it")
         self.wait_warm()
         self.test_unit_ready()
 
@@ -2429,6 +2443,9 @@ class DirectScanner:
             # Why `reference` is None, when it is; None for a whole one.
             "incomplete": shortfall,
             "measured_utc": measured_utc,
+            # Byte 8 of the READ STATE it began with, as `media_loaded` reads
+            # it; None when no READ STATE was answered.
+            "media_loaded": media_loaded,
             "ccd_mask": mask,
             "bytes_per_line": bpl,
             "pixels_per_line": width,
@@ -3095,12 +3112,15 @@ class DirectScanner:
         if require_media:
             state = self.read_state()
             if not state.media_loaded:
-                # Reported, not enforced: this bit has read clear with film
-                # definitely loaded, so trusting it would block valid scans.
-                # Let the scanner itself refuse if there is really no film.
+                # Reported, not enforced: byte 8 was measured against the film
+                # once, with one variable changed, and no capture can
+                # corroborate it -- every one was taken with film in. This
+                # printed byte 6 and called it unreliable, which it is; the
+                # byte the driver reads is 8, and it is what said empty.
                 self._log(
-                    f"note: state {state.scanning:#04x} suggests no film, but "
-                    "that bit is not reliable; continuing"
+                    f"note: READ STATE byte 8 reads {state.busy:#04x}, which "
+                    "has meant an empty transport; not enforced, since "
+                    "nothing corroborates it -- continuing"
                 )
 
         self.set_exposure_time()

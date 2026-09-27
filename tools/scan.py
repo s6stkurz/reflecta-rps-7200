@@ -27,7 +27,8 @@ import numpy as np
 
 from rps7200 import export, library
 from rps7200.bracket import sensor_rail
-from rps7200.console import DeferredInterrupt, use_utf8_stdout
+from rps7200.console import (DeferredInterrupt, film_unconfirmed,
+                             use_utf8_stdout)
 from rps7200.direct import DirectScanner, supports_infrared
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
@@ -97,6 +98,10 @@ def main() -> int:
                     help="load the cached reference instead of calibrating")
     ap.add_argument("--no-shading", action="store_true",
                     help="return raw pixels, for comparison")
+    ap.add_argument("--film-loaded", action="store_true",
+                    help="the film is in the transport, so the calibration "
+                         "may run without asking. Without it the tool asks, "
+                         "and refuses where nobody can answer")
     ap.add_argument("--auto-exposure", action="store_true")
     ap.add_argument("--bracket", type=int, default=0, metavar="N",
                     help="scan N exposures of this frame (2-9) and merge them by "
@@ -228,6 +233,13 @@ def main() -> int:
                 f"scanner -- a single value would say nothing.")
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
+    # Before the device opens, and only when a calibration will run: it went
+    # straight from INQUIRY into one, on whatever the transport held.
+    if not args.no_shading and not (args.reuse
+                                    and Path(args.reference).exists()):
+        unconfirmed = film_unconfirmed(args.film_loaded)
+        if unconfirmed:
+            ap.error(unconfirmed)
     if not args.ir:
         # No plane to acquire, so the bit governs nothing. Silently cleared now
         # that it is the default -- warning on every RGB scan about a flag
