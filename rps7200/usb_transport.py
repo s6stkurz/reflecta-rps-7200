@@ -678,11 +678,23 @@ class Transport:
             # shows CyberView sending, into a device a pass just failed in.
             # None of the three vendor shapes this module otherwise sends,
             # and no command log sees it -- so the message has to.
+            #
+            # Worded from libusb's answer, not from having asked: a refused
+            # clear read "cleared" too, which is the one detail a wedge
+            # investigated afterwards needs right.
             try:
-                self.clear_halt()
-                cleared = "; the endpoint's halt was cleared (CLEAR_FEATURE)"
-            except Exception:
-                cleared = "; clearing the endpoint's halt failed too"
+                answer = self.clear_halt()
+            except Exception as exc:                         # noqa: BLE001
+                cleared = f"; clearing the endpoint's halt failed too ({exc})"
+            else:
+                if answer is None:
+                    cleared = ("; the endpoint's halt was not cleared: the "
+                               "transport had closed, so nothing was sent")
+                elif answer < 0:
+                    cleared = ("; clearing the endpoint's halt (CLEAR_FEATURE) "
+                               f"failed too: {_err(answer)}")
+                else:
+                    cleared = "; the endpoint's halt was cleared (CLEAR_FEATURE)"
             raise UsbError(
                 f"bulk read of {len(view)} bytes failed after "
                 f"{transferred.value} bytes: {_err(rc)}{cleared}"
@@ -699,18 +711,22 @@ class Transport:
         self._control_out(PORT_PAR_CTRL, _C1284_NINIT)
         self._control_out(PORT_PAR_DATA, 0xFF)
 
-    def clear_halt(self) -> None:
+    def clear_halt(self) -> int | None:
         """Clear a stalled bulk-in endpoint.
 
         A bulk read that times out mid-transfer leaves the endpoint stalled,
         and the bridge's IEEE1284 reset cannot clear that -- every later control
         transfer then times out and only a power cycle recovers it. Clearing the
         halt is the targeted fix and avoids the power cycle.
+
+        Returns libusb's answer, negative where it refused, or None where
+        there was no handle and nothing was sent -- so a caller can say which.
         """
         if not self._handle:
-            return
+            return None
         rc = _lib.libusb_clear_halt(self._handle, self.bulk_in_ep)
         self._log(f"clear_halt on ep {self.bulk_in_ep:#04x}: {_err(rc) if rc else 'ok'}")
+        return rc
 
     # -- SCSI ---------------------------------------------------------------
 

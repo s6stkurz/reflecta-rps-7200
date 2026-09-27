@@ -274,6 +274,39 @@ def test_a_failed_bulk_read_says_it_cleared_the_halt(monkeypatch):
     assert cleared == [0x81]
 
 
+def test_a_clear_libusb_refused_is_not_reported_as_cleared(monkeypatch):
+    """`clear_halt` swallowed libusb's answer, so a refused clear read "the
+    endpoint's halt was cleared" -- wrong in the one message a wedge is
+    investigated from afterwards."""
+    import ctypes
+
+    from rps7200 import usb_transport
+
+    names = {usb_transport.LIBUSB_ERROR_TIMEOUT: b"LIBUSB_ERROR_TIMEOUT",
+             usb_transport.LIBUSB_ERROR_NO_DEVICE: b"LIBUSB_ERROR_NO_DEVICE"}
+
+    class Lib:
+        def libusb_bulk_transfer(self, handle, ep, buf, size, done, timeout):
+            return usb_transport.LIBUSB_ERROR_TIMEOUT      # and nothing read
+
+        def libusb_clear_halt(self, handle, ep):
+            return usb_transport.LIBUSB_ERROR_NO_DEVICE
+
+        def libusb_error_name(self, code):
+            return names[code]
+
+    monkeypatch.setattr(usb_transport, "_lib", Lib())
+    t = Transport.__new__(Transport)
+    t.verbose, t._handle, t.bulk_in_ep = False, ctypes.c_void_p(1), 0x81
+    with pytest.raises(UsbError) as refused:
+        t._bulk_read_into(memoryview(bytearray(64)), 1000)
+    assert "was cleared" not in str(refused.value)
+    assert "failed too: LIBUSB_ERROR_NO_DEVICE" in str(refused.value)
+
+    t._handle = None                                   # nothing to send it on
+    assert t.clear_halt() is None
+
+
 def test_nothing_here_offers_an_ieee1284_reset():
     """The vendor never sends one, and one left the scanner working for a
     single session and wedged for the next. `open(reset=True)` and a public
