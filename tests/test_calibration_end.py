@@ -163,3 +163,25 @@ def test_an_incomplete_calibration_is_kept_but_not_cached(monkeypatch, tmp_path)
     archived = [p for p in cache.parent.iterdir() if p.is_dir()]
     assert len(archived) == 1
     assert (archived[0] / "data.bin").read_bytes() == b"".join(DARK[:3])
+
+
+def test_a_mask_refused_after_a_whole_calibration_costs_only_the_mask(
+        monkeypatch, tmp_path):
+    """The scanner had said it was finished; a COPY refused after that threw
+    the whole calibration away -- 3-4 minutes, and its bytes with it. Every
+    pass reads its own mask, which is the one a correction uses."""
+    class NoMask(CalibratingTransport):
+        def command(self, command, *args, **kwargs):
+            if command[0] == SCSI_COPY:
+                self.sense = 0x29
+                raise CheckCondition(SCSI_COPY)
+            return super().command(command, *args, **kwargs)
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = DirectScanner(transport=NoMask(DARK + LIT), debug=False)
+    s._own_transport = False
+    s.ensure_shading(tmp_path / "calibration" / "shading.npz")
+    assert s.shading is not None and s.suspect is None
+    folder = next(p for p in (tmp_path / "calibration").iterdir() if p.is_dir())
+    assert (folder / "data.bin").read_bytes() == b"".join(DARK + LIT)
+    assert not (folder / "ccd_mask.bin").exists()

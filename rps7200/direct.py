@@ -2392,7 +2392,17 @@ class DirectScanner:
             # This calibration's own width, not the module constant: the two
             # only coincide because every calibration before this one ran at
             # 3600 dpi. A wider pass needs a wider mask read to match.
-            mask = self.get_ccd_mask(width)
+            try:
+                mask: bytes | None = self.get_ccd_mask(width)
+            except ScanReadError as exc:
+                # Refused after the scanner said it had finished, so nothing
+                # is outstanding -- and every pass reads its own mask, which
+                # is the one a correction uses. This one is only kept with the
+                # calibration's bytes, and losing it cost the whole
+                # calibration: 3-4 minutes, and the bytes with it.
+                self._log(f"the calibration's CCD mask was refused ({exc}); "
+                          "its lines are kept without it")
+                mask = None
         except BaseException as exc:
             if not ended:
                 self._mark_suspect(f"{type(exc).__name__} during the calibration "
@@ -2416,7 +2426,8 @@ class DirectScanner:
                 "action": "calibrated", "resolution": int(resolution),
                 "width": int(width), "measured_utc": measured_utc,
             }
-            self._ccd_mask = mask
+            if mask is not None:
+                self._ccd_mask = mask
             self._log(
                 f"shading reference: {width} columns, channels "
                 f"{reference.channels}, means "
