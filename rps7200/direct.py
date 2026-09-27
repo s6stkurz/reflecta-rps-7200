@@ -646,6 +646,25 @@ class DirectScanner:
         return cls.READ_IDLE_S
 
     @staticmethod
+    def infrared_blind(film: str, roll: bool = False) -> ValueError:
+        """The refusal an infrared pass gets on film its plane cannot see.
+
+        Static for the reason `uncalibrated` is: the demo refuses with these
+        words. It carried a retyped copy that had already lost the C-41
+        sentence and compared against a literal "bw".
+        """
+        cost = ("every frame of this roll would spend its ~212 s floor and "
+                "hand back" if roll else
+                "the pass would spend its ~212 s floor and hand back")
+        return ValueError(
+            f"infrared is blind to {film}: its "
+            + ("grain" if film == FILM_BW else "cyan layer")
+            + f" absorbs infrared, so {cost} the picture rather than the dust. "
+            "Scan it RGB. (Chromogenic C-41 black and white does clean "
+            "properly -- scan that as a negative.)"
+        )
+
+    @staticmethod
     def uncalibrated(reason: str = "no shading reference in this session"
                      ) -> ShadingUnavailable:
         """The refusal a corrected pass gets when no calibration covers it.
@@ -2920,14 +2939,7 @@ class DirectScanner:
             # dye-based and does clean properly. It is not FILM_BW: it is a
             # colour negative that looks grey, and belongs under
             # FILM_NEGATIVE, which is where the exception lives.
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == FILM_BW else "cyan layer")
-                + " absorbs infrared, so the pass would spend its ~212 s floor "
-                "and hand back the picture rather than the dust. Scan it RGB. "
-                "(Chromogenic C-41 black and white does clean properly -- scan "
-                "that as a negative.)"
-            )
+            raise self.infrared_blind(film)
 
         if frame is None:
             frame = FULL_FRAME
@@ -3876,13 +3888,7 @@ class DirectScanner:
         # three or four minutes before the first frame, so an infrared setting
         # the film is blind to would be discovered after the expensive part.
         if infrared and not supports_infrared(film):
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == FILM_BW else "cyan layer")
-                + " absorbs infrared, so every frame of this roll would spend "
-                "its ~212 s floor and hand back the picture rather than the "
-                "dust. Scan it RGB."
-            )
+            raise self.infrared_blind(film, roll=True)
 
         window = scan_frame or FULL_FRAME
 

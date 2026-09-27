@@ -186,11 +186,17 @@ def test_reshaping_the_image_hands_over_the_reshaped_pass(tmp_path):
 
 @pytest.mark.parametrize("film", ["bw", "kodachrome"])
 def test_it_refuses_infrared_where_the_device_would(tmp_path, film):
+    from rps7200.direct import DirectScanner
+
     entry(tmp_path)
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
-    with pytest.raises(ValueError, match="infrared is blind"):
+    with pytest.raises(ValueError, match="infrared is blind") as refused:
         s.scan(resolution=900, infrared=True, film=film)
+    # In the driver's words exactly, as `uncalibrated` is: the demo's copy
+    # had lost the advice about chromogenic black and white.
+    assert str(refused.value) == str(DirectScanner.infrared_blind(film))
+    assert "C-41" in str(refused.value)
     with pytest.raises(ValueError, match="infrared is blind"):
         list(s.scan_roll(frames=1, infrared=True, film=film))
     s.close()

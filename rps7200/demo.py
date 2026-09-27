@@ -688,15 +688,11 @@ class DemoScanner:
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         if infrared and not supports_infrared(film):
-            # The demo refuses exactly what the device refuses. A stand-in that
-            # accepts a combination the hardware will not is worse than no
-            # stand-in: it teaches the window a shape that does not exist.
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == "bw" else "cyan layer")
-                + " absorbs infrared, so the pass would spend its ~212 s floor "
-                "and hand back the picture rather than the dust. Scan it RGB."
-            )
+            # The demo refuses exactly what the driver refuses, in its words.
+            # A stand-in that accepts a combination the driver will not is
+            # worse than no stand-in: it teaches the window a shape that does
+            # not exist.
+            raise DirectScanner.infrared_blind(film)
         frame = frame or FULL_FRAME
         # The driver's refusals before the transport's, as in `prescan`.
         self._refuse(resolution, frame, shading)
@@ -837,6 +833,8 @@ class DemoScanner:
     # plain function comes back through the class and assigning it here
     # would bind  as its first argument.
     param_for_mm = staticmethod(DirectScanner.param_for_mm)
+    #: The borrowed roll refuses infrared on film blind to it with this.
+    infrared_blind = staticmethod(DirectScanner.infrared_blind)
     #: When a roll ends and what a frame is numbered: the loop that asks is
     #: the driver's own now, and these stay taken for the tests and the
     #: window that ask the stand-in directly.
