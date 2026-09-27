@@ -4895,17 +4895,18 @@ class ScannerGui:
                 question += ("\n\nThis frame was reopened from a roll: the "
                              "entry is the one its walk filed, not a copy made "
                              "for this window.")
-            keep = messagebox.askyesnocancel(
-                "Delete", question + "\n\nKeep the library entry?", parent=self.root)
-            if keep is None:
+            # Keeping the entry is the answer that needs nothing but a press.
+            # The question used to be "Keep the library entry?", under a title
+            # of "Delete": read by its title, "No" -- the irreversible answer
+            # -- was the natural one, and one click rmtree'd the only raw copy.
+            also = messagebox.askyesnocancel(
+                "Delete", question + "\n\nDelete its library entry as well? "
+                "No removes it from this session and keeps the entry.",
+                default=messagebox.NO, parent=self.root)
+            if also is None:
                 return
-            if not keep:
-                try:
-                    shutil.rmtree(entry)
-                    library.reindex(entry.parent)
-                    self._say(f"deleted library entry {entry.name}")
-                except OSError as exc:
-                    self._say(f"could not delete {entry.name}: {exc}")
+            if also and not self._delete_entry(entry):
+                return
         elif not messagebox.askokcancel("Delete", question, parent=self.root):
             return
         # Anything it was standing in for comes back rather than vanishing too.
@@ -4923,6 +4924,53 @@ class ScannerGui:
                 self.v_caption.set("nothing scanned yet")
                 self._schedule_redraw()
         self._redraw_strip()
+
+    def _delete_entry(self, entry: Path) -> bool:
+        """Delete one library entry for good, once asked in so many words.
+
+        False when nothing was deleted -- not confirmed, or refused -- and the
+        pass stays where it is. Not while the scanner works: the writer files
+        into this library and rebuilds its index as each entry lands.
+
+        Moved aside before it is removed. `rmtree` goes file by file, and one
+        that failed part way -- a file held open, on Windows -- left the raw
+        bytes gone and `scan.json` still there, an entry that Export and the
+        roll browser went on joining. Renamed first, a refusal leaves it whole,
+        and its record goes before the rest, so what a failure leaves behind
+        is not an entry.
+        """
+        if self._working():
+            messagebox.showinfo(
+                "Delete", "The scanner is working, and the library is being "
+                "written to. Delete the entry once it has finished.",
+                parent=self.root)
+            return False
+        if not messagebox.askokcancel(
+                "Delete the library entry",
+                f"Delete {entry.name} for good -- its raw bytes, its shading "
+                "reference and its CCD mask? Nothing can rebuild them short "
+                "of scanning the frame again.", icon=messagebox.WARNING,
+                default=messagebox.CANCEL, parent=self.root):
+            return False
+        aside = _unclaimed(entry.with_name(entry.name + ".deleting"))
+        try:
+            entry.rename(aside)
+        except OSError as exc:
+            self._say(f"could not delete {entry.name}: {exc}; it is left whole")
+            return False
+        try:
+            (aside / "scan.json").unlink(missing_ok=True)
+            shutil.rmtree(aside)
+            self._say(f"deleted library entry {entry.name}")
+        except OSError as exc:
+            self._say(f"deleted library entry {entry.name}, but {aside.name} "
+                      f"could not be cleared away ({exc}); it is no longer an "
+                      "entry, and can be removed by hand")
+        try:
+            library.reindex(entry.parent)
+        except OSError as exc:
+            self._say(f"could not rebuild the library index: {exc}")
+        return True
 
     # -- drawing, zoom and pan --------------------------------------------
 

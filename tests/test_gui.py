@@ -5493,6 +5493,48 @@ def test_deleting_a_reopened_frames_entry_says_what_it_is_first(window,
     assert entry.exists() and result in app.results, "Cancel is cancel"
 
 
+def test_deleting_a_pass_keeps_its_entry_unless_asked_twice(window,
+                                                            monkeypatch):
+    """"Keep the library entry?" under a title of "Delete": read by the
+    title, No was the natural answer, and it rmtree'd the only raw copy in
+    one click. No keeps it now, and deleting it takes a second, separately
+    worded yes."""
+    import pathlib
+
+    app, root = window
+    entry = pathlib.Path(app.session.root) / "an-entry"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    (entry / "raw.bin.gz").write_bytes(b"raw")
+    answers, said = {"also": False, "sure": False}, []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: answers["also"])
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: answers["sure"])
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+
+    result = _reopened_with_entry(app, entry)
+    app.on_delete(result)                        # No
+    assert entry.exists() and result not in app.results
+
+    answers["also"] = True                       # Yes, then not sure
+    result = _reopened_with_entry(app, entry)
+    app.on_delete(result)
+    assert entry.exists() and result in app.results
+
+    app.busy = True                              # sure, but mid-roll
+    answers["sure"] = True
+    app.on_delete(result)
+    assert entry.exists() and result in app.results
+    assert "The scanner is working" in said[-1]
+    app.busy = False
+
+    app.on_delete(result)                        # Yes, and sure
+    assert not entry.exists() and result not in app.results
+    assert list(entry.parent.glob("an-entry*")) == [], "nothing half-deleted"
+
+
 def test_a_plain_roll_is_not_shown_with_the_sheets_turns(window, monkeypatch):
     """The Roll button's frames are written the session's way; turns a sheet
     left against frame numbers put this roll's frames of the same number on
