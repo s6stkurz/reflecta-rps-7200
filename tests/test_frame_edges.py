@@ -483,3 +483,39 @@ def test_a_frame_the_detector_fails_on_is_red_and_the_rest_are_read(monkeypatch)
         assert {1, 3, 4} <= set(progress.offsets)
     finally:
         watch.close()
+
+
+def test_a_read_that_fails_once_and_then_succeeds_is_not_left_red(monkeypatch):
+    """An error was cleared only by a new prescan of that frame, so a first
+    read that failed stayed after the re-read at finish() succeeded: every
+    frame had its position and the light said FAILED, with a stale line."""
+    frames = _walk((12.0, 0.0, 7.0, 15.0))
+    flaky = frames[1][1]
+    real = frame_edges.watch.read_frame
+    failed = []
+
+    def once(image, **kw):
+        if image is flaky and not failed:
+            failed.append(True)
+            raise ValueError("a passing fault")
+        return real(image, **kw)
+
+    monkeypatch.setattr(frame_edges.watch, "read_frame", once)
+    watch = frame_edges.EdgeWatch()
+    try:
+        watch.begin("negative", expected=len(frames))
+        # One at a time, as a walk delivers them: frame 2 is first read
+        # before the frames after it exist, and read again at the finish
+        # against all of them.
+        for number, image in frames:
+            watch.add(number, image)
+            assert watch.wait(30)
+        watch.finish()
+        assert watch.wait(60)
+        progress = watch.progress()
+        assert failed, "the first read never failed"
+        assert progress.state == frame_edges.DONE, progress.errors
+        assert progress.errors == ()
+        assert progress.done == len(frames)
+    finally:
+        watch.close()
