@@ -12,6 +12,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 7: the sub-frame SLIDEs a roll sends. No payload changes; which are sent
+#    does. A hold to an approved position no longer negates its target when
+#    the window's hand-move "reverse the direction" tick is on -- that sent
+#    `01` where `00` was meant, and the reverse, driving each frame to the
+#    mirror of where it was set. And a walk that aims each frame sends no
+#    SLIDE for a position only one edge-reader member read (`unconfirmed`),
+#    where it used to move on it.
 # 6: the transport is asked where the film is, and a roll goes there first.
 #    No payload changes; the sequence does. READ STATE is sent when a window
 #    session opens and after every job that ended normally, a whole-frame
@@ -37,7 +44,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 6
+PROTOCOL_REVISION = 7
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
