@@ -351,3 +351,42 @@ def test_a_calibration_ended_short_of_its_declared_lines_installs_nothing(
     assert s.shading is None and result["reference"] is None
     assert "8 lines arrived where the descriptor declared 12" in result["refused"]
     assert result["data"], "the lines are kept all the same"
+
+
+def test_a_calibration_refused_part_way_keeps_its_lines(no_waiting, tmp_path):
+    """They went with it: the only record of what the device sent before it
+    stopped. Archived beside the good ones, saying where it failed, with no
+    reference to be taken for one."""
+    import json
+
+    lines = calibration_lines(12, 12)
+    s = Calibrating(lines[:4], declared=12, then=ScanReadError)
+    with pytest.raises(ScanReadError):
+        s.ensure_shading(tmp_path / "calibration" / "shading.npz")
+    [folder] = (tmp_path / "calibration").iterdir()
+    assert (folder / "data.bin").read_bytes() == b"".join(lines[:4])
+    record = json.loads((folder / "calibration.json").read_text(encoding="utf-8"))
+    assert record["failed"]["stage"] == "during the read"
+    assert "unit attention" in record["failed"]["error"]
+    assert record["reference"] is None and not (folder / "shading.npz").exists()
+    assert record["commands"] is not None
+    assert not (folder / library.INCOMPLETE).exists()
+    assert s.last_failed_calibration is None, "held for a second archive"
+
+
+def test_a_calibration_archive_cut_short_says_so(tmp_path, monkeypatch):
+    """Written in place, a folder a kill or a full disk cut short passed for
+    a whole calibration."""
+    def full(path, text):
+        raise OSError(28, "No space left on device")
+
+    s = DirectScanner(transport=FakeTransport())
+    s.verbose = False
+    whole = s.archive_calibration({"data": b"\x01" * 8}, tmp_path / "a")
+    assert not (whole / library.INCOMPLETE).exists()
+    monkeypatch.setattr(library, "_write_atomic", full)
+    with pytest.raises(OSError):
+        s.archive_calibration({"data": b"\x01" * 8}, tmp_path / "b")
+    [cut] = (tmp_path / "b").iterdir()
+    assert (cut / library.INCOMPLETE).exists()
+    assert not (cut / "calibration.json").exists()

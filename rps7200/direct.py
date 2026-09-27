@@ -1003,7 +1003,16 @@ class DirectScanner:
 
         Written uncompressed: the device is still open, and compressing with
         it open and idle is what preceded a wedge. It is 1.7 MB.
+
+        Written as a library entry is: ``INCOMPLETE`` first and removed last,
+        the record beside and renamed over. A folder a kill or a full disk
+        cut short passed for a whole calibration.
+
+        A calibration that raised is kept too, with what it said
+        (``failed``) and no reference: see `ensure_shading`.
         """
+        from .library import INCOMPLETE, _write_atomic
+
         data = result.get("data")
         if not data:
             return None
@@ -1024,6 +1033,9 @@ class DirectScanner:
                 if not folder.exists():
                     raise
                 folder, n = root / f"{stamp}-{n}", n + 1
+        (folder / INCOMPLETE).write_text(
+            "this calibration was being written and did not finish\n",
+            encoding="utf-8")
         (folder / "data.bin").write_bytes(data)
         mask = result.get("ccd_mask")
         if mask is not None:
@@ -1032,7 +1044,10 @@ class DirectScanner:
             result["reference"].save(folder / "shading.npz", compress=False)
         import hashlib
         record = {
-            "measured_utc": (self._shading_origin or {}).get("measured_utc"),
+            # Its own time where it carries one: a calibration that failed
+            # never became the session's, whose time is another's.
+            "measured_utc": (result.get("measured_utc")
+                             or (self._shading_origin or {}).get("measured_utc")),
             "resolution": result.get("resolution"),
             "pixels_per_line": result.get("pixels_per_line"),
             "bytes_per_line": result.get("bytes_per_line"),
@@ -1049,10 +1064,33 @@ class DirectScanner:
             "lines_declared": result.get("lines_declared"),
             "lines_arrived": result.get("lines_arrived"),
             "refused": result.get("refused"),
+            # Where it stopped and what it said, for one that raised.
+            "failed": result.get("failed"),
         }
-        (folder / "calibration.json").write_text(
-            json.dumps(record, indent=2, default=str), encoding="utf-8")
+        _write_atomic(folder / "calibration.json",
+                      json.dumps(record, indent=2, default=str))
+        (folder / INCOMPLETE).unlink(missing_ok=True)
         return folder
+
+    def _archive_failed_calibration(self, root: Path) -> None:
+        """Archive the lines of a calibration that raised, tagged failed.
+
+        They went with it: the lines of one refused part way, or read in
+        full and then lost to a refused mask, are the only evidence of what
+        the device sent. Never raises: the failure being reported is the
+        calibration's.
+        """
+        failed, self.last_failed_calibration = self.last_failed_calibration, None
+        if not failed or not failed.get("data"):
+            return
+        try:
+            folder = self.archive_calibration(
+                dict(failed, commands=self.last_failed_commands), root)
+        except Exception as exc:                      # noqa: BLE001
+            self._log(f"could not keep the failed calibration's bytes ({exc})")
+            return
+        self._log(f"the calibration failed; the {len(failed['data'])} bytes it "
+                  f"read are kept in {folder}")
 
     def ensure_shading(
         self, path: str | Path, reuse: bool = False, skip: bool = False
@@ -1096,7 +1134,11 @@ class DirectScanner:
             }
 
         started = time.monotonic()
-        result = self.calibrate_shading(keep_data=True)
+        try:
+            result = self.calibrate_shading(keep_data=True)
+        except BaseException:
+            self._archive_failed_calibration(path.parent)
+            raise
         duration = round(time.monotonic() - started, 1)
         # The calibration's own bytes, kept: the reference is a reduction of
         # them, and a reduction cannot be redone with better code once its
