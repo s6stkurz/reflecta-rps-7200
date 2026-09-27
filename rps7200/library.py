@@ -590,7 +590,18 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     than 5172 columns at any resolution. The reason itself stays in
     `calibration.skipped` for a caller that wants to say which.
     """
-    image, record = load(path)
+    return correct(*load(path))
+
+
+def correct(image: np.ndarray, record: dict[str, Any]
+            ) -> tuple[np.ndarray, dict[str, Any]]:
+    """:func:`corrected`, on an entry :func:`load` has already read.
+
+    For a caller that wants the stored pixels as well: the window counts
+    what sat at the rail on them, and reading the entry twice for it -- once
+    raw, once inside `corrected` -- was two reads of a 7200 dpi scan, some
+    570 MB, where one was enough.
+    """
     applied = (record.get("image") or {}).get("corrections_applied") or []
     if "shading" in applied:
         record["corrected"] = "already"

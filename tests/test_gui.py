@@ -1291,6 +1291,42 @@ def test_the_rail_in_the_histogram_is_the_sensors(window, tmp_path):
     assert "sensor" in app.histogram.v_source.get()
 
 
+def test_the_full_view_reads_its_entry_once_and_names_the_rail_honestly(
+        window, tmp_path, monkeypatch):
+    """The rail counts read the entry raw and `library.corrected` then read
+    it again: two reads of a 7200 dpi scan where one was enough. And an entry
+    filed corrected -- a legacy one -- had its rail counted on corrected
+    pixels under a caption saying the sensor read them."""
+    from rps7200 import library
+    from rps7200.library import FilmNotes
+    from rps7200.session import Result
+
+    app, root = window
+    image = np.full((8, 12, 3), 65535, np.uint16)
+    entry = library.save(
+        image, {"resolution_dpi": 900, "channels": 3, "film": "negative",
+                "channel_order": list("RGB"), "width": 12, "height": 8},
+        root=tmp_path / "library", film=FilmNotes(frame="legacy"),
+        corrections=["shading"])
+    reads = []
+    loading = library.load
+    monkeypatch.setattr(library, "load",
+                        lambda path: reads.append(path) or loading(path))
+
+    result = Result(seq=1, kind="scan", label="legacy", image=image,
+                    meta={}, entry=entry)
+    app._add_result(result)
+    app._show(result)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and app._levels_seq != 1:
+        root.update()
+        time.sleep(0.02)
+    assert app._levels_seq == 1, "the scan's own pixels never arrived"
+    assert len(reads) == 1, f"read {len(reads)} times"
+    assert app._rail is None
+    assert "sensor" not in app.histogram.v_source.get()
+
+
 def test_changing_the_monochrome_channel_changes_the_view(window):
     """Every setting the picker offers has to show what it will deliver --
     including the average, whose view is MONO rather than any one plane."""

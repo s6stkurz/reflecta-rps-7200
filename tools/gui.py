@@ -4669,15 +4669,22 @@ class ScannerGui:
         def work(entry: Path, seq: int) -> None:
             image = problem = rail = None
             try:
-                # The rail as the sensor met it, for `_measure_histogram`,
-                # read from the stored raw pixels and let go of at once.
-                raw, _ = library.load(entry)
+                # Read once. The rail as the sensor met it, for
+                # `_measure_histogram`, is counted on the stored pixels before
+                # they are corrected; reading them a second time inside
+                # `library.corrected` doubled the wait for this view -- at
+                # 7200 dpi, two reads of some 570 MB with the device open.
+                raw, record = library.load(entry)
                 rail = preview.clipping(rgb_only(raw))
-                del raw
                 # Corrected, not raw: the library stores what the scanner sent
                 # and the correction beside it, and this is the full-resolution
                 # view an operator asked to look at.
-                image, _ = library.corrected(entry)
+                image, record = library.correct(raw, record)
+                del raw
+                if record.get("corrected") == "already":
+                    # A legacy entry, filed corrected: its stored pixels are
+                    # not what the sensor read, and the caption says they are.
+                    rail = None
             except Exception as exc:                     # noqa: BLE001
                 problem = f"could not read {entry.name}: {exc}"
             # Through a queue, never by calling Tk. `after()` from another
