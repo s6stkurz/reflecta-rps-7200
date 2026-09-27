@@ -1668,6 +1668,16 @@ class DirectScanner:
                 if attempts >= retries or time.monotonic() > deadline:
                     break
                 time.sleep(0.5)
+            except BaseException as exc:
+                # Not a refusal: the SCAN went out and what the device made of
+                # it is not known -- a status read that timed out, BUSY past
+                # its deadline, Ctrl-C. It may be scanning. This used to escape
+                # before any guard, so a roll counted the frame an ordinary
+                # failure, advanced the film and started the next pass into it.
+                self._scanning = False
+                self._mark_suspect(f"{type(exc).__name__} as a scan was "
+                                   f"started: {exc}")
+                raise
 
         # Leave the scanner usable; an abandoned start wedges it otherwise.
         self._scanning = False

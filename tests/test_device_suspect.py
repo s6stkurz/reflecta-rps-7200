@@ -227,3 +227,42 @@ def test_the_pass_is_read_with_the_patience_its_mode_needs():
 def test_a_resolution_that_cannot_be_corrected_is_known_before_opening():
     assert DirectScanner.correctable_at(3600)
     assert not DirectScanner.correctable_at(7200)
+
+
+# -- starting a pass ---------------------------------------------------------
+
+
+def _scan_answered(raise_):
+    from conftest import FakeTransport
+    from rps7200.protocol import SCSI_SCAN
+
+    def scan(command):
+        raise raise_
+
+    s = DirectScanner(transport=FakeTransport(replies={SCSI_SCAN: scan}),
+                      debug=False)
+    s._own_transport = False
+    return s
+
+
+def test_a_start_that_was_not_answered_marks_the_device():
+    """The SCAN went out and its status read timed out: the device may be
+    scanning, and a roll used to count the frame an ordinary failure, move
+    the film and start the next pass into it."""
+    s = _scan_answered(UsbError("status read failed: LIBUSB_ERROR_TIMEOUT"))
+    with pytest.raises(UsbError):
+        s.start_scan()
+    assert s.suspect is not None and "started" in s.suspect
+    with pytest.raises(DeviceSuspect):
+        DirectScanner.slide(s, SLIDE_NEXT)
+
+
+def test_a_start_the_device_refused_does_not():
+    """A refusal is an answer: nothing is running, so nothing is suspect."""
+    from rps7200.protocol import CalibrationRequired
+    from rps7200.usb_transport import CheckCondition
+
+    s = _scan_answered(CheckCondition(0x1B))
+    with pytest.raises(CalibrationRequired):
+        s.start_scan(retries=1)
+    assert s.suspect is None
