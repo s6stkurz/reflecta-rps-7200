@@ -985,6 +985,27 @@ def test_a_spooled_pass_is_filed_under_the_time_it_was_taken(
         assert entry.name.startswith("20260102T030405Z")
 
 
+def test_a_debug_filed_probe_or_hold_pass_is_tagged_for_what_it_was(
+        tmp_path, monkeypatch):
+    """Every one was tagged "debug" and nothing else, so a roll's probes or a
+    hold's verification passes could be found only by reading records."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path))
+    s = _debug_scanner(debug=True)
+    for role in ({"kind": "metering probe", "round": 1},
+                 {"kind": "verification prescan", "for": "operator",
+                  "roll_index": 2, "move": 1},
+                 None):
+        s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                         dict(_META, **({"pass_role": role} if role else {})))
+    s.close()
+    tags = {str(((r.get("extra") or {}).get("pass_role") or {}).get("kind")):
+            set(r["tags"]) - {"debug"} for r in library.entries(tmp_path)}
+    assert tags == {"metering probe": {"probe"},
+                    "verification prescan": {"hold"}, "None": set()}
+
+
 def test_a_claimed_pass_in_a_spool_left_behind_is_filed_only_when_asked(
         tmp_path, monkeypatch):
     """Its caller files its own, and probably did."""

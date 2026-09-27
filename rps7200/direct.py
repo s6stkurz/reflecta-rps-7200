@@ -738,6 +738,9 @@ class DirectScanner:
     #: -- a metering probe, a hold's verification prescan -- and recorded in
     #: its meta as ``pass_role``. Consumed by `scan`, so it describes one pass.
     _pass_role: dict[str, Any] | None = None
+    #: The library tag a debug-filed pass gets for its ``pass_role``. The
+    #: hold loop takes an aim's verification passes too.
+    _ROLE_TAGS = {"metering probe": "probe", "verification prescan": "hold"}
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
     #: resolutions. Here, beside the read it guards, rather than only in the
@@ -1240,6 +1243,14 @@ class DirectScanner:
             item: dict[str, Any] = {"meta": meta, "captured": time.time()}
             item["tags"] = (["failed"] if failed else []) + (
                 ["debug"] if getattr(self, "debug", False) else [])
+            # And what it was for, where the loop that took it said
+            # (`pass_role`), so the library can be asked for a roll's probes
+            # or a hold's verification passes: every one was tagged "debug"
+            # and nothing else, and could be found only by reading records.
+            role = self._ROLE_TAGS.get(
+                str((meta.get("pass_role") or {}).get("kind")))
+            if role is not None:
+                item["tags"].append(role)
             item["notes"] = ("a pass read in full that then failed: "
                              f"{(meta.get('failed') or {}).get('error')}"
                              if failed else "captured with RPS7200_DEBUG on")
