@@ -2296,6 +2296,9 @@ class DirectScanner:
         # Every line is in: whatever goes wrong from here on is the host's, and
         # leaves nothing outstanding on the device.
         self._read_complete = True
+        # Whether the device ended the read before the lines GET PARAMETERS
+        # declared, which `scan` records with the pass: see `short_read`.
+        self.last_read_short = len(blob) // bpl < total_lines
         # Everything a decoder needs, so the bytes stay meaningful without
         # this object. Line stride includes the 2-byte channel tag.
         layout = {
@@ -3638,6 +3641,13 @@ class DirectScanner:
             "frame": list(frame),
             "width": int(params.width),
             "height": int(image.shape[0]),
+            # The lines GET PARAMETERS declared, a plane each, and whether
+            # the device ended the read on "end of data" before they were
+            # in. Such a pass decodes to fewer rows and was filed as an
+            # ordinary one: without its raw bytes, whose layout alone held
+            # the declared count, nothing in the entry said it was short.
+            "lines_declared": int(params.lines),
+            "short_read": bool(getattr(self, "last_read_short", False)),
             "bytes_per_line": int(params.bytes_per_line),
             # Read by get_parameters() and otherwise discarded. Recorded
             # because two passes at an identical frame and dpi have correlated

@@ -211,6 +211,19 @@ def test_a_pass_that_failed_leaves_no_earlier_pass_bytes_behind():
     assert s.capture_record()["raw_layout"] is None
 
 
+def test_a_read_the_device_ended_early_says_so_in_the_record():
+    """"End of data" part way through is taken as the end, and the pass
+    decodes to fewer rows. It was filed as an ordinary pass, and without its
+    raw bytes nothing in the entry said it was short."""
+    image = picture(8)
+    s = OnePass(tagged(image[:3]), width=8)       # 3 of the 4 rows declared
+    got, meta = scan(s, shading=False, keep_raw=False)
+    assert got.shape[0] == 3
+    assert meta["lines_declared"] == LINES and meta["short_read"] is True
+    whole = OnePass(tagged(image), width=8)
+    assert scan(whole, shading=False, keep_raw=False)[1]["short_read"] is False
+
+
 def test_a_pass_records_what_it_was_taken_for_and_only_that_pass():
     """Set by the loop that takes it -- a metering probe, a verification
     prescan -- and recorded with that pass, never the next."""
