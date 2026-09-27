@@ -2214,6 +2214,38 @@ def test_a_walk_can_add_to_the_walk_before_it(tmp_path):
         f"prescan{n:02d}.tif" for n in range(1, 7)]
 
 
+def test_a_walk_added_to_an_old_one_never_writes_over_its_pictures(tmp_path):
+    """A walk from before frame numbers were places on the strip named its
+    files by its own count, and renumbering keeps those names: the walk that
+    started on strip frame 5 left frame 5's record naming prescan01.tif. A
+    walk of frames 1 to 3 added to it wrote prescan01..03 over them, and the
+    sheet showed frames 1 to 3 as 5 to 7 -- often the only copy of those."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    for n in (1, 2, 3):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 10 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "strip", "dry_run": True,
+        "frames": [{"number": n, "transport_position": n + 3,
+                    "prescan": f"prescan{n:02d}.tif", "done": False}
+                   for n in (1, 2, 3)],
+    }), encoding="utf-8")
+    walk(Roll(frames=3, start_at=1, dry_run=True, name="strip",
+              extend_walk=True), tmp_path, StripScanner(at=0))
+    manifest = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    by_number = {f["number"]: f for f in manifest["frames"]}
+    assert sorted(by_number) == [1, 2, 3, 5, 6, 7]
+    for number, level in ((5, 11), (6, 12), (7, 13)):
+        kept = tiff.read(folder / by_number[number]["prescan"])
+        assert int(kept.max()) == level, (
+            f"frame {number}'s picture was written over by the new walk")
+    names = [by_number[n]["prescan"] for n in (1, 2, 3, 5, 6, 7)]
+    assert len(set(names)) == 6, names
+
+
 def test_a_frame_walked_again_is_recorded_once_and_a_fresh_walk_replaces(
         tmp_path):
     from conftest import StripScanner

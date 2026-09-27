@@ -1098,6 +1098,19 @@ class RollManifest:
             self._keep()
             return self.unsaved is None
 
+    def named_by_others(self, number: int) -> set[str]:
+        """The files this manifest's records of other frames name.
+
+        A walk writes each frame's prescan beside the manifest, and a file
+        another record names is that frame's picture: see `_roll`.
+        """
+        with self._lock:
+            return {str(record[key])
+                    for record in self.data.get("frames") or ()
+                    if str(record.get("number")) != str(number)
+                    for key in ("prescan", "prescan_before")
+                    if record.get(key)}
+
     def pending(self) -> bool:
         """Whether any frame recorded here still waits for its filing."""
         with self._lock:
@@ -2738,6 +2751,8 @@ class ScanSession:
                 #: How this frame's walked prescan file was arranged, as
                 #: `_file` wrote it; a walk's only.
                 walked_as: tuple[int, bool] | None = None
+                #: What that file is called: see where it is written.
+                surveyed_name = f"prescan{number:02d}.tif"
                 if rf.position is not None and plausible(rf.position):
                     # Already read for this frame, so the readout follows the
                     # roll without asking the device anything more.
@@ -2764,7 +2779,18 @@ class ScanSession:
                         # walked again. Written by the writer thread, not here:
                         # it is only ~370 KB, but nothing local happens on the
                         # scanning thread with the device open.
-                        surveyed = out / f"prescan{number:02d}.tif"
+                        #
+                        # Never over a file another frame's record names. A
+                        # walk from before frame numbers were places on the
+                        # strip named its files by its own count, and
+                        # renumbering keeps those names: frame 5's record can
+                        # name prescan01.tif. Written over by this walk's
+                        # frame 1, the sheet showed frame 1 as frame 5, and
+                        # positions set there held the roll to the wrong
+                        # picture -- often the only copy of the one lost.
+                        taken = record_of.named_by_others(number)
+                        surveyed_name = _free_name(surveyed_name, taken)
+                        surveyed = out / surveyed_name
                         walked_as = self._file(
                             seq, number, rf.prescan,
                             # The pass's own meta. A hand-built one here is
@@ -2800,7 +2826,8 @@ class ScanSession:
                                 tuple(job.tags) + ("gui", "roll", "prescan",
                                                    name),
                                 kind="prescan",
-                                path=out / f"prescan{number:02d}-before.tif",
+                                path=out / _free_name(
+                                    f"prescan{number:02d}-before.tif", taken),
                                 roll=name,
                                 file_entry=False,
                             )
@@ -2885,7 +2912,7 @@ class ScanSession:
                     # each frame from its entry with this.
                     record["rotation"], record["flipped"] = arranged
                 if job.dry_run and rf.prescan is not None:
-                    record["prescan"] = f"prescan{number:02d}.tif"
+                    record["prescan"] = surveyed_name
                     # How that file was turned, per frame, as it was written:
                     # the pair `_file` applied, not the session's asked for
                     # again afterwards. The manifest's one `rotation` is the
@@ -3207,6 +3234,17 @@ def _safe(name: str, fallback: str = "roll") -> str:
     if cleaned and cleaned.split(".")[0].lower() in _RESERVED:
         cleaned = f"{cleaned}-roll"
     return cleaned
+
+
+def _free_name(wanted: str, taken: set[str]) -> str:
+    """`wanted`, or the first ``stem-N`` beside it that is not in `taken`."""
+    if wanted not in taken:
+        return wanted
+    stem, dot, suffix = wanted.rpartition(".")
+    n = 2
+    while f"{stem}-{n}{dot}{suffix}" in taken:
+        n += 1
+    return f"{stem}-{n}{dot}{suffix}"
 
 
 def _unclaimed(wanted: Path) -> Path:
