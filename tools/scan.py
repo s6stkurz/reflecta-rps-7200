@@ -41,6 +41,7 @@ from rps7200.mono import (
     to_monochrome,
 )
 from rps7200.library import FilmNotes
+from rps7200.session import _unclaimed
 
 
 #: What a calibration costs, for the estimate: 3-4 minutes, per the prompt
@@ -199,6 +200,11 @@ def main() -> int:
     if export.FORMATS.get(Path(args.out).suffix.lower()) is None:
         ap.error(f"--out {args.out}: the extension picks the format, and must "
                  f"be one of {', '.join(sorted(export.FORMATS))}")
+    # What the help promises, refused rather than passed to Pillow, which
+    # turns 0 into 1 -- `--quality 9` for 90 was a heavily blocked JPEG
+    # delivered without a word, after the scan had been paid for.
+    if not 60 <= args.quality <= 100:
+        ap.error(f"--quality {args.quality}: JPEG quality is 60-100")
     if args.bracket and args.stops <= 0:
         ap.error(f"--stops must be positive, got {args.stops:g}")
     if args.bracket and args.ir:
@@ -445,7 +451,12 @@ def main() -> int:
             "entries": [e.name for e in entries],
         }
 
-    out = Path(args.out)
+    # Never over an earlier scan: two runs in one directory replaced
+    # scan.tif and scan.json, and with --no-library that was the only copy
+    # of the first. The next free name, as the window's output folder does.
+    out = _unclaimed(Path(args.out))
+    if out != Path(args.out):
+        print(f"{args.out} is already there; writing {out.name} instead")
     out.parent.mkdir(parents=True, exist_ok=True)
     delivered = image
     if args.mono is None:

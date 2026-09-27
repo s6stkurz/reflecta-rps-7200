@@ -124,6 +124,17 @@ def test_a_plain_scan_writes_the_file_it_was_asked_for(tmp_path, monkeypatch):
     assert (tmp_path / "out.json").exists()
 
 
+def test_a_second_run_never_writes_over_the_first(tmp_path, monkeypatch):
+    """Two runs in one directory replaced scan.tif and its .json, and with
+    --no-library the first was the only copy of that scan."""
+    run(tmp_path, monkeypatch, "--no-library")
+    first = (tmp_path / "out.tif").read_bytes()
+    run(tmp_path, monkeypatch, "--no-library")
+    assert (tmp_path / "out.tif").read_bytes() == first
+    assert (tmp_path / "out-2.tif").exists()
+    assert (tmp_path / "out-2.json").exists()
+
+
 def test_a_plain_scan_is_filed_once(tmp_path, monkeypatch):
     run(tmp_path, monkeypatch)
     assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 1
@@ -525,6 +536,9 @@ def test_both_capture_tools_file_the_raw_pixels(tmp_path):
     ["--dpi", "7200"],            # cannot be shading-corrected at all
     ["--dpi", "0"],
     ["--out", "scan.png"],        # no such format; used to fail after the scan
+    # The help says 60-100; Pillow turned 0 into 1, so a typo was a heavily
+    # blocked JPEG delivered after the scan had been paid for.
+    ["--out", "scan.jpg", "--quality", "9"],
     # A bracket's exposure is R,G,B or nothing. One value was dropped without a
     # word and the passes ran around the device's own settings, metering off.
     ["--bracket", "3", "--exposure-scale", "1.5"],
