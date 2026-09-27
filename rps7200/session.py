@@ -1287,10 +1287,11 @@ def frames_asked(start_at: int, frames: int | None,
 #: sub-frame move asked to travel further than this is a whole-frame job, and
 #: SLIDE_NEXT/SLIDE_PREV do that properly.
 #:
-#: Set when a command topped out at param 8, about 1 mm. At param 87 eight
-#: commands are some 710 units -- two frames -- so as a "whole-frame job"
-#: line it is loose now. The window keeps its own copy of the 8 for what it
-#: says, so the two move together or not at all.
+#: Set when a command topped out at param 8, about 9.8 units (param 8 and
+#: the 1.84 ramp). At param 87 eight commands are some 710 units -- two
+#: frames -- so as a "whole-frame job" line it is loose now. The window keeps
+#: its own copy of the 8 for what it says, so the two move together or not
+#: at all.
 MAX_FINE_STEPS = 8
 
 
