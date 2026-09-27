@@ -1,0 +1,271 @@
+{
+ "type": "result",
+ "key": "v2:27c9a07ea57c0f7fbcc75722c7bc63f4de7cf42841c5a1d03ee9673507d86141",
+ "agentId": "a104fe2b4537e6691",
+ "result": {
+  "branch": "fix3/window",
+  "commits": [
+   "94b93e8 Keep the window's event pump running past a handler that fails (audit GUI1-A1)",
+   "521e2e2 Export a roll's own frames: join on roll.json and the folder, not the name (audit P21, GUI1-01, GUI2-01)",
+   "86069ea Guard every way into a job, not only the buttons (audit P23, GUI1-02, GUI1-06, GUI1-10, GUI1-16, GUI2-02, GUI2-08)",
+   "64baa9a Read one pass at full resolution at a time (audit GUI2-06)",
+   "78d3f71 A double-click on a sheet frame no longer unticks it (audit GUI2-04)",
+   "409cd0c Keep a scanned frame unticked on Return, and name rescans before they start (audit GUI2-05)",
+   "15ca111 Rebuild a sheet opened mid-walk on the whole walk when it ends (audit GUI2-A1)",
+   "24e107e Give the window tests their own settings file",
+   "6d6c4ae File a sheet's decisions by the walk, and read them back on reopen (audit P22, GUI1-03, GUI2-03)",
+   "4021fa3 File the sheet's decisions as they are made, not only on close (audit P22)",
+   "9b4a405 Deliver a pass one channel or all by its own film, not the window's (audit GUI1-04, GUI2-09)",
+   "4ddc85d Write the scan's resolution into files delivered from the window (audit GUI1-13)",
+   "9994c96 Save As on a writer thread, saying when it could not write (audit GUI1-A2, GUI2-19)",
+   "a2b829c Say when the full-resolution view is showing uncorrected pixels (audit GUI1-18, GUI2-22)",
+   "b665eda Refuse a roll the driver would refuse part-way, before the film moves (audit GUI1-08, GUI1-11, GUI2-12)",
+   "acd1ded Show a cached reference's age before the Calibrate button reuses it (audit GUI1-09)",
+   "27f448f Aim only from a prescan of the film where it is (audit P23, GUI2-07)",
+   "213f455 Finish a reopened roll without scanning its done frames again (audit P25)",
+   "474428e Keep a deleted pass's library entry unless asked twice; delete it whole (audit P25, GUI1-15, GUI2-23)",
+   "5847728 Say what deleting a roll folder loses for good (audit GUI1-05, GUI2-18)",
+   "274ea9d Say in the window when its settings file could not be read (audit P24)",
+   "c76d146 Commission a roll from elsewhere with its walk, into a folder of its own (audit P18, GUI2-14)",
+   "cdd3fe7 Make the window's texts say what the code does (audit GUI1-20, GUI2-10, GUI2-15, GUI2-16, GUI2-17, P20)",
+   "a1db51e Use a folder typed into \"Save scans to\" (audit GUI1-07)",
+   "a98ee17 Turning a frame no longer moves the window's idea of where the film is (audit GUI2-24)",
+   "d3881f4 Close the contact sheet once its roll is handed over, not before the question (audit GUI2-26)",
+   "bc4a7ce Keep Save all's and Export's promise not to overwrite what is there (audit GUI1-14, GUI2-20)",
+   "f3c41b3 Say that a turn made on the sheet during a roll does not reach that roll (audit GUI2-27)",
+   "7cf599c Wait out a briefly held settings file before giving up the save"
+  ],
+  "done": [
+   {
+    "item": "GUI1-A1 (medium): event pump stops for good on one handler exception",
+    "change": "tools/gui.py _pump now books its next tick in a finally; _drain handles each queued message/event through _safely (log line + traceback, costs that message only). Test: failing log event followed by a good one; good one handled, log says so, next tick still runs."
+   },
+   {
+    "item": "P21 / GUI1-01 / GUI2-01 (high): Export joins entries to rolls by roll name only; GUI1-A3 / GUI2-21 (low): export names from roll's last settings, CLI rolls named 0dpi",
+    "change": "roll_entry_index now returns ids/folders/names; new roll_entries() joins per done frame: roll.json's recorded entry (by id in the library; a deleted one gives none), else membership folder (resolved, normcased via _folder_key), else legacy name. roll_summary exposes 'recorded'. roll_exports names each file from the entry's own scan.json (_scanned_as), falling back to settings incl. the 'dpi' alias. Tests: duplicate vs original after rescan, name reused after Delete, per-entry dpi/channels and CLI 'dpi'."
+   },
+   {
+    "item": "P23 (1)(2)(4)(5), GUI1-02/GUI2-02 (high/medium) browser Open during a job; GUI1-06 double-press Scan; GUI1-10/GUI2-08 Rename/Delete of the sheet's roll or one still filing; GUI1-16 calibration dropped by Stop leaves window 'calibrated'; stale on_roll comment",
+    "change": "open_roll refuses while _working() or _surveying and sets _loaded_roll only after a successful read; _hand_over marks a Prescan/Scan/Roll as queued until the worker's busy event (cleared by Stop/closed); on_scan/on_prescan/on_roll/on_scan_chosen/_roll_is_busy use _working(); _roll_is_busy also protects _sheet_roll and folders whose RollManifest is ahead_of_disk(); on_calibrate refuses while working and a job that ends without a 'calibrated' event takes session.calibrated. Six tests."
+   },
+   {
+    "item": "GUI2-06 (medium, part): unbounded concurrent full-resolution loads",
+    "change": "_load_full keeps one read in flight; a pass shown meanwhile waits (_load_next) and only the last one shown is read next. Test with a blocking fake library.corrected."
+   },
+   {
+    "item": "GUI2-04 (medium): double-click on a sheet thumbnail toggles its tick",
+    "change": "<Double-Button-1> now goes to _double_clicked, which takes back the first press's toggle before opening the position window. Test."
+   },
+   {
+    "item": "GUI2-05 (medium): Return/All re-tick scanned frames; confirm silent about rescans",
+    "change": "_FrameAdjuster._accept leaves a done frame's tick alone; on_scan_chosen names chosen frames already scanned (reopened roll's done set plus roll.json via done_in/_scanned_in). Two tests."
+   },
+   {
+    "item": "GUI2-A1 (medium): sheet opened mid-walk never rebuilt",
+    "change": "_walk_ended closes an open sheet (keeping its decisions) and reopens it on the whole walk. Test."
+   },
+   {
+    "item": "P22 (1)(2)(3), GUI1-03 / GUI2-03 (medium): sheet decisions keyed by folder name leak onto a new strip, never read back after restart, lost on crash",
+    "change": "Stored sheet state carries walk_stamp (survey.json mtime_ns) and is recalled only for that walk (_stored_sheet); open_roll restores it for a walk with no approved.json (never ticking a done frame; machine positions still re-measured by _merge_kept); Rename moves and Delete drops the key; every tick/position/turn books a debounced save (_keep_sheet_soon, SHEET_KEEP_MS). Four tests."
+   },
+   {
+    "item": "Test hygiene found in passing: window fixture wrote the operator's gui-settings.json in the cwd",
+    "change": "window fixture passes settings_path under tmp_path."
+   },
+   {
+    "item": "GUI1-04 / GUI2-09 (medium): Save As/Save all/Export use the window's mono setting",
+    "change": "_mono_for decides per pass (roll items carry wants_mono(settings.mono, film) and mono_channel from roll_exports; a pass of another film follows its film; same film keeps the window's controls). Two tests."
+   },
+   {
+    "item": "GUI1-13 (low): delivered files carry no resolution",
+    "change": "_deliver_one passes the entry's scan.resolution_dpi (or the pass meta) to export.write; reduced previews still carry none. Test."
+   },
+   {
+    "item": "GUI1-A2 / GUI2-19 (low): Save As on the UI thread, failures silent",
+    "change": "Save As runs through _start_writing and reports 'saved ...' or 'could not save <name>: <why>' via the _saves queue. Test with ENOSPC."
+   },
+   {
+    "item": "GUI1-18 / GUI2-22 (low): 1:1 view shows raw pixels silently",
+    "change": "_load_full carries record['corrected'] through _reads; _loaded logs 'UNCORRECTED (<why>)' unless applied/already. Test."
+   },
+   {
+    "item": "GUI1-08 / GUI2-12 (medium/low) 7200 dpi rolls fail frame by frame after moving film; GUI1-11 IR on B&W/Kodachrome from the sheet",
+    "change": "_refused_up_front asks DirectScanner.correctable_at (scan and prescan dpi) and supports_infrared in on_roll (walks: prescan dpi only) and on_scan_chosen before anything is written or submitted. Four tests."
+   },
+   {
+    "item": "GUI1-09 (medium): Calibrate with remembered 'reuse' loads a reference of any age",
+    "change": "on_calibrate_pressed loads without asking only a reference written since the window opened (2 s grace); older ones go through the prompt that shows the age and still offers 'Use the cached one'. Test."
+   },
+   {
+    "item": "P23 (3) / GUI2-07 (medium): aim from a stale prescan",
+    "change": "_aim_from tracks the newest single prescan; cleared by any Move, fine move, aim, or Roll; on_press refuses aiming on any other prescan with an explanation. Test."
+   },
+   {
+    "item": "P25 (b)(c): reopened no-walk roll rescans non-contiguous done frames; dialog claims settings/first frame set",
+    "change": "on_roll, for the roll reopened in this window, passes Roll(only=...) skipping roll.json's done frames in a bounded range (names them for an open-ended range) and says so; the reopen message says whether settings were restored. Two tests."
+   },
+   {
+    "item": "P25 (a, part) / GUI1-15 (low) inverted 'Keep the library entry?' question; GUI2-23 (low) half-deleted entries and delete racing the writer",
+    "change": "Question now asks whether to delete the entry as well (No default keeps it); deletion needs a second, warning confirmation (Cancel default), is refused while working, renames the entry aside and removes scan.json first, then rmtree and reindex. Test."
+   },
+   {
+    "item": "GUI1-05 / GUI2-18 (medium/low): Delete-roll dialog calls everything but approved.json re-derivable",
+    "change": "Dialog/docstring now name survey.json (not rebuildable), roll.json, approved.json counted on positions too, and prescanNN-before.tif counts. Test."
+   },
+   {
+    "item": "P24 (6): unreadable settings set aside silently",
+    "change": "settings.load(where, say=None) reports the set-aside file; the window logs it after building. Tests in test_settings.py and test_gui.py."
+   },
+   {
+    "item": "P18 (3) (new problem from the P18 fix) and GUI2-14 (low): commission from a roll outside session.rolls has no walk / merges into an unrelated same-named roll",
+    "change": "on_scan_chosen carries the walk (carry_walk) before approved.json; _roll_folder maps an outside roll to the first of name, name-2, ... that is free or holds the same walk (same_walk), cached for the session (_carried). Two tests."
+   },
+   {
+    "item": "GUI1-20 (1)(2)(3)(5), GUI2-10 (header text), GUI2-15, GUI2-16, GUI2-17, P20 cosmetic docstring",
+    "change": "stop_label treats 'chosen frame' jobs as rolls; c_ir runs _sync_infrared; Continue dialog says what calibration actually happens; sheet header no longer claims the nudge covers unadjusted frames or a rewind to the strip start; shortcut editor/_actions docstring/adjuster labels corrected; aim refusal cites one command and uses len(plan_nudges); snap_offset and lattice comments corrected (2.84); read_survey docstring. Two tests (stop label, IR tie)."
+   },
+   {
+    "item": "GUI1-07 (low): typed output folder ignored until relaunch",
+    "change": "Entry bound on Return/FocusOut to _set_outdir. Test."
+   },
+   {
+    "item": "GUI2-24 (low, first half): turning a frame moves the transport forecast",
+    "change": "_transport is set where a pass arrives (_arrange), not in remember_arrangement. Test."
+   },
+   {
+    "item": "GUI2-26 (low): Scan chosen frames closes the sheet before asking",
+    "change": "on_scan_chosen returns True only when the roll is handed over; the sheet dismisses only then; the confirm is parented on the sheet. Test (stub window gains root/_sheet_roll etc.)."
+   },
+   {
+    "item": "GUI1-14 / GUI2-20 (low): 'nothing is overwritten' false for DNG companion, Pillow-less TIFF fallback, and after 999 clashes",
+    "change": "unclaimed_delivery counts a JPEG's .dng and .tif fallback, raises instead of returning a taken name; used by Save all and Export. Test."
+   },
+   {
+    "item": "GUI2-27 (low): turns on a sheet reopened mid-roll don't reach the running roll",
+    "change": "The sheet's turn log lines say so while the scanner works (_too_late). Test."
+   },
+   {
+    "item": "Windows robustness for the new frequent settings writes",
+    "change": "settings.save retries the replace over session.REPLACE_RETRY_S on PermissionError. Test."
+   }
+  ],
+  "left": [
+   {
+    "item": "GUI2-06 (rest): Export/Save all/Save As deflate-compress full-resolution files with the scanner open and idle",
+    "why": "Hardware-safety question only a measurement can settle: the documented hazard is gzipping with the device open and idle, and tools/filing_load_test.py measures filing beside a busy device, not an idle one.",
+    "proposal": "Run filing_load_test in an idle-open configuration. Until it says safe, either write window deliveries uncompressed (tiff.write compress=False) while the session holds the device, or have Export/Save all of more than a few frames offer to close the scanner first and reopen it after. Decision for Stefan."
+   },
+   {
+    "item": "GUI2-11 (medium): histogram 'at full'/'near full' measured on shading-corrected pixels",
+    "why": "Design decision about what the panel is for; the raw pixels exist only in the library entry (the working copy is corrected), so measuring the rail means a second full read.",
+    "proposal": "Measure clipping on the entry's raw scan.tif (library.load on the same read thread as _load_full, one read at a time) and label it 'sensor rail (raw)'; keep a corrected histogram only if wanted, labelled as such. Until then the panel could say 'after correction'."
+   },
+   {
+    "item": "GUI2-10 (the option itself): the sheet's 'nudge registration between frames' tick can never act",
+    "why": "Header text fixed; removing the tick is already recorded in TODO.md as its own commit, and the alternative changes what the roll does per frame.",
+    "proposal": "Either remove the tick (OPTIONS, _options_note map, state round trip, one test), or give frames with no decision (source 'none', offset 0) no Approved so the automatic nudge acts on them -- the latter changes the device path per frame and is Stefan's call."
+   },
+   {
+    "item": "GUI2-28 (low): snap_offset silently clamps detector proposals to one command",
+    "why": "UI design choice about how to show a clamped proposal.",
+    "proposal": "Keep the unclamped proposal in the note; caption '+88.8 units (clamped from 120)' in the sheet's warning colour; the confirm dialog counts clamped frames and names them."
+   },
+   {
+    "item": "GUI1-12 (low): output format/folder/arrangement changed mid-roll apply to the remaining frames",
+    "why": "The fix is either a session change (snapshot out_dir, out_format, jpeg_quality, rotation, flip into the job at submit -- session subsystem) or a UI choice (grey those controls while busy).",
+    "proposal": "Snapshot them into Roll/Scan at submit in the session, and have the window say in the log that a change made while a roll runs applies from the next job."
+   },
+   {
+    "item": "P25 (a, rest): an entry deleted from the window is gone for good (no trash); approved.json's reference_entry is left pointing at it",
+    "why": "A trash folder is a library-layout decision (verify, reindex, roll_entry_index and reconstruct must all skip it) and belongs to the library subsystem; the one-click loss is fixed.",
+    "proposal": "Move deleted entries to library/.trash/<UTC>/ which verify/reindex/joins ignore, emptied by an explicit 'tools/library.py empty-trash'; leave reference_entry as provenance (it names an id)."
+   },
+   {
+    "item": "P18 (2): a fresh walk into an existing folder leaves the old strip's approved.json, read on reopen and merged on the next commission",
+    "why": "Changes what a roll folder means (one roll per folder vs a new strip per fresh walk); the window's question already warns that the walk is replaced.",
+    "proposal": "When a fresh (not kept) walk has replaced survey.json (in _walk_ended, the point the new folder is known), move the old approved.json aside as approved.json.bak, matching the survey.json.bak the session keeps, and say so in the log."
+   },
+   {
+    "item": "P18 (1) / GUI1-21 / GUI2-25: --demo with an explicit --library/--rolls/--reference writes into the real stores",
+    "why": "This is DP-05 in demo-parity.md, owned by the demo subsystem; the fix is a few lines in tools/gui.py main(), so taking it in two branches would conflict.",
+    "proposal": "Under --demo, refuse (ap.error) a --library, --rolls or --reference that resolves to the real library/, rolls/ or calibration/shading.npz, and correct the main() comment that says --demo pins rolls under demo/."
+   },
+   {
+    "item": "P24 (1): tools/scan_roll.py scans on after a failed filing",
+    "why": "CLI subsystem (tools/scan_roll.py).",
+    "proposal": "Stop the loop (interrupt.requested) on the first writer error, as ScanSession._filed does."
+   },
+   {
+    "item": "P24 (2): no free-space check before a roll",
+    "why": "Needs a size model and a threshold, which are decisions.",
+    "proposal": "Before a roll, compare shutil.disk_usage of the library and rolls volumes with frames x an estimate from the pass's pixel count (raw bytes + decode, uncompressed upper bound); refuse below 1x, warn below 2x; the session re-checks before each frame."
+   },
+   {
+    "item": "P24 (3) / GUI1-19: failed filing has no dialog, the roll ends 'stopped ... as asked', and before-correction prescans log 'could not be filed: None'",
+    "why": "Session subsystem: the window cannot tell a failed filing from file_entry=False without a structured event, and the final text is the session's.",
+    "proposal": "Session emits Event('unfiled', done=seq, total=number, text=error) only for real failures (never for file_entry=False) and ends the roll 'stopped: picture N could not be filed (<why>)'; the window shows a non-modal error scheduled via after, never from inside the pump."
+   },
+   {
+    "item": "P24 (4): a reindex failure after a complete entry is reported as a failed filing",
+    "why": "Library subsystem (library.save / reindex).",
+    "proposal": "Write index.json atomically and treat a reindex failure as a warning after the entry is complete."
+   },
+   {
+    "item": "P24 (5): no persisted session log",
+    "why": "Location and retention are decisions.",
+    "proposal": "Tee every _say line to library/logs/<UTC start>.log (append, flush per line), created on first write."
+   },
+   {
+    "item": "GUI1-17: Force abort leaves the RPS7200_DEBUG spool unfiled",
+    "why": "Session/direct subsystem (_debug_flush is called only from DirectScanner.close).",
+    "proposal": "Call a public flush from the session's finally when dead, after the writer finishes, and log the spool path on failure."
+   },
+   {
+    "item": "GUI2-13: a reopened walk loses the link from each reference prescan to its library entry",
+    "why": "The record belongs in survey.json (session subsystem: on_filed for walk prescans).",
+    "proposal": "Session records each walk prescan's entry id in its survey record; read_survey reads it; a fallback can join roll_membership(kind=prescan) by folder, as the Export join now does for frames."
+   },
+   {
+    "item": "GUI2-A2: entry paths recorded relative to the window's working directory",
+    "why": "Trade-off: absolute paths break when the library moves, relative ones when the cwd changes; belongs to session/library.",
+    "proposal": "Record entry ids and resolve them against the library root when read -- the new Export join already does this."
+   },
+   {
+    "item": "GUI1-20 (4): a manual exposure factor is shown unclamped while Settings.scaled clamps it to 100..65535",
+    "why": "The window does not know the base exposure the factor multiplies, so it cannot compute the clamp.",
+    "proposal": "Show the effective values after inquiry/metering, or bound the factor field to what the device's defaults allow."
+   },
+   {
+    "item": "GUI1-08 / GUI1-11 (UI parts): 7200 still on the dpi ladder; the sheet's IR box is not greyed by its film",
+    "why": "UI choices; the harmful path (film moving before the refusal) is closed by the up-front refusal, and a test asserts 7200 is on the ladder as the INQUIRY maximum.",
+    "proposal": "Label 7200 'raw only -- not correctable' on the ladder, and grey the sheet's IR box by the sheet's film as _sync_infrared does in the main window."
+   },
+   {
+    "item": "GUI2-27 (rest): sheet reopened during its roll is still editable",
+    "why": "Making it read-only while its roll runs is a behaviour change of the sheet; the mismatch is now said in the log.",
+    "proposal": "Open a commissioned sheet read-only while its roll runs, with a banner saying edits reach the next commission."
+   },
+   {
+    "item": "GUI2-24 (second half): 'rotate all' redraws the strip and shows each frame once per frame",
+    "why": "Performance only; the memory part is gone with the one-read-at-a-time fix.",
+    "proposal": "Have _orient skip _show/_redraw_strip when called from _all and redraw once at the end."
+   },
+   {
+    "item": "GUI2-15 (rest): the 1.1 s per fine move figure is a local constant",
+    "why": "There is no home for it in DirectScanner or the session to take it from.",
+    "proposal": "Measure the per-command time and give it a home beside FORWARD_FRAME_S in session.py; the window then imports it."
+   },
+   {
+    "item": "P19 minor / P20 minor",
+    "why": "tools/scan_roll.py --approved reads survey.json with bare json.loads (CLI subsystem); record['prescan'] names the file before the writer writes it, and the manifest's top-level rotation is the start-of-walk value (session subsystem).",
+    "proposal": "Use read_manifest in scan_roll --approved; set record['prescan'] from the writer's answer."
+   },
+   {
+    "item": "GUI2-30 (info): _propose_positions and roll_line used only by tests",
+    "why": "No behaviour; info-level.",
+    "proposal": "Move those tests onto take_readings/_open_sheet and drop the helpers."
+   }
+  ],
+  "tests": "All required commands pass on 7cf599c. Main suite (.venv python -m pytest -q -p no:cacheprovider --no-cov tests/): 1327 passed, 32 skipped, 9 deselected. RPS7200_NO_TIFFFILE=1: 1261 passed, 98 skipped, 9 deselected. GUI suite (xvfb-run, guienv, -n 2 tests/test_gui.py): 433 passed (base: 390). ruff check .: all checks passed. ty check --exclude tests/ --exclude tools/, run exactly as given: 51 diagnostics, all unresolved imports (numpy, PIL, tifffile, libusb_package). They come from the environment, because the worktree has no .venv, and the base shows the same 51. With --python /home/user/reflecta-rps-7200/.venv: all checks passed. Every behaviour change has a test that fails with tools/gui.py (or rps7200/settings.py) put back to HEAD. Nothing sent to the device changed, so PROTOCOL_REVISION was not bumped. Roll(only=...) for a resumed roll uses the sheet's existing seek and advance path. No hardware was touched."
+ }
+}
