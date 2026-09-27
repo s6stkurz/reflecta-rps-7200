@@ -1828,6 +1828,24 @@ def test_an_offset_inside_the_unreachable_hole_becomes_zero():
     assert gui.snap_offset(-0.10) == 0.0
 
 
+def test_a_position_that_is_not_a_number_is_no_move_at_all(tmp_path):
+    """`min(M, nan)` is M, so a NaN offset -- a hand-edited approved.json or
+    gui-settings.json, json reads one happily -- snapped to the largest
+    forward move there is, 88.8 units, and was held to without a word."""
+    assert gui.snap_offset(float("nan")) == 0.0
+    assert gui.snap_offset(float("inf")) == 0.0
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text(json.dumps({
+        "frames": [{"number": 2, "offset_mm": float("nan")},
+                   {"number": 3, "offset_mm": 0.5}]}), encoding="utf-8")
+    offsets = gui.read_approved(folder)[0]
+    assert offsets == {3: 0.5}
+    state = gui.ScannerGui._clean_sheet_state(
+        {"offsets": {"2": float("nan"), "3": 0.5, "4": "inf"}})
+    assert state["offsets"] == {3: 0.5}
+
+
 def test_a_snapped_offset_can_always_be_planned_again():
     """The adjuster stores what snap_offset returns and the mover plans from
     it later. A value the planner would refuse on the way back is a number

@@ -104,6 +104,14 @@ def test_sides_that_disagree_and_the_empty_gate_refuse():
     assert centre.decide(_edges(lstate=NO_FILM), 428, fw).action == "refuse"
 
 
+def test_a_side_with_no_finite_edge_moves_nothing():
+    """Carried through, a NaN edge came out of the sheet's snap as the
+    largest forward move the window allows."""
+    fw = centre.frame_columns(428)
+    dec = centre.decide(_edges(left=float("nan")), 428, fw)
+    assert dec.action == "refuse" and dec.units is None
+
+
 def test_the_frame_is_wider_than_the_aperture():
     """Measured from prescans of one frame: 435.6 columns against 428."""
     assert centre.frame_columns(428) == pytest.approx(435.6, abs=0.1)

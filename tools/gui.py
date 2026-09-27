@@ -2639,8 +2639,11 @@ class ScannerGui:
                 continue
             for key, value in section.items():
                 try:
-                    out[name][int(key)] = cast(value)
-                except (TypeError, ValueError):
+                    kept = cast(value)
+                    if name == "offsets" and not math.isfinite(kept):
+                        continue            # NaN is a mistake, not a position
+                    out[name][int(key)] = kept
+                except (TypeError, ValueError, OverflowError):
                     continue
         # Only the five words the ensemble and the sheet actually use. A
         # hand-edited file naming anything else would reach a caption and a
@@ -5490,7 +5493,14 @@ def read_approved(folder, legacy: int = 0, say=None):
         # untouched frame's `source` is not read as his either.
         placed = bool(record.get("offset_mm")) or bool(record.get("as_walked"))
         if placed:
-            offsets[number] = float(record.get("offset_mm") or 0.0)
+            # `bool(nan)` is True and json reads NaN; a position that is not a
+            # number is no decision, not the largest move there is.
+            try:
+                value = float(record.get("offset_mm") or 0.0)
+            except (TypeError, ValueError):
+                value = math.nan
+            if math.isfinite(value):
+                offsets[number] = value
         # `is not None` rather than truthiness: an explicit zero is a decision
         # here, and a file written before this existed has no key at all rather
         # than a zero.
@@ -5924,7 +5934,12 @@ def snap_offset(millimetres: float) -> float:
     `MAX_CORRECTION_PARAM`, which is `MAX_TRAVEL_MM`, so the planner is never
     asked for a distance it would refuse.
     """
-    want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, float(millimetres)))
+    want = float(millimetres)
+    if not math.isfinite(want):
+        # `min(M, nan)` is M, so a NaN -- a hand-edited file, a detector that
+        # measured nothing -- became the largest forward move there is.
+        return 0.0
+    want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, want))
     sign = -1.0 if want < 0 else 1.0
     try:
         plan = plan_nudges(want)

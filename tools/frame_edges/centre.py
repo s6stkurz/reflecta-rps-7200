@@ -124,6 +124,12 @@ def decide(result: EdgeResult, width: int, frame_width: float,
         ulo, uhi = min(lo, hi), max(lo, hi)
     else:
         return Decision("refuse", None, why="no side places the frame")
+    if not np.isfinite(u):
+        # A side that measured nothing finite places nothing; carried on, a
+        # NaN became the largest forward move the window allows.
+        return Decision("refuse", None, left_units=per["left"],
+                        right_units=per["right"],
+                        why="a side measured no finite position")
     u += bias_units
     ulo += bias_units
     uhi += bias_units
