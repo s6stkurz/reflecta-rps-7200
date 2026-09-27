@@ -15,6 +15,7 @@ import pytest
 
 from conftest import FakeTransport
 from rps7200.direct import DirectScanner
+from rps7200.protocol import ShadingUnavailable
 from rps7200.shading import ShadingReference
 
 
@@ -111,12 +112,12 @@ def test_reuse_falls_back_to_calibrating_when_the_file_is_absent(tmp_path):
 def test_a_calibration_that_yields_nothing_says_so(tmp_path):
     s = scanner()
     s.calibrate_shading = lambda **kw: {"reference": None, "bytes_drained": 0}
-    result = s.ensure_shading(tmp_path / "shading.npz", reuse=False)
-    assert result["reference"] is None
     # It used to promise raw scans, and the next scan calibrated inside itself
-    # instead. Now a corrected scan is refused until a calibration succeeds.
-    assert "no usable shading reference" in result["summary"]
-    assert "refused" in result["summary"]
+    # instead. Now a corrected scan is refused until a calibration succeeds --
+    # and the calibration itself fails, rather than a summary line going by.
+    with pytest.raises(ShadingUnavailable, match="refused"):
+        s.ensure_shading(tmp_path / "shading.npz", reuse=False)
+    assert not (tmp_path / "shading.npz").exists()
 
 
 # --- capture_record ---------------------------------------------------------

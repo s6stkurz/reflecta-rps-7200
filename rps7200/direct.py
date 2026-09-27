@@ -786,7 +786,11 @@ class DirectScanner:
             result["reference"].save(folder / "shading.npz")
         import hashlib
         record = {
-            "measured_utc": (self._shading_origin or {}).get("measured_utc"),
+            # The calibration's own time: one that was not taken leaves the
+            # origin of the reference before it, which is another day's.
+            "measured_utc": (result.get("measured_utc")
+                             or (self._shading_origin or {}).get("measured_utc")),
+            "incomplete": result.get("incomplete"),
             "resolution": result.get("resolution"),
             "pixels_per_line": result.get("pixels_per_line"),
             "bytes_per_line": result.get("bytes_per_line"),
@@ -822,6 +826,10 @@ class DirectScanner:
         asks for correction is refused rather than calibrated for (see `scan`);
         one taken with ``shading=False`` comes back raw, and striped: the
         scanner never corrects its own output.
+
+        A calibration that comes back incomplete (`calibration_shortfall`)
+        raises `ShadingUnavailable` once its bytes are archived, leaving the
+        reference in force and the cache as they were.
         """
         path = Path(path)
         if skip:
@@ -856,6 +864,22 @@ class DirectScanner:
             archive = self.archive_calibration(result, path.parent)
         except OSError as exc:
             self._log(f"could not keep the calibration's bytes ({exc})")
+        if result["reference"] is None:
+            # Kept, and said, but neither cached nor put in force: see
+            # `calibration_shortfall`. Raised, so a window job fails and a
+            # tool stops, rather than a summary line going by while the
+            # reference in force is still the one from before.
+            raise ShadingUnavailable(
+                "the calibration came back incomplete ("
+                + (result.get("incomplete") or "no usable lines")
+                + "), so no reference was taken from it and the cache was left "
+                "as it was. "
+                + ("The reference in force before it still is"
+                   if self._shading is not None else
+                   "A corrected scan will be refused until a calibration "
+                   "succeeds")
+                + (f"; its bytes are in {archive}." if archive is not None
+                   else "."))
         if archive is not None and self._shading_origin is not None:
             self._shading_origin["archive"] = str(archive)
         # A cache that cannot be written costs the cache, not the calibration:
@@ -869,12 +893,7 @@ class DirectScanner:
                       "it is still in force for this session")
         drained = result["bytes_drained"] / 1e6
         summary = f"  {drained:.2f} MB in {duration:.0f}s"
-        summary += (
-            (f", saved {saved}" if saved else ", not cached")
-            if result["reference"] is not None
-            else " -- no usable shading reference; a corrected scan will be "
-                 "refused until a calibration succeeds"
-        )
+        summary += f", saved {saved}" if saved else ", not cached"
         if archive is not None:
             summary += f"; its bytes are in {archive}"
         return {
@@ -2307,7 +2326,14 @@ class DirectScanner:
                 except NoDataYet:
                     time.sleep(0.05)
                     continue
-                except (EndOfData, ScanReadError):
+                except EndOfData:
+                    # "No more lines", ASC 0x20: the only refusal that says
+                    # the pass is over. Any other -- NOT READY, a one-shot
+                    # UNIT ATTENTION, a sense that could not be read -- is not
+                    # the scanner finishing, and used to be taken for it: the
+                    # device was left mid-calibration and driven on, and the
+                    # blocks read so far became the reference. It now leaves
+                    # this loop as a lost read does, below.
                     self._log(f"  scanner finished after {blocks} blocks")
                     ended = True
                     break
@@ -2345,24 +2371,34 @@ class DirectScanner:
         stopper = getattr(self.t, "stop", None)
         commands = stopper() if callable(stopper) else None
         data = b"".join(collected)
+        measured_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         # The point of the pass. The scanner measured its per-column response
         # and handed it back; it does not apply it, so a calibration whose
         # result is discarded genuinely changes nothing in the image.
-        self._shading = calculate_shading(data, width)
-        self._shading_origin = {
-            "action": "calibrated", "resolution": int(resolution),
-            "width": int(width),
-            "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        if self._shading is None:
-            self._log("calibration returned no usable shading lines")
-        else:
+        reference = calculate_shading(data, width)
+        shortfall = self.calibration_shortfall(reference)
+        if shortfall is None and reference is not None:
+            self._shading = reference
+            self._shading_origin = {
+                "action": "calibrated", "resolution": int(resolution),
+                "width": int(width), "measured_utc": measured_utc,
+            }
             self._ccd_mask = mask
             self._log(
                 f"shading reference: {width} columns, channels "
-                f"{self._shading.channels}, means "
-                f"{[round(self._shading.mean[c], 1) for c in self._shading.channels]}"
+                f"{reference.channels}, means "
+                f"{[round(reference.mean[c], 1) for c in reference.channels]}"
             )
+        else:
+            # Not taken, and nothing it would have replaced is lost: a
+            # calibration that ended after its dark lines used to become the
+            # session's reference -- the dark level averaged as a one-point
+            # "light" one, cached over the good file for every later --reuse
+            # -- and one that ended with no lines at all left the session
+            # none, whatever it had before.
+            reference = None
+            self._log(f"calibration incomplete after {blocks} blocks: "
+                      f"{shortfall}; no reference was taken from it")
 
         # The calibration pass moved the carriage, so a READ STATE taken before
         # it no longer says where the carriage is. See `carriage_record`.
@@ -2370,7 +2406,10 @@ class DirectScanner:
         return {
             "shading_calibration": True,
             "data": data if keep_data else None,
-            "reference": self._shading,
+            "reference": reference,
+            # Why `reference` is None, when it is; None for a whole one.
+            "incomplete": shortfall,
+            "measured_utc": measured_utc,
             "ccd_mask": mask,
             "bytes_per_line": bpl,
             "pixels_per_line": width,
@@ -2379,6 +2418,29 @@ class DirectScanner:
             "resolution": int(resolution),
             "commands": commands,
         }
+
+    @staticmethod
+    def calibration_shortfall(reference: ShadingReference | None) -> str | None:
+        """Why a calibration's lines cannot stand as a reference, or None.
+
+        The pass is two phases, unlit and then lit, in every channel:
+        measured here at ~170-200 counts against ~47,000, 160 lines in 40
+        blocks (`docs/shading-calibration-plan.md`). Nothing else is known
+        well enough to hold it to -- the descriptor declares 80 lines, half
+        of what arrives -- but that much is, and a pass that stopped short
+        stopped in the dark phase, the one that comes first. So each visible
+        channel must be there with both. Infrared is not asked: what its
+        lines hold has not been measured.
+        """
+        if reference is None:
+            return "no calibration lines it could read"
+        for channel, name in enumerate(("red", "green", "blue")):
+            if channel not in reference.ref:
+                return f"no {name} lines"
+            if channel not in reference.dark:
+                return (f"{name} came back as one phase, not the dark and "
+                        "the lit a whole calibration returns")
+        return None
 
     # -- exposure ----------------------------------------------------------
 
