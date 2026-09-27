@@ -2379,16 +2379,23 @@ class DirectScanner:
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
+                # From the last block, not from the first read: the pass is
+                # given up only once it has gone silent, as `read_planes`
+                # gives up a pass. Counted from the start, a calibration still
+                # sending at 300 s was abandoned mid-read -- the wedge -- for
+                # being slow rather than for having stopped.
+                deadline = time.monotonic() + timeout
             if not ended:
-                # The deadline ran out with the scanner still sending. Building
-                # a reference from what arrived would be a partial calibration
-                # passed off as a whole one, and the read it leaves is an
-                # abandoned one.
-                self._mark_suspect(f"the calibration was still sending after "
-                                   f"{timeout:.0f} s ({blocks} blocks)")
+                # The scanner went silent without saying it had finished.
+                # Building a reference from what arrived would be a partial
+                # calibration passed off as a whole one, and the read it
+                # leaves is an abandoned one.
+                self._mark_suspect(f"the calibration sent nothing for "
+                                   f"{timeout:.0f} s after {blocks} blocks")
                 raise ScanReadError(
-                    f"calibration did not finish within {timeout:.0f} s "
-                    f"({blocks} blocks read); no reference was built from it")
+                    f"calibration went {timeout:.0f} s without a block after "
+                    f"{blocks} and never said it had finished; no reference "
+                    "was built from it")
             # This calibration's own width, not the module constant: the two
             # only coincide because every calibration before this one ran at
             # 3600 dpi. A wider pass needs a wider mask read to match.

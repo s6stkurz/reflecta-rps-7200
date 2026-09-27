@@ -185,3 +185,44 @@ def test_a_mask_refused_after_a_whole_calibration_costs_only_the_mask(
     folder = next(p for p in (tmp_path / "calibration").iterdir() if p.is_dir())
     assert (folder / "data.bin").read_bytes() == b"".join(DARK + LIT)
     assert not (folder / "ccd_mask.bin").exists()
+
+
+class Slow(CalibratingTransport):
+    """Each block after `quiet` READs answered "not yet" -- 0.05 s apart in
+    the loop, so 200 of them are 10 s of silence."""
+
+    def __init__(self, blocks, quiet, ends_with=END_OF_DATA):
+        super().__init__(blocks, ends_with)
+        self.quiet, self.waited = quiet, 0
+
+    def command(self, command, *args, **kwargs):
+        from rps7200.usb_transport import NoDataYet
+
+        if command[0] == SCSI_READ and kwargs.get("read_size") == BLOCK \
+                and self.blocks and self.waited < self.quiet:
+            self.waited += 1
+            raise NoDataYet("not yet")
+        if command[0] == SCSI_READ and kwargs.get("read_size") == BLOCK:
+            self.waited = 0
+        return super().command(command, *args, **kwargs)
+
+
+def test_a_slow_calibration_still_sending_is_not_abandoned(monkeypatch):
+    """Forty blocks 10 s apart is 400 s, past the 300 s the read was given
+    from its start: it was given up mid-read -- an abandoned read -- while
+    blocks were still arriving. The time now runs from the last block."""
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = DirectScanner(transport=Slow(DARK + LIT, quiet=200), debug=False)
+    s._own_transport = False
+    result = s.calibrate_shading()
+    assert result["reference"] is not None and s.suspect is None
+
+
+def test_a_calibration_that_goes_silent_is_still_given_up(monkeypatch):
+    """Silence for the whole timeout, with no "no more lines", is a stall."""
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    s = DirectScanner(transport=Slow(DARK + LIT, quiet=10 ** 6), debug=False)
+    s._own_transport = False
+    with pytest.raises(ScanReadError, match="without a block"):
+        s.calibrate_shading()
+    assert s.suspect is not None
