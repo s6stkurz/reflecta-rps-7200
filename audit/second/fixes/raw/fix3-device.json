@@ -1,0 +1,215 @@
+{
+ "type": "result",
+ "key": "v2:8dc753501f8db700a50eed33985db98cec87278b8f1b36dae8acf7bd85af5478",
+ "agentId": "ab50ec873933dd015",
+ "result": {
+  "branch": "fix3/device",
+  "commits": [
+   "284a727 End a calibration only on \"no more lines\", and never adopt half of one (audit TP-01)",
+   "57d0c87 A SCAN whose answer never came marks the device (audit TP-04)",
+   "b2c26b2 Send a suspect device nothing that configures a pass, and start no job on it (audit TP-05, P14)",
+   "0eb9692 Give a pass's bulk read and a mid-payload pause the pass's own patience (audit P16)",
+   "ba09010 scan.py: a Ctrl-C stops before the next pass, whichever pass that is (audit CLI-02)",
+   "1500c2e Take SIGTERM and a closed terminal as Ctrl-C, and the window's too (audit SR-19, P14)",
+   "249e31d verify_protocol and filing_load_test: Ctrl-C between passes, results kept per stage (audit TP-11, TP-22)",
+   "c1470e1 scan.py: keep hold()'s bracket check beside the one before each pass",
+   "3848243 The tools calibrate only once told the film is in; byte 8 is said and kept (audit TP-09, P17, TP-A3)",
+   "1e24ce1 A mask refused after a finished calibration costs the mask, not the calibration (audit TP-31)",
+   "c3a2f1f Let the decode tests' read_lines stand-ins take the bulk timeout",
+   "35c3906 Give up a calibration's read once it goes silent, not at 300 s from its start (audit TP-30)",
+   "c29bed1 An empty READ STATE before a pass or a calibration is polled past (audit TP-16)",
+   "42a7341 A frame move counts only once the counter leaves where it was (audit TP-29)",
+   "88c6d62 A READ that returns fewer bytes than its lines is a refused read (audit TP-15)",
+   "9906a6c Take RPS7200_MAX_WINDOW only as a window the device can serve (audit TP-18)",
+   "9d57323 Take out the unused ways in to an IEEE1284 RESET (audit TP-17)",
+   "6d273cb A move of several frames is one command a frame (audit TP-28)",
+   "834d15f Say it when a failed bulk read clears the endpoint's halt (audit TP-A2)",
+   "c4ce418 Say what the device is sent where the comments said otherwise (audit TP-13, TP-23, TP-25, TP-26)",
+   "5478591 Keep the INQUIRY reply whole in every entry, not only its parsed fields (audit TP-A4)"
+  ],
+  "done": [
+   {
+    "item": "TP-01 (high): a calibration ended by any refused read, then adopted and cached as a partial reference",
+    "change": "rps7200/direct.py calibrate_shading: only EndOfData (ASC 0x20) ends the read loop. Any other refused read leaves the loop like a lost read, so the device is marked suspect and the error raised. A new static method, calibration_shortfall(), accepts a reference only when R, G and B each came back in both phases (dark and lit). Otherwise the reference and origin already in force are kept, and the result carries 'incomplete'. ensure_shading still archives the calibration's bytes, now with the calibration's own measured_utc and the reason. It no longer caches such a calibration: it raises ShadingUnavailable, so a window job fails and a tool stops. Tested in tests/test_calibration_end.py, with a transport that answers the calibration the way the device does, running the real calibrate_shading. One existing test in tests/test_scanner_api.py was updated because this path now raises."
+   },
+   {
+    "item": "TP-04: a transport error on START SCAN escaped the suspect guard",
+    "change": "start_scan: anything except a CheckCondition from the SCAN command (a status timeout, BUSY past the deadline, Ctrl-C) now marks the device suspect before it is raised. This covers both _read_pass and calibrate_shading. Tests are in tests/test_device_suspect.py."
+   },
+   {
+    "item": "TP-05 / P14 (1)(2): a suspect device still received about 14 configuration commands, and the session kept dispatching jobs to it",
+    "change": "scan() now refuses before its first command (after the pre-flight checks, before metering). auto_exposure refuses before its gain read. set_gain_offset refuses too, since it is the one write callers make outside a pass. ScanSession._dispatch refuses every job while scanner.suspect is set. The demo borrows DirectScanner._refuse_if_suspect rather than retyping it (one line in rps7200/demo.py). Tests confirm a suspect device is sent nothing and that no job starts."
+   },
+   {
+    "item": "P16 (2): the bulk timeout and the mid-payload pause stayed at 120 s, below the untied-infrared floor",
+    "change": "read_planes passes its idle timeout (287 s for an untied IR pass) to each READ as timeout_ms. usb_transport._read_payload now waits out a mid-payload pause for max(120 s, timeout_ms). Every other pass and command keeps its old timeouts."
+   },
+   {
+    "item": "CLI-02 (high): scan.py ignored Ctrl-C through calibration, metering and a --no-library bracket",
+    "change": "tools/scan.py: once calibration is done, the session's scan is wrapped in a check made before every pass. Metering probes and bracket passes all go through scan, so after the first Ctrl-C no further pass starts, whatever the library setting. A stop exits 130 and files what was taken. hold()'s own check is kept (c1470e1) to avoid a conflict with the filing branch. Tests cover a Ctrl-C during calibration, during metering, and in an unfiled bracket."
+   },
+   {
+    "item": "SR-19 (high) and P14 (4): Ctrl-C, SIGTERM or a closed terminal killed the window's threads mid-read; SIGTERM killed the tools; scan_roll's comment claimed SIGTERM was handled",
+    "change": "rps7200/console.py DeferredInterrupt now also handles SIGTERM, SIGHUP and SIGBREAK where the platform has them. Its message can no longer raise when stderr is gone. A new optional on_request callback runs on the first signal. tools/gui.py: the new ScannerGui.on_interrupt does Quit's 'stop after the frame in flight, then quit' without asking anyone, and main() runs mainloop under DeferredInterrupt. A second signal aborts. The scan_roll comment and a CLAUDE.md line now say what is handled."
+   },
+   {
+    "item": "TP-11 (the tools left to this subsystem): Ctrl-C abandoned the read in verify_protocol and filing_load_test",
+    "change": "filing_load_test checks before each pass and exits 130 with no verdict. verify_protocol checks between stages, because a stage's moves and passes form one measurement. The probes and uniformity are handled on fix3/library."
+   },
+   {
+    "item": "TP-22 (part): verify_protocol's docstring claimed vendor bytes only, and results were written only at the end",
+    "change": "The docstring now names the stages that send non-vendor payloads (8a, 12, 14, 15). results.json is written after every stage through session.write_manifest (write beside, then rename with retry). Earlier runs' entries are kept. Tests are in tests/test_verify_protocol.py."
+   },
+   {
+    "item": "TP-09 / P17 (1)(3) / TP-A3: CLI calibration with no film check; byte 8 ignored; scan()'s note named byte 6",
+    "change": "tools/scan.py and tools/scan_roll.py take a new --film-loaded flag. When a calibration would run, they ask at a terminal and refuse (naming the flag) where nobody can answer, before the device opens. The question is in console.film_unconfirmed. calibrate_shading logs a note when byte 8 says the transport is empty and records media_loaded in its result and in calibration.json. It does not refuse on it. scan()'s media note now reports byte 8. CLAUDE.md says what the tools ask. Test helpers that calibrate now pass --film-loaded. Tests are in tests/test_film_loaded.py."
+   },
+   {
+    "item": "TP-31: a CCD-mask read refused after a finished calibration threw the whole calibration away",
+    "change": "A ScanReadError on the calibration's COPY is now logged, and the calibration goes on without the mask. The reference is taken and data.bin is archived without ccd_mask.bin; each pass still reads its own mask."
+   },
+   {
+    "item": "TP-30: the calibration deadline was an absolute 300 s",
+    "change": "The 300 s now count from the last block received, so a calibration that keeps sending is read to its end. One silent for 300 s without the end-of-data answer is still given up and marked suspect."
+   },
+   {
+    "item": "TP-16: an empty READ STATE (NoDataYet) aborted scan() and calibration before START SCAN",
+    "change": "Both opening READ STATE polls now treat NoDataYet as 'not yet' and poll again. The media note is skipped when its READ STATE does not answer. The wait_ready half was refuted by the second reader and is unchanged."
+   },
+   {
+    "item": "TP-29: a frame move was counted when the position before it could not be read",
+    "change": "In _whole_frames, an unread starting position is asked for up to three more times; failing that, the last READ STATE that answered is used. Only status queries are added, and only when one went unanswered."
+   },
+   {
+    "item": "TP-15: a READ that returned no data was counted as lines",
+    "change": "read_lines now raises ScanReadError unless the reply is exactly lines x bytes_per_line. In a pass or a calibration that means a read given up part way, so the device is marked suspect."
+   },
+   {
+    "item": "TP-18: RPS7200_MAX_WINDOW was not validated",
+    "change": "usb_transport._window_from accepts only a whole number from 1 to 32768. Anything else is reported on stderr and the device's 32 KB (the new DEVICE_WINDOW constant) is used, so a bad value no longer breaks import. Transport refuses an out-of-range max_window before touching libusb."
+   },
+   {
+    "item": "TP-17 (transport half): reset() and open(reset=True) offered IEEE1284 RESET",
+    "change": "Transport.open() no longer takes a reset parameter, and reset() is gone. The IEEE1284_RESET constant stays, marked as never sent. finish_scan's docstring now says STOP SCAN is never sent (it previously called it 'reserved'). stop_scan itself is removed on fix3/capture (7fb75d4) and left to that branch."
+   },
+   {
+    "item": "TP-28: advance/retreat(steps) put the step count in the value byte",
+    "change": "steps > 1 is now that many single-frame moves, each using the vendor's payload with value 1 and each waited for on the counter. steps < 1 is refused. A one-frame move sends exactly what it did before."
+   },
+   {
+    "item": "TP-A2: an automatic clear_halt (CLEAR_FEATURE) was sent unrecorded",
+    "change": "The UsbError from a failed bulk read now says whether the endpoint's halt was cleared, or whether clearing it failed. A code comment marks it as a departure from the vendor. Whether to send it at all is left as a decision (below)."
+   },
+   {
+    "item": "TP-13 / TP-23 / TP-25 / TP-26 (doc mismatches)",
+    "change": "Comments and docs only, plus one printed line: nothing sent changes. session_start's docstring now states the SLIDE it actually sends (00 01 00 00, not the vendor's 00 01 00 04) and that 0xE7 is an invalid opcode. The protocol.py and direct.py comments now give the transport law in force, param + 1.84 units (units_for_param(1) = 2.84); verify_protocol's printout now shows COMMAND_UNITS. The INFRARED_FLOOR_S comments in direct.py and session.py are corrected, and the 227 s is named INFRARED_FLOOR_MAX_S (value unchanged). scan()'s docstring no longer claims the vendor's order throughout, and docs/protocol.md section 8 lists the driver's pass beside the vendor's."
+   },
+   {
+    "item": "TP-A4: the INQUIRY reply was kept only as parsed fields",
+    "change": "Inquiry has a new raw_hex field, filled by DirectScanner.inquiry(), so every entry's device record now carries the whole reply. Tested in tests/test_inquiry_record.py."
+   },
+   {
+    "item": "Knock-on fix",
+    "change": "c3a2f1f: two read_lines stand-ins in tests/test_decode.py now accept the new timeout_ms keyword."
+   }
+  ],
+  "left": [
+   {
+    "item": "TP-02: a pass the device ends early with ASC 0x20 is accepted as complete and not marked suspect",
+    "why": "Recording the short read (lines_declared and short_read in meta) is done on fix3/capture (25d120d). What remains is whether such a pass should also mark the device suspect, and that is a decision.",
+    "proposal": "Stefan decides whether an early end of data mid-pass means the device may still hold lines. Proposal: keep accepting the pass but fail the job and flag the entry when short_read is true, and mark the device suspect only if the short-read record from a real device shows lines arriving after the 0x20. That needs a hardware observation first."
+   },
+   {
+    "item": "TP-08: a scalar manual exposure also scales the infrared exposure ('3' and '3 3 3' send different WRITE GAIN/OFFSET payloads)",
+    "why": "Any fix changes what the device is sent in an operator-chosen mode, and PROTOCOL_REVISION would have to be bumped.",
+    "proposal": "Treat a scalar as applying to R, G and B only, padding infrared with 1.0 as the list form already does, so the IR exposure stays the device's own 7745 like the vendor's. Bump PROTOCOL_REVISION to 7 and say so in the window and the CLI help. The alternative is to refuse a scalar when --ir is on."
+   },
+   {
+    "item": "TP-12: the calibration loop re-reads and re-writes gain/offset on every empty poll",
+    "why": "Moving the write to after each successful block, as the vendor does, changes the calibration's command sequence in normal operation, and that sequence has completed calibrations on the hardware.",
+    "proposal": "Try it once on the hardware with Stefan: write gain/offset only after each successful block, read the sense when set_gain_offset is refused, bump PROTOCOL_REVISION, and compare the calibration's commands and duration with a capture."
+   },
+   {
+    "item": "TP-03: a READ payload is dropped on a trailing CHECK, and a trailing FAIL/ERROR is taken as success",
+    "why": "There is no evidence the device ever reports CHECK, FAIL or ERROR after a full data phase. Either change (keeping the payload, or failing the pass) turns an unobserved case into a new behaviour.",
+    "proposal": "First record the trailing status of every image READ in the command log, then decide from a real roll's logs. If a trailing CHECK is ever seen, return the payload inside a CheckCondition subclass and let read_planes keep the lines and act on the sense."
+   },
+   {
+    "item": "read_planes reads with retries=1 (P14 (6)): a one-shot UNIT ATTENTION mid-pass abandons the pass",
+    "why": "Retrying sends another READ after a refusal. That is safe only when nothing was transferred, and how the device behaves there is unmeasured.",
+    "proposal": "Allow one retry when the CHECK came on the command status (before any data phase) and its sense is not end-of-data. Keep the current behaviour for a trailing CHECK. This needs Stefan's agreement to run on hardware."
+   },
+   {
+    "item": "TP-A2 (the sending half): clear_halt runs automatically inside every failed bulk read",
+    "why": "Whether to send a CLEAR_FEATURE the vendor never sends, into a device a pass just failed in, is a trade-off: it may be what keeps control transfers alive afterwards.",
+    "proposal": "Leave it on (it is now reported in the error) until a failed pass on the hardware shows whether control transfers still work without it; if they do, move it to an explicit recovery step."
+   },
+   {
+    "item": "TP-13 (the sending half): session_start sends SLIDE 00 01 00 00, not the vendor's 00 01 00 04, and moves the film unrecorded",
+    "why": "Choosing a value, or dropping the move, changes what the probes send.",
+    "proposal": "Send the vendor's 00 01 00 04, or drop the SLIDE altogether, and have each probe log the move. Only probes call session_start, so bump PROTOCOL_REVISION only if a normal-operation path starts using it."
+   },
+   {
+    "item": "TP-27: two different CAL-INFO prepare payloads (95 00 00 00 00 00 and 95 00 02 00 00 00), and the calibration sends the prepare twice",
+    "why": "Settling it needs the captures (captures/*.pcapng are not in this checkout), and the fix changes the calibration's commands.",
+    "proposal": "Run tools/parse_capture.py on the two calibrating captures, send exactly the vendor's prepare, once, and bump PROTOCOL_REVISION."
+   },
+   {
+    "item": "TP-20: the BUSY status loops poll port 0x84 with no sleep",
+    "why": "Adding a sleep changes the cadence of what is sent in normal operation. No harm has been shown (info severity).",
+    "proposal": "Measure the vendor's BUSY polling cadence in the captures and match it with a sleep in _wait_not_busy and _command's BUSY loop, as a protocol change."
+   },
+   {
+    "item": "TP-23 (probe half): verify_protocol stage 15 sizes its runaway guard and its restore step with 1.5724, and stage 16 uses 1.948",
+    "why": "Deriving them from COMMAND_UNITS changes the params the probe sends. The printout is fixed.",
+    "proposal": "Derive them from rps7200.protocol.COMMAND_UNITS and units_for_param the next time stage 15 or 16 is run with Stefan's agreement."
+   },
+   {
+    "item": "TP-22 (flag half): stages 12, 14 and 15 send non-vendor payloads with no opt-in",
+    "why": "The docstring now names them. Whether to gate them behind a flag is a UI choice.",
+    "proposal": "Require --invented-payloads for stages 8a, 12, 14 and 15, refusing before the device opens."
+   },
+   {
+    "item": "TP-09 (refusal half): calibrating when byte 8 says the transport is empty",
+    "why": "Byte 8 was measured once and nothing corroborates it; CLAUDE.md says READ STATE is not a substitute for asking. The tools now ask, and the calibration logs and records the flag.",
+    "proposal": "Keep asking. Once a few calibrations have recorded media_loaded next to Stefan's answer, decide whether byte 8 = 1 should refuse unless --film-loaded was given."
+   },
+   {
+    "item": "P16 (1) (refusal half): neither tool refuses a run expected to exceed 8 minutes in the foreground",
+    "why": "Both tools now print an estimate and a warning (fix3/filing, c67699d). Refusing without an opt-in is a UI choice.",
+    "proposal": "Refuse when the slow-end estimate exceeds 8 minutes and stdin is not a TTY, unless given --background-ok."
+   },
+   {
+    "item": "CLI-02 (exit-code half): scan_roll exits 0 when stopped by Ctrl-C, where scan.py exits 130",
+    "why": "fix3/filing rewrites the exact return line concerned; changing it here would conflict.",
+    "proposal": "After integration, return 130 from scan_roll.main() when interrupt.requested() and nothing else failed."
+   },
+   {
+    "item": "TP-19: the command log lists every refused NoDataYet READ and none of the image READs",
+    "why": "It changes _CommandLog's record format, which fix3/capture (+142 lines) and fix3/library (e3319d4) both rewrite.",
+    "proposal": "After integration, collapse runs of NoDataYet into {first t, last t, count} and record each image READ as (t, lines, bytes)."
+   },
+   {
+    "item": "TP-21: the pcap parser ignores status and can desync on a refused data-out command; verify_capture's step 3 is never checked",
+    "why": "This is not a few-line fix: it needs the 0x84 status reads threaded through parse(). It is an offline tool.",
+    "proposal": "Keep the port-0x84 status bytes in stream(), consume data-out bytes only when the status was OK, implement or remove step 3, and reword the final line."
+   },
+   {
+    "item": "Owned by other subsystems, already fixed on their branches",
+    "why": "Doing them here would duplicate the work and conflict.",
+    "proposal": "TP-06 and TP-A1 (keeping failed and undecodable passes): fix3/capture 2aded37 and 3e96647. TP-07 (calibration bytes in the library): fix3/library 2dc8a14 and 51e1cb8. TP-10 (debug spool after Force Abort): fix3/capture debug_settle and fix3/filing's close after an abort. TP-14 and P14 (3) (probes need a reference; byte14/gain cleanup to a suspect device): fix3/library 6d8f5a1 and ecbaa46. TP-24: fix3/capture. TP-17's stop_scan: fix3/capture 7fb75d4. P14 (5): fix3/filing 70faff3. P16 (1) estimate: fix3/filing c67699d. P17 (2) and the broken uniformity metering: fix3/library 51e1cb8. The P14 (6) dead-worker window (buttons re-enabled after 'closed') is the window subsystem's. P16 (3), fast_ir_probe accepting films infrared is blind to: not fixed on fix3/library; it belongs to the probes. There is no wedge risk, because scan() refuses the IR pass before sending anything, but metering passes are wasted."
+   },
+   {
+    "item": "Not changed by design",
+    "why": "Force Abort closes the transport from the UI thread on purpose, after the operator types ABORT. The session threads stay daemon threads: the window now waits for them on every signal, and only a second signal (an explicit abort) exits without waiting.",
+    "proposal": "None."
+   },
+   {
+    "item": "Integration notes",
+    "why": "Other branches touch the same files.",
+    "proposal": "Conflicts are most likely in tools/scan.py and tools/scan_roll.py (fix3/filing), rps7200/direct.py and rps7200/session.py (fix3/capture, fix3/filing), tools/gui.py (fix3/window), and the scan-tool tests. Edits were kept outside the other branches' hunks where possible, e.g. a local import in scan_roll.py. After merging, rerun the suites. ensure_shading now raises on an incomplete calibration, and calibrate_shading returns reference None without touching the previous one, so check any new direct caller, such as fix3/library's uniformity capture, against that."
+   }
+  ],
+  "tests": "All five commands pass on fix3/device at 5478591.\n(1) `.venv/bin/python -m pytest -q -p no:cacheprovider --no-cov tests/`: 1381 passed, 33 skipped, 9 deselected.\n(2) `xvfb-run -a .../guienv/bin/python -m pytest -q -p no:cacheprovider --no-cov -n 2 tests/test_gui.py`: 392 passed.\n(3) `RPS7200_NO_TIFFFILE=1 ... pytest ... tests/`: 1315 passed, 99 skipped, 9 deselected.\n(4) `ruff check .`: all checks passed.\n(5) `ty check --exclude tests/ --exclude tools/`: all checks passed. It has to be run with VIRTUAL_ENV=/home/user/reflecta-rps-7200/.venv, because the worktree has no .venv of its own; without that, ty cannot resolve numpy and reports 51 import errors.\nEvery behaviour change has a test, and each was checked to fail against the code before its fix (by swapping the committed file back in temporarily). No hardware test was run and no device was opened. Nothing sent to the device in normal operation changed, so PROTOCOL_REVISION was not bumped.\nNew test files: tests/test_calibration_end.py, tests/test_film_loaded.py, tests/test_status_polls.py, tests/test_verify_protocol.py, tests/test_inquiry_record.py. Tests were also added to tests/test_device_suspect.py, test_transport_reads.py, test_filing_load_test.py and test_gui.py."
+ }
+}
