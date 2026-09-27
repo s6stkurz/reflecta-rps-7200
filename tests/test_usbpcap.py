@@ -94,6 +94,8 @@ def setup_packet(request_type, request, value, index=0, length=1, data=b""):
 #: so a search for them cannot be satisfied by some other record's zeros.
 KEYSTROKE = bytes([0x02, 0x00, 0x0B, 0x08, 0x0F, 0x0F, 0x12, 0x00])
 KEYS = KEYSTROKE[2:7]
+#: The same keys with no modifier held: a report whose first byte is 0x00.
+UNSHIFTED = bytes([0x00]) + KEYSTROKE[1:]
 #: Who sits where on the synthetic bus.
 KEYBOARD, CAMERA, SCANNER = 2, 3, 7
 
@@ -147,6 +149,10 @@ def capture(tmp_path):
                        stage=STAGE_SETUP),
         usbpcap_record(KEYBOARD, 0, CONTROL, KEYSTROKE, from_device=True,
                        stage=3),
+        # and its reply again in a capture that records no stage -- the
+        # 27-byte header -- with no modifier held, so its first byte reads
+        # as a standard request type if a reply is ever taken for a setup
+        usbpcap_record(KEYBOARD, 0, CONTROL, UNSHIFTED, from_device=True),
         # the keyboard again, at the end
         usbpcap_record(KEYBOARD, 0x81, INTERRUPT, KEYSTROKE, from_device=True),
     ]))
@@ -265,6 +271,16 @@ def test_naming_the_keyboard_yields_nothing_of_it(capture):
     assert list(packets(raw, {KEYBOARD})) == []
     assert list(packets(raw, {CAMERA})) == []
     assert {p.device for p in packets(raw, range(128))} == {SCANNER}
+
+
+def test_a_devices_reply_is_never_read_as_a_setup(capture):
+    """A setup is only ever host to device. With no stage recorded, the
+    keyboard's reply was taken for one: its first byte, no modifier held,
+    read as a standard request, so the reply was let out by `packets` and
+    handed back by `setups` as a request whose fields were its keys."""
+    raw = capture.read_bytes()
+    assert list(packets(raw, {KEYBOARD})) == []
+    assert [s.request_type for s in setups(capture, device=KEYBOARD)] == [0xA1]
 
 
 def test_packets_will_not_guess_whose_payloads_are_wanted(capture):
