@@ -1718,7 +1718,15 @@ class FrameWriter:
             except Exception as exc:                     # noqa: BLE001
                 self.errors.append(f"picture {job['number']}: {exc}")
                 if self.on_done is not None:
-                    self.on_done(job.get("seq", 0), job["number"], None, str(exc))
+                    # Guarded as `_tell` is. Raised from here, it would end
+                    # this thread, and with it every filing after this one:
+                    # the next `submit` would block the scanner for good.
+                    try:
+                        self.on_done(job.get("seq", 0), job["number"], None,
+                                     str(exc))
+                    except Exception as said:            # noqa: BLE001
+                        self.errors.append(f"picture {job['number']}: its "
+                                           f"failure could not be said ({said})")
                 self._tell(job, None, str(exc), [])
             finally:
                 self.queue.task_done()
@@ -1970,8 +1978,13 @@ class ScanSession:
         out_dir: str | Path | None = None,
     ):
         self.root = str(root) if root else None
-        #: The job the worker is running, for the writer thread to ask about.
+        #: The job the worker is running, for the writer thread to ask about;
+        #: None between jobs.
         self._current: Job | None = None
+        #: Which job queued each picture still being filed, by its result's
+        #: seq: a filing that fails stops the job that queued it, not
+        #: whichever runs by the time the writer gets there.
+        self._owners: dict[int, Job | None] = {}
         self.reference = str(reference)
         self.rolls = Path(rolls)
         #: Makes the reader a roll's in-walk correction asks about each frame's
@@ -2201,6 +2214,9 @@ class ScanSession:
                     self._emit("finished", text="stopped")
                 except Exception as exc:                 # noqa: BLE001
                     self._emit("failed", text=f"{type(exc).__name__}: {exc}")
+                # Over, whatever its last filings still have to say: see
+                # `_filed`, which stops only a job still running.
+                self._current = None
                 self._emit("state", text="idle", busy=False)
         finally:
             # Order matters: the device closes first, and only then does the
@@ -2256,9 +2272,21 @@ class ScanSession:
         if self._writer is not None:
             while self._writer.notes:
                 self._emit("log", text=self._writer.notes.pop(0))
+        #: The job that queued this picture, as it was then.
+        owner = self._owners.pop(seq, None)
         if entry is None:
+            if err is None:
+                # Written with no entry on purpose -- a walk's picture from
+                # before its aim, or a session with no library. It said
+                # "could not be filed: None", beside the line that reports
+                # real failures, until nobody read either.
+                return
             self._emit("log", text=f"picture {number} could not be filed: {err}")
-            if err is not None and isinstance(self._current, Roll):
+            # The roll that queued it, and only while it is still running. The
+            # last frames of a roll file after it has ended, and a late failure
+            # there stopped whatever ran next -- another roll, a walk -- and
+            # dropped the jobs queued behind it, for a roll already over.
+            if isinstance(owner, Roll) and owner is self._current:
                 # A disk that is full, or an output folder that has gone, fails
                 # every frame after this one the same way. Scanning on spent
                 # the rest of the roll's film and time on pictures that were
@@ -3115,6 +3143,7 @@ class ScanSession:
         """
         if self._writer is None:
             return self._orientation_for(number, kind)
+        self._owners[seq] = self._current
         # A roll frame has its own place in the roll directory *and* wants a
         # copy wherever the operator asked for one. Setting `path` used to skip
         # the output folder entirely, so a whole roll went missing from it.

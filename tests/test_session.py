@@ -1508,6 +1508,83 @@ def test_a_roll_frame_the_library_refused_is_still_in_the_roll(tmp_path):
     assert any(str(k.parent) in first["filing_error"] for k in kept)
 
 
+def test_a_picture_left_unfiled_on_purpose_is_not_called_a_failure(tmp_path):
+    """With no library, every pass logged 'could not be filed: None' -- the
+    line that reports real failures, until nobody read it."""
+    s = ScanSession(root=None, rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    s.join(timeout=10.0)
+    said = [e.text for e in s.poll() if e.kind == "log"]
+    assert not any("could not be filed" in t for t in said), said
+
+
+def test_a_late_failure_from_a_finished_roll_does_not_stop_the_next(tmp_path,
+                                                                   monkeypatch):
+    """A roll's last frames file after it has ended. One that failed then
+    stopped whatever ran next, and dropped the jobs queued behind it."""
+    started, said = threading.Event(), threading.Event()
+    scanner = FakeScanner(frames=3)
+    real_scan = scanner.scan
+
+    def scan(**kw):
+        scans = len([c for c in scanner.calls if c[0] == "scan"])
+        if scans >= 1:
+            started.set()                      # the second roll is scanning
+        if scans >= 2:
+            said.wait(timeout=5.0)             # and the failure has landed
+        return real_scan(**kw)
+
+    scanner.scan = scan
+    real_filed = session.ScanSession._filed
+
+    def filed(self, seq, number, entry, err):
+        real_filed(self, seq, number, entry, err)
+        if err is not None:
+            said.set()
+
+    monkeypatch.setattr(session.ScanSession, "_filed", filed)
+    real_save = library.save
+
+    def slow_failure(image, meta, **kw):
+        if str((kw.get("film") or FilmNotes()).frame).startswith("first-"):
+            started.wait(timeout=5.0)
+            raise OSError(28, "No space left on device")
+        return real_save(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", slow_failure)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, resolution=600, name="first"))
+    s.submit(Roll(frames=3, resolution=600, name="second"))
+    s.shutdown()
+    s.join(timeout=10.0)
+    assert scanner.produced == 4, "the second roll was stopped for the first"
+
+
+def test_a_failure_that_cannot_be_said_does_not_end_the_writer(tmp_path):
+    """Raised from the failure branch, `on_done` ended the writer's thread,
+    and every filing after it with it -- the next submit blocking for good."""
+    def cannot_say(seq, number, entry, err):
+        if err is not None:
+            raise RuntimeError("the window has gone")
+
+    writer = session.FrameWriter(on_done=cannot_say)
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    writer.submit(number=1, paths=[blocker / "no.tif"], image=picture(),
+                  meta={}, dpi=600, library=None, film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None, capture={}, seq=1)
+    writer.submit(number=2, paths=[tmp_path / "yes.tif"], image=picture(),
+                  meta={}, dpi=600, library=None, film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None, capture={}, seq=2)
+    writer.finish()
+    assert (tmp_path / "yes.tif").exists()
+
+
 def test_the_writer_runs_off_the_calling_thread():
     seen = {}
 
