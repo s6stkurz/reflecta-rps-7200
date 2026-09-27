@@ -60,7 +60,8 @@ class DeferredInterrupt:
 
     The other ways a process is told to stop are taken the same way:
     `SIGNALS`. ``on_request`` is called once, on the first, for a caller that
-    has to act rather than poll -- the window, whose loop is Tk's.
+    has to act rather than poll -- the window, whose loop is Tk's. A signal
+    the process was started ignoring -- ``nohup``'s hangup -- is left ignored.
 
     Only the main thread can install a signal handler; anywhere else, and
     where there is no SIGINT, this does nothing and Ctrl-C behaves as usual.
@@ -118,6 +119,12 @@ class DeferredInterrupt:
                 for name in self.SIGNALS:
                     signum = getattr(signal, name, None)
                     if signum is None:
+                        continue
+                    if signal.getsignal(signum) is signal.SIG_IGN:
+                        # Whoever started the process said so: `nohup`, for
+                        # the long runs CLAUDE.md says to background, where
+                        # taking the hangup ended the roll at the terminal
+                        # closing -- the one thing nohup was asked to prevent.
                         continue
                     self._previous[signum] = signal.signal(signum,
                                                            self._handler)

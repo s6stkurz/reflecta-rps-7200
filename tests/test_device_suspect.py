@@ -184,6 +184,30 @@ def test_the_other_ways_to_be_told_to_stop_are_taken_as_ctrl_c(name):
     assert signal.getsignal(signum) == before
 
 
+@pytest.mark.parametrize("name", ["SIGHUP", "SIGTERM"])
+def test_a_signal_the_process_was_started_ignoring_stays_ignored(name):
+    """`nohup` sets SIGHUP to ignore, for exactly the long runs CLAUDE.md
+    says to background; taking it over made the terminal closing end the
+    roll after the frame in flight -- what nohup was there to prevent."""
+    import signal
+
+    from rps7200.console import DeferredInterrupt
+
+    signum = getattr(signal, name, None)
+    if signum is None:
+        pytest.skip(f"no {name} here")
+    ctrl_c = signal.getsignal(signal.SIGINT)
+    before = signal.signal(signum, signal.SIG_IGN)
+    try:
+        with DeferredInterrupt(say=lambda m: None) as interrupt:
+            assert signal.getsignal(signum) is signal.SIG_IGN
+            if ctrl_c is not signal.SIG_IGN:       # the rest still taken
+                assert signal.getsignal(signal.SIGINT) == interrupt._handler
+        assert signal.getsignal(signum) is signal.SIG_IGN
+    finally:
+        signal.signal(signum, before)
+
+
 def test_a_terminal_that_has_gone_does_not_turn_the_request_into_an_error():
     """SIGHUP means stderr may be gone too, and the handler runs in the
     middle of whatever the tool was doing -- a read, most likely."""
