@@ -1720,6 +1720,25 @@ def _press_roll(app, monkeypatch, last="3", first="1", answer=True):
     return said, jobs, errors
 
 
+def test_aiming_at_a_prescan_the_edges_cannot_be_read_at_is_refused(
+        window, monkeypatch):
+    """At 600 dpi every frame is refused by the edge reader, so 'aim each
+    frame' aims nothing while the roll looks centred. The command line
+    refuses `--correct` there; the window warned under one OK."""
+    app, _root = window
+    app.v_film.set("negative")
+    app.v_predpi.set("600")
+    app.v_correct.set(True)
+    said, jobs, errors = _press_roll(app, monkeypatch)
+    assert jobs == [] and said == [], "the roll was offered anyway"
+    assert errors and "not read at a 600 dpi" in errors[0][1]
+    # The walk alone is still only warned about: it is a survey either way.
+    app.v_correct.set(False)
+    said, jobs, errors = _press_roll(app, monkeypatch)
+    assert errors == [] and len(jobs) == 1
+    assert "not read at a 600 dpi" in said[0]
+
+
 def test_the_roll_pace_is_timed_from_where_the_seek_landed(window,
                                                            monkeypatch):
     """The Roll button winds the film to its first frame inside the job, and

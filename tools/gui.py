@@ -2204,6 +2204,17 @@ class ScannerGui:
             messagebox.showerror("Roll", str(exc))
             return
         dry = self.v_dryrun.get()
+        # "Aim each frame" at a prescan resolution the edge reader cannot
+        # read aims nothing -- every frame is refused and left as it came --
+        # while the roll looks centred. `tools/scan_roll.py` refuses
+        # `--correct` there, and this said the same only as a warning under
+        # one OK. Refused as the tool refuses; the dry-run form still warns.
+        unread = frame_edges.unread_at(predpi, self.v_film.get())
+        if unread and self.v_correct.get():
+            messagebox.showerror(
+                "Roll", f"'aim each frame' with a {predpi} dpi prescan: "
+                f"{unread}")
+            return
         per = (23.0 if dry else
                estimate_seconds(dpi, self.v_ir.get(),
                                 self.v_fast_ir.get()) + 70)
@@ -2223,8 +2234,9 @@ class ScannerGui:
         # a prescan resolution the frame-edge detector cannot read, every
         # frame is refused, the sheet's light still goes green and "correct"
         # leaves each frame as it came -- a roll that looks centred and is
-        # not. A warning rather than a refusal: the walk's prescans are still
-        # a survey of the strip, and that may be what he wants from it.
+        # not. A warning rather than a refusal for a walk or the aim's dry
+        # run: the walk's prescans are still a survey of the strip, and that
+        # may be what he wants from it. The aim itself is refused above.
         unread = (frame_edges.unread_at(predpi, self.v_film.get())
                   if dry or self.v_correct.get() or self.v_correct_dry.get()
                   else None)
