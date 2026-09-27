@@ -75,7 +75,7 @@ from .protocol import (
     ScanParameters,
     Settings,
 )
-from .session import BACKLASH_COMMANDS, FINE_MIN_MM, estimate_seconds
+from .session import BACKLASH_COMMANDS, FINE_MIN_MM, _replace, estimate_seconds
 from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
 
@@ -145,6 +145,25 @@ def picture_signature(entry: Path) -> np.ndarray | None:
     columns = np.linspace(0, grey.shape[1] - 1, SIGNATURE_COLUMNS).astype(int)
     grid = grey[np.ix_(rows, columns)]
     return grid if float(grid.std()) > 0 else None
+
+
+def _signature_key(entry: Path) -> str:
+    """What a cached signature is filed under: the entry, and the very file
+    `picture_signature` reads from it, as the disk last saw that file.
+
+    By path alone, a re-filed or migrated entry -- `migrate-raw`, a prescan
+    turned upright -- kept its old likeness for good, and a strip then showed
+    one photograph twice or two as one.
+    """
+    source = entry / "prescan.tif"
+    if not source.exists():
+        source = entry / "scan.tif"
+    try:
+        stat = source.stat()
+    except OSError:
+        return entry.as_posix()
+    return (f"{entry.as_posix()}|{source.name}|{stat.st_mtime_ns}|"
+            f"{stat.st_size}")
 
 
 def _windows(signature: np.ndarray) -> np.ndarray:
@@ -1287,16 +1306,23 @@ class DemoScanner:
         """Every entry's picture signature, from the cache where it has one."""
         known: dict[str, np.ndarray] = {}
         if self.cache is not None and self.cache.exists():
+            # Anything at all, not only the errors a sound file can give: a
+            # cache cut short by quitting mid-write raises EOFError or
+            # BadZipFile, which went uncaught, killed this thread, and left
+            # every later strip drawing on the first one's pictures -- on
+            # every launch, until someone deleted the file.
             try:
                 with np.load(self.cache) as data:
                     known = dict(zip(data["paths"].tolist(), data["signatures"]))
-            except (OSError, ValueError, KeyError):
+            except Exception as exc:                     # noqa: BLE001
+                self._log(f"picture signatures unreadable ({exc}); "
+                          "measuring them again")
                 known = {}
         entries = sorted({p.parent for lib in self.libraries
                           for p in lib.glob("*/scan.json")})
         added = False
         for entry in entries:
-            key = entry.as_posix()
+            key = _signature_key(entry)
             signature = known.get(key)
             if signature is None:
                 signature = picture_signature(entry)
@@ -1305,11 +1331,18 @@ class DemoScanner:
                 known[key], added = signature, True
             self._signatures[entry] = signature
         if added and self.cache is not None and known:
+            # Beside, then renamed over: this thread is a daemon, killed where
+            # it stands when the window quits, and two demo windows share the
+            # file -- written in place, either left it truncated.
+            temp = self.cache.with_name(f".{self.cache.name}.part")
             try:
                 self.cache.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(self.cache, paths=np.array(list(known)),
-                         signatures=np.stack(list(known.values())))
+                with open(temp, "wb") as fh:
+                    np.savez(fh, paths=np.array(list(known)),
+                             signatures=np.stack(list(known.values())))
+                _replace(temp, self.cache)
             except OSError as exc:
+                temp.unlink(missing_ok=True)
                 self._log(f"could not keep the picture signatures: {exc}")
 
     def _pictures_for(self, film: str) -> dict[int, list[Path]]:

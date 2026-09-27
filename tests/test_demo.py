@@ -1090,6 +1090,49 @@ def test_the_likenesses_are_kept_between_sessions(tmp_path, monkeypatch):
         assert len(s._signatures) == 3
 
 
+@pytest.mark.parametrize("damage", [b"", b"PK\x03\x04 cut short"])
+def test_a_damaged_likeness_cache_is_measured_again(tmp_path, damage):
+    """Quitting while the cache was written left it empty or truncated; the
+    load raised what it did not catch, the signing thread died, and every
+    later strip drew on the first one's pictures, launch after launch."""
+    for n in range(3):
+        _scan_only(tmp_path / "lib", 30 + n)
+    cache = tmp_path / "demo" / "pictures.npz"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(damage)
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+        assert len(s._signatures) == 3
+    with np.load(cache) as data:                 # and written back whole
+        assert len(data["paths"]) == 3
+    assert not list(cache.parent.glob("*.part"))
+
+
+def test_a_refiled_picture_is_not_given_its_old_likeness(tmp_path):
+    """Keyed by path alone, an entry whose picture was rewritten -- by
+    migrate-raw, or a prescan turned upright -- kept the likeness of what it
+    used to hold, for good."""
+    import os
+
+    from rps7200 import demo, tiff
+
+    path, _ = _scan_only(tmp_path / "lib", 30)
+    cache = tmp_path / "demo" / "pictures.npz"
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+        before = s._signatures[path]
+    other = _photograph(77)
+    tiff.write(str(path / "scan.tif"), other)
+    stat = (path / "scan.tif").stat()
+    os.utime(path / "scan.tif", ns=(stat.st_atime_ns,
+                                    stat.st_mtime_ns + 10**9))
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+        after = s._signatures[path]
+    assert not np.array_equal(before, after)
+    assert np.array_equal(after, demo.picture_signature(path))
+
+
 # -- what the demo files: raw pixels, corrected last, as the scanner does -----
 #
 # The demo corrected every picture as it decoded it and kept nothing else, so
