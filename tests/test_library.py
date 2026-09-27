@@ -1008,6 +1008,36 @@ def test_an_entry_filed_plain_reads_like_any_other_and_compacts_losslessly(tmp_p
     assert library.compact(path) is False, "compacted twice"
 
 
+def test_a_reference_without_a_mask_is_not_applied_to_a_narrower_pass(tmp_path):
+    """No mask matches columns one to one, right only for a pass that read
+    every CCD pixel. On a narrower one the wrong columns were divided in and
+    the result called "applied"."""
+    stream, image = index_stream(16, 8, 3)
+    wide = ShadingReference(ref={c: np.linspace(20000.0, 40000.0, 64)
+                                 for c in range(3)},
+                            mean={c: 30000.0 for c in range(3)},
+                            pixels_per_line=64)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, {"resolution_dpi": 1800, "channels": 3},
+                        root=tmp_path, reference=wide, raw=stream,
+                        raw_layout=layout)
+    out, record = library.corrected(path)
+    assert record["corrected"] == "no mask"
+    assert np.array_equal(out, image)
+    assert any("no CCD mask" in p for p in library.verify(tmp_path))
+
+
+def test_a_reference_that_will_not_load_is_named_not_raised(tmp_path):
+    """A truncated .npz raised BadZipFile out of every view and export."""
+    path, image, _ = make_entry(tmp_path)
+    data = (path / "shading.npz").read_bytes()
+    (path / "shading.npz").write_bytes(data[: len(data) // 2])
+    out, record = library.corrected(path)
+    assert record["corrected"] == "reference unreadable"
+    assert "shading.npz" in record["reference_error"]
+    assert np.array_equal(out, image)
+
+
 def _plain_entry(tmp_path, prescan=None):
     stream, image = index_stream(16, 8, 3, seed=5)
     meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,

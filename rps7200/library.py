@@ -644,17 +644,25 @@ def load(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
 
     ``record["reference"]`` and ``record["ccd_mask"]`` are filled in where the
     entry has them, so a correction can be re-run exactly as it would have been
-    at scan time.
+    at scan time. A reference that is there and will not load is None, with
+    ``record["reference_error"]`` saying why.
     """
     path = Path(path)
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     image = tiff.read(str(path / "scan.tif"))
 
     ref_file = (record.get("calibration") or {}).get("shading")
-    record["reference"] = (
-        ShadingReference.load(path / ref_file)
-        if ref_file and (path / ref_file).exists() else None
-    )
+    record["reference"] = None
+    if ref_file and (path / ref_file).exists():
+        try:
+            record["reference"] = ShadingReference.load(path / ref_file)
+        # A truncated .npz raises BadZipFile, not an OSError, and it made
+        # every view and export of the entry fail with a traceback. The
+        # pixels are fine; only the correction cannot be had, and saying so
+        # is `corrected()`'s job.
+        except (OSError, ValueError, KeyError, EOFError,
+                zipfile.BadZipFile) as exc:
+            record["reference_error"] = f"{ref_file} cannot be read ({exc})"
     mask_file = (record.get("calibration") or {}).get("ccd_mask")
     record["ccd_mask"] = (
         (path / mask_file).read_bytes()
@@ -683,8 +691,13 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
         "deliberately raw"  the pass asked for `shading=False`
         "raw -- correction was asked for"  it wanted correction and was filed
                      without any; the rawness was a shortfall, not a choice
+        "reference unreadable"  there is one and it will not load
+                     (`record["reference_error"]` says why); returned raw
+        "no mask"    a reference and no CCD mask, on a pass narrower or wider
+                     than the reference: nothing says which of its columns
+                     this pass read, so it is returned raw
 
-    The last two look identical in the record -- both are a non-empty
+    The two "raw" ones look identical in the record -- both are a non-empty
     `calibration.skipped` -- and they are opposite things. Only
     :data:`rps7200.direct.SHADING_SKIPPED_EXPLICIT` means the caller chose it.
     `verify` already draws that line and calls the other one "a thing that went
@@ -711,7 +724,16 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
         )
         return image, record
     if record.get("reference") is None:
-        record["corrected"] = "no reference"
+        record["corrected"] = ("reference unreadable"
+                               if record.get("reference_error") else "no reference")
+        return image, record
+    if (record["ccd_mask"] is None
+            and record["reference"].pixels_per_line != image.shape[1]):
+        # Without a mask `apply_shading` matches columns one to one, which is
+        # right only for a pass that read every CCD pixel. On any other it
+        # divided a 1800 dpi pass's left half by the reference of the CCD's
+        # left quarter -- banding and a colour ramp -- and called it applied.
+        record["corrected"] = "no mask"
         return image, record
     image, report = apply_shading(image, record["reference"], record["ccd_mask"])
     record["corrected"] = "applied"
@@ -1324,6 +1346,16 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                     f"be corrected"
                     + (f" -- correction was asked for: {why}" if why else "")
                 )
+        width = ((record.get("image") or {}).get("shape") or [None, None])[1:2]
+        if (cal.get("shading") and not cal.get("ccd_mask") and width
+                and cal.get("pixels_per_line") not in (None, width[0])):
+            # `corrected()` refuses these rather than guess which columns the
+            # pass read; said here too, as the other entries that can never be
+            # corrected are.
+            problems.append(
+                f"{path.name}: a reference but no CCD mask, on a pass "
+                f"{width[0]} columns wide against its {cal['pixels_per_line']}"
+                f", so it cannot be corrected")
         if not (record.get("raw") or {}).get("file"):
             problems.append(
                 f"{path.name}: no raw bytes, so it cannot be re-decoded"
