@@ -84,6 +84,22 @@ def test_a_move_counts_only_once_the_counter_leaves_where_it_was(monkeypatch):
     assert s.advance() == 5
 
 
+def test_a_move_of_several_frames_is_one_command_a_frame(monkeypatch):
+    """The step count went into the value byte, which moves nothing more --
+    `04 01 00 02` moved one frame -- and the move reported success on the
+    first change, where the demo moved every frame asked for."""
+    from rps7200.protocol import SCSI_SLIDE
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    t = FakeTransport(positions=[0, 1, 1, 2])
+    s = DirectScanner(transport=t, debug=False)
+    s._own_transport = False
+    assert s.advance(steps=2) == 2
+    assert t.payloads(SCSI_SLIDE) == [bytes([0x04, 0x01, 0x00, 0x01])] * 2
+    with pytest.raises(ValueError):
+        s.retreat(steps=0)
+
+
 def test_a_read_answered_with_no_data_is_not_counted_as_lines():
     """The transport returns nothing for a READ answered OK with no data
     phase, and read_planes counted the lines as read: a pass could reach its

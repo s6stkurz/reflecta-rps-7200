@@ -1558,7 +1558,22 @@ class DirectScanner:
         up 1.6 s to 6.2 s later, and the READ_STATE issued immediately after the
         command came back empty every time -- so the poll has to survive a
         failed read rather than treat it as the end.
+
+        One frame per command, ``steps`` times. The value byte does not count
+        frames -- ``04 01 00 02`` moved the film one, as ``04 01 00 01`` does
+        (`docs/protocol.md` section 5) -- and a move of several frames sent
+        as one command with ``value=steps`` moved one and reported success on
+        the first change, where the demo moved them all.
         """
+        if steps != 1:
+            if steps < 1:
+                raise ValueError(f"a move of {steps} frames")
+            position = None
+            for _ in range(steps):
+                position = self._whole_frames(action, 1, timeout, poll, verb)
+                if position is None:
+                    return None
+            return position
         before = self.position()
         # Where the film was has to be known before the move, or the first
         # poll to answer counts as the move whatever it says: the counter
@@ -1572,7 +1587,7 @@ class DirectScanner:
             before = self.position()
         if before is None and self.last_state is not None:
             before = self.last_state.position
-        self.slide(action, param=0x01, value=steps)
+        self.slide(action, param=0x01, value=0x01)
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
