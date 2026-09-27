@@ -4156,6 +4156,19 @@ class ScannerGui:
             self._sheet_roll = getattr(self.session, "last_roll_dir", None)
         # In strip order, whichever end the walk added to.
         self.survey.sort(key=lambda r: int(r.number or 0))
+        # Opened while the walk was still going, so it holds the frames walked
+        # by then and no others: raised as it was, the frames after it had no
+        # cell, no tick and no approval, and a commission from it left them
+        # unscanned with nothing on screen to say so. Closed here, keeping
+        # what was decided in it, and built again on the whole walk below.
+        #
+        # Closed *before* the positions of re-walked frames are dropped: its
+        # way out files its own copy of every decision, and closed after, it
+        # put back what had just been dropped -- a position measured on a
+        # prescan this walk has replaced, reopened, and then held to.
+        reopen = self.sheet is not None and self.sheet.alive()
+        if reopen:
+            self._close_sheet()
         again = sorted(self._rewalked)
         if again:
             # Measured from the prescan this walk has just replaced, so it no
@@ -4176,13 +4189,7 @@ class ScannerGui:
                 self._store_sheet_state(self.sheet_state)
         self._kept_walk, self._rewalked = set(), set()
         self.b_sheet.configure(state="normal" if self.survey else "disabled")
-        if self.sheet is not None and self.sheet.alive():
-            # Opened while the walk was still going, so it holds the frames
-            # walked by then and no others: raised as it was, the frames after
-            # it had no cell, no tick and no approval, and a commission from
-            # it left them unscanned with nothing on screen to say so. Built
-            # again on the whole walk, keeping what was decided in it.
-            self._close_sheet()
+        if reopen:
             self.on_contact_sheet()
 
     def _report_held(self) -> None:

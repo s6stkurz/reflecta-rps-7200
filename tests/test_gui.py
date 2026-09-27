@@ -5969,6 +5969,40 @@ def test_a_sheet_opened_mid_walk_holds_the_whole_walk_at_its_end(window,
     app.sheet.top.destroy()
 
 
+def test_a_sheet_open_through_a_kept_walk_drops_what_it_walked_again(
+        window, tmp_path):
+    """The walk's end dropped a re-walked frame's position from the window's
+    copy and said so -- and then closed the open sheet, which filed its own
+    copy, the position still in it, over the top. The sheet came back holding
+    a position measured on a prescan the walk had just replaced."""
+    import copy
+
+    from rps7200.session import Event
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    results = gui.read_survey(folder)["results"]
+    app._sheet_roll = folder
+    app.survey = list(results)
+    app.sheet_state = {"offsets": {2: 0.5116}, "sources": {2: "operator"},
+                       "rotations": {2: 90}}
+    app._kept_walk, app._rewalked = {1, 2, 3}, set()
+    app._surveying = True
+    app.on_contact_sheet()
+    root.update()
+    assert app.sheet.offsets[2] == 0.5116, "his position, before the walk"
+    app._into_survey(copy.copy(results[1]))             # frame 2, again
+    app._handle(Event(kind="finished", text="walked 1 frame"))
+    root.update()
+    assert app.sheet.proposals.get(2, {}).get("source") != "operator"
+    assert app.sheet.offsets.get(2) != 0.5116
+    assert app.sheet.rotations[2] == 90, "a turn is about the picture: kept"
+    for kept in (app.sheet_state, app.remembered["sheet"][folder.name]):
+        assert 2 not in (kept.get("offsets") or {})
+        assert "2" not in (kept.get("offsets") or {})
+    app.sheet.top.destroy()
+
+
 @pytest.mark.parametrize("options,refused", [
     ({"dpi": "7200", "predpi": "300", "ir": False, "film": "negative"},
      "7200 dpi pass cannot be shading-corrected"),
