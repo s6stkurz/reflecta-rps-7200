@@ -70,6 +70,33 @@ def test_the_library_cohort_takes_only_corrected_passes(tmp_path):
     assert [name for name, _ in margin.cohort(tmp_path, 300)] == [kept.name]
 
 
+def test_a_hold_that_moved_the_wrong_way_is_not_scored_as_delivered(tmp_path,
+                                                                     capsys):
+    """The delivery ratio divided magnitudes -- the mistake CLAUDE.md names --
+    so a frame that moved the wrong way by what it was sent scored 1.0; and an
+    arrival the correlator refused went in as a reading."""
+    study = load_tool("roll_registration_study")
+    folder = tmp_path / "roll"
+    folder.mkdir()
+
+    def held(number, arrived_px, confidence, final_mm):
+        return {"number": number, "registration": {"approved": {
+            "target_mm": 0.5, "outcome": "held", "moves": 1,
+            "spent_mm": 0.5, "final_mm": final_mm, "residual_mm": 0.0,
+            "history": [{"px": arrived_px, "confidence": confidence}]}}}
+
+    (folder / "survey.json").write_text(json.dumps({
+        "numbering": NUMBERING, "prescan_resolution": 300,
+        "frames": [held(1, 0, 80.0, -0.5),          # sent +0.5, went -0.5
+                   held(3, 40, 10.0, 0.5)]}),       # refused arrival
+        encoding="utf-8")
+    study.report_held(folder)
+    out = capsys.readouterr().out
+    line = next(x for x in out.splitlines() if "delivered per mm" in x)
+    assert "-1.000--1.000" in line, line
+    assert "wrong way" in line
+
+
 def test_a_folder_with_no_manifest_still_leaves_the_before_pictures_out(tmp_path):
     folder = tmp_path / "old"
     folder.mkdir()
