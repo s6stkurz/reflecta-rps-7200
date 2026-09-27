@@ -13,6 +13,8 @@ the previous one and every line after it is misaligned. It is also abandoning a
 read mid-scan, which costs a power cycle.
 """
 
+import sys
+
 import pytest
 
 from rps7200.usb_transport import (
@@ -205,3 +207,40 @@ def test_a_pass_hands_its_patience_to_the_bulk_read():
     s._own_transport = False
     s.read_planes(params, 3, idle_timeout=DirectScanner.UNTIED_INFRARED_IDLE_S)
     assert s.t.timeouts == [int(DirectScanner.UNTIED_INFRARED_IDLE_S * 1000)]
+
+
+# --- the window a probe may set ---------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "32k", "65536"])
+def test_a_window_the_device_cannot_serve_is_not_used(raw, capsys):
+    """0 or less announced an empty window for ever with a READ pending, and
+    above 32 KB the device stops after 32 KB: both hang or abandon a read."""
+    from rps7200.usb_transport import DEVICE_WINDOW, _window_from
+
+    assert _window_from(raw) == DEVICE_WINDOW
+    assert "RPS7200_MAX_WINDOW" in capsys.readouterr().err
+
+
+def test_a_smaller_window_is_still_a_probers_choice():
+    from rps7200.usb_transport import DEVICE_WINDOW, _window_from
+
+    assert _window_from("16384") == 16384
+    assert _window_from(None) == _window_from("") == DEVICE_WINDOW
+
+
+def test_a_window_that_is_not_a_number_does_not_break_the_import():
+    """It raised at import of usb_transport, which direct imports -- so
+    offline decoding broke over a setting for the bus."""
+    import os
+    import subprocess
+
+    env = dict(os.environ, RPS7200_MAX_WINDOW="32k")
+    done = subprocess.run([sys.executable, "-c", "import rps7200.direct"],
+                          env=env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_transport_refuses_a_window_before_touching_libusb():
+    with pytest.raises(ValueError, match="max_window"):
+        Transport(max_window=0)

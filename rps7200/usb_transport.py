@@ -63,8 +63,35 @@ SCSI_COMMAND_LEN = 6
 #: at 32 KB is what the two verified full scans used and it works, so it stays.
 #: What does matter is the batch size in read_planes: 216 lines per READ is the
 #: vendor's value and works; 64 does not, and the device simply sends nothing.
-#: Tunable via ``RPS7200_MAX_WINDOW`` for probing.
-MAX_WINDOW = int(os.environ.get("RPS7200_MAX_WINDOW", 0x8000))
+#: Tunable via ``RPS7200_MAX_WINDOW`` for probing, downward only.
+DEVICE_WINDOW = 0x8000
+
+
+def _window_from(raw: str | None) -> int:
+    """``RPS7200_MAX_WINDOW`` as a window this transport can read with.
+
+    Taken as given, 0 or a negative value announced an empty window for ever
+    with a READ pending -- the first INQUIRY hung, and killing it abandoned
+    the read -- and anything above the 32 KB the device serves per handshake
+    stalled after 32 KB and was given up mid-payload. A value that is not a
+    number broke the import, offline decoding included, though that touches
+    no device. Each is said, and the device's own window used instead.
+    """
+    if raw is None or not raw.strip():
+        return DEVICE_WINDOW
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if 0 < value <= DEVICE_WINDOW:
+        return value
+    print(f"RPS7200_MAX_WINDOW={raw!r} ignored: it must be a whole number of "
+          f"bytes from 1 to {DEVICE_WINDOW}; using {DEVICE_WINDOW}",
+          file=sys.stderr)
+    return DEVICE_WINDOW
+
+
+MAX_WINDOW = _window_from(os.environ.get("RPS7200_MAX_WINDOW"))
 
 #: Bytes per individual bulk transfer inside a window.
 BULK_CHUNK = 0x4000
@@ -396,6 +423,10 @@ class Transport:
     """Low-level command/data channel to the scanner."""
 
     def __init__(self, verbose: bool = False, max_window: int = MAX_WINDOW):
+        if not 0 < max_window <= DEVICE_WINDOW:
+            # Refused before libusb is touched: see `_window_from`.
+            raise ValueError(f"max_window {max_window} is not a window this "
+                             f"device can be read in (1-{DEVICE_WINDOW})")
         self.verbose = verbose
         self.max_window = max_window
         self._ctx = _ctx_p()
