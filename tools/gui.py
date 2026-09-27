@@ -64,6 +64,7 @@ from rps7200.mono import (                                 # noqa: E402
     MONO_CHANNEL,
     MONO_CHOICES,
     to_monochrome,
+    wants_mono,
 )
 from rps7200.protocol import (                             # noqa: E402
     COORD_PER_INCH,
@@ -2862,7 +2863,10 @@ class ScannerGui:
             return
 
         quality = jpeg_quality(self.v_jpegq.get())
-        mono, channel = self.v_mono.get(), self.v_mono_channel.get()
+        # Each roll's own film, decided on this thread; see `_mono_for`.
+        for _, items in plans:
+            for item in items:
+                item.mono, item.mono_channel = self._mono_for(item)
         out = Path(folder)
         self._saving = True
         self._say(f"exporting {total} frames into {out} ...")
@@ -2875,8 +2879,8 @@ class ScannerGui:
                         path = _unclaimed(
                             out / f"{_safe(summary['roll'])}_"
                                   f"{batch_name(item, fmt)}")
-                        said = self._deliver_one(item, path, quality, mono,
-                                                 channel)
+                        said = self._deliver_one(item, path, quality,
+                                                 item.mono, item.mono_channel)
                     except Exception as exc:             # noqa: BLE001
                         self._saves.put(("line", f"could not export "
                                                  f"{summary['roll']} frame "
@@ -4471,9 +4475,32 @@ class ScannerGui:
         if not path:
             return
         said = self._deliver_one(result, path, jpeg_quality(self.v_jpegq.get()),
-                                 self.v_mono.get(), self.v_mono_channel.get())
+                                 *self._mono_for(result))
         if said:
             self._say(f"saved {said}")
+
+    def _mono_for(self, result) -> tuple[bool, str]:
+        """One channel or all for a delivered copy of this pass, and which.
+
+        The pass's own film decides, as it did when the scan was delivered
+        (`wants_mono`), not whatever film the window is set to now. Save As,
+        Save all and Export read the window's controls, so a colour roll
+        exported with the window on black and white came out as one grey
+        plane with colour and infrared gone, and a black and white roll
+        exported with it on negative as three channels, unlike its own
+        frames.
+
+        A roll's export items carry the roll's own answer. A pass whose film
+        is the window's keeps the window's controls, where the operator may
+        have chosen otherwise for that film; one of another film follows it.
+        """
+        own = getattr(result, "mono", None)
+        if own is not None:
+            return bool(own), getattr(result, "mono_channel", None) or MONO_CHANNEL
+        film = (getattr(result, "meta", None) or {}).get("film")
+        if film and film != self.v_film.get():
+            return wants_mono(None, film), self.v_mono_channel.get()
+        return self.v_mono.get(), self.v_mono_channel.get()
 
     def on_save_all(self) -> None:
         """Every pass of this session into one folder, in one go.
@@ -4522,14 +4549,15 @@ class ScannerGui:
         # Read here, on the UI thread, and handed over. A worker that reached
         # back into a Tk variable would work until the day it did not.
         quality = jpeg_quality(self.v_jpegq.get())
-        mono, channel = self.v_mono.get(), self.v_mono_channel.get()
+        # Each pass's own, decided here for the same reason; see `_mono_for`.
+        monos = [self._mono_for(result) for result in passes]
         out = Path(folder)
         self._saving = True
         self._say(f"saving {len(passes)} passes into {out} ...")
 
         def run() -> None:
             written = 0
-            for result in passes:
+            for result, (mono, channel) in zip(passes, monos):
                 try:
                     path = _unclaimed(out / batch_name(result, fmt))
                     said = self._deliver_one(result, path, quality, mono,
@@ -5614,6 +5642,10 @@ def roll_exports(summary: dict) -> list:
                 or settings.get("resolution")
                 or settings.get(SETTING_ALIASES["resolution"]) or 0,
                 "channels": 4 if settings.get("infrared") else 3}
+    # One channel or all, as the roll's own frames were written; None where
+    # the roll does not say its film, and the window's controls decide.
+    film = summary.get("film") or settings.get("film")
+    mono = wants_mono(settings.get("mono"), film) if film else None
     out = []
     for number in sorted(summary.get("entries") or {}):
         entry = Path(summary["entries"][number])
@@ -5633,6 +5665,8 @@ def roll_exports(summary: dict) -> list:
             number=number,
             seq=-number,
             meta=_scanned_as(entry, fallback),
+            mono=mono,
+            mono_channel=settings.get("mono_channel") or MONO_CHANNEL,
         ))
     return out
 

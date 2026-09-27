@@ -3518,6 +3518,46 @@ def test_an_exported_frame_is_named_by_its_own_entry(tmp_path):
     assert gui.roll_exports(cli)[0].meta["resolution_dpi"] == 1800
 
 
+def test_an_export_is_one_channel_or_all_as_the_rolls_own_frames_were(tmp_path):
+    """The roll's own film and its own choice, not the window's: a colour
+    roll exported with the window on black and white came out as one grey
+    plane, and a black and white roll with it on negative as three."""
+    def plan(film, mono=None):
+        summary = {"folder": tmp_path / "nowhere", "entries": {1: "e1"},
+                   "film": film, "settings": {"film": film, "mono": mono,
+                                              "mono_channel": "R"}}
+        return gui.roll_exports(summary)[0]
+
+    assert (plan("bw").mono, plan("bw").mono_channel) == (True, "R")
+    assert plan("negative").mono is False
+    assert plan("bw", mono=False).mono is False, "his choice for that roll"
+    assert plan(None).mono is None, "a roll that does not say: the window's"
+
+
+def test_a_saved_pass_is_one_channel_or_all_as_its_own_film_asks(window,
+                                                                 monkeypatch):
+    app, root = window
+    app.v_film.set("negative")
+    app._sync_film()
+    bw = types.SimpleNamespace(meta={"film": "bw"}, label="scan 1")
+    colour = types.SimpleNamespace(meta={"film": "negative"}, label="scan 2")
+    assert app._mono_for(bw)[0] is True
+    assert app._mono_for(colour)[0] is False
+    item = types.SimpleNamespace(meta={}, mono=False, mono_channel="G")
+    app.v_film.set("bw")
+    app._sync_film()
+    assert app._mono_for(item) == (False, "G"), "a roll's own answer wins"
+    assert app._mono_for(colour)[0] is False
+    # And Save As asks it rather than the window.
+    delivered = []
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: "/nowhere/out.tif")
+    monkeypatch.setattr(app, "_deliver_one",
+                        lambda r, p, q, mono, ch: delivered.append(mono) or "")
+    app.on_save_as(colour)
+    assert delivered == [False]
+
+
 def test_approvals_are_read_without_loading_a_survey(tmp_path):
     """`approved.json` is the one thing in a roll folder the library cannot
     rebuild, so Delete has to be able to ask about it without reading pixels."""
