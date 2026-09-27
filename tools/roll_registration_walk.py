@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -50,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import tiff                                       # noqa: E402
 from rps7200.console import use_utf8_stdout                    # noqa: E402
-from rps7200.direct import DirectScanner                       # noqa: E402
+from rps7200.direct import DirectScanner, debug_from_env       # noqa: E402
 from rps7200.framing import frame_contrast                     # noqa: E402
 from rps7200.session import FINE_MIN_MM                        # noqa: E402
 
@@ -239,7 +238,7 @@ def main() -> int:
         print("\ndry run: no device was opened")
         return 0
 
-    if not os.environ.get("RPS7200_DEBUG"):
+    if not debug_from_env():
         print("refusing to run without RPS7200_DEBUG=1: a walk that files "
               "nothing cannot be re-analysed, and this one is the corpus",
               file=sys.stderr)

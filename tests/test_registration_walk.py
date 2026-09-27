@@ -191,6 +191,35 @@ def test_it_refuses_to_run_without_debug_filing(tmp_path, monkeypatch, capsys):
     assert "RPS7200_DEBUG" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("value", ["0", "false", "2", "y"])
+def test_a_value_the_driver_reads_as_off_is_refused_too(
+        tmp_path, monkeypatch, capsys, value):
+    """The guard asked only whether the variable was set, and the driver files
+    only on 1, true, yes or on: `RPS7200_DEBUG=0` passed the one and filed
+    nothing by the other."""
+    def opened(**kw):
+        raise AssertionError("a run that files nothing must not open the device")
+
+    monkeypatch.setattr(walk_tool, "DirectScanner", opened)
+    monkeypatch.setenv("RPS7200_DEBUG", value)
+    monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(tmp_path)])
+    assert walk_tool.main() == 2
+    assert "RPS7200_DEBUG" in capsys.readouterr().err
+
+
+def test_every_probe_asks_the_driver_whether_debug_is_on():
+    """One reading of the variable, the driver's, for every guard."""
+    from pathlib import Path
+
+    tools = Path(__file__).resolve().parent.parent / "tools"
+    for name in ("hold_probe", "gain_probe", "transport_truth",
+                 "exposure_probe", "roll_registration_walk", "byte14_probe",
+                 "fast_ir_probe"):
+        source = (tools / f"{name}.py").read_text(encoding="utf-8")
+        assert "if not debug_from_env():" in source, name
+        assert 'os.environ.get("RPS7200_DEBUG")' not in source, name
+
+
 def test_a_dry_run_opens_no_device(tmp_path, monkeypatch, capsys):
     def explode(**kw):
         raise AssertionError("a dry run must not construct a scanner")

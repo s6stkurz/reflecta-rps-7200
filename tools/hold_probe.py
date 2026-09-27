@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -53,6 +52,7 @@ from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                  # noqa: E402
     CheckCondition,
     DirectScanner,
+    debug_from_env,
 )
 from rps7200.framing import measure_shift_mm                  # noqa: E402
 from rps7200.session import Approved                          # noqa: E402
@@ -111,7 +111,7 @@ def main() -> int:
         print("\n  about 5 minutes. Film must be loaded.")
         return 0
 
-    if not os.environ.get("RPS7200_DEBUG"):
+    if not debug_from_env():
         print("refusing to run without RPS7200_DEBUG=1: a probe that files "
               "nothing cannot be re-analysed, and this one is worth keeping",
               file=sys.stderr)

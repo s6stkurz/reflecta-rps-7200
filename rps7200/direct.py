@@ -526,6 +526,19 @@ class _CommandLog:
         return reply
 
 
+def debug_from_env() -> bool:
+    """Whether `RPS7200_DEBUG` turns debug filing on: 1, true, yes or on.
+
+    The one reading of it, for `DirectScanner` and for every probe that
+    refuses to run without it. The probes guarded on the variable being set
+    at all, so `RPS7200_DEBUG=0` -- or 2, or y -- passed a guard whose whole
+    purpose is to refuse a run that files nothing, and the run then filed
+    nothing.
+    """
+    return (os.environ.get(DirectScanner.DEBUG_ENV, "").strip().lower()
+            in {"1", "true", "yes", "on"})
+
+
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -647,12 +660,7 @@ class DirectScanner:
         # `debug` files every scan in the library automatically. Off by default
         # so ordinary use is not burdened; see the class docstring and
         # CLAUDE.md for who has to turn it on and why.
-        self.debug = (
-            os.environ.get(self.DEBUG_ENV, "").strip().lower()
-            in {"1", "true", "yes", "on"}
-            if debug is None
-            else bool(debug)
-        )
+        self.debug = debug_from_env() if debug is None else bool(debug)
         #: Scans waiting to be filed. Only paths and metadata live here; the
         #: pixels are spooled to disk, because a 7200 dpi roll would otherwise
         #: want 19 GB of RAM.
