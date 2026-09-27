@@ -258,26 +258,40 @@ def test_a_reused_reference_still_names_the_calibration_it_came_from(
 # -- through the session ------------------------------------------------------
 
 
-def _session_to_close(scanner, tmp_path, jobs, timeout=30.0):
+def _session(scanner, tmp_path, **kw):
     from rps7200.session import ScanSession
 
-    session = ScanSession(root=str(tmp_path / "library"),
-                          rolls=str(tmp_path / "rolls"),
-                          open_scanner=lambda: scanner, verbose=False)
-    session.start()
-    for job in jobs:
-        session.submit(job)
-    session.shutdown()
+    return ScanSession(root=str(tmp_path / "library"),
+                       rolls=str(tmp_path / "rolls"),
+                       open_scanner=lambda: scanner, verbose=False, **kw)
+
+
+def _events_until(session, done, timeout=30.0):
+    """Every event up to and including the first batch ``done`` accepts."""
     events = []
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         batch = session.poll()
         events += batch
-        if any(e.kind == "closed" for e in batch):
-            break
+        if done(batch):
+            return events
         time.sleep(0.01)
+    raise AssertionError(f"waited {timeout} s; the last events were "
+                         f"{[(e.kind, e.text) for e in events[-5:]]}")
+
+
+def _closed(batch):
+    return any(e.kind == "closed" for e in batch)
+
+
+def _session_to_close(scanner, tmp_path, jobs, timeout=30.0, **kw):
+    session = _session(scanner, tmp_path, **kw)
+    session.start()
+    for job in jobs:
+        session.submit(job)
+    session.shutdown()
+    events = _events_until(session, _closed, timeout)
     session.join(timeout=5)
-    assert any(e.kind == "closed" for e in events), "the session never closed"
     return session, events
 
 
@@ -319,3 +333,172 @@ def test_the_session_files_every_real_pass_once_and_each_reconstructs(
         path = debug_root / record["id"]
         assert library.read_raw(path) not in kept_blobs
         assert library.reconstruct(path)[1].startswith("identical"), path
+
+
+# -- when filing fails, or the session is abandoned ---------------------------
+
+
+def _calibration(tmp_path):
+    from rps7200.session import Calibrate
+
+    return Calibrate(reference=str(tmp_path / "calibration" / "shading.npz"))
+
+
+def _spool_where_a_test_can_look(tmp_path, monkeypatch):
+    """Debug spools go to the system's temporary folder; here, one of ours."""
+    import tempfile
+
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    return temp
+
+
+def _library_refuses(monkeypatch, refused_root):
+    """`library.save` into ``refused_root`` fails as a full disk does; any
+    other root -- debug filing's -- still works."""
+    real = library.save
+
+    def save(image, meta, **kw):
+        if Path(kw.get("root") or "") == Path(refused_root):
+            raise OSError(28, "No space left on device")
+        return real(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", save)
+
+
+def _surviving(blob, root):
+    """Whether ``blob`` is still on disk under ``root``: as a filed entry's
+    raw bytes, or as a file holding exactly those bytes."""
+    import gzip
+
+    for path in Path(root).rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name.endswith(".gz"):
+            with gzip.open(path, "rb") as fh:
+                if fh.read() == blob:
+                    return True
+        elif path.stat().st_size == len(blob) and path.read_bytes() == blob:
+            return True
+    return False
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-03: FrameWriter._write runs library.save before the copy loop, so a "
+    "library that refuses the entry skips every delivered copy as well"))
+def test_a_scan_the_library_refused_is_still_delivered(monkeypatch, tmp_path):
+    """The library on a drive that has filled, the output folder on another
+    that has not: the operator's copy is the one thing that could still be
+    written, and the scan's only chance of surviving the session."""
+    from rps7200.session import Scan
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    _library_refuses(monkeypatch, tmp_path / "library")
+    out = tmp_path / "out"
+    _session_to_close(scanner, tmp_path,
+                      [_calibration(tmp_path),
+                       Scan(resolution=300, infrared=False,
+                            auto_exposure=False)],
+                      out_dir=str(out))
+    assert list(out.glob("*.tif")), "the scan exists nowhere"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-03: the session claims a pass from debug filing before its own "
+    "filing has succeeded, and close() deletes a claimed spool whether or "
+    "not the claimer's filing then worked"))
+def test_a_pass_the_library_refused_keeps_its_raw_bytes(monkeypatch, tmp_path):
+    """With RPS7200_DEBUG=1 the spool is an independent copy of every pass,
+    and it was deleted at close for the one pass whose filing then failed."""
+    from rps7200.session import Scan
+
+    _spool_where_a_test_can_look(tmp_path, monkeypatch)
+    monkeypatch.setenv(DirectScanner.DEBUG_ROOT_ENV, str(tmp_path / "debug"))
+    scanner, device = scanner_at_commands(monkeypatch, debug=True)
+    _library_refuses(monkeypatch, tmp_path / "library")
+    _session_to_close(scanner, tmp_path,
+                      [_calibration(tmp_path),
+                       Scan(resolution=300, infrared=False,
+                            auto_exposure=False)])
+    assert _surviving(device.passes[-1]["blob"], tmp_path), (
+        "the pass's raw bytes are gone from every place they were")
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-A1: a session marked dead by force_abort skips close(), the only "
+    "caller of the debug flush, so passes spooled earlier are neither filed "
+    "nor named"))
+def test_what_debug_filing_spooled_before_a_force_abort_is_not_lost(
+        monkeypatch, tmp_path):
+    """The metering probes of a session that later had to be aborted are the
+    passes an investigation of that wedge would want first."""
+    from rps7200.session import Scan
+
+    temp = _spool_where_a_test_can_look(tmp_path, monkeypatch)
+    debug_root = tmp_path / "debug"
+    monkeypatch.setenv(DirectScanner.DEBUG_ROOT_ENV, str(debug_root))
+    scanner, device = scanner_at_commands(monkeypatch, debug=True)
+    session = _session(scanner, tmp_path)
+    session.start()
+    session.submit(_calibration(tmp_path))
+    session.submit(Scan(resolution=300, infrared=False, auto_exposure=True))
+    events = []
+    finished = 0
+    while finished < 2:
+        batch = _events_until(session, lambda b: any(
+            e.kind in ("finished", "failed") for e in b))
+        events += batch
+        finished += sum(e.kind in ("finished", "failed") for e in batch)
+    session.force_abort()
+    session.shutdown()
+    events += _events_until(session, _closed)
+    session.join(timeout=5)
+
+    probes = [p for p in device.passes if not p["calibrate"]][:-1]
+    assert probes, "the metered scan ran no probe"
+    filed = ({library.read_raw(debug_root / r["id"])
+              for r in library.entries(debug_root)}
+             if debug_root.exists() else set())
+    said = " ".join(e.text or "" for e in events if e.kind == "log")
+    for probe in probes:
+        if probe["blob"] in filed:
+            continue
+        spooled = [p for p in temp.rglob("*-raw.bin")
+                   if p.read_bytes() == probe["blob"]]
+        assert spooled and str(spooled[0].parent) in said, (
+            "a probe spooled before the abort is neither filed nor named")
+
+
+def test_a_force_abort_mid_read_leaves_the_scanner_suspect(monkeypatch,
+                                                           tmp_path):
+    """The abort the window offers when a pass has hung: the transport is
+    closed under the read. That pass stops before its last line, so the
+    device may still be mid-scan, and nothing may drive it again this
+    session -- only the idle case was tested."""
+    from rps7200.session import Scan
+
+    holder = {}
+
+    def abort_during_the_scan(device, n):
+        if not device.passes[-1]["calibrate"] and "fired" not in holder:
+            holder["fired"] = n
+            holder["session"].force_abort()
+
+    scanner, device = scanner_at_commands(monkeypatch,
+                                          on_read=abort_during_the_scan)
+    session = _session(scanner, tmp_path)
+    holder["session"] = session
+    session.start()
+    session.submit(_calibration(tmp_path))
+    session.submit(Scan(resolution=300, infrared=False, auto_exposure=False))
+    session.shutdown()
+    events = _events_until(session, _closed)
+    session.join(timeout=5)
+
+    assert "fired" in holder, "the abort never happened mid-read"
+    assert session.dead is True
+    assert scanner.suspect is not None
+    assert any(e.kind == "failed" for e in events)
+    assert library.entries(tmp_path / "library") == [], \
+        "a pass abandoned mid-read was filed as if whole"

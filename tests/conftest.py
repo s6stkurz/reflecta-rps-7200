@@ -475,13 +475,19 @@ class DeviceAtCommands:
     a test can hold what the driver filed against what the device sent. An
     opcode it does not know fails the test rather than answering empty: SET
     SCAN HEAD among them, and STOP SCAN, which the vendor never sends either.
+
+    Closed, it refuses every command as `Transport` does once its handle is
+    gone. ``on_read(device, n)`` is called before the ``n``th image READ of
+    the whole session, so a test can act mid-pass -- a force abort, say.
     """
 
     #: What READ GAIN/OFFSET reports: the device's own power-on values.
     EXPOSURE = (9604, 6506, 6506, 7745)
 
-    def __init__(self, *, upward=(), seed=0, position=0):
+    def __init__(self, *, upward=(), seed=0, position=0, on_read=None):
         self.upward = set(upward)
+        self.on_read = on_read
+        self.reads = 0
         self.seed = seed
         self.position = position
         self.sent: list[tuple[int, bytes]] = []
@@ -511,6 +517,10 @@ class DeviceAtCommands:
                 max_wait_s=60.0):
         from rps7200 import protocol as p
 
+        from rps7200.usb_transport import UsbError
+
+        if self.closed:
+            raise UsbError("transport is not open")
         opcode = command[0]
         data = bytes(data) if data else b""
         self.sent.append((opcode, data))
@@ -642,6 +652,12 @@ class DeviceAtCommands:
 
         if self._pass is None:
             self._refuse(SCSI_READ, ASC_END_OF_DATA)
+        self.reads += 1
+        if self.on_read is not None:
+            self.on_read(self, self.reads)
+            if self.closed:
+                from rps7200.usb_transport import UsbError
+                raise UsbError("transport closed under a read")
         if not self._waited:
             self._waited = True
             raise NoDataYet("not scanned that far yet")
