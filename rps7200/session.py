@@ -1159,6 +1159,20 @@ class RollManifest:
             record["filing_error"] = str(error)
 
 
+def recorded_numbers(manifest: dict) -> list[int]:
+    """The frame numbers a manifest holds a record for, unreadable ones left out.
+
+    What a roll that named no frames is taken to want.
+    """
+    numbers = []
+    for record in manifest.get("frames") or ():
+        try:
+            numbers.append(int(record["number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return numbers
+
+
 def walk_span(earlier: dict, start_at: int,
               frames: int | None) -> tuple[int, int | None]:
     """The range two walks of one strip cover together, as ``(start, count)``.
@@ -2454,10 +2468,21 @@ class ScanSession:
             #: many sessions it takes. The union, because a resumed run is told
             #: only what is *left* -- taking its `only` as the answer is what
             #: made a four-frame roll report itself as two.
+            #:
+            #: A roll that named no frames wrote none here, and is read as
+            #: wanting every frame it recorded (the window's `wanted_frames`).
+            #: So that is its side of the union when this run names some: the
+            #: window resumes such a roll with just the frames left, and the
+            #: union from nothing made the roll want those few -- read as
+            #: finished with a frame still to do, a failed frame outside the
+            #: range no longer left. A run that names none still writes none,
+            #: so the reader's fallback goes on counting its frames too.
             "wanted": sorted(
                 {int(n) for n in (earlier.get("wanted")
                                   or (earlier.get("settings") or {}).get("only")
-                                  or earlier.get("only") or ())}
+                                  or earlier.get("only")
+                                  or (recorded_numbers(earlier) if job.only
+                                      else ()))}
                 | {int(n) for n in (job.only or ())}
             ) or None,
             # Earlier attempts' frames, kept. This run's records replace the

@@ -6094,15 +6094,18 @@ def test_aim_measures_only_from_a_prescan_of_the_film_where_it_is(window,
 
 
 def _unwalked_roll(tmp_path, done, settings=True):
-    """A roll scanned without a walk, six frames asked for, `done` done."""
+    """A roll scanned without a walk, six frames asked for, `done` done and
+    the rest failed -- as the session writes one: a roll that named no frames
+    records no `wanted`, and is read as wanting every frame it recorded."""
     folder = tmp_path / "rolls" / "resume"
     folder.mkdir(parents=True)
     (folder / "roll.json").write_text(json.dumps({
-        "roll": "resume", "numbering": "strip", "wanted": list(range(1, 7)),
+        "roll": "resume", "numbering": "strip", "wanted": None,
         **({"settings": {"resolution": 1800, "prescan_resolution": 300,
-                         "film": "negative", "start_at": 1, "frames": 6}}
+                         "film": "negative", "start_at": 1, "frames": 6,
+                         "only": None}}
            if settings else {}),
-        "frames": [{"number": n, "done": True} for n in done]}),
+        "frames": [{"number": n, "done": n in done} for n in range(1, 7)]}),
         encoding="utf-8")
     return folder
 
@@ -6127,6 +6130,40 @@ def test_finishing_a_reopened_roll_skips_the_frames_it_has(window, monkeypatch,
     app.on_roll()
     assert jobs[0].only == (3, 6) and jobs[0].start_at == 3
     assert "Already scanned, and skipped: 4-5." in asked[0]
+
+
+def test_a_reopened_roll_finished_in_part_still_wants_what_is_left(
+        window, monkeypatch, tmp_path):
+    """Resumed with just the frames left, a roll that had named none came
+    back wanting only those: stopped after frame 3 with 6 still to do, the
+    browser called it finished and a reopen found nothing left to scan."""
+    from conftest import StripScanner
+    from rps7200.session import ScanSession
+
+    app, root = window
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    folder = _unwalked_roll(tmp_path, done=(1, 2, 4, 5))
+    app.open_roll(folder)
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs[0].only == (3, 6)
+    # The job the window handed over, run by a session on a strip that ends
+    # at frame 4: frame 3 is scanned, and 6 is never reached.
+    resumed = ScanSession(root=str(tmp_path / "library"),
+                          rolls=app.session.rolls, verbose=False,
+                          open_scanner=lambda: StripScanner(at=0, last=3))
+    resumed.start()
+    resumed.submit(jobs[0])
+    resumed.shutdown()
+    resumed.join(timeout=10)
+    summary = gui.roll_summary(folder)
+    assert summary["done"] == [1, 2, 3, 4, 5]
+    assert summary["remaining"] == [6]
+    assert gui.roll_cells(summary)[1] == "5 of 6"
 
 
 def test_a_reopened_roll_with_no_settings_does_not_say_they_are_back(
