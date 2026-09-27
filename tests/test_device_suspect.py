@@ -166,13 +166,84 @@ def test_a_bracket_stopped_at_ctrl_c_files_the_passes_it_took(tmp_path, monkeypa
     """Stopped between passes, never inside one, and nothing scanned is lost:
     the passes used to be held in memory until the end and die with the
     exception."""
-    from rps7200 import console
     from test_scan_tool import _filed, run_correcting
 
-    monkeypatch.setattr(console.DeferredInterrupt, "requested", lambda self: True)
+    passes = _ctrl_c_after_passes(monkeypatch, 1)
     _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
     assert code == 130
+    assert len(passes) == 1, "a pass started after the Ctrl-C"
     assert len(_filed(tmp_path)) == 1, "the pass taken before Ctrl-C was not filed"
+
+
+def _ctrl_c_after_passes(monkeypatch, n):
+    """Ctrl-C pressed during pass `n`: asked for from then on. Returns the
+    passes that started, as `FakeCorrectingScanner` saw them."""
+    from test_scan_tool import FakeCorrectingScanner
+
+    from rps7200 import console
+
+    started = []
+    real = FakeCorrectingScanner.scan
+
+    def scan(self, **kw):
+        started.append(kw)
+        return real(self, **kw)
+
+    monkeypatch.setattr(FakeCorrectingScanner, "scan", scan)
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: len(started) >= n)
+    return started
+
+
+def test_a_ctrl_c_during_the_calibration_starts_no_pass(tmp_path, monkeypatch):
+    """The calibration ran on, then the full pass started anyway, after the
+    operator had been told "stopping" -- which invites the second Ctrl-C,
+    the one that abandons a read."""
+    from test_scan_tool import FakeCorrectingScanner, run_correcting
+
+    from rps7200 import console
+
+    asked = []
+    monkeypatch.setattr(FakeCorrectingScanner, "ensure_shading",
+                        lambda self, *a, **k: asked.append(1) or {
+                            "action": "calibrated", "summary": "calibrated"})
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: bool(asked))
+    created, code = run_correcting(tmp_path, monkeypatch)
+    assert code == 130
+    assert created[0].scans == []
+
+
+def test_a_ctrl_c_during_metering_starts_no_further_pass(tmp_path, monkeypatch):
+    """Metering's probes are passes, and go through `scan` as the frame does;
+    a stop asked for during the first is taken before the second."""
+    from test_scan_tool import FakeCorrectingScanner, run_correcting
+
+    class Metering(FakeCorrectingScanner):
+        def scan(self, **kw):
+            if kw.pop("auto_exposure", False):
+                # As the driver's does: each round a scan of its own.
+                for _ in range(2):
+                    self.scan(resolution=300, infrared=False)
+            return super().scan(**kw)
+
+    passes = _ctrl_c_after_passes(monkeypatch, 1)
+    _created, code = run_correcting(tmp_path, monkeypatch, "--auto-exposure",
+                                    scanner=Metering)
+    assert code == 130
+    assert len(passes) == 1, "metering went on, and the frame after it"
+
+
+def test_a_bracket_filed_nowhere_still_stops_at_ctrl_c(tmp_path, monkeypatch):
+    """The only check sat behind `--library`: with --no-library every pass of
+    the bracket was taken."""
+    from test_scan_tool import run_correcting
+
+    passes = _ctrl_c_after_passes(monkeypatch, 1)
+    _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3",
+                                    "--no-library")
+    assert code == 130
+    assert len(passes) == 1
 
 
 def test_a_failure_part_way_through_a_bracket_files_what_came_before(

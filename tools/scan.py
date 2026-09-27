@@ -65,7 +65,7 @@ def say_estimate(*, passes: int, resolution: int, infrared: bool,
 
 
 class _StoppedBetweenPasses(Exception):
-    """A bracket stopped at Ctrl-C, after a pass had landed and before the next."""
+    """Stopped at Ctrl-C before a pass started -- never inside one."""
 
 
 def main() -> int:
@@ -273,6 +273,26 @@ def main() -> int:
                 print(s.ensure_shading(ref_path, reuse=args.reuse,
                                        skip=args.no_shading)["summary"])
 
+                # Every pass from here asks first -- metering's probes and a
+                # bracket's passes go through `scan` as the frame does -- so
+                # a Ctrl-C during the calibration, metering or any pass stops
+                # before the next one starts, filed or not. It used to be
+                # asked in one place, after a bracket pass was filed: through
+                # a calibration and metering the operator was told "stopping"
+                # and then saw a full pass start, and pressed again -- the
+                # second Ctrl-C, which abandons the read.
+                scan_now = s.scan
+
+                def scan_unless_stopped(*a, **kw):
+                    if interrupt.requested():
+                        raise _StoppedBetweenPasses(
+                            f"after {len(pending)} pass"
+                            f"{'' if len(pending) == 1 else 'es'} kept, "
+                            "at Ctrl-C")
+                    return scan_now(*a, **kw)
+
+                s.scan = scan_unless_stopped
+
                 # Everything the library needs is gathered while the session is open and
                 # written after it closes: filing an entry gzips well over a hundred
                 # megabytes, and holding the device open and idle through that has
@@ -298,12 +318,6 @@ def main() -> int:
                         dict(capture, inquiry=info, meta=meta,
                              image=image if raw is None else raw)
                     )
-                    if args.bracket and interrupt.requested():
-                        # Between passes: this one is complete and held, and
-                        # the next has not started, so stopping here abandons
-                        # nothing. A single pass has nothing after it to stop.
-                        raise _StoppedBetweenPasses(
-                            f"after pass {len(pending)}, at Ctrl-C")
 
                 bracket = None
                 if args.bracket:
