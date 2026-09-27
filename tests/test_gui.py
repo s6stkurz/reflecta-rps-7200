@@ -1213,6 +1213,43 @@ def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
         root.destroy()
 
 
+def test_a_refused_key_does_not_fall_back_onto_another_actions_key(tmp_path):
+    """Save as's `<Foo>` is refused and it falls back to its default -- which
+    the operator had given to previous pass. Tk's `bind` replaces what a key
+    did, so previous pass's shortcut silently saved instead, while the log
+    said "using its default". The default is left to its owner."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200 import shortcuts
+    from rps7200.demo import DemoScanner
+    from rps7200.session import ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    default = shortcuts.defaults()["save_as"]
+    stored = tmp_path / "gui-settings.json"
+    # previous_pass is bound before save_as, so without the check the
+    # fallback is the binding that stands.
+    stored.write_text(json.dumps({"shortcuts": {
+        "save_as": "<Foo>", "previous_pass": default}}), encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"), verbose=False)
+    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
+    try:
+        app = load_tool("gui").ScannerGui(root, session, demo=True,
+                                          settings_path=str(stored))
+        assert app._bound.count(default) == 1, app._bound
+        said = app.log.get("1.0", "end")
+        assert "left unbound" in said and "previous_pass" in said, said
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
 def test_the_monochrome_controls_follow_the_film(window):
     """Enabled only for black and white, because reducing a colour negative or
     a slide to one channel throws the picture away rather than a redundant copy

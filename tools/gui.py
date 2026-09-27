@@ -904,15 +904,18 @@ class ScannerGui:
                 pass
         self._bound = []
         actions = self._actions()
-        for sequence, action_id in shortcuts.in_scope(self.keys, "window").items():
+        scoped = shortcuts.in_scope(self.keys, "window")
+        for sequence, action_id in scoped.items():
             run = actions.get(action_id)
             if run is None:
                 continue
-            bound = self._bind_key(self.root, sequence, action_id, run)
+            bound = self._bind_key(self.root, sequence, action_id, run,
+                                   taken=scoped)
             if bound:
                 self._bound.append(bound)
 
-    def _bind_key(self, widget, sequence: str, action_id: str, run) -> str | None:
+    def _bind_key(self, widget, sequence: str, action_id: str, run,
+                  taken: dict[str, str] | None = None) -> str | None:
         """Bind one key, or its default where Tk will not take the one set.
 
         `shortcuts.resolve` promises a hand-editing mistake costs a key rather
@@ -920,19 +923,33 @@ class ScannerGui:
         string, and a sequence Tk does not know -- `<Foo>` -- raised TclError
         here, from the window's constructor, and the window never opened.
         Returns the sequence bound, or None.
+
+        ``taken`` is the scope's own `{sequence: action id}`. A default another
+        action there holds is not fallen back on: Tk's `bind` replaces what a
+        key did, so the fallback took that key from its owner, whose shortcut
+        then silently ran this action instead -- while the log said "using
+        its default".
         """
+        taken = taken or {}
         default = shortcuts.defaults().get(action_id, "")
+        held = taken.get(default) not in (None, action_id)
         for candidate in dict.fromkeys((sequence, default)):
             if not candidate:
+                continue
+            if candidate != sequence and held:
                 continue
             try:
                 widget.bind(candidate, self._runner(run, candidate))
             except tk.TclError as exc:
+                if candidate != sequence or not default or default == sequence:
+                    then = "left unbound"
+                elif held:
+                    then = (f"left unbound: its default {default!r} is "
+                            f"{taken[default]}'s")
+                else:
+                    then = "using its default"
                 self._say(f"shortcut {candidate!r} for {action_id} is not a "
-                          f"key Tk knows ({exc}); "
-                          + ("using its default" if candidate == sequence
-                             and default and default != sequence
-                             else "left unbound"))
+                          f"key Tk knows ({exc}); {then}")
                 continue
             return candidate
         return None
@@ -7449,11 +7466,12 @@ class _FrameAdjuster:
                 pass
         self._bound = []
         actions = self._actions()
-        for sequence, action_id in shortcuts.in_scope(
-                self.gui.keys, "adjuster").items():
+        scoped = shortcuts.in_scope(self.gui.keys, "adjuster")
+        for sequence, action_id in scoped.items():
             run = actions.get(action_id)
             if run is not None:
-                bound = self.gui._bind_key(self.top, sequence, action_id, run)
+                bound = self.gui._bind_key(self.top, sequence, action_id, run,
+                                           taken=scoped)
                 if bound:
                     self._bound.append(bound)
 
@@ -8255,11 +8273,12 @@ class _ContactSheet:
                 pass
         self._bound = []
         actions = self._actions()
-        for sequence, action_id in shortcuts.in_scope(
-                self.gui.keys, "sheet").items():
+        scoped = shortcuts.in_scope(self.gui.keys, "sheet")
+        for sequence, action_id in scoped.items():
             run = actions.get(action_id)
             if run is not None:
-                bound = self.gui._bind_key(self.top, sequence, action_id, run)
+                bound = self.gui._bind_key(self.top, sequence, action_id, run,
+                                           taken=scoped)
                 if bound:
                     self._bound.append(bound)
         if self._adjuster is not None and self._adjuster.alive():
