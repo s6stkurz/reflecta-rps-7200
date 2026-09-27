@@ -82,3 +82,17 @@ def test_a_move_counts_only_once_the_counter_leaves_where_it_was(monkeypatch):
     s = DirectScanner(transport=t, debug=False)
     s._own_transport = False
     assert s.advance() == 5
+
+
+def test_a_read_answered_with_no_data_is_not_counted_as_lines():
+    """The transport returns nothing for a READ answered OK with no data
+    phase, and read_planes counted the lines as read: a pass could reach its
+    declared count early and be taken as complete with lines still on the
+    device. It is a refused read now, and the pass is not whole."""
+    from rps7200.protocol import SCSI_READ, ScanReadError
+
+    s = DirectScanner(transport=FakeTransport(replies={SCSI_READ: bytes(0)}),
+                      debug=False)
+    s._own_transport = False
+    with pytest.raises(ScanReadError, match="returned 0 bytes"):
+        s.read_lines(4, 100, retries=1)

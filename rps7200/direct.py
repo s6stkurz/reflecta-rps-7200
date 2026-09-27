@@ -1823,12 +1823,22 @@ class DirectScanner:
         last = Sense.unreadable("no attempt was made")
         for _ in range(retries):
             try:
-                return self.t.command(
+                data = self.t.command(
                     _cmd(SCSI_READ, lines),
                     read_size=lines * bytes_per_line,
                     timeout_ms=timeout_ms,
                     max_wait_s=max_wait_s,
                 )
+                # Every caller counts `lines` as read on return. A READ
+                # answered OK with no data phase came back as b"" and was
+                # counted anyway: a pass could reach its declared line count
+                # early and be taken as complete while the device still held
+                # lines. Refused, so the pass is not taken for whole.
+                if len(data) != lines * bytes_per_line:
+                    raise ScanReadError(
+                        f"reading {lines} lines x {bytes_per_line} bytes "
+                        f"returned {len(data)} bytes")
+                return data
             except CheckCondition:
                 last = self.read_sense()
                 self._log(f"  read_lines: {last}")
