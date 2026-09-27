@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan with the scanner's own shading correction applied.
+"""Scan one frame, corrected on the host from the scanner's own reference.
 
     uv run python tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
 
@@ -34,6 +34,7 @@ from rps7200.direct import DirectScanner, supports_infrared
 from rps7200.direct import DirectScanner as _Driver
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
 from rps7200.library import FilmNotes
+from rps7200.session import HeldOpen, keep_unfiled
 
 
 #: What a calibration costs, for the estimate: 3-4 minutes, per the prompt
@@ -165,7 +166,10 @@ def main() -> int:
             "(Chromogenic C-41 black and white does clean properly: scan that "
             "as --film negative.)"
         )
-    if args.no_library:
+    if args.no_library or args.library == "":
+        # `--library ''` is how `tools/scan_roll.py` says "do not file", and
+        # here it filed into the current directory -- `Path('')` is `.` --
+        # beside an index.json, out of sight of `make verify`.
         args.library = None
     if args.bracket and not (
         DirectScanner.MIN_BRACKET_PASSES
@@ -242,16 +246,19 @@ def main() -> int:
         calibrating=not args.no_shading and not (args.reuse and ref_path.exists()),
         metering=args.auto_exposure and not args.exposure_scale)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
-    # entries and claims each of those passes (`hold` below), so debug filing
-    # leaves them out rather than writing every frame twice -- 43 GB of
-    # duplicate on a 38-frame roll at 7200 dpi, which is why this used to say
-    # debug=False and so filed none of the metering probes either.
+    # entries and claims each of those passes once it has filed it (below),
+    # so debug filing leaves them out rather than writing every frame twice --
+    # 43 GB of duplicate on a 38-frame roll at 7200 dpi, which is why this
+    # used to say debug=False and so filed none of the metering probes either.
+    # Held open by `HeldOpen`: the device closes when the block ends, and the
+    # scanner's own exit -- debug filing -- waits for this tool's filing.
     # Ctrl-C finishes the pass in flight instead of abandoning its read --
     # which wedges the scanner -- and a bracket stops after it. Whatever went
     # wrong, the passes already scanned are filed below: they used to be held
     # only in `pending` and die with the exception.
     interrupt = DeferredInterrupt()
     trouble: BaseException | None = None
+    device: HeldOpen | None = None
     pending: list[dict] = []
     # Each bracket pass as the sensor returned it, for the merge to judge
     # saturation on -- see rps7200/bracket.py. With the library on, these are
@@ -263,7 +270,8 @@ def main() -> int:
     sensor: list[np.ndarray] = []
     try:
         with interrupt:
-            with DirectScanner(verbose=args.verbose, debug=None) as s:
+            device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
+            with device as s:
                 info = s.inquiry()
                 print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
@@ -292,11 +300,16 @@ def main() -> int:
                     # describes the pass that *just* ran: `on_pass` is called as each
                     # pass lands, and the pass after it overwrites this.
                     raw = getattr(s, "last_pixels_raw", None)
-                    if raw is not None:
-                        s.debug_claim(raw)
                     pending.append(
                         dict(capture, inquiry=info, meta=meta,
-                             image=image if raw is None else raw)
+                             image=image if raw is None else raw,
+                             # Claimed from debug filing once it is filed, and
+                             # only with its bytes. Claimed here, before the
+                             # filing below, a pass whose filing then failed
+                             # was deleted from the spool as well.
+                             claim=(s.debug_claim if raw is not None
+                                    and capture.get("raw") is not None
+                                    else None))
                     )
                     if args.bracket and interrupt.requested():
                         # Between passes: this one is complete and held, and
@@ -364,15 +377,46 @@ def main() -> int:
               else f"stopped: {type(exc).__name__}", file=sys.stderr)
 
     entries = []
-    for held in pending:
-        entries.append(library.save(
-            held.pop("image"), held.pop("meta"),
-            root=args.library,
-            film=FilmNotes(stock=args.stock, frame=args.frame,
-                           subject=args.subject, notes=args.notes),
-            tags=args.tags,
-            **held,
-        ))
+    #: Passes the library would not take, said once filing is over.
+    unfiled: list[str] = []
+    try:
+        for n, held in enumerate(pending, 1):
+            # Each pass on its own. A bare loop let the first refusal -- a
+            # full disk, --library naming a file -- escape as a traceback, and
+            # every pass after it, the bracket's merge and --out went with it:
+            # all of them held only here, in memory.
+            pixels, meta = held.pop("image"), held.pop("meta")
+            claim = held.pop("claim", None)
+            filing = dict(film=FilmNotes(stock=args.stock, frame=args.frame,
+                                         subject=args.subject, notes=args.notes),
+                          tags=args.tags, **held)
+            try:
+                entry = library.save(pixels, meta, root=args.library, **filing)
+            except Exception as exc:                     # noqa: BLE001
+                # Its raw data kept elsewhere, whole, where it can be moved
+                # into the library later -- beside --out, or in the system's
+                # temporary directory. See `session.keep_unfiled`.
+                kept, elsewhere = keep_unfiled(pixels, meta,
+                                               near=[Path(args.out).parent],
+                                               **filing)
+                said = (f"pass {n} could not be filed in {args.library} "
+                        f"({exc}); ")
+                said += (f"its raw data is kept in {kept} -- move that folder "
+                         "into the library to file it" if kept is not None
+                         else "and could not be kept anywhere else either ("
+                         + "; ".join(elsewhere) + ")")
+                print(said, file=sys.stderr, flush=True)
+                unfiled.append(said)
+                continue
+            entries.append(entry)
+            if claim is not None:
+                claim(pixels)
+    finally:
+        # Debug filing last, once every pass here is filed and claimed: what
+        # it finds unclaimed is what this run did not keep -- metering probes,
+        # and a pass whose filing failed.
+        if device is not None:
+            device.release()
 
     if trouble is not None:
         for e in entries:
@@ -433,6 +477,12 @@ def main() -> int:
             print(f"  {e}")
         print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
               f"re-decoded and re-corrected without the scanner")
+    if unfiled:
+        # Said again last, where it is read: the file above was written, and
+        # this is what it cost. A pass not in the library is a failed run.
+        for said in unfiled:
+            print(said, file=sys.stderr)
+        return 1
     return 0
 
 
