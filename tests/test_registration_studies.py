@@ -97,6 +97,20 @@ def test_a_hold_that_moved_the_wrong_way_is_not_scored_as_delivered(tmp_path,
     assert "wrong way" in line
 
 
+def test_a_match_is_scored_both_ways_up_as_the_hold_scores_it(capsys):
+    """`measure_shift_mm` takes the stronger of upright and rows-reversed; the
+    tool scored one orientation, so the statistic it re-fits the floor on was
+    not the gate's. A pass read bottom-up is the same picture to the gate."""
+    rng = np.random.default_rng(3)
+    base = rng.normal(0, 1, (60, 80))
+    for _ in range(3):                    # texture with some structure
+        base = base + np.roll(base, 1, axis=1)
+    image = np.stack([base] * 3, axis=-1)
+    margin.separation([("a", image), ("b", image[::-1].copy())], 300)
+    out = capsys.readouterr().out
+    assert "same picture" in out and "different picture" not in out, out
+
+
 def test_a_folder_with_no_manifest_still_leaves_the_before_pictures_out(tmp_path):
     folder = tmp_path / "old"
     folder.mkdir()

@@ -245,8 +245,17 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
     differ: list[tuple] = []
     unsure: list[tuple] = []
     for (na, a), (nb, b) in itertools.combinations(images, 2):
-        dy, dx, conf = register(a, b, max_shift=reach)
-        corr = aligned_correlation(a, b, dx)
+        # Both ways up, and the stronger taken, as `framing.measure_shift_mm`
+        # scores the match that moves film. One orientation alone measured a
+        # different statistic from the gate this tool exists to re-fit: over
+        # a pair of different pictures the larger of two null draws is higher
+        # than one, so its worst null was a lower bound on the production
+        # gate's.
+        upright = register(a, b, max_shift=reach)
+        flipped = register(a, b[::-1], max_shift=reach)
+        turned = flipped[2] > upright[2]
+        dy, dx, conf = flipped if turned else upright
+        corr = aligned_correlation(a, b[::-1] if turned else b, dx)
         row = (na, nb, dy, dx, conf, corr)
         (same if corr >= SAME_PICTURE else differ).append(row)
         if abs(corr - SAME_PICTURE) < ARBITER_MARGIN:
