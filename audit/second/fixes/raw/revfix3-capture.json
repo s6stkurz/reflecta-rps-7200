@@ -1,0 +1,47 @@
+{
+ "type": "result",
+ "key": "v2:76107201e61e914ef9d4e1996328bfd910b7bcc11a82f29f64bb809ae6c93ae4",
+ "agentId": "a8c3c523d7582907f",
+ "result": {
+  "branch": "fix3/capture",
+  "commits": [
+   "688093a26633d40157e70be241cf69d5f27bbb62 Refuse a calibration that did not split in every channel (review of DBG-7)",
+   "75d7956e25ae3457f7e57f3052915b528fff42e8 File what nobody claimed at close(); remove a spool left holding only its reference (review of DBG-1)",
+   "cf52b7671a0f264c63d3c954cd46da01ed3e48a0 A failed pass taken raw on purpose keeps saying so (review of P07)",
+   "cd584f902b0aeaa99f83dcbf01e2ce9199071804 Bound the writer by frames, with prescans apart (review of LIB-01)"
+  ],
+  "done": [
+   {
+    "issue": "major, rps7200/direct.py:2960: the DBG-7 check `arrived < lines_declared` let a calibration through when it ended exactly at the phase boundary. That pass has the declared number of lines, all dark, so nothing splits and a single-point reference on the ~170-count dark floor was installed.",
+    "change": "688093a: calibrate_shading now also refuses any reference with a channel that did not split into a dark and a lit phase, and names those channels in `refused`. The check is per channel rather than `reference.two_point`, because two_point is already true once one channel splits: a calibration cut off after red's first lit line would still leave green and blue on the dark floor. Every calibration on record split in every channel it returned. The lines are still kept and archived, and nothing sent to the device changes. New tests in tests/test_failed_pass.py cover two cases: 12 of 12 declared lines all dark, and 13 lines with only red lit. Neither installs a reference. Both fail without the fix."
+   },
+   {
+    "issue": "minor, rps7200/direct.py:1595: the spool leaked when every spooled pass was claimed and answered. The shared NNN-shading.npz stayed on disk, and `_debug_flush` returned early because nothing was pending.",
+    "change": "75d7956: the rmtree tail is moved into a new `_debug_remove_spool()`. `_debug_flush` now calls it when nothing is pending and no claimed pass is waiting, so a spool left holding only its reference is removed at close()/debug_settle(). The new test test_a_session_whose_every_pass_was_claimed_leaves_no_spool (tests/test_roll.py) spools one pass under a reference, claims it, answers the receipt, then runs close() and settle; no `.spool` is left. It fails without the fix."
+   },
+   {
+    "issue": "minor, rps7200/direct.py:1601: close() filed nothing at all while any claim was unanswered. A second Ctrl-C, or an exception escaping before the tools' post-`with` debug_settle(), left every unclaimed probe and hold prescan unfiled.",
+    "change": "75d7956: close() now files every pass that is not claimed. Only claimed passes wait for their caller's answer and for `debug_settle`, and the spool is not removed while any of them remain. Filing beside a claimant is what close() did before claims existed, and library._reserve's exclusive mkdir keeps two writers apart. I updated the debug_settle docstring and the session's settle comment. test_a_claim_nobody_answers_for_is_filed_when_the_claimant_is_done pinned the old behaviour; it now asserts that close() files the unclaimed probe (checked by pixels) and that settle files the claimed one. It fails without the fix."
+   },
+   {
+    "issue": "minor, rps7200/direct.py:1415: `_keep_failed_pass` overwrote `shading_skipped` with 'the pass failed ...', which dropped the SHADING_SKIPPED_EXPLICIT marker of a `shading=False` pass. verify then stayed red for good and corrected() said 'correction was asked for'.",
+    "change": "cf52b76: scan() now records the pass's own `shading` choice in its in-flight record (flight['shading']). A failed pass that asked for no correction keeps SHADING_SKIPPED_EXPLICIT, and its failure is still recorded in extra.failed and the 'failed' tag. The 'the pass failed ...' text is used only for a pass that asked for correction. I did not use the review's suggested source, mode['skip_shading'], because that is the device's skip-shading-analysis bit, not the host correction. The new test covers a shading=False pass whose bytes do not decode, with no reference: verify reports no shading problem and corrected() says 'deliberately raw'. It fails without the fix."
+   },
+   {
+    "issue": "minor, rps7200/session.py:1561: FrameWriter.DEPTH 4 counted jobs, so where no prescans are queued (`scan_roll --no-library`) up to 4 frames of ~1.7 GB could wait instead of 2.",
+    "change": "cd584f9: DEPTH is back to 2 and now counts frames; prescans have their own bound, PRESCANS = 4. The queue itself is unbounded so jobs keep their order, and two BoundedSemaphores do the bounding: submit() acquires one by the job's kind, and _run releases it when the job is taken off the queue. That matches the old maxsize semantics: 2 frames waiting plus the one being written. A job marks itself kind='prescan': ScanSession._file passes its kind through, and tools/scan_roll.py file_prescan sets it. tests/test_roll_writer.py::test_the_queue_is_bounded_by_frames replaces the test that pinned queue.maxsize. With a stalled writer, a third waiting frame blocks and four prescans do not. Two more tests check the plumbing: the session and the roll tool each submit prescans as 'prescan' and frames as frames. All three fail without the fix."
+   }
+  ],
+  "left": [
+   {
+    "issue": "Merge overlap on rps7200/session.py FrameWriter and tools/scan_roll.py with fix3/filing (e.g. cab6b13 'Claim a pass from debug filing once it is filed', 290c8f0 idle/plain filing, keep_unfiled)",
+    "why": "Not an issue from the review, but whoever merges should know. fix3/filing rewrites FrameWriter.__init__, _run and _write and moves the debug claim into the writer, while this branch uses receipts. My change to FrameWriter is kept small (a semaphore pair in __init__/_run/submit, and `kind` passed by the two callers) so the merge is easier. The claim designs of the two branches still have to be reconciled by hand."
+   },
+   {
+    "issue": "Pre-existing warning in the suite",
+    "why": "tests/test_frame_edges.py::test_a_near_black_frame_costs_nothing_on_the_roll_path gives a RuntimeWarning (divide) in tools/frame_edges/changepoint.py:523. It has nothing to do with this branch, and it was there before these commits."
+   }
+  ],
+  "tests": "All five checks passed at cd584f9 (the final commit), and each earlier commit was checked with the same five before it was made:\n- Full suite (.venv python -m pytest -q -p no:cacheprovider --no-cov tests/): 1386 passed, 32 skipped, 9 deselected, 1 pre-existing warning.\n- GUI suite (xvfb-run guienv pytest -n 2 tests/test_gui.py): 390 passed.\n- RPS7200_NO_TIFFFILE=1 suite: 1320 passed, 98 skipped, 9 deselected.\n- ruff check .: all checks passed.\n- ty check --python .venv --exclude tests/ --exclude tools/: all checks passed.\n\nTo show each new or changed test fails without its fix, I saved the source diff, reverted only the source files, ran the tests, then reapplied the diff:\n- 688093a: 2 calibration tests fail.\n- 75d7956: 2 spool tests fail.\n- cf52b76: 1 failed-pass test fails.\n- cd584f9: 3 writer and plumbing tests fail.\n\nNo device was opened, no hardware tests were run, and nothing sent to the scanner changed."
+ }
+}

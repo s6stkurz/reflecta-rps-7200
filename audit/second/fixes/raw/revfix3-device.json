@@ -1,0 +1,39 @@
+{
+ "type": "result",
+ "key": "v2:f7a465f532caeebca10aa4da04b14badd59273405beb2318ec34c801418c5f60",
+ "agentId": "abf6d25085ce414ea",
+ "result": {
+  "branch": "fix3/device",
+  "commits": [
+   "3ac6687 Leave a signal the process was started ignoring ignored (review of SR-19)",
+   "a7cfc40 A closed terminal only asks, and takes no write down with it (review of SR-19)",
+   "142381a Say the endpoint's halt was cleared only when libusb says so (review of TP-A2)",
+   "98cebe0 Count the wait after a READ's payload from the payload's end (review of P16)"
+  ],
+  "done": [
+   {
+    "issue": "major, rps7200/console.py:118. DeferredInterrupt took over SIGHUP and SIGTERM even when they were set to SIG_IGN, which defeated nohup.",
+    "change": "3ac6687: in __enter__, any signal whose current handler is SIG_IGN is now skipped, and only the signals actually replaced are put back on exit. Python itself treats an ignored SIGINT the same way at start-up. Test test_a_signal_the_process_was_started_ignoring_stays_ignored[SIGHUP, SIGTERM] is in tests/test_device_suspect.py. It pre-sets the signal to SIG_IGN and checks it is still ignored inside the `with` and after it, while SIGINT is still taken. It fails without the fix (both cases checked)."
+   },
+   {
+    "issue": "major, rps7200/direct.py:678. After SIGHUP every write to the hung-up tty raises EIO. The unguarded print in DirectScanner._log inside read_planes would raise, abandon the read and mark the device suspect.",
+    "change": "a7cfc40, with three parts. (1) DirectScanner._log and usb_transport.Transport._log now swallow OSError and ValueError from print. This matters for the window, whose reads run on a thread while Tk's loop may not have run the Python handler yet. (2) DeferredInterrupt records on entry which of stdout/stderr are a tty; a hung-up tty also fails isatty(). On SIGHUP it points those streams at os.devnull, so later prints from the tools between or inside passes cannot raise. A stream redirected to a file is kept. (3) I found a related hole while verifying this: one closed terminal can send two SIGHUPs, one from the shell passing it to its jobs and one from the kernel to the foreground process group after the shell exits. The second was treated as the operator's second Ctrl-C and raised KeyboardInterrupt inside the read. A hangup now never escalates; a second Ctrl-C or SIGTERM still aborts. The CLAUDE.md line and scan_roll's BaseException comment now say that a closed terminal only asks and is not taken at all under nohup. There are three new tests in tests/test_device_suspect.py, and each fails without the fix: a hung-up stdout is released and a file stderr is kept; a second hangup does not raise while a later Ctrl-C does; and read_planes, run through the real Transport._read_payload with both logs on, completes against a stdout whose every write raises OSError(5). The existing SIGHUP-parametrised test now monkeypatches stdout/stderr so that `pytest -s` cannot leave real streams redirected."
+   },
+   {
+    "issue": "minor, rps7200/usb_transport.py:678. clear_halt never raised on failure, so the TP-A2 message said 'halt was cleared' even when libusb refused the clear or nothing was sent.",
+    "change": "142381a: clear_halt now returns libusb's rc, or None when there is no handle and nothing was sent. _bulk_read_into words the error from that result: cleared (CLEAR_FEATURE), 'failed too: <libusb error name>', or 'not cleared: the transport had closed, so nothing was sent'. A ctypes exception is still reported, now with its text. Test test_a_clear_libusb_refused_is_not_reported_as_cleared in tests/test_transport_reads.py has libusb_clear_halt return LIBUSB_ERROR_NO_DEVICE and also checks the no-handle None. It fails without the fix. What is sent to the device is unchanged."
+   },
+   {
+    "issue": "minor, rps7200/usb_transport.py:876. P16 was only partly fixed: one deadline set at the command's start also bounded the post-payload _wait_not_busy. A long payload pause could use up that deadline, and 'stayed busy' was then raised after every byte had been read.",
+    "change": "98cebe0: the post-payload _wait_not_busy now gets its own deadline of `time.monotonic() + max_wait_s`, counted from the end of the payload. For a read that does not pause, the wait is the same as before, and nothing sent changes. Test test_a_long_payload_does_not_spend_the_wait_that_follows_it in tests/test_transport_reads.py uses a fake clock. The payload uses up 350 s of a 300 s budget, then the device answers BUSY, BUSY, OK. The test failed with 'command 0x08 data-in: device stayed busy' before the fix. It also checks that a device still BUSY past its own count is still given up."
+   }
+  ],
+  "left": [
+   {
+    "issue": "minor, tools/verify_protocol.py:1247 and rps7200/protocol.py:255. The claim that framing shares COMMAND_UNITS was false because framing.COMMAND_COST was a separately typed 1.84.",
+    "why": "The real fix belongs in rps7200/framing.py, which is the demo/framing subsystem's file. fix3/demo-framing-outputs has already made it in commit 31d292f ('framing: take the ramp and the tolerance from protocol, not retyped'), which sets `COMMAND_COST = COMMAND_UNITS` imported from rps7200.protocol and pins it in tests/test_roll.py. Once that branch is merged, the stage-15 printout and the protocol.py comment are literally true, so they are left unchanged here. Rewording them on this branch would make them wrong after the merge. A trial `git merge-tree` confirms both branches change units_for_param's docstring the same way, so it merges cleanly. The only conflicts with that branch (session.py, test_device_suspect.py, scan.py) already existed at 5478591, before this round's commits."
+   }
+  ],
+  "tests": "All five commands passed before each of the four commits; figures below are from the final commit, 98cebe0. Full suite: 1388 passed, 33 skipped, 9 deselected. RPS7200_NO_TIFFFILE=1: 1322 passed, 99 skipped, 9 deselected. GUI (xvfb, -n 2): 392 passed. `ruff check .`: all checks passed. `ty check` (excluding tests/ and tools/): all checks passed. I set each fix aside, reran its new tests and confirmed they failed: 2 for SIG_IGN, 3 for the hangup/log fix, 1 for clear_halt, 1 for the deadline. Trial merges with `git merge-tree` against every other fix3 branch show no new conflicts from these commits. The existing ones (capture: direct.py; filing: test_filing_load_test.py; tests: test_gui.py; demo-framing-outputs: session.py, test_device_suspect.py, scan.py) were all already there at 5478591. No device was opened and no hardware tests were run."
+ }
+}
