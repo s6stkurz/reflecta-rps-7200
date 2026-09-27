@@ -97,6 +97,18 @@ def test_a_missing_library_returns_nothing_rather_than_raising(tmp_path):
     assert linearity.entries_by_exposure(tmp_path / "not-there") == {}
 
 
+def test_a_demo_entry_is_never_joined_as_a_rung(fake_library):
+    """It records an exposure like any pass, and is a pass of no film."""
+    root, add = fake_library
+    add("real", (100, 200, 300))
+    demo = add("demo", (100, 200, 300))
+    record = json.loads((demo / "scan.json").read_text(encoding="utf-8"))
+    record["extra"] = {"demo": True}
+    (demo / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    found = linearity.entries_by_exposure(root)
+    assert [p.name for p in found[(100, 200, 300)]] == ["real"]
+
+
 # -- grouping ----------------------------------------------------------------
 
 

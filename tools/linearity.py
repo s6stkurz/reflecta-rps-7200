@@ -183,7 +183,9 @@ def entries_by_exposure(root="library") -> dict[tuple[int, ...], list[Path]]:
         except (OSError, ValueError, NotADirectoryError):
             continue
         exposure = (record.get("device_settings") or {}).get("exposure")
-        if not exposure:
+        # A demo entry records an exposure too, and is a pass of no film: a
+        # join on the triple could hand it over as a rung.
+        if not exposure or (record.get("extra") or {}).get("demo"):
             continue
         out.setdefault(tuple(int(v) for v in exposure[:3]), []).append(entry)
     return out

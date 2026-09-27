@@ -113,6 +113,10 @@ def ladder(root: Path, after: str, before: str,
                 continue
         elif not (after <= d["created"] <= before):
             continue
+        elif (d.get("extra") or {}).get("demo"):
+            # A window takes whatever was filed inside it; a demo entry is
+            # not a pass of any film, and named by id is the only way in.
+            continue
         if s.get("resolution_dpi") is None or s.get("channels") is None:
             continue
         out.append({

@@ -117,3 +117,17 @@ def test_the_noise_floor_comes_from_a_registered_pair():
     assert shift[1] != 0
     for rnd, total, share in split.values():
         assert rnd < 60, (rnd, total)
+
+
+def test_a_window_leaves_demo_entries_out(tmp_path):
+    """A time window takes whatever was filed inside it -- another frame, a
+    prescan, a demo entry -- and a demo entry is a pass of no film."""
+    root = tmp_path / "lib"
+    real = rung(root, 300, seed=1)
+    demo = rung(root, 600, seed=2)
+    path = root / demo / "scan.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["extra"] = {"demo": True}
+    path.write_text(json.dumps(record), encoding="utf-8")
+    series = dpi_analysis.ladder(root, "0", "9")
+    assert [e["dir"].name for e in series] == [real]
