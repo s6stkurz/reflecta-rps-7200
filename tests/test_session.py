@@ -577,6 +577,39 @@ def test_a_roll_that_ends_short_of_what_was_asked_says_so(tmp_path):
                for e in kinds(events, "finished"))
 
 
+def test_a_stop_while_passing_unchosen_frames_is_a_stop(tmp_path):
+    """The driver looks at the stop before every advance, the ones past
+    frames nobody chose included, and returns without yielding. The roll
+    took that for the driver's own end and recorded a Stop as "ended after 1
+    of the 2 frames asked for" -- the end of the film."""
+    holder = {}
+
+    class StopWhilePassing(FakeScanner):
+        def scan_roll(self, should_stop=None, **kw):
+            for rf in super().scan_roll(**kw):
+                yield rf
+                # Advancing past frames 2 and 3, nobody's choice, the
+                # operator presses Stop; the driver sees it and returns.
+                holder["s"].request_stop()
+                if should_stop():
+                    return
+
+    run(Roll(frames=4, only=(1, 4), resolution=600, name="passing"), tmp_path,
+        scanner=StopWhilePassing(frames=4),
+        extra=lambda s, _scanner: holder.update(s=s))
+    said = _manifest_of(tmp_path, "passing")["stopped"]
+    assert "ended after" not in said
+    assert said == "stopped after frame 1, as asked"
+
+
+def test_a_roll_is_short_only_of_the_chosen_frames_it_can_reach(tmp_path):
+    """Frame 5 is past the four places the roll was given, so it is never
+    reached, and a roll that took frame 2 took everything it could."""
+    run(Roll(frames=4, only=(2, 5), resolution=600, name="reach"), tmp_path,
+        scanner=FakeScanner(frames=4))
+    assert "stopped" not in _manifest_of(tmp_path, "reach")
+
+
 def test_a_walk_names_its_picture_from_before_the_aim(tmp_path):
     """Named in its record, as the roll tool names it; unnamed, carrying the
     walk to another folder left it behind."""

@@ -2982,13 +2982,14 @@ class ScanSession:
         # as it arrives; see `last` below.
         ends = DirectScanner.roll_ends(first, 0, job.frames, only)
         stopped = None
-        #: Frames the roll reached, scanned, walked or failed.
+        #: Frames the roll reached, scanned, walked or failed, and the last.
         covered = 0
+        reached: int | None = None
         self._rolling = True
         try:
             for rf in frames:
                 number = rf.index + 1
-                covered += 1
+                covered, reached = covered + 1, number
                 # Nothing is scanned after this frame: the count is reached,
                 # the last chosen frame is in, or a stop was asked for. Its
                 # entry is filed plain and compacted once the device closes,
@@ -3199,13 +3200,25 @@ class ScanSession:
                     self._emit("log", text=stopped)
                     break
             else:
-                # Ended by the driver short of what was asked: a frame with no
-                # picture in it reads as the end of the film, and so does the
-                # end of the transport. It used to finish like any roll.
-                asked = [n for n in (job.frames, None if job.only is None
-                                     else len(job.only)) if n]
-                if asked and covered < min(asked):
-                    stopped = (f"ended after {covered} of the {min(asked)} "
+                asked = frames_asked(first + 1, job.frames, job.only)
+                if self._stop.is_set():
+                    # Ended by the driver, but at the stop: it looks before
+                    # every frame and every advance, the advances past frames
+                    # nobody chose on a sheet's roll included, and returns
+                    # without a word to this loop. A Stop there, or the one
+                    # `_filed` sets for a frame the library refused, was
+                    # recorded as "ended after 1 of the 2 frames asked for":
+                    # the end of the film, the one thing this record exists
+                    # to tell apart from a Stop.
+                    stopped = (f"stopped after frame {reached}, as asked"
+                               if reached is not None else "stopped before "
+                               "its first frame, as asked")
+                elif asked and covered < len(asked):
+                    # Ended by the driver short of what was asked: a frame
+                    # with no picture in it reads as the end of the film, and
+                    # so does the end of the transport. It used to finish like
+                    # any roll.
+                    stopped = (f"ended after {covered} of the {len(asked)} "
                                "frames asked for -- the log says why")
         except BaseException as exc:
             # Said in the file too, not only to the window: a device gone
