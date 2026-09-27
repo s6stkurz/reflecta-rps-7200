@@ -8377,6 +8377,18 @@ class _ContactSheet:
         self._select(index)
         self._toggle(number)
 
+    def _double_clicked(self, number: int, index: int) -> None:
+        """Set where the frame sits, leaving its tick as it was.
+
+        The first press of a double-click is a click, so it has already
+        toggled the tick by the time the second one gets here. That toggle is
+        taken back: the position window loaded the flipped tick, and left with
+        Done or Escape a frame ticked for the roll came out of it unticked and
+        was silently not scanned.
+        """
+        self._toggle(number)
+        self.adjust(index)
+
     def _move(self, by: int) -> None:
         self._select(self.selected + by)
 
@@ -8446,7 +8458,8 @@ class _ContactSheet:
         self._pictures[number] = picture
         picture.bind("<Button-1>",
                      lambda _e, n=number, i=index: self._clicked(n, i))
-        picture.bind("<Double-Button-1>", lambda _e, i=index: self.adjust(i))
+        picture.bind("<Double-Button-1>",
+                     lambda _e, n=number, i=index: self._double_clicked(n, i))
         for seq in MENU_EVENTS:
             picture.bind(
                 seq, lambda e, i=index: self.on_cell_menu(e, i))

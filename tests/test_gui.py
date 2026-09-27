@@ -5383,6 +5383,27 @@ def test_the_big_view_draws_the_frames_other_end_lighter(window, tmp_path):
     sheet.top.destroy()
 
 
+def test_a_double_click_on_a_frame_leaves_its_tick_alone(window, tmp_path):
+    """Double-click is how the sheet says to set a position, and its first
+    press is a click, which ticks. So every frame double-clicked was also
+    unticked, the position window loaded that, and Done left it out of the
+    roll."""
+    app, root = window
+    out = gui.read_survey(_walked_folder(tmp_path, count=3))
+    sheet = gui._ContactSheet(app, out["results"])
+    root.update()
+    picture = sheet._pictures[2]
+    assert sheet.ticks[2].get() is True
+    _press(picture, "<Button-1>")                   # the first press ...
+    _press(picture, "<Double-Button-1>")            # ... and the second
+    root.update()
+    assert sheet.ticks[2].get() is True
+    assert sheet._adjuster is not None and sheet._adjuster.v_tick.get() is True
+    _press(picture, "<Button-1>")                   # a click still ticks
+    assert sheet.ticks[2].get() is False
+    sheet.top.destroy()
+
+
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     """Only the buttons grey while the scanner works. The roll key queued a
     second roll behind the first, and an aim-click or a fine move queued a
