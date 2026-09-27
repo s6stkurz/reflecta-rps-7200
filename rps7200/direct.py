@@ -27,7 +27,7 @@ import weakref
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
@@ -526,6 +526,37 @@ class _CommandLog:
         return reply
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _keeps_what_a_failed_pass_left(
+    method: Callable[Concatenate[DirectScanner, _P], _R],
+) -> Callable[Concatenate[DirectScanner, _P], _R]:
+    """A pass, with what it leaves behind when it raises kept rather than lost.
+
+    Its command log, stopped: it went on recording every later command into a
+    list the next pass then threw away, so the commands that led to a failure
+    were the ones never kept. And, where every line of it was read before the
+    failure -- a decode that refused the bytes, a realignment, a correction --
+    the pass itself, filed tagged ``failed`` (`_after_a_failed_pass`). Those
+    bytes were dropped, debug filing included, which is exactly the case they
+    are kept for.
+
+    A wrapper, so every way out of the pass is covered without the pass
+    itself being re-indented around a handler.
+    """
+    @functools.wraps(method)
+    def run(self: DirectScanner, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return method(self, *args, **kwargs)
+        except BaseException as exc:
+            self._after_a_failed_pass(exc)
+            raise
+
+    return run
+
+
 class DirectScanner:
     """Command-level control of the scanner."""
 
@@ -541,6 +572,12 @@ class DirectScanner:
     last_raw_layout: dict[str, Any] | None = None
     _shading: ShadingReference | None = None
     _ccd_mask: bytes | None = None
+    #: What the pass in flight was asked for and, once read, its bytes and
+    #: pixels: see `_keeps_what_a_failed_pass_left`. None between passes.
+    _in_flight: dict[str, Any] | None = None
+    #: The command log of the last pass that raised, kept for a caller that
+    #: wants to know what it sent. A pass read in full files its own.
+    last_failed_commands: dict[str, Any] | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
     #: resolutions. Here, beside the read it guards, rather than only in the
@@ -959,8 +996,15 @@ class DirectScanner:
 
     # -- automatic filing (debug mode) -------------------------------------
 
-    def _debug_capture(self, image: np.ndarray, meta: dict[str, Any]) -> None:
+    def _debug_capture(self, image: np.ndarray, meta: dict[str, Any],
+                       capture: dict[str, Any] | None = None,
+                       failed: bool = False) -> None:
         """Spool a scan to disk for filing after the session.
+
+        ``capture`` is the pass's own record where the caller has it, and
+        then trusted as this pass's; otherwise the scanner's is read. A
+        ``failed`` pass is spooled whether or not debug filing is on, and
+        filed tagged so (`_after_a_failed_pass`).
 
         **Held on disk, not in memory.** A 7200 dpi RGBI frame is 570 MB of
         pixels and about as much again of raw bytes, so queueing seventeen of
@@ -973,7 +1017,7 @@ class DirectScanner:
         hundred megabytes costs a second or two against a scan measured in
         minutes.
         """
-        if not self.debug:
+        if not (getattr(self, "debug", False) or failed):
             return
         try:
             spool = self._debug_spool_dir()
@@ -983,7 +1027,12 @@ class DirectScanner:
             # one would have written over.
             n = self._debug_count = getattr(self, "_debug_count", 0) + 1
             item: dict[str, Any] = {"meta": dict(meta), "captured": time.time()}
-            record = self.capture_record()
+            item["tags"] = (["failed"] if failed else []) + (
+                ["debug"] if getattr(self, "debug", False) else [])
+            item["notes"] = ("a pass read in full that then failed: "
+                             f"{(meta.get('failed') or {}).get('error')}"
+                             if failed else "captured with RPS7200_DEBUG on")
+            record = self.capture_record() if capture is None else capture
             # So a caller that files this very pass itself can say so, and the
             # flush does not file it twice (`debug_claim`). Weak, because the
             # pixels of a 7200 dpi roll must not be held alive by the spool.
@@ -1003,7 +1052,7 @@ class DirectScanner:
             # out for another width or channel count are another photograph.
             # Height is not judged -- at 7200 dpi the stagger realignment trims
             # rows the bytes still hold, and a short read decodes fewer.
-            if raw is not None and any(
+            if capture is None and raw is not None and any(
                 layout.get(k) is not None and layout[k] != v
                 for k, v in (("width", image.shape[1]),
                              ("channels", image.shape[2] if image.ndim > 2 else 1))
@@ -1052,6 +1101,71 @@ class DirectScanner:
                 self._debug_pending.append(item)
         except Exception as exc:                      # never break a scan
             self._log(f"debug: could not spool this scan ({exc})")
+
+    def _after_a_failed_pass(self, exc: BaseException) -> None:
+        """Keep what a pass that raised left: see `_keeps_what_a_failed_pass_left`.
+
+        Never raises: the failure being reported is the pass's, and this must
+        not replace it with its own.
+        """
+        flight, self._in_flight = getattr(self, "_in_flight", None), None
+        try:
+            stopper = getattr(getattr(self, "t", None), "stop", None)
+            leftover = stopper() if callable(stopper) else None
+            commands = (flight or {}).get("commands") or leftover
+            if commands is not None:
+                self.last_failed_commands = commands
+            if not flight or not flight.get("raw"):
+                return
+            self._keep_failed_pass(flight, exc, commands)
+        except Exception as problem:                      # noqa: BLE001
+            self._log(f"could not keep what the failed pass left ({problem})")
+
+    def _keep_failed_pass(self, flight: dict[str, Any], exc: BaseException,
+                          commands: dict[str, Any] | None) -> None:
+        """Spool a pass that was read in full and then failed, to be filed.
+
+        Its decoded pixels where the decode got that far. Where it did not,
+        the lines exactly as they arrived, one row each with their tags --
+        not a picture, and the record says so, but what scan.tif can hold of
+        bytes nothing could decode; `raw.bin.gz` beside it is the pass.
+        """
+        why = f"{type(exc).__name__}: {exc}"
+        layout = dict(flight.get("raw_layout") or {})
+        pixels = flight.get("pixels")
+        stage = "after the decode" if pixels is not None else "in the decode"
+        if pixels is None:
+            stride = int(layout.get("line_stride") or 0) or 1
+            blob = flight["raw"]
+            lines = len(blob) // stride
+            pixels = np.frombuffer(blob, np.uint8, count=lines * stride
+                                   ).reshape(lines, stride, 1)
+        meta = dict(flight.get("meta") or {})
+        meta.update({
+            "width": layout.get("width"),
+            "height": int(pixels.shape[0]),
+            "bytes_per_line": layout.get("bytes_per_line"),
+            "read_direction": (self.last_read_direction.as_record()
+                               if self.last_read_direction is not None
+                               else None),
+            "commands": commands,
+            "shading": None,
+            # Not corrected, and not to be as though nothing had happened:
+            # `library.corrected` hands it over as it came, saying why.
+            "shading_skipped": f"the pass failed {stage}: {why}",
+            "failed": {
+                "stage": stage, "error": why,
+                "pixels": ("decoded" if stage == "after the decode" else
+                           "the lines as they arrived, one row each, tags "
+                           "included -- not a picture"),
+            },
+        })
+        self._debug_capture(pixels, meta, failed=True, capture={
+            "reference": self._shading, "ccd_mask": self._ccd_mask,
+            "raw": flight["raw"], "raw_layout": layout})
+        self._log(f"this pass was read in full and then failed ({why}); its "
+                  "bytes are kept, and filed tagged failed once the device "
+                  "has closed")
 
     def _debug_root(self) -> Path:
         """Where debug filing files: see `debug_root`."""
@@ -1206,8 +1320,9 @@ class DirectScanner:
                 entry = library.save(
                     image, item["meta"],
                     root=root,
-                    film=FilmNotes(notes="captured with RPS7200_DEBUG on"),
-                    tags=["debug"],
+                    film=FilmNotes(notes=item.get(
+                        "notes", "captured with RPS7200_DEBUG on")),
+                    tags=item.get("tags") or ["debug"],
                     reference=item.get("reference"),
                     ccd_mask=item.get("ccd_mask"),
                     raw_path=item.get("raw_path"),
@@ -2030,21 +2145,29 @@ class DirectScanner:
         # Every line is in: whatever goes wrong from here on is the host's, and
         # leaves nothing outstanding on the device.
         self._read_complete = True
+        # Everything a decoder needs, so the bytes stay meaningful without
+        # this object. Line stride includes the 2-byte channel tag.
+        layout = {
+            "format": "index",
+            "bytes_per_line": int(params.bytes_per_line),
+            "line_stride": int(params.bytes_per_line) + INDEX_HEADER,
+            "index_header": INDEX_HEADER,
+            "width": int(params.width),
+            "lines": int(params.lines),
+            "channels": int(channels),
+            "byte_order": "little",
+            "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
+        }
+        # And for the pass in flight, so one whose decode below -- or whose
+        # realignment or correction after it -- then fails is still filed
+        # with them (`_keeps_what_a_failed_pass_left`). Only where the bytes
+        # are kept at all: a caller that asked for none files nothing.
+        flight = getattr(self, "_in_flight", None)
+        if flight is not None and keep_raw:
+            flight.update(raw=blob, raw_layout=layout)
         if keep_raw:
-            # Everything a decoder needs, so the bytes stay meaningful without
-            # this object. Line stride includes the 2-byte channel tag.
             self.last_raw = blob
-            self.last_raw_layout = {
-                "format": "index",
-                "bytes_per_line": int(params.bytes_per_line),
-                "line_stride": int(params.bytes_per_line) + INDEX_HEADER,
-                "index_header": INDEX_HEADER,
-                "width": int(params.width),
-                "lines": int(params.lines),
-                "channels": int(channels),
-                "byte_order": "little",
-                "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
-            }
+            self.last_raw_layout = layout
         else:
             # Cleared, never left over. A pass that did not keep its bytes used
             # to leave the previous pass's here, and `capture_record` handed
@@ -2054,6 +2177,8 @@ class DirectScanner:
             self.last_raw_layout = None
         image, direction = self.decode_index(blob, params, channels)
         self.last_read_direction = direction
+        if flight is not None and keep_raw:
+            flight["pixels"] = image
         if direction.reversed:
             self._log("this pass was read bottom-up (its first line is "
                       f"{direction.lead}, its last {direction.trail or 'cut short'}); "
@@ -2276,6 +2401,7 @@ class DirectScanner:
         except (CheckCondition, UsbError) as exc:
             self._log(f"opening slide failed: {exc}")
 
+    @_keeps_what_a_failed_pass_left
     def calibrate_shading(
         self,
         resolution: int = 3600,
@@ -2990,6 +3116,7 @@ class DirectScanner:
                 del image
         return frames, ratios, metas
 
+    @_keeps_what_a_failed_pass_left
     def scan(
         self,
         resolution: int = 300,
@@ -3141,6 +3268,16 @@ class DirectScanner:
         logger = getattr(self.t, "start", None)
         if callable(logger):
             logger()
+        # Nothing a pass before this one left may describe it -- a metering
+        # probe's included. `read_planes` cleared `last_raw` only once a read
+        # completed, so a pass that raised before its last line, or before
+        # its read at all, left the previous pass's bytes for the next
+        # `capture_record` to hand over as this one's.
+        self.last_raw = None
+        self.last_raw_layout = None
+        self.last_pixels_raw = None
+        self.last_scan_meta = None
+        self._in_flight = None
 
         # Open with READ_STATE polling, as the vendor software does.
         for _ in range(4):
@@ -3217,6 +3354,23 @@ class DirectScanner:
         # READ STATE polled above, marked stale if a calibration ran after it.
         carriage = self.carriage_record()
         self.last_read_direction = None
+        mode = {"byte14_override": byte14, "skip_shading": bool(skip_shading),
+                "slide_init_param": int(slide_init_param),
+                "depth": int(depth), "passes": int(passes)}
+        # What this pass is, for the record of one that is read in full and
+        # then fails (`_keeps_what_a_failed_pass_left`). The meta below says
+        # it again, and more, for one that does not.
+        flight: dict[str, Any] = {"meta": {
+            "resolution_dpi": resolution, "channels": channels, "film": film,
+            "protocol_revision": PROTOCOL_REVISION,
+            "channel_order": list(CHANNEL_ORDER[:channels]),
+            "depth": 16 if depth == DEPTH_16 else 8, "frame": list(frame),
+            "exposure": settings.exposure, "gain": settings.gain,
+            "offset": settings.offset, "fast_infrared": bool(fast_infrared),
+            "started_utc": started_utc, "mode": mode,
+            "carriage_state": carriage,
+        }}
+        self._in_flight = flight
         started = time.monotonic()
         try:
             image, params, ccd_mask = self._read_pass(
@@ -3225,6 +3379,7 @@ class DirectScanner:
         finally:
             stopper = getattr(self.t, "stop", None)
             commands = stopper() if callable(stopper) else None
+            flight["commands"] = commands
 
         # After the scan has settled, never inside it: the vendor polls
         # READ_STATE for several seconds once the last line is read and only
@@ -3242,6 +3397,9 @@ class DirectScanner:
             before = image.shape[0]
             image = self._realign_native_column_stagger(image)
             stagger_realigned = self.NATIVE_COLUMN_STAGGER_LINES
+            if "pixels" in flight:
+                flight["pixels"] = image
+                flight["meta"]["stagger_realigned"] = stagger_realigned
             self._log(
                 f"realigned {self.NATIVE_COLUMN_STAGGER_LINES}-line native "
                 f"column stagger: {before} -> {image.shape[0]} lines"
@@ -3352,9 +3510,7 @@ class DirectScanner:
             "started_utc": started_utc,
             # What defined the pass and was otherwise spent and forgotten: the
             # mode choices, and every command sent with what came back.
-            "mode": {"byte14_override": byte14, "skip_shading": bool(skip_shading),
-                     "slide_init_param": int(slide_init_param),
-                     "depth": int(depth), "passes": int(passes)},
+            "mode": mode,
             "commands": commands,
             # Where this pass's shading reference came from, and when.
             "shading_origin": (dict(origin)
@@ -3371,6 +3527,8 @@ class DirectScanner:
             meta["metering"] = self.last_metering
         # The raw pixels, not the corrected ones: see `raw_pixels` above.
         self._debug_capture(raw_pixels, meta)
+        # Done: the pass did not fail, and its bytes are not held twice.
+        self._in_flight = None
         # For a caller that files this pass itself rather than through debug
         # filing. Set on every pass, so it is never a stale leftover the way
         # `last_raw` once was -- but it describes the pass that *just* ran, so
