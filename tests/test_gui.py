@@ -3329,6 +3329,16 @@ def test_settings_a_roll_has_nothing_to_say_about_are_left_alone():
     assert "mono" not in gui.restorable({"mono": True})
 
 
+def test_a_channel_the_chooser_does_not_offer_is_not_put_back():
+    """A manifest is hand-editable, and whatever it said for `mono_channel`
+    went into the chooser and on to every roll after it: "I" delivered the
+    dust plane as the photograph once, and is refused by `to_monochrome`
+    now -- for every frame of the roll."""
+    assert gui.restorable({"mono_channel": "G"})["mono_channel"] == "G"
+    for wrong in ("I", "green", 3):
+        assert "mono_channel" not in gui.restorable({"mono_channel": wrong})
+
+
 def test_a_batch_name_says_what_the_file_is():
     """NegPy reads these next, so what it is leads. A timestamp sorts by when
     it was scanned and says nothing about what it was."""

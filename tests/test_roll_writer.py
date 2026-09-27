@@ -137,3 +137,21 @@ def test_a_jpeg_frame_leaves_its_infrared_beside_it_and_the_roll_keeps_tiff(tmp_
     assert kept.shape[2] == 4
     assert (kept[..., 3] == 4242).all(), "the plane, at full depth, not the picture"
     assert any("frame01_ir.dng" in n for n in writer.notes), "the operator is told"
+
+
+def test_a_channel_it_will_not_deliver_costs_the_copy_and_not_the_entry(tmp_path):
+    """`to_monochrome` refuses a channel outside `MONO_CHOICES` -- "I", or
+    whatever a roll manifest or a hand-edited preset put back -- and it was
+    asked before `library.save`, so the refusal took the pass's raw bytes
+    with it. The entry is filed; the copy it could not make is the problem."""
+    writer = scan_roll.FrameWriter()
+    writer.submit(**dict(job(1, tmp_path / "frame01.tif",
+                             library=str(tmp_path / "lib")),
+                         mono=True, mono_channel="I"))
+    writer.finish()
+
+    (_, entry), = writer.done
+    assert entry is not None and (entry / "raw.bin.gz").exists()
+    assert not (tmp_path / "frame01.tif").exists()
+    assert len(writer.errors) == 1 and "one-channel" in writer.errors[0]
+    assert "library entry is safe" in writer.errors[0]

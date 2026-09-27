@@ -5316,6 +5316,18 @@ def read_survey(folder, say=None) -> dict:
     }
 
 
+def _mono_choice(value) -> str:
+    """A channel the chooser offers, or ValueError, which `restorable` drops.
+
+    A manifest is a file anyone can edit. Put back as it stood, "I" or a typo
+    sat in a read-only chooser that cannot show it, and every one-channel
+    copy of the next roll was refused by `to_monochrome`.
+    """
+    if value not in MONO_CHOICES:
+        raise ValueError(f"{value!r} is not one of {list(MONO_CHOICES)}")
+    return str(value)
+
+
 #: How a roll manifest's `settings` block maps onto the window's controls.
 #: Only the ones a resume should put back: `mono` is missing deliberately,
 #: because `_sync_film` derives it from the film type and restoring it would be
@@ -5330,7 +5342,7 @@ RESTORABLE = {
     "fast_infrared": ("fast_ir", bool),
     "film": ("film", str),
     "meter": ("meter", str),
-    "mono_channel": ("mono_channel", str),
+    "mono_channel": ("mono_channel", _mono_choice),
     "correct": ("correct", bool),
     "start_at": ("startat", str),
 }

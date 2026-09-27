@@ -1627,11 +1627,6 @@ class FrameWriter:
         # operator asked to be given.
         turned = preview.orient(job["image"], job.get("rotate") or 0,
                                 bool(job.get("flip")))
-        # One channel on the way out, three in the library. A consumer cannot
-        # tell black and white from a slide by looking at the pixels -- see
-        # rps7200/mono.py -- so the file it reads has to say so by its shape.
-        delivered = (to_monochrome(turned, job.get("mono_channel") or MONO_CHANNEL)
-                     if job.get("mono") else turned)
         # The library entry first, the operator's copies after. A copy can be
         # written again from the entry at any time; the entry cannot be written
         # again from anything, because it holds the only raw bytes. Written the
@@ -1673,7 +1668,23 @@ class FrameWriter:
                 self.uncompressed.append(entry)
         problems = []
         written = []
-        for path in job.get("paths") or ():
+        paths = list(job.get("paths") or ())
+        # One channel on the way out, three in the library. A consumer cannot
+        # tell black and white from a slide by looking at the pixels -- see
+        # rps7200/mono.py -- so the file it reads has to say so by its shape.
+        # Made after the entry, as part of the copies: a channel
+        # `to_monochrome` refuses -- one a roll manifest or a hand-edited
+        # preset put back -- raised above `library.save`, and the pass's raw
+        # bytes went with it.
+        delivered = turned
+        if paths and job.get("mono"):
+            try:
+                delivered = to_monochrome(
+                    turned, job.get("mono_channel") or MONO_CHANNEL)
+            except ValueError as exc:
+                problems.append(f"could not make its one-channel copy ({exc})")
+                paths = []
+        for path in paths:
             # Each copy on its own: one that cannot be written -- a missing
             # drive, a full disk -- says so and does not stop the others.
             try:
