@@ -1411,8 +1411,15 @@ class DirectScanner:
             "commands": commands,
             "shading": None,
             # Not corrected, and not to be as though nothing had happened:
-            # `library.corrected` hands it over as it came, saying why.
-            "shading_skipped": f"the pass failed {stage}: {why}",
+            # `library.corrected` hands it over as it came, saying why. Except
+            # where it was never to be corrected: `shading=False` stays the
+            # sentinel that says so, and the failure is `failed` and the tag.
+            # Written over with this, a raw-on-purpose pass with no reference
+            # -- calibration off -- read "correction was asked for" in
+            # `verify` for good, and in `library.corrected`, both false.
+            "shading_skipped": (f"the pass failed {stage}: {why}"
+                                if flight.get("shading", True)
+                                else SHADING_SKIPPED_EXPLICIT),
             "failed": {
                 "stage": stage, "error": why,
                 "pixels": ("decoded" if decoded else
@@ -3771,6 +3778,9 @@ class DirectScanner:
         }}
         if role is not None:
             flight["meta"]["pass_role"] = role
+        # Whether it asked to be corrected: a pass taken raw on purpose is
+        # still that when it fails (`_keep_failed_pass`).
+        flight["shading"] = bool(shading)
         self._in_flight = flight
         started = time.monotonic()
         try:

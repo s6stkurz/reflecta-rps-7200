@@ -169,6 +169,26 @@ def test_a_pass_that_fails_after_its_decode_is_filed_with_its_pixels(tmp_path):
     assert loaded["corrected"] == "raw -- correction was asked for"
 
 
+def test_a_pass_taken_raw_on_purpose_is_still_raw_on_purpose_when_it_fails(
+        tmp_path):
+    """`shading=False` with no reference in the session -- calibration off.
+    Its record said "the pass failed", which `verify` and `corrected` read
+    as a correction that was asked for and missed: `make verify` red for
+    good, over a pass that never wanted one."""
+    s = OnePass(tagged(picture(8), tags=b"XYZ"), width=8)
+    s.debug_root = tmp_path
+    with pytest.raises(ScanReadError):
+        scan(s, shading=False, keep_raw=True)
+    s.close()
+    [record] = library.entries(tmp_path)
+    assert "failed" in record["tags"]
+    assert "no recognisable channel tags" in record["extra"]["failed"]["error"]
+    assert not [p for p in library.verify(tmp_path) if "shading" in p], \
+        library.verify(tmp_path)
+    _pixels, loaded = library.corrected(tmp_path / record["id"])
+    assert loaded["corrected"] == "deliberately raw"
+
+
 class CutShort(OnePass):
     """Read six lines at a time, and refused after the first six: two rows."""
 
