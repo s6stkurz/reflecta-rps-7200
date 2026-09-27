@@ -763,6 +763,70 @@ def test_an_entry_cut_short_is_reported_not_passed_over(tmp_path):
     assert any(orphan.name in p and "no scan.json" in p for p in problems)
 
 
+def test_an_index_that_cannot_be_rewritten_does_not_fail_a_filed_entry(
+        tmp_path, monkeypatch):
+    """The entry is complete once its record is in place. A sync client
+    holding index.json made save() raise over a finished entry, and every
+    caller treated the frame as lost: the roll stopped, its copies were never
+    written, and the debug spool was kept to be filed twice."""
+    import pytest
+
+    def held(root):
+        raise PermissionError(13, "held by another process", "index.json")
+
+    monkeypatch.setattr(library, "reindex", held)
+    with pytest.warns(RuntimeWarning, match="reindex"):
+        path, image, _ = make_entry(tmp_path)
+    assert (path / "scan.json").exists()
+    assert not (path / library.INCOMPLETE).exists()
+    monkeypatch.undo()
+    assert library.verify(tmp_path) == []
+
+
+def test_the_raw_bytes_are_written_before_anything_that_can_refuse(tmp_path):
+    """They are the ground truth, and they were written last: a pass whose
+    image the TIFF writer refused lost the only record of what went wrong."""
+    import pytest
+
+    stream, image = index_stream(16, 8, 3)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    with pytest.raises(ValueError, match="empty"):
+        library.save(image[:0], {"resolution_dpi": 300, "channels": 3},
+                     root=tmp_path, raw=stream, raw_layout=layout)
+    [cut] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert (cut / library.INCOMPLETE).exists()
+    assert library.read_raw(cut) == stream
+    assert any(cut.name in p and "did not finish" in p
+               for p in library.verify(tmp_path))
+
+
+def test_two_indexes_written_at_once_leave_a_whole_one(tmp_path):
+    """The roll's filing thread and the debug flush in `close()` reindex at
+    the same moment; one shared temporary name let them tear each other."""
+    import threading
+
+    for _ in range(3):
+        entry_with(tmp_path)
+    errors = []
+
+    def go():
+        try:
+            for _ in range(20):
+                library.reindex(tmp_path)
+        except Exception as exc:                           # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(json.loads((tmp_path / library.INDEX).read_text(
+        encoding="utf-8"))) == 3
+    assert not list(tmp_path.glob(".*.part"))
+
+
 def test_every_file_of_an_entry_is_checksummed(tmp_path):
     """A damaged reference corrects every export of the entry wrongly, and
     `verify` could see damage only to scan.tif and the raw bytes."""

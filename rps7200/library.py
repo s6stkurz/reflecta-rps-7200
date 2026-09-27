@@ -38,6 +38,9 @@ import os
 import platform
 import subprocess
 import sys
+import threading
+import time
+import warnings
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -264,15 +267,11 @@ def save(
     (path / INCOMPLETE).write_text(
         "this entry was being written and did not finish\n", encoding="utf-8")
 
-    resolution = int(meta.get("resolution_dpi") or 0) or None
-    tiff.write(str(path / "scan.tif"), image, resolution=resolution,
-               compress=compress)
-    if prescan is not None:
-        tiff.write(str(path / "prescan.tif"), prescan, compress=compress)
-    if reference is not None:
-        reference.save(path / "shading.npz")
-    if ccd_mask is not None:
-        (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
+    # The raw bytes first: they are the ground truth and the only file here
+    # nothing else can be derived back into. Written last, any failure on the
+    # way -- a TIFF refused for its shape, a reference that would not save, a
+    # disk filling during scan.tif -- aborted the save before they were even
+    # tried, and a pass that went wrong lost the one record of how.
     raw_bytes = raw_sha = None
     raw_name = None
     if raw is not None or raw_path is not None:
@@ -303,6 +302,21 @@ def save(
                         fh.write(chunk)
                         raw_bytes += len(chunk)
         raw_sha = digest.hexdigest()
+        _sync(path / raw_name)
+
+    resolution = int(meta.get("resolution_dpi") or 0) or None
+    tiff.write(str(path / "scan.tif"), image, resolution=resolution,
+               compress=compress)
+    _sync(path / "scan.tif")
+    if prescan is not None:
+        tiff.write(str(path / "prescan.tif"), prescan, compress=compress)
+        _sync(path / "prescan.tif")
+    if reference is not None:
+        reference.save(path / "shading.npz")
+        _sync(path / "shading.npz")
+    if ccd_mask is not None:
+        (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
+        _sync(path / "ccd_mask.bin")
 
     record: dict[str, Any] = {
         "id": path.name,
@@ -394,10 +408,25 @@ def save(
         if (path / name).exists()
     }
     # The record last, whole or not at all: written beside and renamed over,
-    # so a reader never meets half of one.
+    # so a reader never meets half of one. Every file above was synced before
+    # it, so a power cut cannot leave a durable record naming data that never
+    # reached the disk -- the marker going would otherwise vouch for it.
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    _sync_dir(path)
     (path / INCOMPLETE).unlink(missing_ok=True)
-    reindex(root)
+    _sync_dir(path)
+    # The entry is complete, and nothing past this point may say otherwise.
+    # The index is a summary nothing reads; a sync client or a scanner for
+    # viruses holding it for a moment made a complete save raise, and every
+    # caller then treated a filed frame as a failed one -- the roll stopped,
+    # its delivered copies were never written, and the debug spool was kept
+    # to be filed a second time by hand.
+    try:
+        reindex(root)
+    except OSError as exc:
+        warnings.warn(f"{path.name} is filed, but {root / INDEX} could not be "
+                      f"rewritten ({exc}); `tools/library.py reindex` "
+                      f"rebuilds it", RuntimeWarning, stacklevel=2)
     return path
 
 
@@ -483,13 +512,81 @@ def _reserve(root: Path, name: str) -> Path:
 
 
 def _write_atomic(path: Path, text: str) -> None:
-    """Write beside, then rename over: the old file or the new, never half."""
-    temp = path.with_name(f".{path.name}.part")
-    with open(temp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(temp, path)
+    """Write beside, then rename over: the old file or the new, never half.
+
+    The name written beside is this writer's own. `index.json` is rewritten
+    by the roll's filing thread and by the debug flush in `close()` at the
+    same moment, and two writers sharing one temporary name truncated and
+    interleaved each other's text before either renamed it.
+    """
+    temp = path.with_name(
+        f".{path.name}.{os.getpid()}-{threading.get_ident()}.part")
+    try:
+        with open(temp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+#: How long `_replace` waits between attempts to rename over a file someone
+#: holds open. On Windows the rename fails outright while any handle lacks
+#: FILE_SHARE_DELETE -- Python's own `open()` for reading, a sync client, the
+#: indexer and Defender all briefly hold new files. The same waits as
+#: `session.write_manifest`, for the same reason.
+REPLACE_RETRY_S = (0.05, 0.05, 0.1, 0.1, 0.1)
+
+
+def _replace(temp: Path, path: Path) -> None:
+    """`os.replace`, patient with a file that is only briefly held open."""
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if wait is None:
+                raise
+            time.sleep(wait)
+
+
+def _sync(path: Path) -> None:
+    """Flush one written file to the disk, not just to the cache.
+
+    Best effort. The file is written either way; a sync refused -- a handle
+    Windows will not grant while a scanner for viruses has the file -- costs
+    durability across a power cut, and must not cost the entry.
+    """
+    try:
+        fd = os.open(path, os.O_RDWR | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _sync_dir(path: Path) -> None:
+    """Make the names in a directory durable, where the platform can.
+
+    POSIX needs the directory itself synced for a new or renamed name to
+    survive a power cut. Windows cannot open a directory this way and makes
+    its metadata durable itself, so there it is nothing to do.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def add_tags(path: Path | str, tags: list[str]) -> list[str]:
@@ -1124,7 +1221,9 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
     ]
     root.mkdir(parents=True, exist_ok=True)
     index = root / INDEX
-    index.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    # Beside and swapped in, like every other file here: a plain rewrite cut
+    # short left half an index, and two at once left a torn one.
+    _write_atomic(index, json.dumps(summary, indent=2))
     return index
 
 
