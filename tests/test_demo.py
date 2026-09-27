@@ -656,32 +656,53 @@ def test_nudging_the_demo_actually_moves_the_film():
     assert scanner._film_mm > before
 
 
-def test_the_demo_converges_on_an_approved_position():
-    from rps7200.demo import DemoScanner
+def _textured(place):
+    """A prescan-shaped picture per strip place, with enough structure for
+    the hold loop's correlation to lock on to."""
+    rng = np.random.default_rng(place)
+    width, height = 428, 287
+    base = np.linspace(20, 90, width)[None, :, None] * np.ones((height, 1, 3))
+    base = base + 30 * np.sin(np.linspace(0, 9 + place, width))[None, :, None]
+    return np.clip(base + rng.normal(0, 5, (height, width, 3)),
+                   0, 255).astype(np.uint8)
+
+
+class _TexturedStrip(DemoScanner):
+    """The demo on a strip of `_textured` pictures: no library needed, so the
+    hold loop's own tests run in every checkout rather than skipping in all
+    of them but one."""
+
+    def __init__(self):
+        super().__init__("no-library-here", speed=1e9)
+
+    def _stored(self, kind, film, channels):
+        return {"pixels": _textured(self._position), "dpi": None,
+                "reference": None, "ccd_mask": None, "entry": None,
+                "file": "strip"}
+
+
+def _hold(monkeypatch, frames, approved):
+    """Walk `frames` of the textured strip, holding the ones in `approved`
+    (index: millimetres), and return what each hold recorded."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
     from rps7200.session import Approved
 
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    if not scanner._entries:
-        # The test card the demo falls back to has nothing to correlate,
-        # so registration can only ever say "unverified". Same reason
-        # test_tiff skips without scans/: the data is not in a checkout.
-        scanner.close()
-        pytest.skip("no library entries in this checkout to register against")
-    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
-        frames=2, resolution=300, infrared=False, dry_run=True)}
-    scanner.close()
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
+    monkeypatch.setattr(direct, "time", NoWaiting())
     held = {}
-    approved = {0: Approved(1, 0.5, reference=references[0]),
-                1: Approved(2, 0.0, reference=references[1])}
-    for rf in scanner.scan_roll(frames=2, resolution=300, infrared=False,
-                                dry_run=True, approved=approved):
-        held[rf.index] = rf.registration["approved"]
-    scanner.close()
+    for rf in _TexturedStrip().scan_roll(
+            frames=frames, resolution=300, infrared=False, dry_run=True,
+            meter="none",
+            approved={i: Approved(i + 1, mm, reference=_textured(i))
+                      for i, mm in approved.items()}):
+        if "approved" in rf.registration:
+            held[rf.index] = rf.registration["approved"]
+    return held
 
+
+def test_the_demo_converges_on_an_approved_position(monkeypatch):
+    held = _hold(monkeypatch, 2, {0: 0.5, 1: 0.0})
     assert held[0]["outcome"] == "held"
     assert held[0]["moves"] == 1, "an offset should cost exactly one move"
     assert held[0]["final_mm"] == pytest.approx(0.5, abs=0.05)
@@ -689,37 +710,42 @@ def test_the_demo_converges_on_an_approved_position():
     assert held[1]["moves"] == 0, "no offset asked for, so nothing to do"
 
 
-def test_one_frame_is_made_to_miss_on_purpose():
+def test_a_frame_is_entered_loaded_forward_so_going_back_costs_backlash(
+        monkeypatch):
+    """The driver's hold loop iterates because the transport advances into
+    every frame, so the first backward command is spent on backlash. The
+    demo forgot the advance at each new frame and had no slack to take up:
+    a backward offset held in one move, a hold loop the hardware does not
+    have. Forward costs one move either way."""
+    from rps7200.direct import DirectScanner
+
+    eight_units = 8 * DirectScanner.STEP_MM
+    back = _hold(monkeypatch, 2, {1: -eight_units})[1]
+    assert back["outcome"] == "held", back
+    assert back["moves"] == 2, back
+    ahead = _hold(monkeypatch, 2, {1: eight_units})[1]
+    assert ahead["outcome"] == "held", ahead
+    assert ahead["moves"] == 1, ahead
+
+
+def test_the_demo_backlash_is_counted_in_the_transports_moves():
+    """Retyped as `2.2 * 0.1057` -- the unit, by hand, and less than one
+    smallest move where the driver and the demo's own comment said two to
+    three commands were lost."""
+    from rps7200.direct import DirectScanner
+    from rps7200.session import BACKLASH_COMMANDS, FINE_MIN_MM
+
+    assert DemoScanner.BACKLASH_MM == BACKLASH_COMMANDS * FINE_MIN_MM
+    # And the move itself is the driver's, arithmetic, cap and answer.
+    assert DemoScanner.nudge is DirectScanner.nudge
+
+
+def test_one_frame_is_made_to_miss_on_purpose(monkeypatch):
     """A flag nobody has ever seen fire is a flag nobody trusts. The demo has
     a frame whose transport slips, so `not_converged` and the end-of-roll
     warning can be watched rather than taken on faith."""
-    from rps7200.demo import DemoScanner
-    from rps7200.session import Approved
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    if not scanner._entries:
-        # The test card the demo falls back to has nothing to correlate,
-        # so registration can only ever say "unverified". Same reason
-        # test_tiff skips without scans/: the data is not in a checkout.
-        scanner.close()
-        pytest.skip("no library entries in this checkout to register against")
-    slipping = scanner._slipping_index
-    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
-        frames=slipping + 1, resolution=300, infrared=False, dry_run=True)}
-    scanner.close()
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    out = {}
-    for rf in scanner.scan_roll(
-            frames=slipping + 1, resolution=300, infrared=False, dry_run=True,
-            approved={slipping: Approved(slipping + 1, 0.8,
-                                         reference=references[slipping])}):
-        if rf.index == slipping:
-            out = rf.registration["approved"]
-    scanner.close()
-
+    slipping = DemoScanner("no-library-here")._slipping_index
+    out = _hold(monkeypatch, slipping + 1, {slipping: 0.8})[slipping]
     assert out["outcome"] == "not_converged"
     assert out["moves"] == 3, "it tries, and stops at the cap"
 
@@ -1704,7 +1730,7 @@ def test_the_demo_has_everything_the_drivers_roll_reaches_for():
     demo = DemoScanner("library")
     for method in (DirectScanner.scan_roll, DirectScanner._hold_to_approved,
                    DirectScanner._aim_frame, DirectScanner._rejudge_for,
-                   DirectScanner.auto_exposure):
+                   DirectScanner.auto_exposure, DirectScanner.nudge):
         wanted = set(re.findall(r"self\.(\w+)", inspect.getsource(method)))
         missing = [name for name in sorted(wanted) if not hasattr(demo, name)]
         assert not missing, (method.__name__, missing)

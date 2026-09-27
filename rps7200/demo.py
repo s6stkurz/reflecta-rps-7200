@@ -71,10 +71,11 @@ from .protocol import (
     INDEX_HEADER,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
+    SLIDE_INIT,
     ScanParameters,
     Settings,
 )
-from .session import estimate_seconds
+from .session import BACKLASH_COMMANDS, FINE_MIN_MM, estimate_seconds
 from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
 
@@ -272,10 +273,13 @@ class DemoScanner:
         #: prescan came back identical, so the loop could only ever be
         #: pretended at.
         self._film_mm = 0.0
-        #: Backlash, as the transport really has it: two to three commands are
-        #: swallowed after a direction change and the distance arrives later.
-        #: Modelled because it is the reason the loop iterates at all.
-        self._owed_mm = 0.0
+        #: Backlash, as the transport really has it: after a direction change
+        #: the gear train takes up `BACKLASH_MM` of slack before the film
+        #: follows. `_last_way` is the way the train is loaded -- forward after
+        #: a whole-frame advance, which is how a roll enters every frame -- and
+        #: `_slack_mm` what is still to be taken up that way. Modelled because
+        #: it is the reason the hold loop iterates at all.
+        self._slack_mm = 0.0
         self._last_way = 0
         #: One frame per strip whose transport slips, so `not_converged` and
         #: the end-of-roll warning can be seen rather than taken on trust.
@@ -389,6 +393,7 @@ class DemoScanner:
             self._log("no advance: treating that as the end of the film")
             return None
         self._position += steps
+        self._loaded(1)
         if self._rolling is not None:
             self._new_frame()
         self._log(f"advanced to position {self._position}")
@@ -399,10 +404,16 @@ class DemoScanner:
 
         The offset an operator asked for is what the hold loop then puts in;
         carrying the last frame's over would hand it a frame already moved.
+        The way the gear train is loaded is *not* forgotten: that is what the
+        advance left, and resetting it here meant a frame's first backward
+        move never met the backlash the driver's hold loop is written around.
         """
         self._film_mm = 0.0
-        self._owed_mm = 0.0
-        self._last_way = 0
+
+    def _loaded(self, way: int) -> None:
+        """A whole-frame move leaves the train loaded its way, slack taken up."""
+        self._last_way = way
+        self._slack_mm = 0.0
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
@@ -411,33 +422,38 @@ class DemoScanner:
             self._log("no movement: already at the first frame")
             return None
         self._position = max(0, self._position - steps)
+        self._loaded(-1)
         self._log(f"went back to position {self._position}")
         return self._position
 
-    def nudge(self, millimetres: float) -> dict[str, Any]:
-        """Move the simulated film, by the driver's own arithmetic.
+    def slide(self, action: int = SLIDE_INIT, param: int = 0x16,
+              value: int = 0) -> None:
+        """The command the driver's `nudge` sends, moving the simulated film.
 
-        Only the film is pretend. Which `param` byte a distance becomes, what
-        that param delivers, and where the cap falls are all taken from
-        `DirectScanner` -- `param_for_mm` is a `@staticmethod` precisely so
-        there is one home for the snapping.
+        `nudge` itself is the driver's, bound below: which `param` a distance
+        becomes, what it reports and where the cap falls are all its own. It
+        used to be retyped here, and it went stale exactly as that arrangement
+        always does -- it kept `param` capped at 8 and a ramp of 0.1662 mm
+        after the driver moved to 87 and 0.1945, so a frame set 38 units out
+        held in one command on the hardware and came back `not_converged` in
+        the demo. Only what the film then does is the demo's.
 
-        This used to be typed out here, and it went stale exactly as that
-        arrangement always does: it kept `param` capped at 8 and a ramp of
-        0.1662 mm after the driver moved to 87 and 0.1945. A frame set 38
-        units out then held in one command on the hardware and came back
-        `not_converged` in the demo -- which reads as a weak hold loop and was
-        a stale copy.
+        A sub-frame move (action 0 forward, 1 back) delivers what the
+        transport's law says a command of that `param` delivers, less any
+        backlash still to be taken up, and nothing at all on the one frame
+        whose transport slips. Nothing else here sends this: whole frames are
+        `advance` and `retreat`.
         """
         self._need_film("move")
-        param = self.param_for_mm(millimetres)
+        if action not in (0x00, 0x01):
+            raise NotImplementedError(
+                f"the demo's transport only moves sub-frame (SLIDE 00/01), "
+                f"not SLIDE {action:#04x}")
+        way = 1 if action == 0x00 else -1
         asked = self.STEP_MM * param + self.OVERHEAD_MM
-        short = abs(millimetres) - asked
-        clamped = short > 1e-9
-        asked = asked if millimetres >= 0 else -asked
-        way = 1 if millimetres >= 0 else -1
-
-        delivered = asked
+        if self._last_way and way != self._last_way:
+            self._slack_mm = self.BACKLASH_MM
+        self._last_way = way
         if (self._rolling is not None
                 and self._position == self._slipping_index):
             # A frame whose transport slips. The command is accepted and
@@ -445,29 +461,17 @@ class DemoScanner:
             # simulating, because that is how the real one fails too.
             delivered = 0.0
             self._log("slide sub-frame: commanded, and the film did not move")
-        elif way != self._last_way and self._last_way:
-            # Backlash: the first move after a reversal mostly disappears into
-            # the gear train and comes back on the move after.
-            swallowed = min(abs(asked), 2.2 * 0.1057)
-            self._owed_mm += swallowed * way
-            delivered = asked - swallowed * way
         else:
-            delivered += self._owed_mm
-            self._owed_mm = 0.0
-
-        self._film_mm += delivered
-        self._last_way = way
-        self._log(f"slide sub-frame: {say_units(asked)} (param {param}), "
+            taken = min(asked, self._slack_mm)
+            self._slack_mm -= taken
+            delivered = asked - taken
+            if taken:
+                self._log(f"slide sub-frame: backlash took "
+                          f"{say_units(taken, signed=False)}")
+        self._film_mm += delivered * way
+        self._log(f"slide sub-frame: {say_units(asked * way)} (param {param}), "
                   f"film now {say_units(self._film_mm)}")
         self._work(1.5)
-        # The same keys the real one returns, including the two the hold loop
-        # reads: `_hold_to_approved` takes `clamped` to decide whether to say
-        # a command fell short, and without them that warning was unreachable
-        # at any distance.
-        return {"param": param, "forward": millimetres >= 0,
-                "asked_mm": round(asked, 3),
-                "requested_mm": round(millimetres, 3), "clamped": clamped,
-                "short_mm": round(short, 4) if clamped else 0.0}
 
     def _shift(self, width: int) -> int:
         """How many columns the film has moved in the aperture, at this width.
@@ -794,6 +798,15 @@ class DemoScanner:
     #: shows up with no scanner on the bus.
     _aim_frame = DirectScanner._aim_frame
     _rejudge_for = DirectScanner._rejudge_for
+    #: The sub-frame move, whole: this class has only the `slide` it sends.
+    nudge = DirectScanner.nudge
+    #: The slack a reversal takes up before the film follows: the smallest
+    #: move, `BACKLASH_COMMANDS` times. The ladder in docs/protocol.md section
+    #: 11 lost its first two small steps after a reversal and then went at
+    #: full length, and a rewind after a roll has had its first command
+    #: swallowed. A property of the pretend film, so it is the demo's -- but
+    #: in the transport's own terms, never a retyped unit.
+    BACKLASH_MM = BACKLASH_COMMANDS * FINE_MIN_MM
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
     #: The transport's law, taken and not retyped. `_aim_frame`'s dry run
     #: reaches for all three and raised `AttributeError` without them -- so the
