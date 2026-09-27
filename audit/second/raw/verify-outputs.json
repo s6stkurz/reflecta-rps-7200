@@ -1,0 +1,166 @@
+{
+ "type": "result",
+ "key": "v2:98907b44163d99600416cd0e7cbe64c3d20b55a5b796659a2ff22687afc2d4a6",
+ "agentId": "a8185e1cdf2aa1be1",
+ "result": {
+  "verdicts": [
+   {
+    "id": "OUT-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "session.py:2876-2887 passes compress=bool(roll) with a comment naming 'gzip, and TIFF deflate' as the hazard. But FrameWriter._write (session.py:1682-1684) calls export.write(str(path), delivered, resolution=job['dpi'], quality=...) with no compress argument, and export.write calls tiff.write(str(path), image, resolution=resolution). tiff.write's default is compress=True (tiff.py:102), and tifffile is a declared dependency (pyproject.toml:59), so it writes zlib with a predictor. The device is opened once in ScanSession._run (session.py:1930-1932) and closed only in its finally block, so every single-scan delivery is deflated while the device is open and idle. The same holds for GUI Save all and Export, whose _deliver_one runs library.corrected at full resolution plus deflate on a worker thread. The hazard itself rests on one anecdote, which is why this stays medium. The code contradicts its own stated rule."
+   },
+   {
+    "id": "OUT-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "console.py:74-81: the first Ctrl-C only sets _requested and prints 'stopping after the pass in flight'. In tools/scan.py the only reader of interrupt.requested() is hold() at line 301, and that only applies to brackets (`if args.bracket and interrupt.requested()`). ensure_shading (line 273) and scan() (line 350) take no should_stop; in direct.py only scan_roll paths take one (3314, 3437, 3780). So a Ctrl-C during calibration is followed by metering probes and a full pass, while the operator has been told it is stopping. A second press raises KeyboardInterrupt from the handler (console.py:76-78) mid-read, which is the wedge path."
+   },
+   {
+    "id": "OUT-03",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:2549-2566 files the aimed prescan and 2575-2587 then files prescan_before with file_entry=False, both with kind='prescan' and roll=name. _file (2827-2831) appends the out-folder path for both regardless of file_entry, and _out_name gives the same name because the meta has the same resolution_dpi and channels. _unclaimed (2961-2973) only checks exists(). FrameWriter is a single FIFO thread (queue.Queue, one Thread) whose first job runs library.save before writing its paths, so the second _file resolves the same free name and the before-aim copy is written last. Severity lowered: the roll folder (prescanNN.tif / prescanNN-before.tif) and the library are correct, and the sheet reads the roll folder (read_survey), not the output folder."
+   },
+   {
+    "id": "OUT-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "preview.clipping (preview.py:349-371) counts ==0, ==top and >=0.99*top on whatever it is given. The GUI's _measure_histogram uses _finest_pixels, which is result.image (the downscaled corrected working copy, session.py:2722) or _levels built from library.corrected(entry) (gui.py:4593, 4615). apply_shading (shading.py:258-282) computes (raw - dark)*gain, rounds and clips to maxval, so a railed 65535 in a gain<1 column comes back below the 64879 NEAR_FULL line, and a gain>1 column clamps unrailed samples to 65535. bracket.py:31-41 documents exactly this physics and fixes it for the merge only. The 'at nothing' figure is likewise measured after dark subtraction, not on the sensor."
+   },
+   {
+    "id": "OUT-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "bracket.py:447-450 builds `[np.asarray(f).astype(np.float64) - o for f, o in zip(frames, offsets)]` in full before _z_medians (328-332) strides them in _subsample. That is 4x each uint16 frame, held for every pass at once, which defeats the CHUNK_ROWS banding. MAX_BRACKET_PASSES = 9 (direct.py:2679). The merge runs after the with-block in tools/scan.py (384-393), and pending is empty with --no-library (hold returns early), so a MemoryError there loses every pass."
+   },
+   {
+    "id": "OUT-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The only callers of merge_bracket (tools/scan.py:391, 393) pass no alpha or beta, so DEFAULT_ALPHA=1.0 and DEFAULT_BETA=4096.0 always run. fit_noise_params has no non-test caller. bracket.py:12-15 says the constants 'are measured from our own flats by fit_noise_params rather than assumed', which the code contradicts. The z-gate, residual confidence and IVW weights all depend on these constants. The failure scenario's magnitude is unmeasured, but the mismatch between doc and code is certain and affects every merge."
+   },
+   {
+    "id": "OUT-07",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "bracket.py:494-500: worst_z = max(|z - median|) with no confidence gate, while c_res uses gate = min(confs[0], c). A clipped long pass has a too-low scaled value, so z is large and positive. misaligned = (worst_z > 8) & (spread > 150), and then chunk takes scaled[0] (the reference alone), overriding the IVW that had already zero-weighted the clipped pass. MergeStats' own docstring admits about 10% fallback from clipping. spread is a raw inter-channel DN difference, so on an orange-masked negative it is almost always above 150. Line 517 uses np.clip(...).astype(np.uint16), which truncates, whereas shading.py and mono.py round with floor(x+0.5)."
+   },
+   {
+    "id": "OUT-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/scan.py:396-401 does meta = dict(metas[-1]) plus a 'bracket' dict with passes, ratios (the commanded ladder), stops and stats.describe() prose. The fitted slopes, offsets, z-medians, alpha and beta are not recorded, and the merged image is filed nowhere. direct.py:2821-2824 records bracket_index, bracket_ratio, bracket_passes and bracket_stops per pass but no shared bracket id. merge_bracket's docstring confirms the output is on frames[0]'s scale."
+   },
+   {
+    "id": "OUT-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gui.py:4276-4277 and 2746-2747 promise that nothing is overwritten. _unclaimed (4293, 2762) checks only the .jpg/.tif name. export.write writes infrared_path(path) = with_suffix('.dng') through dng.write → open(path,'wb') without a check (export.py:146-149, dng.py:147-148), and the ImportError fallback writes path.with_suffix('.tif') unchecked (export.py:186-190). A roll frame goes to out / f'frame{number:02d}.tif' with no _unclaimed (session.py:2629). None of these writes is atomic. Only delivered files are affected; library entries are untouched."
+   },
+   {
+    "id": "OUT-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_deliver_one calls export.write(path, full, quality=quality) and export.write(path, ..., quality=quality) with no resolution (gui.py:4334, 4345-4348). _write_jpeg has no resolution parameter and saves no dpi (export.py:110-127). tifffile path: resolution is set only `if resolution` (tiff.py:146-148), otherwise tifffile's default (1/1, no unit). The builtin path writes 72 dpi inch (tiff.py:241-244). That contradicts the module's 'equivalent'/'identical' claim (tiff.py:15-23, 114-117) as far as metadata goes, although pixels agree. The IFD at data_offset+data_size (tiff.py:252) can land on an odd offset for odd-sized 8-bit images. Pixel data is unaffected."
+   },
+   {
+    "id": "OUT-11",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The reduced preview really is written under batch_name's `{dpi}dpi` name with no resolution tag (gui.py:4341-4351, 5260-5268). But Save all's confirmation dialog does say up front how many passes 'are the reduced previews on screen, because their full-resolution pixels are not filed yet' (gui.py:4270-4275), and each log line says 'reduced preview'. Only Save as relies on a log line alone, and there the operator chose the name (defaulting to result.label).",
+    "corrected_description": "When a pass has no filed entry yet, Save as and Save all write the 1400 px (or 512 px archived) corrected working copy. Save all names it with the scan's full dpi and writes no resolution tag. The Save all dialog warns with a count and the log line says 'reduced preview', but nothing in the file or its name marks it as reduced, so it later passes for a full-resolution delivery.",
+    "corrected_locations": [
+     "tools/gui.py:4341-4351",
+     "tools/gui.py:4270-4275",
+     "tools/gui.py:5248-5268",
+     "rps7200/session.py:2722",
+     "tools/gui.py:3986-3987"
+    ]
+   },
+   {
+    "id": "OUT-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "on_save_as (gui.py:4221-4235) calls _deliver_one with no try/except, and gui.py does not override report_callback_exception. format_of raises ValueError for an unknown suffix (export.py:66-79). asksaveasfilename with defaultextension only appends an extension when none is typed, so 'best.png' gets through and raises into Tk's default stderr handler. In addition, Save as runs library.corrected at full resolution plus the write on the UI thread, which freezes the window for seconds on a 3600 dpi pass, unlike Save all."
+   },
+   {
+    "id": "OUT-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/scan.py:76 defaults --out to scan.tif, and lines 413-416 write it and its .json unconditionally, with no existence check. --quality is passed straight to PIL (line 414), whereas the GUI clamps with jpeg_quality (gui.py:6624-6635). The suffix is validated before scanning (192-194), so only the overwrite, the quality and a write failure after a --no-library scan remain. One nuance: Pillow treats a negative quality as its default (75) rather than 1."
+   },
+   {
+    "id": "OUT-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The dng.py tag list (199-230) has no ColorMatrix1, which the DNG specification requires for non-monochrome images. The module still cites spec conformance (19-21, 33-37). The write() docstring (127-129) says R, G, B, IR are 'corrected the same way everything else delivered is corrected', but apply_shading skips channels without a reference (shading.py:259-261) and the calibration is RGB, so IR is raw."
+   },
+   {
+    "id": "OUT-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "to_monochrome returns (H, W), and export._write_infrared returns '' when image.ndim != 3 (export.py:144-145), so no DNG and no note is written. This is reachable through tools/scan.py --ir --mono --film negative (--ir is refused only for bw/kodachrome). It is also reachable in the window: Save as/Save all/Export pass v_mono, which _sync_film sets True when the film is switched to B&W, so re-saving an earlier RGBI colour pass silently drops its IR. to_monochrome accepts 'I' because CHANNEL_ORDER[:4] includes it (mono.py:109-115). The combobox and argparse restrict the choice, but _restore and RESTORABLE (gui.py:5241) set v_mono_channel from a stored str without checking it against MONO_CHOICES."
+   },
+   {
+    "id": "OUT-16",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The individual facts hold: DEFAULT_PATH = Path('gui-settings.json') (settings.py:25), keys are Path(...).name (gui.py:2601, 2616), save writes .part then replaces without fsync, and _remember writes whole sections. However, the window's library, rolls and calibration also default to CWD-relative paths (gui.py:8858 home = Path('.')), so 'beside the library' is true for a default launch. The CWD objection applies equally to the library and is not a settings-specific defect. The two-window race needs two non-demo windows on the same file at once (a demo window uses demo/gui-settings.json), which is narrow.",
+    "corrected_description": "Sheet decisions and roll 'last opened' times are keyed by the roll folder's basename only, so same-named rolls under different --rolls roots share and overwrite each other's pre-commission decisions. save() writes the whole file from this process's copy without re-reading and without fsync, so two concurrent non-demo windows erase each other's sheet/rolls sections. The CWD-relative default is consistent with the equally CWD-relative library and rolls defaults.",
+    "corrected_locations": [
+     "rps7200/settings.py:104-119",
+     "tools/gui.py:2601",
+     "tools/gui.py:2606-2616",
+     "tools/gui.py:692-725"
+    ]
+   },
+   {
+    "id": "OUT-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "library.compact (library.py:440-450) re-reads scan.tif and prescan.tif, rewrites them through _replace_tiff and records _sha256 of the new file. Only raw.bin is compared against its recorded sha256 (434). A truncated TIFF would make tiff.read raise, and the entry would be left plain, so only silent bit damage slips through. For prescan.tif, which has no raw bytes, that damage becomes undetectable."
+   },
+   {
+    "id": "OUT-18",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "Checked: dtype refusal (tiff.py:125-126), the builtin writer forced little-endian (186-190), the reader's big-endian→native conversion, per-strip zlib, the refusal of other sample formats, tiles and planar=2, truncation checks, and the predictor undone with cumsum in the sample dtype (437-452). Pixels round-trip exactly on both paths; the differences are metadata only (OUT-10)."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "OUT-A1",
+    "title": "tools/scan.py files its held passes outside the Ctrl-C guard and without per-pass error handling, so a Ctrl-C or one failed save during filing loses the remaining raw bytes",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "tools/scan.py:253",
+     "tools/scan.py:265",
+     "tools/scan.py:361-364",
+     "tools/scan.py:366-376",
+     "rps7200/console.py:92-102"
+    ],
+    "evidence": "`with interrupt:` (line 265) closes before the filing loop. `for held in pending: entries.append(library.save(held.pop(\"image\"), held.pop(\"meta\"), root=args.library, ...))` (366-376) runs after DeferredInterrupt.__exit__ has restored the default SIGINT handler (console.py:101-102), and it has no try/except.",
+    "description": "The passes of a run (up to nine bracket passes, each with its raw bytes held in memory from capture_record()) are filed only after the device closes, one gzip-heavy library.save at a time. That filing is no longer under DeferredInterrupt, so a Ctrl-C there raises KeyboardInterrupt straight out of main. The operator has just been told to 'Press Ctrl-C again to abort anyway' and sees the tool still busy. The pass being written is left with its INCOMPLETE marker, and every pass after it is lost with its raw bytes. The same happens if one library.save raises, for example on a full disk: the loop stops and the rest are dropped, together with the delivered file, because the exception escapes before export.write.",
+    "failure_scenario": "`tools/scan.py --dpi 3600 --bracket 9`. The operator presses Ctrl-C during pass 7, which is honoured after that pass. While passes 1-7 are being gzipped into the library (tens of seconds), they press Ctrl-C again. The traceback ends the process with passes 3-7 never filed, and their raw bytes existed only in memory.",
+    "recommendation": "Keep the filing loop inside the DeferredInterrupt (or a second one), and catch exceptions per pass, reporting and continuing so every held pass gets its attempt. On failure, spool what could not be filed to a temporary directory, as DirectScanner's debug spool does."
+   },
+   {
+    "id": "OUT-A2",
+    "title": "Save as re-corrects a full-resolution pass on the Tk UI thread",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "tools/gui.py:4221-4235",
+     "tools/gui.py:4324-4334"
+    ],
+    "evidence": "on_save_as calls `said = self._deliver_one(result, path, ...)` directly. _deliver_one runs `full, entry_record = library.corrected(result.entry)`, then orient, optional mono, and export.write with deflate. on_save_all runs the same function on a worker via _start_writing, and its own docstring says doing it on the UI thread 'would freeze the window'.",
+    "description": "A single Save as of a 3600 dpi RGBI pass reads, decodes, corrects and deflates around 142 MB on the main thread. The window, including its session event pump and log, freezes for seconds. It also runs outside the _saving guard, so it can overlap a Save all that is re-correcting the same entry.",
+    "failure_scenario": "During a roll, the operator does Save as on an earlier 3600 dpi frame. The window stops responding for several seconds while the scan thread keeps working, and progress or failure events queue up unseen.",
+    "recommendation": "Run Save as through _start_writing like Save all, and report errors through the same queue (this also fixes OUT-12)."
+   }
+  ],
+  "persisted_state_corrections": "1. Library prescan beside a frame (library/<entry>/prescan.tif). rf.prescan is the prescan_image returned by DirectScanner.prescan (direct.py:3968-3975), which is shading-corrected. So a frame entry's prescan.tif holds corrected 8-bit pixels in the scanner's own orientation, with no raw bytes. Its record block (library.py:378-382) carries only file, read_direction and carriage_state, and says nothing of its correction state. A dry-run walk's prescans are the exception: they are filed as their own entries with raw_image=rf.raw_prescan (raw). The claimed 'as handed to library.save' should read 'corrected, unlabelled' for frame entries.\n2. Settings path. The CWD-relative default is consistent with the window's other defaults (gui.py:8858, home = Path('.'), so library, rolls and calibration are also CWD-relative). The 'beside the library' comment is therefore accurate for a default launch.\n3. JPEG infrared companion DNG. Its resolution tag is job['dpi'] when written by FrameWriter, but None → 72 dpi inch when written from Save as, Save all or Export (gui.py:4334, 4345). Its IR is raw, contrary to dng.py's docstring.\n4. Delivered output-folder copies. The TIFF does carry a resolution tag (resolution=job['dpi'], session.py:1682); only the JPEG lacks dpi. The before-aim prescan of a dry-run walk is also delivered into <out_dir>/prescans/ under the aimed prescan's name, with no '-before' marker (OUT-03).\n5. tools/scan.py delivery. The TIFF carries resolution=args.dpi. The .json is written with default=str, so bytes-valued fields become repr strings.\n6. Save as / Save all / Export. The TIFF has no resolution tag on the tifffile path (tifffile's own default applies) and 72 dpi inch on the builtin path; this is not 'no tag' on both. Neither the TIFF nor the JPEG/DNG write is atomic."
+ }
+}
