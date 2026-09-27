@@ -80,6 +80,8 @@ from rps7200.framing import (                # noqa: E402
     right_gap_closure,
     CLEAR_RATIO,
     CONFIDENCE_FLOOR,
+    FRAME_WIDTH_MM,
+    FRAME_WIDTH_UNITS,
     PRESCAN_COLUMNS,
     GAP_FLATNESS,
     GAP_LEVEL_SIGMA,
@@ -94,11 +96,16 @@ from rps7200.framing import (                # noqa: E402
 from rps7200.session import manifest_settings, renumbered  # noqa: E402
 from rps7200.uniformity import luminance, register  # noqa: E402
 
-#: The image a 135 frame actually carries, against the 36.49 mm aperture. The
-#: difference is all the room the film has, and half of it is the most a frame
-#: can be off while still losing no picture -- which is the tolerance this
-#: study is measured against.
-FRAME_MM = 36.0
+#: The image a 135 frame carries in the older gap model, against the 36.49 mm
+#: aperture. The difference is all the room the film has in that model, and
+#: half of it is the most a frame can be off while still losing no picture --
+#: which is the tolerance this study is measured against.
+#:
+#: The driver's own, not a copy: `framing.FRAME_WIDTH_MM`, which still aims a
+#: roll with no edge reader. The frame-edge work measured a frame *wider*
+#: than the aperture (`framing.FRAME_WIDTH_UNITS`), in which no such band
+#: exists; this study describes the gap model, and says so where it prints.
+FRAME_MM = FRAME_WIDTH_MM
 
 
 def mm_per_px(width: int) -> float:
@@ -265,7 +272,10 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
 
     print(f"\n{len(rows)} prescans, {width} px across, {scale:.5f} mm/px")
     print(f"aperture {APERTURE_MM:.4f} mm, frame {FRAME_MM} mm")
-    print(f"  nothing lost while |e| <= {no_loss:.4f} mm = {no_loss/scale:.2f} px")
+    print(f"  nothing lost while |e| <= {no_loss:.4f} mm = {no_loss/scale:.2f} px"
+          f"  -- in the {FRAME_MM} mm gap model; a frame measured by its edges "
+          f"is {FRAME_WIDTH_UNITS} units, wider than the aperture, and loses "
+          f"picture at any offset")
     print(f"  a detector error above    {MAX_REGISTRATION_MM} mm = "
           f"{MAX_REGISTRATION_MM/scale:.2f} px")
     print(f"  so the actionable band is {no_loss:.3f}..{MAX_REGISTRATION_MM} mm "
