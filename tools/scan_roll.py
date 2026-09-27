@@ -76,7 +76,12 @@ from rps7200.session import (
     walked_prescans,
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
-from rps7200.session import raw_bytes_disagree, roll_frame_label, roll_membership
+from rps7200.session import (
+    answering,
+    raw_bytes_disagree,
+    roll_frame_label,
+    roll_membership,
+)
 from rps7200.session import rewind as _rewind
 from tools import frame_edges  # noqa: E402  (repo root is on the path above)
 
@@ -471,8 +476,14 @@ def main() -> int:
     # aborts. Abandoning a read wedges the scanner, and the frames queued for
     # filing used to die with it.
     interrupt = DeferredInterrupt()
+    #: The scanner, once opened, for `debug_settle` after the writer.
+    scanner: DirectScanner | None = None
     try:
         with interrupt, DirectScanner(verbose=args.verbose, debug=None) as s:
+            scanner = s
+            if args.library:
+                # Debug filing beside this roll's frames, not in `./library`.
+                s.debug_root = args.library
             info = s.inquiry()
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
@@ -672,7 +683,11 @@ def main() -> int:
                         if raw_bytes_disagree(frame.raw_prescan.shape,
                                               capture.get("raw_layout"), meta):
                             capture.update(raw=None, raw_layout=None)
-                        s.debug_claim(frame.raw_prescan)
+                        # Claimed only with its bytes, and let go by debug
+                        # filing when the writer says it is filed: see
+                        # `DirectScanner.debug_claim`.
+                        receipt = (s.debug_claim(frame.raw_prescan)
+                                   if capture.get("raw") is not None else None)
                         writer.submit(
                             number=number, paths=[], dpi=args.prescan_dpi,
                             image=frame.prescan, raw_image=frame.raw_prescan,
@@ -682,6 +697,7 @@ def main() -> int:
                             film=FilmNotes(stock=args.stock, process=args.process,
                                            frame=roll_frame_label(roll_name, number),
                                            notes=args.notes),
+                            on_filed=answering(receipt),
                         )
                     if frame.prescan_before is not None:
                         # The frame as it arrived, before aiming moved it. A
@@ -726,8 +742,10 @@ def main() -> int:
                     # capture_record() is read here, on this thread, before the next
                     # scan overwrites last_raw. Everything after it belongs to the
                     # writer and happens while the scanner is busy again.
-                    if args.library and frame.raw_image is not None:
-                        s.debug_claim(frame.raw_image)
+                    capture = s.capture_record()
+                    receipt = (s.debug_claim(frame.raw_image)
+                               if args.library and frame.raw_image is not None
+                               and capture.get("raw") is not None else None)
                     writer.submit(
                         number=number,
                         # `paths`, plural. It was `path` until 2026-09-09, when
@@ -755,7 +773,7 @@ def main() -> int:
                         prescan_meta=frame.prescan_meta,
                         library=args.library,
                         inquiry=info,
-                        capture=s.capture_record(),
+                        capture=capture,
                         tags=sorted({*args.tags, "roll", roll_name}),
                         film=FilmNotes(
                             stock=args.stock,
@@ -768,11 +786,13 @@ def main() -> int:
                             frame=roll_frame_label(roll_name, number),
                             notes=args.notes,
                         ),
-                        on_filed=(lambda entry, error, written, n=number,
-                                  p=path: record_of.filed(
-                                      n, entry, error,
-                                      **({"file": p.name} if p in written
-                                         else {}))),
+                        on_filed=answering(
+                            receipt,
+                            lambda entry, error, written, n=number,
+                            p=path: record_of.filed(
+                                n, entry, error,
+                                **({"file": p.name} if p in written
+                                   else {}))),
                     )
                     submitted = True
                     print(f"picture {number}: {path} {frame.image.shape} "
@@ -801,6 +821,13 @@ def main() -> int:
     # `ScanSession._run` has had this shape all along, which is why the window
     # never lost a frame this way.
     writer.finish()
+    # Every filing is in, so debug filing can file what it still holds: see
+    # `DirectScanner.debug_settle`. The device closed with the block above.
+    if scanner is not None:
+        try:
+            scanner.debug_settle()
+        except Exception as exc:                          # noqa: BLE001
+            print(f"debug filing: {exc}", file=sys.stderr)
     filed = dict(writer.done)
     for record in manifest["frames"]:
         entry = filed.get(record["number"])

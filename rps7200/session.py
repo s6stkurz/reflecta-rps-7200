@@ -766,6 +766,27 @@ def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
     }
 
 
+def answering(receipt: Callable[[Any], None] | None,
+              then: Callable[..., Any] | None = None
+              ) -> Callable[..., Any] | None:
+    """A writer job's `on_filed` that also answers a debug claim.
+
+    ``receipt`` is what `DirectScanner.debug_claim` handed back: it is told
+    the entry once `FrameWriter` has filed the pass, or None when it could
+    not, and the spooled copy is let go or kept on that answer rather than on
+    the claim. ``then`` is the job's own `on_filed`, called after it.
+    """
+    if receipt is None:
+        return then
+
+    def told(entry, error, written):
+        receipt(entry if error is None else None)
+        if then is not None:
+            then(entry, error, written)
+
+    return told
+
+
 def roll_frame_label(roll: str, number: int) -> str:
     """The `film.frame` every roll entry carries: ``<roll>-<NN>``.
 
@@ -1913,6 +1934,10 @@ class ScanSession:
         """
         if hasattr(scanner, "log_hook"):
             scanner.log_hook = lambda m: self._emit("log", text=m)
+        # Debug filing into this session's library, beside the frames it
+        # files: it went to `./library` whatever `--library` said.
+        if hasattr(scanner, "debug_root") and self.root is not None:
+            scanner.debug_root = self.root
         if hasattr(scanner, "progress_hook"):
             scanner.progress_hook = lambda done, total: self._emit(
                 "progress", done=done, total=total
@@ -1986,6 +2011,17 @@ class ScanSession:
                 for manifest in self._manifests.values():
                     if manifest.unsaved is not None:
                         manifest.save()
+                # What debug filing still holds: the passes nobody here
+                # claimed when close() found a claim still unanswered, a pass
+                # the writer could not file, and everything after a force
+                # abort, which never reached close() at all and so left every
+                # probe and hold of the session unfiled in the spool.
+                settle = getattr(self._scanner, "debug_settle", None)
+                if callable(settle):
+                    try:
+                        settle()
+                    except Exception as exc:             # noqa: BLE001
+                        self._emit("log", text=f"debug filing: {exc}")
                 # Now, with the device closed: see `_file`'s `compress`.
                 for entry in self._writer.uncompressed:
                     try:
@@ -2868,11 +2904,17 @@ class ScanSession:
             raw_image = None
         # This pass is filed here, so debug filing (RPS7200_DEBUG=1) leaves it
         # out rather than filing it twice; it still files the passes nothing
-        # here keeps -- metering probes, hold and aim prescans.
+        # here keeps -- metering probes, hold and aim prescans. Not when the
+        # bytes were dropped above: the spooled copy has them, and is then the
+        # only copy that does. The receipt goes back when the writer has filed
+        # it, or failed to, and only then is the spooled copy let go.
         claim = getattr(self._scanner, "debug_claim", None)
+        receipt = None
         if (raw_image is not None and file_entry and self.root is not None
-                and callable(claim)):
-            claim(raw_image)
+                and callable(claim)
+                and (capture.get("raw") is not None
+                     or capture.get("raw_path") is not None)):
+            receipt = claim(raw_image)
         self._writer.submit(
             seq=seq,
             number=number,
@@ -2901,7 +2943,7 @@ class ScanSession:
             capture=capture,
             mono=mono,
             mono_channel=mono_channel,
-            on_filed=on_filed,
+            on_filed=answering(receipt, on_filed),
         )
         return turn, flip
 

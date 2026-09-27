@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import json
 import os
+import functools
 import tempfile
 import shutil
+import threading
 import time
 import weakref
 from collections.abc import Callable, Iterator, Sequence
@@ -535,6 +537,24 @@ class DirectScanner:
     #: Where debug entries go. Overridable so a test never writes into the real
     #: library -- which it did, once, before this existed.
     DEBUG_ROOT_ENV = "RPS7200_DEBUG_ROOT"
+    #: The library the caller files into -- the window's, a tool's
+    #: `--library` -- which debug filing then files into too. It went to
+    #: RPS7200_DEBUG_ROOT or `./library` whatever the caller used, so with
+    #: `--library D:/lib` the frames landed there and the probes and prescans
+    #: that explain them in whatever directory the window was started from.
+    #: None, and the variable above decides, and then `library.DEFAULT_ROOT`.
+    debug_root: str | Path | None = None
+    #: The spool beside that library, not in the system's temporary
+    #: directory: that is RAM on many Linux machines and the system disk on
+    #: Windows, and a spool there ran out long before the library's disk did.
+    #: A dot-directory, so no listing of entries and no `verify` takes it
+    #: for one.
+    DEBUG_SPOOL_DIR = ".spool"
+    #: The spool's bookkeeping is touched from two threads: the scanning one
+    #: spools and flushes, a caller's writer answers for the passes it
+    #: claimed (`debug_claim`). On the class so a stand-in built without
+    #: `__init__` has one.
+    _debug_lock = threading.Lock()
 
     #: Where a display listens in. Declared on the class as well as set in
     #: __init__, because the test doubles stand in for a scanner without
@@ -564,6 +584,7 @@ class DirectScanner:
         #: want 19 GB of RAM.
         self._debug_pending: list[dict[str, Any]] = []
         self._debug_spool: Path | None = None
+        self._debug_lock = threading.Lock()
         self.verbose = verbose
         # Where a display listens. Both are host-side and optional: nothing the
         # device is sent changes, which is why PROTOCOL_REVISION stays put.
@@ -922,11 +943,12 @@ class DirectScanner:
         if not self.debug:
             return
         try:
-            if self._debug_spool is None:
-                self._debug_spool = Path(
-                    tempfile.mkdtemp(prefix="rps7200-debug-")
-                )
-            n = len(self._debug_pending)
+            spool = self._debug_spool_dir()
+            # Counted, never taken from the queue's length: a pass its caller
+            # has filed leaves the queue (`debug_claim`), and the length then
+            # named a number a pass still waiting had -- whose files the next
+            # one would have written over.
+            n = self._debug_count = getattr(self, "_debug_count", 0) + 1
             item: dict[str, Any] = {"meta": dict(meta), "captured": time.time()}
             record = self.capture_record()
             # So a caller that files this very pass itself can say so, and the
@@ -937,7 +959,7 @@ class DirectScanner:
             except TypeError:
                 item["pixels"] = None
 
-            image_path = self._debug_spool / f"{n:03d}-image.npy"
+            image_path = spool / f"{n:03d}-image.npy"
             np.save(image_path, image)
             item["image_path"] = image_path
 
@@ -957,7 +979,7 @@ class DirectScanner:
                           "pass; spooling it without them")
                 raw, layout = None, {}
             if raw is not None:
-                raw_path = self._debug_spool / f"{n:03d}-raw.bin"
+                raw_path = spool / f"{n:03d}-raw.bin"
                 raw_path.write_bytes(raw)
                 item["raw_path"] = raw_path
             item["raw_layout"] = layout or None
@@ -969,7 +991,7 @@ class DirectScanner:
             # And on disk beside the pixels, so a spool left behind -- by a
             # failed filing, or a process that died before close() -- still
             # says what each pass was and can be filed later by hand.
-            side = self._debug_spool / f"{n:03d}-meta.json"
+            side = spool / f"{n:03d}-meta.json"
             side.write_text(json.dumps(
                 {"meta": item["meta"], "raw_layout": item["raw_layout"],
                  "captured": item["captured"]}, indent=2, default=str),
@@ -983,21 +1005,45 @@ class DirectScanner:
                 saved = getattr(self, "_debug_reference_saved", None)
                 if saved is None or saved[0] is not item["reference"] \
                         or not saved[1].exists():
-                    ref_path = self._debug_spool / f"{n:03d}-shading.npz"
+                    ref_path = spool / f"{n:03d}-shading.npz"
                     item["reference"].save(ref_path)
                     saved = (item["reference"], ref_path)
                     self._debug_reference_saved = saved
                 item["reference_path"] = saved[1]
             if item["ccd_mask"] is not None:
-                mask_path = self._debug_spool / f"{n:03d}-ccd_mask.bin"
+                mask_path = spool / f"{n:03d}-ccd_mask.bin"
                 mask_path.write_bytes(bytes(item["ccd_mask"]))
                 item["mask_path"] = mask_path
 
-            self._debug_pending.append(item)
+            with self._debug_lock:
+                self._debug_pending.append(item)
         except Exception as exc:                      # never break a scan
             self._log(f"debug: could not spool this scan ({exc})")
 
-    def debug_claim(self, pixels: np.ndarray | None) -> None:
+    def _debug_root(self) -> Path:
+        """Where debug filing files: see `debug_root`."""
+        from . import library
+        return Path(self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV)
+                    or library.DEFAULT_ROOT)
+
+    def _debug_spool_dir(self) -> Path:
+        """This session's spool, made on first use beside the library."""
+        if self._debug_spool is None:
+            parent = self._debug_root() / self.DEBUG_SPOOL_DIR
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+                self._debug_spool = Path(
+                    tempfile.mkdtemp(prefix="rps7200-debug-", dir=parent))
+            except OSError:
+                # A library that cannot be written to is no reason to spool
+                # nothing: the pass then waits in the system's temporary
+                # directory, and the flush says where when it cannot file it.
+                self._debug_spool = Path(
+                    tempfile.mkdtemp(prefix="rps7200-debug-"))
+        return self._debug_spool
+
+    def debug_claim(self, pixels: np.ndarray | None
+                    ) -> Callable[[Any], None] | None:
         """Say that the caller files the pass these raw pixels came from.
 
         Debug filing then leaves it out, so a tool that files its own entries
@@ -1006,14 +1052,61 @@ class DirectScanner:
         and the tools used to switch debug off outright. With it off they filed
         nothing of the passes they do not keep themselves: metering probes,
         hold and aim prescans. Pass the very array `last_pixels_raw` held.
+
+        **A claim is a promise, and the spooled copy is kept until it is
+        kept.** Returns the caller's receipt, or None when nothing spooled is
+        this pass: call it once the caller's own filing is over, with the
+        entry it wrote -- the spooled copy is deleted then, not later, so a
+        roll holds one or two frames in the spool rather than every frame
+        until the window closes -- or with None when it could not file the
+        pass, and debug filing files it after all. It used to delete a claimed
+        pass at close() on the claim alone, and every claimant files *after*
+        close(): a full library disk lost the pass from both places, which is
+        the one case the spool is there for.
+
+        Claim only a pass filed *with its bytes*. A caller that files one
+        without them -- the session drops bytes that describe another pass --
+        leaves the spooled copy, which has them, to be filed as well.
         """
         if pixels is None:
-            return
+            return None
         # `getattr`: stand-ins subclass this without running `__init__`.
-        for item in getattr(self, "_debug_pending", ()):
-            ref = item.get("pixels")
-            if ref is not None and ref() is pixels:
-                item["claimed"] = True
+        with self._debug_lock:
+            for item in getattr(self, "_debug_pending", ()):
+                ref = item.get("pixels")
+                if ref is not None and ref() is pixels:
+                    item["claimed"] = True
+                    return functools.partial(self._debug_receipt, item)
+        return None
+
+    def _debug_receipt(self, item: dict[str, Any], entry: Any) -> None:
+        """The claimant's answer for one pass: see `debug_claim`."""
+        with self._debug_lock:
+            if entry is None:
+                # Not filed after all, so it goes back to being ours: the
+                # flush files it, and until then its spool stays put.
+                item["claimed"] = False
+                self._log("debug: a pass its caller could not file is kept, "
+                          "and filed with the rest")
+                return
+            self._debug_pending = [i for i in self._debug_pending
+                                   if i is not item]
+        if self._debug_unlink(item):
+            self._log(f"debug: a filed pass left files behind in "
+                      f"{self._debug_spool}")
+
+    def debug_settle(self) -> None:
+        """File what the spool still holds, now that every claimant is done.
+
+        For a caller that claims passes (`debug_claim`) and files them after
+        close(), as the window and the tools do: call this after that
+        filing, with the device closed. close() files what nobody claimed,
+        unless a claimed pass is still waiting for its caller's answer -- then
+        it files nothing, so the two never write into one library at once, and
+        leaves it all to this. Here a claim that was never answered is taken
+        as a pass nobody filed, and filed.
+        """
+        self._debug_flush(settle=True)
 
     @staticmethod
     def _debug_unlink(item: dict[str, Any]) -> int:
@@ -1028,15 +1121,27 @@ class DirectScanner:
                     stuck += 1
         return stuck
 
-    def _debug_flush(self) -> None:
+    def _debug_flush(self, settle: bool = False) -> None:
         """Write the queued scans. Called after the transport is closed.
 
         Failures are logged and swallowed. Filing is a record-keeping duty, and
         losing the record is better than losing the session that produced it.
+
+        While a pass is claimed and its caller has not answered for it, this
+        files nothing and leaves everything for `debug_settle` (``settle``),
+        which the caller runs once its own filing is done. See `debug_claim`.
         """
-        if not self._debug_pending:
-            return
-        pending, self._debug_pending = self._debug_pending, []
+        with self._debug_lock:
+            # `getattr`: stand-ins subclass this without running `__init__`.
+            if not getattr(self, "_debug_pending", None):
+                return
+            waiting = sum(1 for i in self._debug_pending if i.get("claimed"))
+            if waiting and not settle:
+                self._log(f"debug: {waiting} claimed scan(s) still to be filed "
+                          "by their caller; the spool is filed once it has "
+                          f"been ({self._debug_spool})")
+                return
+            pending, self._debug_pending = self._debug_pending, []
         self._log(f"debug: filing {len(pending)} scan(s) in the library ...")
         try:
             from . import library
@@ -1044,19 +1149,23 @@ class DirectScanner:
         except Exception as exc:
             self._log(f"debug: library unavailable ({exc}); {len(pending)} "
                       f"scan(s) left unfiled in {self._debug_spool}")
+            # Forgotten, so a later pass spools elsewhere; see `failed` below.
+            self._debug_spool = None
+            self._debug_reference_saved = None
             return
 
-        root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT
+        root = self._debug_root()
         stuck = 0
         failed = 0
         for n, item in enumerate(pending, 1):
             image = None
             filed = False
             if item.get("claimed"):
-                # Its caller filed it, with these same bytes and pixels.
-                self._log(f"debug: scan {n}/{len(pending)} was filed by its caller")
-                stuck += self._debug_unlink(item)
-                continue
+                # Claimed and never answered for, with the claimant done: it
+                # was not filed, as far as anybody can tell, and a pass filed
+                # twice is a nuisance where one filed nowhere is a loss.
+                self._log(f"debug: scan {n}/{len(pending)} was claimed and "
+                          "never filed by its caller; filing it here")
             try:
                 # mmap the image rather than loading it: tiff.write walks it
                 # once, so a 570 MB frame need not be resident.
@@ -1119,8 +1228,17 @@ class DirectScanner:
                 # handle to the directory, and dropping it on a failed clean
                 # loses the chance to say where the leftovers are.
                 if not self._debug_spool.exists():
+                    parent = self._debug_spool.parent
                     self._debug_spool = None
                     self._debug_reference_saved = None
+                    # The library's `.spool` too, once nothing is in it --
+                    # another session's spool, or one left by a failed filing,
+                    # keeps it, which is what an rmdir refuses to remove.
+                    if parent.name == self.DEBUG_SPOOL_DIR:
+                        try:
+                            parent.rmdir()
+                        except OSError:
+                            pass
         except Exception:
             pass
 

@@ -138,6 +138,53 @@ def test_a_bracket_takes_the_passes_it_was_asked_for(tmp_path, monkeypatch):
     assert len(scanner.scans) == 3
 
 
+def test_one_pass_the_library_refuses_does_not_cost_the_others(
+        tmp_path, monkeypatch):
+    """Filed one at a time, each on its own. The loop had no try, so the first
+    refusal raised out of main() and every pass after it died unfiled -- and
+    the claims had already deleted their debug copies."""
+    from rps7200 import library
+
+    real = library.save
+    calls = []
+
+    def save(image, meta, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError(28, "No space left on device")
+        return real(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", save)
+    _scanner, code = run(tmp_path, monkeypatch, "--bracket", "3")
+    assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 2
+    assert (tmp_path / "out.tif").exists(), "the merged picture was not delivered"
+    assert code == 1, "a pass the library refused is a loss worth saying"
+
+
+def test_a_claimed_pass_is_answered_for_once_it_is_filed(tmp_path, monkeypatch):
+    """With the entry, or with None when it could not be filed -- the answer
+    is what lets debug filing delete its copy, or file it after all."""
+    from rps7200 import library
+
+    answers = []
+    monkeypatch.setattr(
+        FakeBracketScanner, "debug_claim",
+        lambda self, pixels: answers.append, raising=False)
+    real = library.save
+
+    def save(image, meta, **kw):
+        if not answers:
+            raise OSError(28, "No space left on device")
+        return real(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", save)
+    monkeypatch.setattr(FakeBracketScanner, "last_pixels_raw",
+                        np.zeros((6, 6, 3), np.uint16), raising=False)
+    run(tmp_path, monkeypatch, "--bracket", "3")
+    assert answers[0] is None
+    assert all(a is not None for a in answers[1:]) and len(answers) == 3
+
+
 def test_a_bracket_exposes_each_pass_differently(tmp_path, monkeypatch):
     """A bracket of identical exposures is not a bracket."""
     scanner, _ = run(tmp_path, monkeypatch, "--bracket", "4")

@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from rps7200 import library, session, tiff
-from rps7200.direct import RollFrame
+from rps7200.direct import DirectScanner, RollFrame
 from rps7200.library import FilmNotes
 from rps7200.session import (
     Approved,
@@ -295,6 +295,112 @@ def test_what_the_session_files_it_claims_from_debug_filing(tmp_path):
     run(Scan(resolution=600), tmp_path, scanner=scanner)
     assert len(scanner.claimed) == 1
     assert scanner.claimed[0] is scanner.last_pixels_raw
+
+
+class SpoolingScanner(FakeScanner, DirectScanner):
+    """The fake's answers, with the driver's own debug spool, claim and flush.
+
+    Every scan spools a metering probe first -- a pass nothing in the session
+    files, which debug filing exists for -- and then the pass itself, as
+    `DirectScanner.scan` does.
+    """
+
+    def __init__(self, **kw):
+        FakeScanner.__init__(self, **kw)
+        self.verbose = False
+        self.debug = True
+        self._debug_pending = []
+        self._debug_spool = None
+        self._debug_lock = threading.Lock()
+        self._shading = None
+        self._ccd_mask = None
+
+    def scan(self, resolution=1800, infrared=True, **kw):
+        self._debug_capture(picture(channels=3, seed=5),
+                            {"resolution_dpi": 300, "channels": 3,
+                             "channel_order": list("RGB")})
+        image, meta = FakeScanner.scan(self, resolution=resolution,
+                                       infrared=infrared, **kw)
+        self._debug_capture(image, meta)
+        self.last_pixels_raw = image
+        return image, meta
+
+    def close(self):
+        FakeScanner.close(self)
+        self._debug_flush()
+
+
+def test_a_pass_the_writer_could_not_file_is_filed_by_debug_filing(
+        tmp_path, monkeypatch):
+    """The session claimed each pass as it queued it, and the scanner closed
+    -- deleting every claimed spool -- before the writer had filed anything.
+    A library.save that failed then lost the pass from both places."""
+    real = library.save
+
+    def save(image, meta, **kw):
+        if "debug" not in (kw.get("tags") or ()):
+            raise OSError(28, "No space left on device")
+        return real(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", save)
+    run(Scan(resolution=600), tmp_path, scanner=SpoolingScanner())
+    shapes = sorted(tuple(e["image"]["shape"]) for e in library.entries(tmp_path))
+    assert shapes == [(24, 36, 3), (24, 36, 4)], \
+        "the scan the writer could not file was lost"
+
+
+def test_a_pass_the_writer_filed_is_not_filed_again(tmp_path):
+    scanner = SpoolingScanner()
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    entries = library.entries(tmp_path)
+    assert sorted(tuple(e["image"]["shape"]) for e in entries) == \
+        [(24, 36, 3), (24, 36, 4)]
+    assert [e for e in entries if "debug" in e["tags"]][0]["image"]["shape"] \
+        == [24, 36, 3], "the scan was filed twice, or the probe not at all"
+    assert not (tmp_path / DirectScanner.DEBUG_SPOOL_DIR).exists()
+
+
+def test_a_force_abort_still_files_what_debug_filing_holds(tmp_path):
+    """force_abort skips close(), the only caller of the flush, so every probe
+    and hold of the session was left in the spool, unfiled."""
+    scanner = SpoolingScanner()
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    events = []
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not kinds(events, "finished"):
+        events.extend(s.poll())
+        time.sleep(0.01)
+    s.force_abort()
+    s.shutdown()
+    while time.monotonic() < deadline and not kinds(events, "closed"):
+        events.extend(s.poll())
+        time.sleep(0.01)
+    s.join(timeout=2.0)
+    assert not scanner.closed, "this is the path that never reaches close()"
+    shapes = sorted(tuple(e["image"]["shape"]) for e in library.entries(tmp_path))
+    assert (24, 36, 3) in shapes, "the probe was left unfiled in the spool"
+
+
+def test_a_pass_filed_without_its_bytes_is_not_claimed(tmp_path):
+    """The spooled copy has the bytes the session dropped as another pass's,
+    so it is the only copy that does and must be filed too."""
+    scanner = CorrectingScanner()
+    scanner.capture_record = lambda: {
+        "reference": None, "ccd_mask": None, "raw": b"\x00" * 64,
+        "raw_layout": {"format": "index", "width": 860, "lines": 573,
+                       "channels": 4},
+    }
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert scanner.claimed == []
+
+
+def test_the_session_files_debug_passes_into_its_own_library(tmp_path):
+    scanner = SpoolingScanner()
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert scanner.debug_root == str(tmp_path)
 
 
 def test_the_default_scanner_leaves_debug_to_the_environment(monkeypatch):

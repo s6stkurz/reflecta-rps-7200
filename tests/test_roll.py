@@ -782,7 +782,10 @@ def test_nothing_is_written_while_the_device_is_open(tmp_path, monkeypatch):
     s._debug_capture(img, meta)
     s._debug_capture(img, meta)
     assert len(s._debug_pending) == 2
-    assert list(tmp_path.iterdir()) == [], "wrote while the session was open"
+    # Spooled beside the library, and nothing filed in it: a plain write of
+    # the pass is all that happens with the device open.
+    assert [p.name for p in tmp_path.iterdir()] == [".spool"], \
+        "wrote while the session was open"
 
     s.close()
     assert s._debug_pending == []
@@ -882,12 +885,88 @@ def test_a_pass_its_caller_files_is_not_filed_twice(tmp_path, monkeypatch):
     probe = np.ones((8, 16, 3), np.uint8)
     s._debug_capture(probe, dict(_META))
     s._debug_capture(kept, dict(_META))
-    s.debug_claim(kept)
+    receipt = s.debug_claim(kept)
+    receipt(tmp_path / "the-callers-own-entry")
     s.close()
     filed = [p for p in (tmp_path / "lib").iterdir() if p.is_dir()]
     assert len(filed) == 1, sorted(p.name for p in filed)
     from rps7200 import tiff
     assert np.array_equal(tiff.read(filed[0] / "scan.tif"), probe)
+
+
+def test_a_claimed_pass_is_kept_until_its_caller_has_filed_it(
+        tmp_path, monkeypatch):
+    """A claim is a promise, and the spooled copy is the pass until it is kept.
+
+    The flush at close() deleted a claimed pass on the claim alone, and every
+    claimant files *after* close(): the window's writer, `tools/scan.py`'s
+    loop, `tools/scan_roll.py`'s writer. A full library disk then lost the
+    pass from both places -- the one case the spool exists for.
+    """
+    from rps7200 import library, tiff
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.full((8, 16, 3), 7, np.uint8)
+    s._debug_capture(kept, dict(_META))
+    item = s._debug_pending[0]
+    receipt = s.debug_claim(kept)
+    s.close()                          # the claimant has not filed it yet
+    assert item["image_path"].exists(), "deleted on the claim alone"
+    assert library.entries(tmp_path / "lib") == []
+    receipt(None)                      # ... and then it could not
+    s.debug_settle()
+    filed = library.entries(tmp_path / "lib")
+    assert len(filed) == 1
+    assert np.array_equal(
+        tiff.read(tmp_path / "lib" / filed[0]["id"] / "scan.tif"), kept)
+    assert not (tmp_path / "lib" / ".spool").exists(), "the spool outlived it"
+
+
+def test_a_claimed_pass_is_let_go_as_soon_as_it_is_filed(tmp_path, monkeypatch):
+    """Not at close(): the window holds one session all day, and a claimed
+    frame kept until then put every frame of every roll in the spool twice
+    over -- 43 GB for one roll at 7200 dpi."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(kept, dict(_META))
+    item = s._debug_pending[0]
+    s.debug_claim(kept)(tmp_path / "the-callers-own-entry")
+    assert not item["image_path"].exists()
+    assert s._debug_pending == []
+
+
+def test_a_claim_nobody_answers_for_is_filed_when_the_claimant_is_done(
+        tmp_path, monkeypatch):
+    """close() waits for an unanswered claim; `debug_settle` does not."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(np.ones((8, 16, 3), np.uint8), dict(_META))
+    s._debug_capture(kept, dict(_META))
+    s.debug_claim(kept)
+    s.close()
+    assert library.entries(tmp_path / "lib") == [], \
+        "filed beside a claimant that may still be writing into the library"
+    s.debug_settle()
+    assert len(library.entries(tmp_path / "lib")) == 2
+
+
+def test_debug_filing_goes_into_the_callers_library(tmp_path, monkeypatch):
+    """With `--library D:/lib` the frames went there and the probes and
+    prescans that explain them into `./library`, wherever that was."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "elsewhere"))
+    s = _debug_scanner(debug=True)
+    s.debug_root = tmp_path / "chosen"
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    s.close()
+    assert len(library.entries(tmp_path / "chosen")) == 1
+    assert not (tmp_path / "elsewhere").exists()
 
 
 def test_filing_off_queues_nothing():
@@ -916,8 +995,14 @@ def test_scans_are_spooled_to_disk_not_held_in_ram(tmp_path, monkeypatch):
     assert "raw" not in held, "the raw bytes are being kept in memory"
     assert held["image_path"].exists()
     assert held["raw_path"].exists()
-    # and the spool is somewhere temporary, not in the library
-    assert str(tmp_path) not in str(held["image_path"])
+    # and the spool is beside the library, on its disk rather than in a
+    # temporary directory that is RAM on many machines -- where nothing that
+    # reads the library takes it for an entry
+    from rps7200 import library
+    spool = tmp_path / "lib" / DirectScanner.DEBUG_SPOOL_DIR
+    assert held["image_path"].is_relative_to(spool)
+    assert library.entries(tmp_path / "lib") == []
+    assert library.verify(tmp_path / "lib") == []
 
 
 def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
