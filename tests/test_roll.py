@@ -1421,6 +1421,40 @@ def test_an_offset_is_applied_and_confirmed_by_looking_again():
     assert frame.image is not None
 
 
+def test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film():
+    """The first prescan had been given the roll's film; the ones a hold or an
+    aim took after moving the film fell back to the default. Those replace the
+    frame's prescan, and a walk files their meta as its entry, so every frame
+    moved on a black and white strip was recorded as a colour negative."""
+    from rps7200.framing import StripWalk
+
+    films = []
+
+    class Recording(FakeRoll):
+        def prescan(self, *a, film="negative", **kw):
+            films.append(film)
+            self.last_scan_meta = {"resolution_dpi": 300, "film": film}
+            return super().prescan(*a, film=film, **kw)
+
+    reference = _lit()
+    scanner = Recording([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)}, film="bw")
+    assert frame.registration["approved"]["moves"] == 1
+    assert films == ["bw", "bw"], films
+    assert frame.prescan_meta["film"] == "bw"
+
+    class Aimed(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"agreed": ["left", "right"]}
+
+    films.clear()
+    scanner = Recording([reference])
+    scanner.prescans = [np.roll(reference, 6, axis=1)]
+    scanner._aim_frame(0, reference, 300, Aimed(), film="bw")
+    assert films == ["bw"], films
+
+
 def test_a_frame_that_will_not_move_is_scanned_anyway_and_flagged():
     reference = _lit()
     scanner = FakeRoll([reference])

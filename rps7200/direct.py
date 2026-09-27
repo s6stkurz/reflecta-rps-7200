@@ -3314,6 +3314,7 @@ class DirectScanner:
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
         source: str = "operator",
         shading: bool = True,
+        film: str = FILM_NEGATIVE,
     ) -> dict[str, Any]:
         """Move the film until this frame sits where it was decided to go.
 
@@ -3383,8 +3384,12 @@ class DirectScanner:
             out["spent_mm"] = round(spent, 4)
 
             time.sleep(self.HOLD_SETTLE_S)
+            # The roll's film. This pass replaces the frame's prescan, and a
+            # walk files it as that prescan's entry: without it every frame
+            # a hold or an aim moved was recorded as a colour negative.
             image, _ = self.prescan(resolution=prescan_resolution,
-                                    keep_raw=keep_raw, shading=shading)
+                                    keep_raw=keep_raw, shading=shading,
+                                    film=film)
             out["prescan"] = image
             measured, detail = measure_shift_mm(approved.reference, image)
             out["history"].append(detail)
@@ -3445,6 +3450,7 @@ class DirectScanner:
         walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
         should_stop: Callable[[], bool] | None = None,
         shading: bool = True,
+        film: str = FILM_NEGATIVE,
     ) -> dict[str, Any]:
         """Judge where this frame sits, put it there, and check the work.
 
@@ -3520,7 +3526,7 @@ class DirectScanner:
             _Aim(offset_mm=decision, reference=image),
             keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
             rejudge=self._rejudge_for(index, walk, decision),
-            shading=shading,
+            shading=shading, film=film,
         )
         out.update({k: v for k, v in fix.items() if k != "prescan"})
         out["prescan"] = fix.get("prescan")
@@ -4019,7 +4025,7 @@ class DirectScanner:
                         # `operator` -- the one thing `source`'s own docstring
                         # says the field exists to prevent.
                         source=getattr(held, "source", None) or "operator",
-                        shading=shading,
+                        shading=shading, film=film,
                     )
                     if fix.get("roll_abort"):
                         holding = False
@@ -4058,7 +4064,7 @@ class DirectScanner:
                     fix = self._aim_frame(
                         index, prescan_image, prescan_resolution, walk,
                         dry_run=correct_dry_run, keep_raw=keep_raw,
-                        should_stop=should_stop, shading=shading,
+                        should_stop=should_stop, shading=shading, film=film,
                     )
                     marks["correction"] = {k: v for k, v in fix.items()
                                            if k != "prescan"}
