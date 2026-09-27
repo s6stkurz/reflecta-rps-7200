@@ -580,15 +580,21 @@ def confirm(prompt: str, expect: str | None = None) -> str:
 
 def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
              session, index) -> tuple[Path | None, str]:
-    """Scan one step, close the device, file it, and report what it looks like.
+    """Scan one step, file it, close the device, and report what it looks like.
 
-    The device is opened for the scan and **closed before anything else
-    happens**. Filing an entry gzips the raw bytes and the orientation check
-    decodes them again -- heavy local work, and "gzipping a 140 MB library
-    entry with the device open and idle preceded one wedge" (CLAUDE.md). The
-    operator prompt that follows would hold it open and idle for minutes more.
-    Closing is not a power cycle, so the scanner keeps its calibration and the
-    host-side reference simply reloads from disk.
+    The device is closed before anything heavy happens. Compressing an entry
+    and the orientation check's decode are heavy local work, and "gzipping a
+    140 MB library entry with the device open and idle preceded one wedge"
+    (CLAUDE.md); the operator prompt that follows would hold it open and idle
+    for minutes more. Closing is not a power cycle, so the scanner keeps its
+    calibration and the host-side reference simply reloads from disk.
+
+    The entry itself is filed *plain* just before the close -- uncompressed,
+    a sequential write, as the window files every single scan with its device
+    open -- and compacted after it. Filed after the close, it could not be
+    claimed from debug filing without losing the pass if the save then
+    failed (the close deletes a claimed pass's spool), and unclaimed it was
+    filed twice with RPS7200_DEBUG on.
     """
     subject, orientation, label, instruction, purpose = step
 
@@ -620,23 +626,36 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
         # `scan.tif` while the record said nothing was baked in. Read before
         # `close()`, and before another pass overwrites it.
         raw_pixels = getattr(scanner, "last_pixels_raw", None)
+
+        meta["uniformity_session"] = session
+        entry = library.save(
+            # Raw, per the library's bargain: `image` below is still the
+            # corrected one, which is what the orientation check and the crop
+            # want to see.
+            image if raw_pixels is None else raw_pixels, meta,
+            root=args.library,
+            film=library.FilmNotes(
+                stock="IT8" if subject == IT8 else subject,
+                subject=label,
+                notes=purpose,
+            ),
+            tags=[args.tag],
+            reference=shading_ref, ccd_mask=mask, raw=raw, raw_layout=layout,
+            compress=False,
+        )
+        # Claimed only once filed, so a save that fails leaves the pass to
+        # debug filing rather than to nobody.
+        claim = getattr(scanner, "debug_claim", None)
+        if callable(claim):
+            claim(raw_pixels)
     finally:
         scanner.close()
-
-    meta["uniformity_session"] = session
-    entry = library.save(
-        # Raw, per the library's bargain: `image` below is still the corrected
-        # one, which is what the orientation check and the crop want to see.
-        image if raw_pixels is None else raw_pixels, meta,
-        root=args.library,
-        film=library.FilmNotes(
-            stock="IT8" if subject == IT8 else subject,
-            subject=label,
-            notes=purpose,
-        ),
-        tags=[args.tag],
-        reference=shading_ref, ccd_mask=mask, raw=raw, raw_layout=layout,
-    )
+    try:
+        library.compact(entry)
+    except (OSError, ValueError) as exc:
+        # Plain is complete and verifiable; `tools/library.py compact` can
+        # finish it later.
+        print(f"    {entry.name} left uncompressed ({exc})")
 
     if orientation is not None and subject == IT8:
         sig = un.orientation_signature(image)
@@ -686,6 +705,18 @@ def write_crop(image, signature, path: Path) -> None:
 
 def cmd_capture(args: argparse.Namespace) -> int:
     from datetime import datetime, timezone
+    if args.ir:
+        # Before anything drives the device. This was found out only after
+        # the canary prompt, the metering and a 3-4 minute calibration had
+        # been paid for -- on every run, because the answer never varies.
+        print("REFUSING phase 2: the calibration pass is RGB, so there is "
+              "never an infrared reference, and apply_shading would leave the "
+              "IR plane unshaded -- carrying the full ~34% falloff, which "
+              "would read as an enormous IR vignette that is pure artefact. "
+              "What phase 2 should measure instead (the IR field raw, "
+              "against its own repeat floor, or nothing) is an open decision; "
+              "see TODO.md.", file=sys.stderr)
+        return 1
     steps = PHASE2 if args.ir else PHASE1
     session = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     reference_path = Path(args.reference)
@@ -698,37 +729,17 @@ def cmd_capture(args: argparse.Namespace) -> int:
           "directly comparable -- start over, or re-run the repeat pair after "
           "the restart to measure the cross-session floor.")
 
-    if args.ir:
-        print("\nIR passes hold the device busy for a ~212 s floor each, "
-              "whatever the resolution. Before committing to five of them, run "
-              "one throwaway pass at these settings as a canary: if it stalls, "
-              "plumb idle_timeout through scan() rather than retrying -- a "
-              "wedge costs a power cycle and this whole locked session with it.")
-        if confirm("    canary pass already done? Enter to continue: ") == "abort":
-            return 1
-
     def factory():
         return DirectScanner(verbose=args.verbose)
 
-    exposure_scale: float | list[float] = 1.0
-    if args.exposure_scale:
-        parts = [float(v) for v in args.exposure_scale.replace(",", " ").split()]
-        exposure_scale = parts[0] if len(parts) == 1 else parts
-        print(f"\nexposure locked at {exposure_scale} (given)")
-    else:
-        print("\nMetering on the EMPTY transport -- the brightest subject, so "
-              "everything loaded afterwards is darker and nothing can clip.")
-        if confirm("    press Enter with the transport empty: ") == "abort":
-            return 1
-        scanner = factory()
-        try:
-            scanner.open()
-            exposure_scale = scanner.auto_exposure(
-                target=args.target, infrared=args.ir, film="positive")
-        finally:
-            scanner.close()
-        print(f"    exposure locked at {[round(v, 3) for v in exposure_scale]}")
-
+    # The reference first. Metering is a corrected pass like any other, and
+    # a session with no reference refuses one -- so metering first died at
+    # its first probe with ShadingUnavailable, after the operator had been
+    # asked to empty the transport, and --exposure-scale was the only way
+    # through. And calibrated with the film in, as CyberView calibrates:
+    # this used to calibrate straight after the transport was emptied for
+    # metering, and calibrating an empty transport is a state the vendor
+    # never creates and doing it once preceded a wedge (CLAUDE.md).
     from rps7200.shading import ShadingReference
     if args.reuse:
         if not reference_path.exists():
@@ -745,22 +756,55 @@ def cmd_capture(args: argparse.Namespace) -> int:
         # Not "at that exposure": the device meters the calibration pass
         # itself and ignores what the host writes beforehand, so the
         # exposure_scale this used to pass was a no-op and has been removed.
-        # The exposure above still governs the *scans*, which is what it is
+        # The exposure below still governs the *scans*, which is what it is
         # locked for.
-        print("\nCalibrating shading (3-4 minutes) ...")
+        print("\nCalibrating shading (3-4 minutes), with film in the "
+              "transport. Load the clear film -- or any film -- for it: the "
+              "calibration reads the lower part of the transport, which film "
+              "does not cover, and it comes out again for the first pass.")
+        if confirm("    press Enter with film in the transport: ") == "abort":
+            return 1
         scanner = factory()
         try:
             scanner.open()
-            result = scanner.calibrate_shading()
+            # `ensure_shading`, not `calibrate_shading`: it keeps the
+            # calibration's own bytes in an archive beside the reference and
+            # writes the reference atomically. Called directly, the bytes were
+            # thrown away and the reference was written in place.
+            result = scanner.ensure_shading(reference_path)
         finally:
             scanner.close()
-        if result["reference"] is None:
+        reference = result.get("reference")
+        if reference is None:
             print("no usable shading reference; stopping", file=sys.stderr)
             return 1
-        reference = result["reference"]
-        reference_path.parent.mkdir(parents=True, exist_ok=True)
-        reference.save(reference_path)
-        print(f"    saved {reference_path}, channels {reference.channels}")
+        if result.get("path") is None:
+            print(f"the reference could not be written to {reference_path}, "
+                  "and every pass loads it from there; stopping",
+                  file=sys.stderr)
+            return 1
+        print(f"    {result.get('summary', '').strip()}")
+
+    exposure_scale: float | list[float] = 1.0
+    if args.exposure_scale:
+        parts = [float(v) for v in args.exposure_scale.replace(",", " ").split()]
+        exposure_scale = parts[0] if len(parts) == 1 else parts
+        print(f"\nexposure locked at {exposure_scale} (given)")
+    else:
+        print("\nMetering on the EMPTY transport -- the brightest subject, so "
+              "everything loaded afterwards is darker and nothing can clip.")
+        if confirm("    take the film out, and press Enter with the transport "
+                   "empty: ") == "abort":
+            return 1
+        scanner = factory()
+        try:
+            scanner.open()
+            scanner.load_shading(reference_path)
+            exposure_scale = scanner.auto_exposure(
+                target=args.target, infrared=args.ir, film="positive")
+        finally:
+            scanner.close()
+        print(f"    exposure locked at {[round(v, 3) for v in exposure_scale]}")
 
     if args.ir and 3 not in reference.ref:
         print("REFUSING: the calibration produced no infrared reference, so "
