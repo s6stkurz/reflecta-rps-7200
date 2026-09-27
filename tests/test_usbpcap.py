@@ -139,6 +139,14 @@ def capture(tmp_path):
                        stage=STAGE_SETUP),
         # and a bulk payload read
         usbpcap_record(SCANNER, 0x81, BULK, b"\xab" * 16, from_device=True),
+        # the keyboard answering a HID GET_REPORT on endpoint 0: a class
+        # request, and its data stage is an input report -- keystrokes, over
+        # control, which an interrupt-only rule lets straight through
+        usbpcap_record(KEYBOARD, 0, CONTROL,
+                       setup_packet(0xA1, 0x01, 0x0100, length=8),
+                       stage=STAGE_SETUP),
+        usbpcap_record(KEYBOARD, 0, CONTROL, KEYSTROKE, from_device=True,
+                       stage=3),
         # the keyboard again, at the end
         usbpcap_record(KEYBOARD, 0x81, INTERRUPT, KEYSTROKE, from_device=True),
     ]))
