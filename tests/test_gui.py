@@ -870,6 +870,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
                                       rolls=str(tmp_path / "rolls")),
         _working=lambda: False, _hand_over=submitted.append,
         _scanned_in=lambda folder: set(),
+        _refused_up_front=lambda *a, **k: False,
     )
 
 
@@ -5689,6 +5690,55 @@ def test_a_sheet_opened_mid_walk_holds_the_whole_walk_at_its_end(window,
     assert app.sheet.ticks[1].get() is False, "what was decided is kept"
     assert app.sheet.ticks[3].get() is True
     app.sheet.top.destroy()
+
+
+@pytest.mark.parametrize("options,refused", [
+    ({"dpi": "7200", "predpi": "300", "ir": False, "film": "negative"},
+     "7200 dpi pass cannot be shading-corrected"),
+    ({"dpi": "1800", "predpi": "7200", "ir": False, "film": "negative"},
+     "7200 dpi pass cannot be shading-corrected"),
+    ({"dpi": "1800", "predpi": "300", "ir": True, "film": "bw"},
+     "Infrared is blind to bw"),
+])
+def test_a_commission_the_driver_would_refuse_is_refused_before_it_moves(
+        window, monkeypatch, tmp_path, options, refused):
+    """The roll winds to its first frame before the driver reads what it was
+    asked for. At 7200 dpi it then prescanned, held and metered three frames
+    before giving up; infrared on B&W, which the sheet's panel let through,
+    was refused with the film already moved."""
+    app, root = window
+    app.calibrated = True
+    app._sheet_roll = tmp_path / "rolls" / "sheet"
+    jobs, said = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: pytest.fail("asked to start it"))
+    app.on_scan_chosen((1, 2), options=dict(options, fast_ir=True,
+                                            meter="none", correct=False))
+    assert jobs == [] and refused in said[0] and "Nothing has moved" in said[0]
+    assert not (app._sheet_roll / "approved.json").exists()
+
+
+def test_a_roll_at_a_resolution_nothing_can_correct_is_refused(window,
+                                                               monkeypatch):
+    app, root = window
+    app.calibrated = True
+    jobs, said, asked = [], [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(1) or False)
+    app.v_dpi.set("7200")
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs == [] and asked == [] and "7200 dpi" in said[0]
+    # A walk scans only its prescans, so it is asked about as usual.
+    app.v_dryrun.set(True)
+    app.on_roll()
+    assert len(said) == 1 and asked == [1]
 
 
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):

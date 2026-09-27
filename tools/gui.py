@@ -55,6 +55,8 @@ from rps7200.direct import (                              # noqa: E402
     FILM_TYPES,
     INFRARED_IS_BLIND_TO,
     METER_MODES,
+    DirectScanner,
+    supports_infrared,
 )
 from rps7200.framing import FULL_FRAME, units_per_column  # noqa: E402
 from tools import frame_edges                             # noqa: E402
@@ -2173,6 +2175,45 @@ class ScannerGui:
         y = parent.winfo_rooty() + 120
         top.geometry(f"+{max(0, x)}+{max(0, y)}")
 
+    def _refused_up_front(self, title: str, predpi: int, dpi: int | None = None,
+                          infrared: bool = False, film: str = "",
+                          parent=None) -> bool:
+        """Refuse here what a roll's driver would refuse only part-way in.
+
+        A roll goes to its first frame before the driver looks at what it
+        was asked for, and a pass it cannot correct it finds out frame by
+        frame: at 7200 dpi each frame was wound to, prescanned, held and
+        metered before `scan` refused it, three frames and minutes of
+        transport before the roll gave up. And the sheet's own options let
+        infrared through on a film it is blind to, refused once the film had
+        moved. The driver's own tests (`DirectScanner.correctable_at`,
+        `supports_infrared`), asked before anything is handed over.
+        """
+        problems = []
+        for value in dict.fromkeys(v for v in (predpi, dpi) if v):
+            if not DirectScanner.correctable_at(value):
+                best = max((d for d in DPI_LADDER
+                            if DirectScanner.correctable_at(d)), default=None)
+                problems.append(
+                    f"A {value} dpi pass cannot be shading-corrected on this "
+                    "scanner: its calibration gives no reference that wide, "
+                    "at any resolution, so the driver refuses every frame."
+                    + (f" Scan at {best} dpi or below." if best else ""))
+        try:
+            blind = bool(infrared and film and not supports_infrared(film))
+        except ValueError:
+            blind = False
+        if blind:
+            problems.append(
+                f"Infrared is blind to {film}: the plane would hold the "
+                "picture rather than the dust, and the driver refuses it. "
+                "Untick infrared, or change the film.")
+        if not problems:
+            return False
+        messagebox.showerror(title, "\n\n".join(problems) + "\n\nNothing has "
+                             "moved.", parent=parent or self.root)
+        return True
+
     def _working(self) -> bool:
         """Whether the scanner has a job, running or handed over and not begun."""
         return self.busy or self._queued_run is not None
@@ -2239,6 +2280,13 @@ class ScannerGui:
             return
         dpi, predpi = self._dpi(), self._prescan_dpi()
         if dpi is None or predpi is None:
+            return
+        # A walk scans nothing but its prescans.
+        if self._refused_up_front(
+                "Scan roll", predpi,
+                None if self.v_dryrun.get() else dpi,
+                infrared=self.v_ir.get() and not self.v_dryrun.get(),
+                film=self.v_film.get()):
             return
         # A shape check only. Whether a strip has that frame is the seek's to
         # say, and it refuses before it reads or moves anything -- one place
@@ -3305,6 +3353,11 @@ class ScannerGui:
                       f"survey your positions were set on (you asked for "
                       f"{predpi})")
             predpi = self._survey_predpi
+        if self._refused_up_front(
+                "Scan chosen frames", predpi, dpi, infrared=infrared,
+                film=film, parent=self.sheet.top
+                if self.sheet is not None and self.sheet.alive() else None):
+            return
         start_at, span = chosen_span(numbers)
         walked = len(self.survey)
         per = self._per_frame_seconds(dpi=dpi, ir=infrared, fast_ir=fast_ir)
