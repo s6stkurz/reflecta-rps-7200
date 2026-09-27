@@ -49,9 +49,39 @@ if os.environ.get("RPS7200_NO_TIFFFILE"):
 # that models neither well.
 
 import numpy as np  # noqa: E402
+import pytest  # noqa: E402
 
+from rps7200 import settings as window_settings  # noqa: E402
 from rps7200.direct import DirectScanner, RollFrame, Settings  # noqa: E402
 from rps7200.usb_transport import CheckCondition  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
+    """Keep every test off what the operator's own checkout remembers.
+
+    Three variables decide where state outside a test's folder goes, and the
+    suite inherits whatever the shell that runs it exported:
+
+    - `RPS7200_SETTINGS` -- unset, the window reads and rewrites
+      ``./gui-settings.json``. The window tests open rolls and close the
+      window, each of which saves, and the checkout's own file was found
+      holding rolls named "first" and "walk" and dozens of generated sheet
+      keys: test folders, remembered as if the operator had opened them.
+    - `RPS7200_DEBUG` -- CLAUDE.md tells Claude to export it always, and a test
+      asserting that filing is off by default then failed in exactly that
+      shell.
+    - `RPS7200_DEBUG_ROOT` -- unset, a debug-filing test that completes a pass
+      files into ``./library``, the operator's real one.
+
+    So each test starts with filing off and both paths in a folder of its own.
+    A folder apart from ``tmp_path``, because some tests list theirs.
+    """
+    isolated = tmp_path_factory.mktemp("operator")
+    monkeypatch.setenv(window_settings.PATH_ENV,
+                       str(isolated / "gui-settings.json"))
+    monkeypatch.delenv(DirectScanner.DEBUG_ENV, raising=False)
+    monkeypatch.setenv(DirectScanner.DEBUG_ROOT_ENV, str(isolated / "library"))
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two

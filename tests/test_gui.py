@@ -1,10 +1,13 @@
-"""The window's own decisions, tested without opening one.
+"""The window's own decisions, and the window itself where one can be opened.
 
-A Tk window driven from pytest hangs on macOS -- reliably, at the second test --
-though the same sequence runs clean as a plain script. A suite that hangs is
-worse than one that covers a little less, so the logic that must not be wrong
-lives in module-level functions here rather than inside the widget, and the
-widget wiring is checked by running `make run-demo`.
+Two kinds of test live here. Most exercise module-level functions, so the logic
+that must not be wrong is checked with no display at all. The rest take the
+`window` fixture, which builds a real `ScannerGui` on the demo stand-in: they
+run wherever this Python has Tk and there is a display (CI gives Linux one with
+xvfb) and skip elsewhere. This file used to open by saying the window was
+tested without opening one, because a Tk window driven from pytest once hung
+on macOS at the second test; by the time the fixture's tests numbered in the
+dozens, that sentence described a suite that no longer existed.
 
 What is tested is what would mislead the operator: the stop button saying which
 of the two things it will do, the option parsing that decides what the scanner
@@ -1098,10 +1101,9 @@ def test_a_decision_filed_on_the_strips_numbers_is_read_as_it_stands(tmp_path):
 
 # -- the window itself, where a display allows it ---------------------------
 #
-# The rest of this file tests the window's pure functions, deliberately: a
-# suite that needs a display does not run everywhere. These two need real Tk
-# widgets, because what they check is which controls are greyed out, so they
-# skip rather than fail where there is no display.
+# Everything from here that takes `window` needs real Tk widgets -- which
+# controls are greyed out, what a dialog was asked, what the sheet shows -- so
+# it skips rather than fails where there is no display.
 
 
 @pytest.fixture
@@ -1120,8 +1122,16 @@ def window(tmp_path):
     gui_mod = load_tool("gui")
     session = ScanSession(root=str(tmp_path / "library"),
                           rolls=str(tmp_path / "rolls"), verbose=False)
-    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
-    app = gui_mod.ScannerGui(root, session, demo=True)
+    # Neither the stand-in's pictures nor the window's memory come from the
+    # checkout: "library" and gui-settings.json are relative to wherever
+    # pytest runs, which put the operator's own entries in front of the demo
+    # (and signed every one of them) and wrote test folders into the file
+    # the operator's next launch restores from. The pictures' folder is not
+    # the session's, so what a test files is not drawn on as a picture.
+    stored = tmp_path / "demo-library"
+    session._open_scanner = lambda: DemoScanner(str(stored), speed=1e9)
+    app = gui_mod.ScannerGui(root, session, demo=True,
+                             settings_path=tmp_path / "gui-settings.json")
     root.update()
     try:
         yield app, root
@@ -4521,6 +4531,30 @@ def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
     app.on_close()
     assert not sheet.alive()
     assert app.remembered["sheet"]["walk"]["rotations"][3] == 180
+
+
+def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,
+                                                            monkeypatch):
+    """Opening a roll and quitting both save, and the window fixture used to
+    save into ``./gui-settings.json`` -- the file the operator's next launch
+    restores its controls, rolls and uncommissioned sheets from. It was found
+    holding this file's test folders. The save has to land in the test's own
+    file, and the checkout's must come out byte for byte as it went in."""
+    from pathlib import Path
+
+    from rps7200 import settings
+
+    app, root = window
+    checkout = Path(settings.DEFAULT_PATH).resolve()
+    before = checkout.read_bytes() if checkout.exists() else None
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    app.on_close()
+
+    assert "walk" in settings.load(tmp_path / "gui-settings.json")["rolls"]
+    after = checkout.read_bytes() if checkout.exists() else None
+    assert after == before, f"{checkout} was written by a test"
 
 
 def test_reset_in_the_big_view_puts_that_frame_back_and_no_other(window, tmp_path):

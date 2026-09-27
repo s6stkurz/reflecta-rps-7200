@@ -749,11 +749,13 @@ def test_a_scan_files_the_raw_pixels_and_returns_the_corrected_ones():
             < source.index("image, shading_report = apply_shading"))
 
 
-def test_filing_is_off_by_default():
-    """Ordinary use is not burdened. CLAUDE.md says who must turn it on."""
-    import os
+def test_filing_is_off_by_default(monkeypatch):
+    """Ordinary use is not burdened. CLAUDE.md says who must turn it on.
 
-    assert os.environ.get("RPS7200_DEBUG") is None or True
+    Unset rather than assumed unset: CLAUDE.md also tells Claude to export it
+    always, and in that shell the default this is about is not the one read.
+    """
+    monkeypatch.delenv("RPS7200_DEBUG", raising=False)
     assert _debug_scanner().debug is False
     assert _debug_scanner(debug=True).debug is True
 
