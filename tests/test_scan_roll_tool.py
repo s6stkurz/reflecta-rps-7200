@@ -1495,3 +1495,65 @@ def test_a_roll_without_approved_is_still_negative_unless_told(tmp_path,
     scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
     assert code == 0
     assert scanner.asked["film"] == "negative"
+
+
+# --- a resume holds to what the roll was taken with --------------------------
+
+
+def _earlier_roll(tmp_path, settings):
+    folder = tmp_path / "roll"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "teststrip", "numbering": "strip", "settings": settings,
+        "frames": [{"number": 1, "transport_position": 0, "done": True}],
+    }), encoding="utf-8")
+    return folder
+
+
+@pytest.mark.parametrize("argv, said", [
+    (["--dpi", "3600"], "dpi 1800"),
+    (["--ir"], "infrared False"),
+    (["--film", "positive"], "film negative"),
+    (["--meter", "none"], "metering each"),
+])
+def test_a_resume_that_asks_for_other_settings_is_refused(
+        tmp_path, monkeypatch, capsys, argv, said):
+    """Night one at 1800 dpi RGB, night two resumed with a flag changed or
+    forgotten: the roll silently mixed resolutions, channels or metering --
+    baked into the raw bytes -- and roll.json recorded only the last run's."""
+    _earlier_roll(tmp_path, {"dpi": 1800, "infrared": False,
+                             "film": "negative", "meter": "each"})
+    opened: list = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--start-at", "2", *argv, opened=opened)
+    assert refused.value.code == 2
+    assert opened == [], "the scanner was opened for a resume that differs"
+    assert said in capsys.readouterr().err
+
+
+def test_a_resume_with_the_same_settings_goes_ahead(tmp_path, monkeypatch):
+    _earlier_roll(tmp_path, {"dpi": 1800, "infrared": False,
+                             "film": "negative", "meter": "each"})
+    _scanner, code = run(tmp_path, monkeypatch, "--start-at", "2",
+                         "--frames", "1")
+    assert code == 0
+
+
+def test_a_resume_of_a_window_roll_is_held_to_its_resolution(tmp_path,
+                                                             monkeypatch):
+    """The window writes `resolution` where this tool writes `dpi`."""
+    _earlier_roll(tmp_path, {"resolution": 600, "infrared": False,
+                             "film": "negative", "meter": "each"})
+    with pytest.raises(SystemExit):
+        run(tmp_path, monkeypatch, "--start-at", "2")
+
+
+def test_the_roll_records_what_its_frames_were_taken_with(tmp_path, monkeypatch):
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1", "--correct")
+    assert code == 0
+    settings = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))["settings"]
+    assert settings["shading"] is False           # the helper runs --no-shading
+    assert settings["correct"] is True
+    assert settings["fast_infrared"] is False     # an RGB roll
+    assert settings["max_failures"] == 3

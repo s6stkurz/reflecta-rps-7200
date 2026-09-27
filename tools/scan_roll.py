@@ -338,6 +338,35 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
                   "prescan_resolution": walked_at, "film": film}
 
 
+def _differs_from_earlier(path: Path, args: argparse.Namespace) -> list[str]:
+    """How this run's request differs from the one the roll's frames took.
+
+    Read from the roll's own manifest, in either tool's shape
+    (`manifest_settings`), and only for what decides the pixels: the
+    resolution, the channels, the film metering reads, and the metering. A
+    manifest with no frames yet, or one that cannot be read, has nothing to
+    hold a run to.
+    """
+    try:
+        earlier = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(earlier, dict) or not earlier.get("frames"):
+        return []
+    was = manifest_settings(earlier)
+    now = {"resolution": (args.dpi, "dpi"),
+           "infrared": (args.ir, "infrared"),
+           "film": (args.film, "film"),
+           "meter": (args.meter, "metering")}
+    if args.ir and was.get("infrared"):
+        # Only between two infrared runs: an RGB roll's record of the flag
+        # governs nothing, and the window writes it whatever the channels.
+        now["fast_infrared"] = (bool(args.fast_ir), "tied infrared")
+    return [f"{name} {was[key]} where this run asks for {value}"
+            for key, (value, name) in now.items()
+            if was.get(key) is not None and was[key] != value]
+
+
 def _refuse_infrared(ap: argparse.ArgumentParser, film: str) -> None:
     ap.error(
         f"--ir with --film {film}: infrared is blind to it -- its "
@@ -469,6 +498,19 @@ def main() -> int:
     # not share a file: the record of what was walked is what says which frames
     # are worth scanning, and writing the scan over it loses that.
     manifest_path = out / ("survey.json" if args.dry_run else "roll.json")
+    if not args.dry_run:
+        differs = _differs_from_earlier(manifest_path, args)
+        if differs:
+            # A resume adds to the roll, and this run's frames would be
+            # scanned otherwise: another resolution, another channel set, a
+            # slide metered as a negative -- baked into the raw bytes, and
+            # one roll.json saying only what the last run asked for. Refused
+            # before anything opens; nothing here can tell a deliberate
+            # change from a flag forgotten overnight.
+            ap.error(f"{manifest_path} was scanned with "
+                     + "; ".join(differs)
+                     + ". Give the flags its earlier frames were taken with, "
+                     "or scan into a new --roll.")
 
     manifest = {
         "roll": roll_name,
@@ -494,6 +536,14 @@ def main() -> int:
             # against a floor of 55. Every frame would then read `unverified`,
             # nothing would move, and the run would be a loss with no error.
             "prescan_resolution": args.prescan_dpi,
+            # The rest of what the frames were taken with, as the window
+            # records it: without these, which passes of a roll were tied or
+            # corrected could not be told from roll.json.
+            "fast_infrared": bool(args.fast_ir and args.ir),
+            "shading": not args.no_shading,
+            "correct": args.correct,
+            "correct_dry_run": args.correct_dry_run,
+            "max_failures": args.max_failures,
         },
         "held": held_note,
         "frames": [],
