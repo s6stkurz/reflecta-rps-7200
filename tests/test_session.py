@@ -369,6 +369,85 @@ def test_a_single_scan_is_compressed_only_after_the_scanner_closes(
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
 
 
+def _compressions(monkeypatch):
+    """What each writer job was queued as: frame number -> compress."""
+    queued = {}
+    real = session.FrameWriter.submit
+
+    def submit(self, **job):
+        if job.get("library"):
+            queued[job["number"]] = job.get("compress", True)
+        return real(self, **job)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", submit)
+    return queued
+
+
+def test_a_rolls_last_frame_is_filed_plain(tmp_path, monkeypatch):
+    """A roll's frames gzip on the writer while the next one scans. The last
+    has no next one: gzipped, it ran with the device open and idle -- at 3600
+    dpi RGBI some 280 MB, the state that preceded a wedge."""
+    queued = _compressions(monkeypatch)
+    run(Roll(frames=3, resolution=600, name="tail"), tmp_path)
+    assert queued == {1: True, 2: True, 3: False}
+
+
+def test_the_last_chosen_frame_is_filed_plain(tmp_path, monkeypatch):
+    queued = _compressions(monkeypatch)
+    run(Roll(frames=5, only=(2, 4), resolution=600, name="chosen"), tmp_path)
+    assert queued == {2: True, 4: False}
+
+
+def test_the_frame_a_stop_ends_on_is_filed_plain(tmp_path, monkeypatch):
+    queued = _compressions(monkeypatch)
+    holder = {}
+
+    def press_stop_during(index):
+        if index == 1:
+            holder["s"].request_stop()
+
+    scanner = FakeScanner(frames=4, on_yield=press_stop_during)
+    run(Roll(frames=4, resolution=600, name="stopped"), tmp_path,
+        scanner=scanner, extra=lambda s, _scanner: holder.update(s=s))
+    assert queued == {1: True, 2: False}
+
+
+def test_a_roll_frame_the_writer_starts_after_the_roll_is_filed_plain(tmp_path):
+    """The end nobody saw coming -- a blank frame, the end of the strip --
+    leaves frames queued to compress. With nothing scanning they are written
+    plain, and compacted once the device has closed."""
+    writer = session.FrameWriter(idle=lambda: True)
+    writer.submit(number=1, paths=[], image=picture(), meta={"resolution_dpi": 600},
+                  dpi=600, library=str(tmp_path / "lib"), film=FilmNotes(),
+                  tags=[], prescan=None, inquiry=None,
+                  capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+    writer.finish()
+    (entry,) = writer.uncompressed
+    assert (entry / library.RAW_PLAIN).exists()
+    assert not (entry / library.RAW_FILE).exists()
+
+
+def test_a_roll_frame_filed_while_the_next_one_scans_is_compressed(tmp_path):
+    writer = session.FrameWriter(idle=lambda: False)
+    writer.submit(number=1, paths=[], image=picture(), meta={"resolution_dpi": 600},
+                  dpi=600, library=str(tmp_path / "lib"), film=FilmNotes(),
+                  tags=[], prescan=None, inquiry=None,
+                  capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+    writer.finish()
+    assert writer.uncompressed == []
+    (entry,) = [tmp_path / "lib" / e["id"] for e in library.entries(tmp_path / "lib")]
+    assert (entry / library.RAW_FILE).exists()
+
+
+def test_every_entry_of_a_roll_ends_up_compressed(tmp_path):
+    """Plain only until the device closes."""
+    run(Roll(frames=3, resolution=600, name="whole"), tmp_path)
+    folders = [tmp_path / e["id"] for e in library.entries(tmp_path)]
+    assert len(folders) == 3
+    assert all((f / library.RAW_FILE).exists() for f in folders)
+    assert not any((f / library.RAW_PLAIN).exists() for f in folders)
+
+
 def test_a_prescan_is_filed_too(tmp_path):
     """CLAUDE.md says file every scan, without an exception for the cheap ones.
     A prescan is ~370 KB and it is the evidence about framing."""

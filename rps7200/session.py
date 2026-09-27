@@ -1601,7 +1601,8 @@ class FrameWriter:
     that at 3600 -- and doing it inline leaves the scanner **open and idle** for
     exactly that long, once per frame. That is the state that preceded a wedge
     (see CLAUDE.md). On this thread the write instead overlaps the next frame's
-    scan, so the device is busy rather than idle throughout.
+    scan, so the device is busy rather than idle throughout -- where there is
+    a next frame. A roll's last one has none, and is written plain (`idle`).
 
     The queue is bounded. A scan costs far longer than a write, so the writer is
     normally idle waiting; a bound only matters if that stops being true, and
@@ -1613,7 +1614,16 @@ class FrameWriter:
     is drained by the caller once the roll ends.
     """
 
-    def __init__(self, depth: int = 2, on_done: Any = None):
+    def __init__(self, depth: int = 2, on_done: Any = None,
+                 idle: Callable[[], bool] | None = None):
+        #: Asked as each job starts, where a device stays open between jobs:
+        #: True once nothing is scanning. A job queued to compress is then
+        #: written plain instead, and compacted once the device has closed.
+        #: A roll's frames compress on this thread because the next frame is
+        #: scanning meanwhile; one still queued when the roll has ended has
+        #: no next frame, and gzipped then it is the open-and-idle state
+        #: again. None where the device closes before the writer finishes.
+        self.idle = idle
         self.queue: queue.Queue = queue.Queue(maxsize=depth)
         self.errors: list[str] = []
         # Not failures: things the chosen format could not carry, like the
@@ -1735,10 +1745,12 @@ class FrameWriter:
                 corrections=corrections,
                 **job["capture"],
             )
+            compress = job.get("compress", True)
+            if compress and self.idle is not None and self.idle():
+                compress = False              # see `idle`
             try:
                 entry = library.save(pixels, job["meta"], root=job["library"],
-                                     compress=job.get("compress", True),
-                                     **filing)
+                                     compress=compress, **filing)
             except Exception as exc:                     # noqa: BLE001
                 # Not raised yet. The copies below are still written -- the
                 # corrected picture can reach a drive the library is not on --
@@ -1748,7 +1760,7 @@ class FrameWriter:
                 # frame after it the same way.
                 refused = exc
             else:
-                if not job.get("compress", True):
+                if not compress:
                     self.uncompressed.append(entry)
                 self._claim(job, raw_image)
         problems = []
@@ -1923,6 +1935,10 @@ class ScanSession:
         #: written again once the scanner is closed.
         self._manifests: dict[Path, RollManifest] = {}
         self._seq = 0
+        #: Whether a roll's frames are still coming: the device is busy
+        #: scanning the next one while the writer files the last. Read by
+        #: the writer (`FrameWriter.idle`), set on the scanner thread.
+        self._rolling = False
         self.dead = False                    # set by force_abort
         self.inquiry_text = ""
         #: Whether a `Calibrate` job has left this session a shading reference.
@@ -2062,7 +2078,8 @@ class ScanSession:
         # about where a roll would start from.
         self._report_position()
 
-        self._writer = FrameWriter(on_done=self._filed)
+        self._writer = FrameWriter(on_done=self._filed,
+                                   idle=lambda: not self._rolling)
         try:
             while True:
                 job = self._jobs.get()
@@ -2625,6 +2642,8 @@ class ScanSession:
         self._frame_rotation = {a.number: a.rotation for a in job.approved}
         self._frame_flip = {a.number: bool(a.flipped) for a in job.approved}
 
+        # The window counts frames from 1 and the transport from 0.
+        only = None if job.only is None else tuple(n - 1 for n in job.only)
         frames = self._scanner.scan_roll(
             should_stop=self._stop.is_set,
             prescan_resolution=job.prescan_resolution,
@@ -2638,9 +2657,7 @@ class ScanSession:
             # frame's index is its transport position, and the number every
             # file and record carries is that plus one.
             first_index=first,
-            # The window counts frames from 1 and the transport from 0.
-            only=(None if job.only is None
-                  else tuple(n - 1 for n in job.only)),
+            only=only,
             max_failures=job.max_failures,
             dry_run=job.dry_run,
             correct=job.correct,
@@ -2651,10 +2668,23 @@ class ScanSession:
             keep_raw=True,
             edge_reader=self.edge_reader,
         )
+        # Where the roll ends, asked of the driver rather than worked out
+        # again here, so a frame the roll will scan nothing after is known
+        # as it arrives; see `last` below.
+        ends = DirectScanner.roll_ends(first, 0, job.frames, only)
         stopped = None
+        self._rolling = True
         try:
             for rf in frames:
                 number = rf.index + 1
+                # Nothing is scanned after this frame: the count is reached,
+                # the last chosen frame is in, or a stop was asked for. Its
+                # entry is filed plain and compacted once the device closes,
+                # as a single scan's is. Gzipped on the writer, it went on
+                # with the device open and idle -- the next frame that made a
+                # roll's compression safe was never coming -- and at 3600 dpi
+                # RGBI that is some 280 MB, the state that preceded a wedge.
+                last = ends(rf.index + 1) or self._stop.is_set()
                 #: How this frame's walked prescan file was arranged, as
                 #: `_file` wrote it; a walk's only.
                 walked_as: tuple[int, bool] | None = None
@@ -2701,6 +2731,7 @@ class ScanSession:
                             raw_image=rf.raw_prescan,
                             path=surveyed,
                             roll=name,
+                            plain=last,
                         )
                         if rf.prescan_before is not None:
                             # The picture as the frame arrived, kept beside the
@@ -2766,6 +2797,7 @@ class ScanSession:
                         prescan_meta=rf.prescan_meta,
                         path=out / f"frame{number:02d}.tif",
                         roll=name,
+                        plain=last,
                         mono=wants_mono(job.mono, job.film),
                         mono_channel=job.mono_channel,
                         # Done when the writer says it was filed, and not
@@ -2831,6 +2863,11 @@ class ScanSession:
             # Ends the generator at its yield rather than leaving it suspended
             # with the device half-way through a roll.
             frames.close()
+            # Nothing is scanning now, so a frame the writer has yet to start
+            # is filed plain, whatever it was queued as (`FrameWriter.idle`):
+            # the end the roll gave no warning of -- a blank frame, the end of
+            # the strip, a failure -- as well as the one `last` foresaw.
+            self._rolling = False
             # This roll's orientations die with it. A single scan taken
             # afterwards is not frame 3 of anything, and letting it inherit
             # frame 3's arrangement would be a silent wrong answer.
@@ -2934,8 +2971,12 @@ class ScanSession:
         mono_channel: str = MONO_CHANNEL,
         file_entry: bool = True,
         on_filed: Callable[..., Any] | None = None,
+        plain: bool = False,
     ) -> tuple[int, bool]:
         """Write this picture, and unless told otherwise file it in the library.
+
+        ``plain`` files a roll's picture uncompressed, as a single pass is,
+        for one that nothing will be scanned after; see `_roll`.
 
         ``file_entry=False`` writes the file and no entry. It exists for the
         prescan a correction replaced, and the reason is specific: the capture
@@ -3027,8 +3068,9 @@ class ScanSession:
             # and compressed when the session closes. A roll's frames keep
             # compressing on the writer thread while the next frame scans: the
             # device is busy there, which is the exception CLAUDE.md argues
-            # and `tools/filing_load_test.py` exists to measure.
-            compress=bool(roll),
+            # and `tools/filing_load_test.py` exists to measure. Not its last
+            # frame, which has no next one (`plain`).
+            compress=bool(roll) and not plain,
             rotate=turn,
             flip=flip,
             image=image,
