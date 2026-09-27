@@ -4855,6 +4855,29 @@ def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
     assert not moved.exists() and "holiday" not in app.remembered["sheet"]
 
 
+def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
+                                                       monkeypatch):
+    """The question called everything but approved.json re-derivable, and
+    counted that only where it held a turn. No tool rebuilds a walk, and a
+    prescan kept from before an in-walk correction has no entry at all."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    (folder / "prescan02-before.tif").write_bytes(b"only here")
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip",
+        "frames": [{"number": 1, "offset_mm": 0.5, "source": "operator"}]}),
+        encoding="utf-8")
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or False)
+    app.on_delete_rolls([gui.roll_summary(folder)])
+    assert "survey.json), which nothing rebuilds" in asked[0]
+    assert "set by hand in 1 of them (approved.json)" in asked[0]
+    assert "1 prescan taken before an in-walk correction" in asked[0]
+    assert "can be rebuilt from them" not in asked[0]
+    assert folder.exists()
+
+
 def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
                                                  monkeypatch):
     """For a walk not yet commissioned the sheet is the only record of the

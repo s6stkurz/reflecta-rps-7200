@@ -3030,27 +3030,46 @@ class ScannerGui:
     def on_delete_rolls(self, summaries) -> None:
         """Remove roll folders. Never the library entries.
 
-        Everything in a roll folder is re-derivable from the library **except
-        `approved.json`** -- the frames and prescans can be rebuilt, the
-        operator's own positions and turns cannot. That is what the question
-        below says, because it is the only thing actually being risked.
+        The library keeps the raw bytes of every frame and every walk prescan,
+        so the frames can still be exported from it. What nothing rebuilds is
+        the folder's own record, and the question says so: the walk
+        (`survey.json` -- where each frame was, how it read and was turned;
+        without it the roll never opens as a contact sheet again), what was
+        done (`roll.json`), the positions and turns set by hand
+        (`approved.json`), and each `prescanNN-before.tif` an in-walk
+        correction kept, which has no library entry at all. It used to call
+        all of it re-derivable except `approved.json`, and counted that only
+        where it held a turn.
         """
         if self._roll_is_busy(summaries, "Delete"):
             return
         names = ", ".join(s["roll"] for s in summaries)
         size = human_size(sum(s["size"] for s in summaries))
+        # Positions as well as turns and flips.
         decided = sum(1 for s in summaries
-                      if any(read_approved(s["folder"])[1:3]))  # turns/flips
+                      if any(read_approved(s["folder"])[0:3]))
+        before = sum(len(list(Path(s["folder"]).glob("prescan*-before.tif")))
+                     for s in summaries)
+        walked = sum(1 for s in summaries if s.get("walked"))
+        lost = ([f"{walked} walk{'s' if walked != 1 else ''} (survey.json), "
+                 "which nothing rebuilds -- a roll without its walk never "
+                 "opens as a contact sheet again"] if walked else []) \
+            + (["what each roll has done (roll.json)"]
+               if any(s.get("scanned") for s in summaries) else []) \
+            + ([f"the positions and turns you set by hand in {decided} of "
+                "them (approved.json)"] if decided else []) \
+            + ([f"{before} prescan{'s' if before != 1 else ''} taken before an "
+                "in-walk correction, which exist nowhere else"]
+               if before else [])
         if not messagebox.askokcancel(
             "Delete",
             f"Delete {len(summaries)} roll folder"
             f"{'s' if len(summaries) != 1 else ''} -- {names} -- and {size} "
             f"with them?\n\nThe library entries are NOT touched: the raw bytes "
-            f"stay, and the frames can be rebuilt from them.\n\n"
-            + (f"What does go for good is the positions and turns you set by "
-               f"hand: {decided} of these has an approved.json, and that is the "
-               f"one thing here the library cannot rebuild.\n\n"
-               if decided else "")
+            f"of the frames and the walks' prescans stay, and the frames can "
+            f"still be exported from them.\n\n"
+            + ("What goes for good is the folders' own record: "
+               + "; ".join(lost) + ".\n\n" if lost else "")
             + "Delete?",
         ):
             return
