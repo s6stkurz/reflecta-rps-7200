@@ -1209,6 +1209,55 @@ def test_the_monochrome_controls_follow_the_film(window):
     assert app.v_channel.get() == "MONO"
 
 
+def test_the_rail_in_the_histogram_is_the_sensors(window, tmp_path):
+    """Every sample railed on the sensor, in columns whose gain is below one:
+    corrected, they come back near two thirds of full scale, and the table
+    measured on the corrected pixels said nothing was at or near full. The
+    operator judges an exposure by that table."""
+    from rps7200 import library
+    from rps7200.library import FilmNotes
+    from rps7200.session import Result
+    from rps7200.shading import MASK_USED, ShadingReference
+
+    app, root = window
+    width, lines = 12, 8
+    ccd = 2 * width + 4
+    mask = bytearray([0x70]) * ccd
+    for j in range(width):
+        mask[1 + 2 * j] = MASK_USED
+    reference = ShadingReference(
+        ref={c: np.full(ccd, 60000.0) for c in range(4)},
+        mean={c: 40000.0 for c in range(4)}, pixels_per_line=ccd,
+        dark={c: np.full(ccd, 170.0) for c in range(4)},
+        dark_mean={c: 170.0 for c in range(4)})
+    raw = np.full((lines, width, 3), 65535, np.uint16)
+    entry = library.save(
+        raw, {"resolution_dpi": 900, "channels": 3, "film": "negative",
+              "channel_order": list("RGB"), "width": width, "height": lines},
+        root=tmp_path / "library", film=FilmNotes(frame="rail"),
+        reference=reference, ccd_mask=bytes(mask))
+    corrected, _ = library.corrected(entry)
+    assert int(corrected.max()) < 60000, "the premise: correction hid the rail"
+
+    result = Result(seq=1, kind="scan", label="railed", image=corrected,
+                    meta={}, entry=entry)
+    app._add_result(result)
+    app._show(result)
+    at_full = app.histogram._cells[(1, 2)]
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and app._levels_seq != 1:
+        root.update()
+        time.sleep(0.02)
+    assert app._levels_seq == 1, "the scan's own pixels never arrived"
+    # Then its second measurement, which is the one that counts.
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and at_full.cget("text") == "--":
+        root.update()
+        time.sleep(0.02)
+    assert at_full.cget("text") == "100.00%", at_full.cget("text")
+    assert "sensor" in app.histogram.v_source.get()
+
+
 def test_changing_the_monochrome_channel_changes_the_view(window):
     """Every setting the picker offers has to show what it will deliver --
     including the average, whose view is MONO rather than any one plane."""

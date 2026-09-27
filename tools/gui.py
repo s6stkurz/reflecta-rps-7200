@@ -405,6 +405,9 @@ class ScannerGui:
         self._full_seq = None
         self._levels: list = []              # coarser copies, finest last
         self._levels_seq = None
+        # What is at 0 and at the rail on the sensor, for the pass `_rail_seq`.
+        self._rail = None
+        self._rail_seq = None
         self._loading = None
         self._redraw_job = None
         self._settle_job = None
@@ -3569,12 +3572,12 @@ class ScannerGui:
                              else " -- the rest are in the log above"))
         while True:
             try:
-                seq, image, problem = self._reads.get_nowait()
+                seq, image, problem, rail = self._reads.get_nowait()
             except queue.Empty:
                 break
             if problem:
                 self._say(problem)
-            self._loaded(seq, image)
+            self._loaded(seq, image, rail)
         while True:
             try:
                 token, counts, clipped, problem = self._measured.get_nowait()
@@ -3999,6 +4002,8 @@ class ScannerGui:
         self._full_seq = None
         self._levels = []
         self._levels_seq = None
+        self._rail = None
+        self._rail_seq = None
         self._view = [0.0, 0.0]
         # Read the scan's own pixels straight away rather than waiting for a
         # zoom to ask for them: what is on screen is then the scan at every
@@ -4419,6 +4424,16 @@ class ScannerGui:
         Called twice for one pass, deliberately: once on the working copy as
         soon as it is shown, and again when the scan's own pixels arrive,
         because a reduced copy understates how much is at the rail.
+
+        **What is at 0 and at full scale is the sensor's**, wherever the entry
+        is on disk to say. The correction multiplies each column by its own
+        gain, and that moves the rail: in the bright middle of the lamp a
+        sample the sensor railed comes back near 52000, counted as neither at
+        nor near full, and at the edges a gain above one clamps samples the
+        sensor never railed. So the table measured on corrected pixels missed
+        real clipping and reported clipping that was not there -- the physics
+        `rps7200/bracket.py` already judges its merge by. The curve stays the
+        corrected picture's: it is where the values sit in what is delivered.
         """
         result = self.current
         if result is None or result.image is None:
@@ -4427,6 +4442,10 @@ class ScannerGui:
         pixels, source = self._finest_pixels(result)
         # Infrared is not an exposure -- see `rgb_only`.
         pixels = rgb_only(pixels)
+        rail = (self._rail if self._rail_seq == result.seq
+                and result is self.current else None)
+        if rail is not None:
+            source += "; 0 and full as the sensor read them"
         # A plain counter, not the result's seq: one pass is measured twice,
         # so a token that only said *which* pass would let the coarse answer
         # land after the fine one and quietly replace it.
@@ -4437,7 +4456,7 @@ class ScannerGui:
         def work():
             try:
                 counts = preview.histogram(pixels)
-                clipped = preview.clipping(pixels)
+                clipped = rail if rail is not None else preview.clipping(pixels)
             except Exception as exc:                     # noqa: BLE001
                 self._measured.put((token, None, None, str(exc)))
                 return
@@ -4587,8 +4606,13 @@ class ScannerGui:
         self._loading = r.seq
 
         def work(entry: Path, seq: int) -> None:
-            image = problem = None
+            image = problem = rail = None
             try:
+                # The rail as the sensor met it, for `_measure_histogram`,
+                # read from the stored raw pixels and let go of at once.
+                raw, _ = library.load(entry)
+                rail = preview.clipping(rgb_only(raw))
+                del raw
                 # Corrected, not raw: the library stores what the scanner sent
                 # and the correction beside it, and this is the full-resolution
                 # view an operator asked to look at.
@@ -4600,14 +4624,15 @@ class ScannerGui:
             # visible failure into a silent one: the read finished, the call
             # back never arrived, and the full-resolution view simply never
             # appeared with nothing anywhere to say why.
-            self._reads.put((seq, image, problem))
+            self._reads.put((seq, image, problem, rail))
 
         threading.Thread(target=work, args=(r.entry, r.seq), daemon=True).start()
 
-    def _loaded(self, seq: int, image) -> None:
+    def _loaded(self, seq: int, image, rail=None) -> None:
         self._loading = None
         if self.current is None or self.current.seq != seq or image is None:
             return
+        self._rail, self._rail_seq = rail, seq
         # Nothing is adjusted: the zoom and the view are measured against the
         # working copy, so the big array arriving changes what is sampled and
         # not what any of the numbers mean.
