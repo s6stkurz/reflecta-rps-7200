@@ -1034,7 +1034,12 @@ def keep_first_numbering(path, earlier: dict) -> None:
         return
     legacy = path.with_name(path.name + ".legacy")
     if not legacy.exists():
-        shutil.copyfile(path, legacy)
+        # Beside and renamed over, as the manifest itself is: copied in place,
+        # a copy cut short was kept for good -- this runs once, and only
+        # while the file is not there.
+        temp = path.with_name(f".{legacy.name}.part")
+        shutil.copyfile(path, temp)
+        _replace(temp, legacy)
 
 
 class RollManifest:
@@ -1646,6 +1651,28 @@ KINDS = ("state", "log", "progress", "result", "filed", "transport",
 # ---------------------------------------------------------------------------
 
 
+def _write_whole(path: Path, image: np.ndarray, **kw: Any) -> str:
+    """`export.write`, with a TIFF written beside and renamed over.
+
+    A roll's frameNN.tif and a walk's prescanNN.tif are written again when a
+    frame is scanned or walked again, and were written in place: a crash or a
+    full disk part-way left a truncated file where a good one had been. A
+    TIFF is now the old file or the new one, never half of either. A JPEG is
+    written as before -- its infrared goes to a DNG named after it, and a
+    temporary name would carry into that.
+    """
+    if export.format_of(path) != "tiff":
+        return export.write(str(path), image, **kw)
+    temp = path.with_name(f".{path.stem}.part{path.suffix}")
+    try:
+        note = export.write(str(temp), image, **kw)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    _replace(temp, path)
+    return note
+
+
 #: The folder a picture the library refused is kept in instead, beside the
 #: delivered copies it was written with; see :func:`keep_unfiled`.
 UNFILED = "unfiled"
@@ -1880,7 +1907,7 @@ class FrameWriter:
                 # roll's own `rolls/...tif` and an output folder set to JPEG are
                 # written correctly side by side without this having to know
                 # the setting.
-                note = export.write(str(path), delivered, resolution=job["dpi"],
+                note = _write_whole(Path(path), delivered, resolution=job["dpi"],
                                     quality=job.get("quality")
                                     or export.DEFAULT_QUALITY)
             except Exception as exc:                     # noqa: BLE001

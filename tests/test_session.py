@@ -1660,6 +1660,40 @@ def test_a_late_failure_from_a_finished_roll_does_not_stop_the_next(tmp_path,
     assert scanner.produced == 4, "the second roll was stopped for the first"
 
 
+def test_a_frame_written_again_is_never_left_half_written(tmp_path,
+                                                         monkeypatch):
+    """A frame scanned again replaces its frameNN.tif, and that was written
+    in place: a crash or a full disk part-way left a truncated file where a
+    good one had been."""
+    from rps7200 import export
+
+    good = picture(seed=3)
+    path = tmp_path / "roll" / "frame01.tif"
+
+    def one(image):
+        writer = session.FrameWriter()
+        writer.submit(number=1, paths=[path], image=image, meta={}, dpi=600,
+                      library=None, film=FilmNotes(), tags=[], prescan=None,
+                      inquiry=None, capture={}, seq=1)
+        writer.finish()
+        return writer
+
+    one(good)
+    real = export.write
+
+    def cut_short(target, image, **kw):
+        Path(target).write_bytes(b"II*\x00 half a tiff")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(export, "write", cut_short)
+    writer = one(picture(seed=4))
+    monkeypatch.setattr(export, "write", real)
+    assert writer.errors, "the failure was not said"
+    assert np.array_equal(tiff.read(path), good), "the good frame was lost"
+    assert [p.name for p in path.parent.iterdir()] == ["frame01.tif"], (
+        "the half-written file was left behind")
+
+
 def test_a_failure_that_cannot_be_said_does_not_end_the_writer(tmp_path):
     """Raised from the failure branch, `on_done` ended the writer's thread,
     and every filing after it with it -- the next submit blocking for good."""
