@@ -1294,6 +1294,12 @@ class DirectScanner:
             commands = (flight or {}).get("commands") or leftover
             if commands is not None:
                 self.last_failed_commands = commands
+            if flight and not flight.get("raw") and flight.get("chunks"):
+                # Given up part way: the lines that did arrive.
+                blob = b"".join(flight.pop("chunks"))
+                flight.update(raw=blob, cut_short=True,
+                              raw_layout=self._raw_layout(
+                                  flight["params"], flight["channels"], blob))
             if not flight or not flight.get("raw"):
                 return
             self._keep_failed_pass(flight, exc, commands)
@@ -1302,7 +1308,8 @@ class DirectScanner:
 
     def _keep_failed_pass(self, flight: dict[str, Any], exc: BaseException,
                           commands: dict[str, Any] | None) -> None:
-        """Spool a pass that was read in full and then failed, to be filed.
+        """Spool a pass that failed after its lines were read, to be filed:
+        all of them, or those that arrived before the read was given up.
 
         Its decoded pixels where the decode got that far. Where it did not,
         the lines exactly as they arrived, one row each with their tags --
@@ -1313,6 +1320,16 @@ class DirectScanner:
         layout = dict(flight.get("raw_layout") or {})
         pixels = flight.get("pixels")
         stage = "after the decode" if pixels is not None else "in the decode"
+        if flight.get("cut_short"):
+            # The lines of a read given up part way decode as any short read
+            # does -- to the rows every plane reached -- where they decode.
+            stage = "during the read"
+            try:
+                pixels = self.decode_index(flight["raw"], flight["params"],
+                                           flight["channels"])[0]
+            except Exception:                             # noqa: BLE001
+                pixels = None
+        decoded = pixels is not None
         if pixels is None:
             stride = int(layout.get("line_stride") or 0) or 1
             blob = flight["raw"]
@@ -1334,7 +1351,7 @@ class DirectScanner:
             "shading_skipped": f"the pass failed {stage}: {why}",
             "failed": {
                 "stage": stage, "error": why,
-                "pixels": ("decoded" if stage == "after the decode" else
+                "pixels": ("decoded" if decoded else
                            "the lines as they arrived, one row each, tags "
                            "included -- not a picture"),
             },
@@ -2287,6 +2304,13 @@ class DirectScanner:
         )
 
         chunks: list[bytes] = []
+        # The pass in flight holds its lines as they arrive, not only once
+        # they are all in: a read given up part way -- a timeout, a refused
+        # read, Ctrl-C -- is the pass whose bytes are most worth keeping, and
+        # they went with this list (`_keeps_what_a_failed_pass_left`).
+        flight = getattr(self, "_in_flight", None)
+        if flight is not None and keep_raw:
+            flight.update(chunks=chunks, params=params, channels=channels)
         got = 0
         idle_since: float | None = None
         while got < total_lines:
@@ -2336,25 +2360,14 @@ class DirectScanner:
         # Whether the device ended the read before the lines GET PARAMETERS
         # declared, which `scan` records with the pass: see `short_read`.
         self.last_read_short = len(blob) // bpl < total_lines
-        # Everything a decoder needs, so the bytes stay meaningful without
-        # this object. Line stride includes the 2-byte channel tag.
-        layout = {
-            "format": "index",
-            "bytes_per_line": int(params.bytes_per_line),
-            "line_stride": int(params.bytes_per_line) + INDEX_HEADER,
-            "index_header": INDEX_HEADER,
-            "width": int(params.width),
-            "lines": int(params.lines),
-            "channels": int(channels),
-            "byte_order": "little",
-            "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
-        }
+        layout = self._raw_layout(params, channels, blob)
         # And for the pass in flight, so one whose decode below -- or whose
         # realignment or correction after it -- then fails is still filed
         # with them (`_keeps_what_a_failed_pass_left`). Only where the bytes
-        # are kept at all: a caller that asked for none files nothing.
-        flight = getattr(self, "_in_flight", None)
+        # are kept at all: a caller that asked for none files nothing. The
+        # lines themselves are let go: the joined bytes are all of them.
         if flight is not None and keep_raw:
+            flight.pop("chunks", None)
             flight.update(raw=blob, raw_layout=layout)
         if keep_raw:
             self.last_raw = blob
@@ -2378,6 +2391,23 @@ class DirectScanner:
             self._log(f"which way this pass was read is unknown: {direction.why}; "
                       "left as it came")
         return image
+
+    @staticmethod
+    def _raw_layout(params: ScanParameters, channels: int,
+                    blob: bytes) -> dict[str, Any]:
+        """Everything a decoder needs, so the bytes stay meaningful without
+        this object. Line stride includes the 2-byte channel tag."""
+        return {
+            "format": "index",
+            "bytes_per_line": int(params.bytes_per_line),
+            "line_stride": int(params.bytes_per_line) + INDEX_HEADER,
+            "index_header": INDEX_HEADER,
+            "width": int(params.width),
+            "lines": int(params.lines),
+            "channels": int(channels),
+            "byte_order": "little",
+            "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
+        }
 
     @staticmethod
     def _deinterleave(

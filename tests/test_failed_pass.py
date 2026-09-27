@@ -169,6 +169,44 @@ def test_a_pass_that_fails_after_its_decode_is_filed_with_its_pixels(tmp_path):
     assert loaded["corrected"] == "raw -- correction was asked for"
 
 
+class CutShort(OnePass):
+    """Read six lines at a time, and refused after the first six: two rows."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.served = 0
+
+    def read_planes(self, params, channels, **kw):
+        return super().read_planes(params, channels, batch=6, **kw)
+
+    def read_lines(self, lines, bytes_per_line, retries=3, **kw):
+        if self.served:
+            raise ScanReadError("reading 6 lines was refused: aborted command")
+        self.served += lines
+        return b"".join(line for _, line in zip(range(lines), self._lines))
+
+
+def test_a_read_given_up_part_way_keeps_the_lines_that_arrived(tmp_path):
+    """The anomalous pass, and the one whose bytes are most worth keeping:
+    they lived only in the read's own list and went with it. The device is
+    suspect and nothing drives it again, but what it sent is filed."""
+    image = picture(8)
+    blob = tagged(image)
+    s = CutShort(blob, width=8)
+    s.debug_root = tmp_path
+    with pytest.raises(ScanReadError, match="aborted command"):
+        scan(s, shading=False, keep_raw=True)
+    assert s.suspect is not None, "the device may still be mid-scan"
+    s.close()
+    [record] = library.entries(tmp_path)
+    entry = tmp_path / record["id"]
+    assert "failed" in record["tags"]
+    assert record["extra"]["failed"]["stage"] == "during the read"
+    stride = 8 * 2 + INDEX_HEADER
+    assert library.read_raw(entry) == blob[: 6 * stride]
+    assert np.array_equal(tiff.read(str(entry / "scan.tif")), image[:2])
+
+
 def test_a_caller_that_keeps_no_bytes_is_not_filed_a_failed_pass(tmp_path):
     """`--no-library`, a probe that files nothing: not filed behind its back."""
     s = OnePass(tagged(picture(8), tags=b"XYZ"), width=8)
