@@ -1,0 +1,52 @@
+{
+ "type": "result",
+ "key": "v2:6face8827e3701be68a51fee71893e637e27b2a1eec00680aa5db8fd04b6eada",
+ "agentId": "a51cc35bc92e96926",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "tools/gui.py",
+    "line": 4185,
+    "problem": "GUI2-A1's close-and-reopen in `_walk_ended` undoes the step that drops positions for re-walked frames. The rewalk block (lines 4159-4176) removes offsets and sources for `_rewalked` frames from `self.sheet_state` and logs \"the positions set on N are dropped\". Only after that does `_close_sheet()` call `_dismiss`, which calls `_store_sheet_state(sheet.state())`. The open sheet's widgets still hold those offsets, so `self.sheet_state` and the settings file get them back, and `on_contact_sheet()` reopens the sheet with positions measured on prescans the walk has replaced. A commission then holds those frames to stale positions, even though the log said they were dropped. This happens whenever the sheet is opened during a kept (extended) walk that re-walks a frame with a position.",
+    "fix": "In `_walk_ended`, close the open sheet (remember whether it was alive) before the `_rewalked` block, then drop the offsets and sources from `self.sheet_state`, store the result, and reopen the sheet afterwards. Add a test: a kept walk with the sheet open, frame N re-walked, and after `finished` the sheet has no offset for N."
+   },
+   {
+    "severity": "major",
+    "file": "tools/gui.py",
+    "line": 2393,
+    "problem": "P25(b): on_roll now passes `Roll(only=...)` for a reopened roll that was scanned without a walk. For such a roll the session writes `wanted = earlier wanted, or settings.only, or only, unioned with job.only` (session.py:2457). A roll that had no walk and no `only` has no `wanted`, so after the resume `wanted` becomes just the resumed subset, for example [3, 6] instead of the earlier fallback of every recorded frame. Result: `roll_cells`/`roll_line` report \"finished, 5\" when the resume stopped after frame 3 while `remaining` is [6]. Also, a failed frame outside the chosen range drops out of `remaining`, and a later reopen says there is nothing left to scan. The new test hides this: `_unwalked_roll` writes `\"wanted\": list(range(1, 7))`, which a real roll with no walk does not have.",
+    "fix": "When earlier has no `wanted`/`only`, seed the session's `wanted` union with the numbers of earlier's frame records (the same fallback `wanted_frames` uses). That change is in session.py, so it needs coordination with the session owner. Alternatively, pass `only` only when the roll.json already has a `wanted`. Drop `wanted` from the `_unwalked_roll` fixture so the test reflects what the session actually writes."
+   },
+   {
+    "severity": "major",
+    "file": "tools/gui.py",
+    "line": 2265,
+    "problem": "`_hand_over` sets `_queued_run`, and only the worker's `state busy=True` (or Stop/`closed`) clears it. When the session has already closed (scanner not found at launch, or after force-abort), the run buttons and keys stay enabled. A Prescan/Scan/Roll pressed then is put on a queue nobody reads, so `_queued_run` is never cleared. From then on `_working()` is True for the rest of the process: Open a roll, Rename and Delete in the browser, delete-entry, Calibrate and every further scan all answer \"The scanner is working\". The base did not do this, because `busy` stayed False and open_roll had no guard. Browsing and exporting rolls with the scanner off is a normal use of the window.",
+    "fix": "In `_hand_over` (and in `on_calibrate`), refuse without setting `_queued_run` when `self._session_closed or self.session.dead` or the worker thread is not alive, and say that there is no scanner. Alternatively, have `_working()` ignore `_queued_run` once `_session_closed` is set. Add a test that emits `closed`, presses Prescan, and then checks that `open_roll` still works."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/gui.py",
+    "line": 3727,
+    "problem": "The P23/GUI1-06 claim, \"Guard every way into a job, not only the buttons\", leaves `_moving_refused` checking `self.busy` only. Within the tick after a Scan or Roll is handed over, a move key, a slide button or an aim-click is still accepted and queued behind the job, so the film moves once that job ends. This is the case `_moving_refused`'s own docstring calls wrong. In the other order, a Move submitted just before a Scan emits its own `busy=True`, which clears the Scan's `_queued_run`. When the Move ends, `_working()` is False while the Scan is still queued, so a second press queues a second pass.",
+    "fix": "Use `self._working()` in `_moving_refused`, and route Move submissions through `_hand_over`, or clear `_queued_run` only when the busy event's text matches `_describe(self._queued_run)`."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/gui.py",
+    "line": 6223,
+    "problem": "`roll_entries` gets the entry id with `Path(recorded[number]).name`. `RollManifest` stores `str(entry)`, which on Windows uses backslashes. When that roll.json is read on macOS or Linux (a library and rolls on a shared or external disk), `.name` returns the whole string, so the id is never found. Every recorded frame is then treated as deleted and Export skips the whole roll. The old join by name exported these frames.",
+    "fix": "Take the last component on either separator, for example `re.split(r\"[\\\\/]\", recorded[number])[-1]` or `PureWindowsPath(s).name if \"\\\\\" in s else Path(s).name`, and add a test with a backslash path."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/export.py",
+    "line": 110,
+    "problem": "GUI1-13 is fixed only for TIFF and DNG. `_deliver_one` now passes `resolution=` to `export.write`, but the JPEG path (`_write_jpeg(path, image, quality)`) ignores it. A JPEG delivered from Save As, Save all or Export still carries no resolution, and the claim that 'delivered files carry the resolution' does not hold for JPEG, one of the two output formats.",
+    "fix": "Pass `resolution` through to `_write_jpeg` and call `save(..., dpi=(r, r))` when it is set. Extend `test_a_delivered_file_says_the_resolution_it_was_scanned_at` to cover a .jpg."
+   }
+  ]
+ }
+}
