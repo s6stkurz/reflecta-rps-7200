@@ -142,34 +142,50 @@ def main() -> int:
         # counting it as one turns this check into a metric that cries wolf --
         # the summary read "6 entries no longer decode to what was stored"
         # when all six simply had nothing stored to decode.
-        changed = unreadable = behind = 0
+        #
+        # The opposite mistake is worse, and it was made: a decode that now
+        # raises, a scan.tif that no longer reads and raw bytes that are there
+        # and corrupt were all counted as "nothing to decode from", and the
+        # exit was 0. A change that broke the decode of every entry passed the
+        # one check named for it. Only an entry with nothing stored is benign.
+        changed = unreadable = behind = failed = damaged = 0
         for r in library.entries(root):
             path = library.entry_path(root, r)
             _, verdict = library.reconstruct(path)
-            if verdict.startswith("identical"):
+            kind = verdict.kind
+            if kind == library.IDENTICAL:
                 mark = " "
-            elif ("no raw bytes" in verdict or verdict.startswith("could not")
-                  or "cannot be reproduced" in verdict):
+            elif kind == library.NOTHING:
                 mark, unreadable = "-", unreadable + 1
-            elif verdict.startswith("stored as it was read"):
+            elif kind == library.BEHIND:
                 # Filed before passes were turned upright: known, not a
                 # regression, and `migrate-direction` brings it up to date.
                 # Counted as changed, it was a false alarm on every such entry.
                 mark, behind = "~", behind + 1
+            elif kind == library.FAILED:
+                mark, failed = "!", failed + 1
+            elif kind == library.DAMAGED:
+                mark, damaged = "!", damaged + 1
             else:
                 mark, changed = "!", changed + 1
             print(f"{mark} {path.name}: {verdict}")
         print(f"\n{changed} entr{'y' if changed == 1 else 'ies'} no longer "
               f"decode to what was stored" if changed
-              else "\nevery entry that can be decoded still decodes to exactly "
-                   "what was stored")
+              else "\nevery entry that could be checked still decodes to "
+                   "exactly what was stored")
+        if failed:
+            print(f"{failed} could not be decoded by today's code -- a decode "
+                  f"regression until shown otherwise")
+        if damaged:
+            print(f"{damaged} could not be checked because a stored file is "
+                  f"damaged or unreadable -- run verify")
         if unreadable:
             print(f"{unreadable} had nothing to decode from -- not a "
                   f"regression, but they cannot be re-corrected either")
         if behind:
             print(f"{behind} stored bottom-up from before passes were turned "
                   f"upright -- not a regression; see migrate-direction")
-        return 1 if changed else 0
+        return 1 if changed or failed or damaged else 0
 
     elif args.action == "duplicates":
         if args.keep < 1:

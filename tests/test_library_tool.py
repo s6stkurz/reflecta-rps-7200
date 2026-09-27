@@ -166,3 +166,89 @@ def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
     assert "left alone" in done.stdout + done.stderr
     assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
     assert not (path / "scan.before-migrate-raw.tif").exists()
+
+
+# -- reconstruct: its exit status is the regression gate ----------------------
+
+
+def _reconstruct(root: Path):
+    return subprocess.run(
+        [sys.executable, str(TOOL), "reconstruct", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+
+
+def _good(root: Path, raw: bytes | None = None, **kw) -> Path:
+    """An ordinary entry, or one whose stored bytes are `raw` instead."""
+    import numpy as np
+
+    from rps7200 import library
+
+    width, lines = 16, 8
+    rng = np.random.default_rng(7)
+    planes = [rng.integers(2000, 60000, (lines, width), dtype=np.uint16)
+              for _ in range(3)]
+    stream = bytearray()
+    for y in range(lines):
+        for c, tag in enumerate("RGB"):
+            stream += tag.encode() * 2 + planes[c][y].tobytes()
+    return library.save(
+        np.stack(planes, axis=-1),
+        {"resolution_dpi": 300, "channels": 3, "width": width,
+         "height": lines, "depth": 16},
+        root=root, raw=bytes(stream) if raw is None else raw,
+        raw_layout={"format": "index", "bytes_per_line": width * 2,
+                    "width": width, "lines": lines, "channels": 3}, **kw)
+
+
+def test_a_clean_library_reconstructs_with_exit_zero(tmp_path):
+    root = tmp_path / "library"
+    _good(root)
+    done = _reconstruct(root)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_a_decode_that_now_raises_fails_the_gate(tmp_path):
+    """Bytes that decoded yesterday and make today's decode raise are a decode
+    regression. They were counted as "nothing to decode from" and the run
+    exited 0, so a change that broke every entry passed `make reconstruct`.
+    The bytes here pass their checksum; only the decode can be at fault."""
+    root = tmp_path / "library"
+    _good(root, raw=b"\x00" * (8 * 3 * (16 * 2 + 2)))
+    done = _reconstruct(root)
+    assert done.returncode == 1, done.stdout
+    assert "could not decode" in done.stdout
+    assert "not a regression" not in done.stdout
+
+
+def test_a_scan_tif_that_no_longer_reads_fails_the_gate(tmp_path):
+    root = tmp_path / "library"
+    path = _good(root)
+    (path / "scan.tif").write_bytes(b"not a tiff")
+    done = _reconstruct(root)
+    assert done.returncode == 1, done.stdout
+
+
+def test_corrupt_raw_bytes_are_damage_not_nothing_stored(tmp_path):
+    """A truncated gzip read as "no raw bytes stored", which the tool counted
+    as benign."""
+    root = tmp_path / "library"
+    path = _good(root)
+    data = (path / "raw.bin.gz").read_bytes()
+    (path / "raw.bin.gz").write_bytes(data[: len(data) // 2])
+    done = _reconstruct(root)
+    assert done.returncode == 1, done.stdout
+    assert "damage" in done.stdout and "verify" in done.stdout
+    assert "no raw bytes stored" not in done.stdout
+
+
+def test_an_entry_with_nothing_stored_is_still_benign(tmp_path):
+    import numpy as np
+
+    from rps7200 import library
+
+    root = tmp_path / "library"
+    library.save(np.zeros((8, 16, 3), np.uint16),
+                 {"resolution_dpi": 300, "channels": 3}, root=root)
+    done = _reconstruct(root)
+    assert done.returncode == 0, done.stdout
+    assert "nothing to decode from" in done.stdout

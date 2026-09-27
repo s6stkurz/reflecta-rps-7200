@@ -38,6 +38,7 @@ import os
 import platform
 import subprocess
 import sys
+import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -684,24 +685,71 @@ def decode_raw(path: Path | str) -> np.ndarray | None:
         return None
 
 
-def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
+#: What a :func:`reconstruct` verdict is, as :attr:`Verdict.kind`.
+IDENTICAL = "identical"      # today's decode reproduces the stored pixels
+CHANGED = "changed"          # it does not: shape, samples, type or direction
+BEHIND = "behind"            # filed bottom-up before passes were turned upright
+NOTHING = "nothing"          # nothing stored to decode or reproduce from
+DAMAGED = "damaged"          # a stored file is there and cannot be trusted
+FAILED = "failed"            # today's decode raised on the stored bytes
+
+
+class Verdict(str):
+    """A :func:`reconstruct` verdict: the sentence, and which kind it is.
+
+    A str, so every caller that prints the sentence or tests how it starts
+    still works. `kind` is for the caller that has to *count* them, which
+    used to sort by the wording: "could not" covered a decode that now raises
+    and a scan.tif that no longer reads, and "no raw bytes" a gzip that was
+    there and corrupt -- and all three were counted as nothing stored, so
+    `make reconstruct` passed with every entry failing to decode.
+    """
+
+    kind: str
+
+    def __new__(cls, text: str, kind: str) -> "Verdict":
+        self = super().__new__(cls, text)
+        self.kind = kind
+        return self
+
+
+def _raw_on_disk(path: Path) -> bool:
+    return (path / RAW_FILE).exists() or (path / RAW_PLAIN).exists()
+
+
+def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     """Decode this entry's raw bytes with the *current* code.
 
     Returns ``(image, verdict)``. The verdict says whether today's decode still
     reproduces the pixels stored at scan time -- which is the whole reason the
     bytes are kept. A mismatch is not necessarily a regression: it is where a
     deliberate change to the decode shows up, on every scan in the library at
-    once rather than on the next one taken.
+    once rather than on the next one taken. `verdict.kind` says which of the
+    module's kinds (:data:`IDENTICAL`, :data:`CHANGED` ...) it is.
     """
     path = Path(path)
-    raw = read_raw(path)
-    if raw is None:
-        return None, "no raw bytes stored for this entry"
-
     try:
         record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return None, f"could not read scan.json: {exc}"
+        return None, Verdict(f"could not read scan.json: {exc}", DAMAGED)
+    raw = read_raw(path)
+    if raw is None:
+        # `read_raw` answers None for a file that is not there and for one
+        # that is there and will not read. Only the first is "nothing stored".
+        if _raw_on_disk(path):
+            return None, Verdict(
+                "raw bytes are stored but cannot be read -- damage to the "
+                "file, not a decode change; see verify", DAMAGED)
+        return None, Verdict("no raw bytes stored for this entry", NOTHING)
+    # Checked before decoding, so storage damage is named as storage damage.
+    # Unchecked, a bit flipped in a plain `raw.bin` decoded and read as
+    # "decode CHANGED" -- blaming the decoder, and inviting someone to "fix"
+    # it to match the damaged bytes.
+    digest = (record.get("raw") or {}).get("sha256")
+    if digest and hashlib.sha256(raw).hexdigest() != digest:
+        return None, Verdict(
+            "raw bytes do not match their checksum -- damage to the file, not "
+            "a decode change; see verify", DAMAGED)
     layout = (record.get("raw") or {}).get("layout") or {}
     try:
         params = ScanParameters(
@@ -715,9 +763,10 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         image, direction = DirectScanner.decode_index(
             raw, params, int(layout["channels"]))
     # ScanReadError too: bytes that are not a pass at all are a verdict about
-    # this entry, not a reason to stop checking every entry after it.
+    # this entry, not a reason to stop checking every entry after it. The
+    # bytes passed their checksum above, so what raised is today's decode.
     except (KeyError, ValueError, TypeError, ScanReadError) as exc:
-        return None, f"could not decode: {exc}"
+        return None, Verdict(f"could not decode: {exc}", FAILED)
 
     # An entry stores raw pixels, so a raw decode is what should match and this
     # is normally an exact comparison of the decode alone.
@@ -734,11 +783,17 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         cal = record.get("calibration") or {}
         ref_file, mask_file = cal.get("shading"), cal.get("ccd_mask")
         if not ref_file or not (path / ref_file).exists():
-            return image, (
+            return image, Verdict(
                 "stored image is shading-corrected but its reference is "
-                "missing, so it cannot be reproduced"
-            )
-        reference = ShadingReference.load(path / ref_file)
+                "missing, so it cannot be reproduced", NOTHING)
+        try:
+            reference = ShadingReference.load(path / ref_file)
+        # A truncated .npz raises BadZipFile, which is not an OSError: it
+        # stopped the whole run at the first damaged reference.
+        except (OSError, ValueError, KeyError, EOFError,
+                zipfile.BadZipFile) as exc:
+            return image, Verdict(
+                f"could not read {ref_file}: {exc} -- see verify", DAMAGED)
         mask = ((path / mask_file).read_bytes()
                 if mask_file and (path / mask_file).exists() else None)
         image, _ = apply_shading(image, reference, mask)
@@ -746,32 +801,40 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
     try:
         stored = tiff.read(str(path / "scan.tif"))
     except (OSError, ValueError) as exc:
-        return image, f"could not read scan.tif: {exc}"
+        return image, Verdict(f"could not read scan.tif: {exc}", DAMAGED)
     # The 7200 dpi realignment is part of the path from bytes to `scan.tif`,
     # so it is replayed here, not reported as a changed decode.
     image = _replay(image, record, stored.shape[0])
     if image.shape != stored.shape:
-        return image, (
-            f"decode CHANGED: now {image.shape}, stored {stored.shape}"
-        )
+        return image, Verdict(
+            f"decode CHANGED: now {image.shape}, stored {stored.shape}",
+            CHANGED)
+    # `array_equal` compares values and not their type, and the type is not
+    # a detail: `apply_shading` scales the reference by it, so 8-bit samples
+    # coming back as uint16 with the same values would correct almost black
+    # while every value still matched.
+    if image.dtype != stored.dtype:
+        return image, Verdict(
+            f"decode CHANGED: now {image.dtype}, stored {stored.dtype}",
+            CHANGED)
     recorded = ((record.get("scan") or {}).get("read_direction") or {}).get("direction")
     if recorded is not None and recorded != direction.state:
-        return image, (
+        return image, Verdict(
             f"read direction CHANGED: recorded {recorded}, the line tags now "
-            f"say {direction.state} ({direction.why})")
+            f"say {direction.state} ({direction.why})", CHANGED)
     if np.array_equal(image, stored):
-        return image, "identical to the stored image"
+        return image, Verdict("identical to the stored image", IDENTICAL)
     if direction.reversed and np.array_equal(image[::-1], stored):
         # Filed before passes were turned upright in the decode: the stored
         # image is the pass in the order it was read. Not a regression, and
         # `tools/library.py migrate-direction` is what brings it up to date.
-        return image, ("stored as it was read, bottom-up; today's decode "
-                       "turns it upright -- see migrate-direction")
+        return image, Verdict("stored as it was read, bottom-up; today's "
+                              "decode turns it upright -- see "
+                              "migrate-direction", BEHIND)
     differing = int(np.count_nonzero(image != stored))
-    return image, (
+    return image, Verdict(
         f"decode CHANGED: {differing} of {image.size} samples differ "
-        f"({100 * differing / image.size:.3f}%)"
-    )
+        f"({100 * differing / image.size:.3f}%)", CHANGED)
 
 
 def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:

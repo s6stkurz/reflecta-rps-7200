@@ -810,6 +810,67 @@ def test_reconstruct_reports_a_missing_scan_tif_and_carries_on(tmp_path):
     (path / "scan.tif").unlink()
     _image, verdict = library.reconstruct(path)
     assert verdict.startswith("could not read scan.tif")
+    assert verdict.kind == library.DAMAGED
+
+
+def test_a_decode_that_changes_only_the_sample_type_is_a_change(tmp_path):
+    """`array_equal` ignores dtype, and `apply_shading` scales by it: 8-bit
+    values coming back as uint16 would correct almost black while every value
+    still "matched"."""
+    _, image = index_stream(16, 8, 3)
+    small = (image >> 8).astype(np.uint16)          # every value fits a byte
+    stream = bytearray()
+    for y in range(8):
+        for c in range(3):
+            stream += (CHANNEL_ORDER[c].encode() * INDEX_HEADER
+                       + small[y, :, c].tobytes())
+    # Two bytes a sample in the stream, one in the stored file: the same values.
+    path = library.save(
+        small.astype(np.uint8), {"resolution_dpi": 300, "channels": 3,
+                                 "width": 16, "height": 8, "depth": 8},
+        root=tmp_path, raw=bytes(stream),
+        raw_layout={"bytes_per_line": 32, "width": 16, "lines": 8,
+                    "channels": 3})
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.CHANGED, verdict
+    assert "uint16" in verdict and "uint8" in verdict
+
+
+def test_a_bit_flipped_raw_file_is_damage_not_a_decode_change(tmp_path):
+    """A plain `raw.bin` that decodes still decodes: it was reported as
+    "decode CHANGED", blaming the decoder for the disk."""
+    stream, image = index_stream(16, 8, 3, seed=9)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, compress=False)
+    data = bytearray((path / library.RAW_PLAIN).read_bytes())
+    data[40] ^= 0x01
+    (path / library.RAW_PLAIN).write_bytes(bytes(data))
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "CHANGED" not in verdict
+
+
+def test_a_damaged_reference_is_a_verdict_not_an_abort(tmp_path):
+    """A truncated .npz raises BadZipFile, which stopped the whole run."""
+    from rps7200.shading import apply_shading
+
+    stream, image = index_stream(16, 8, 3)
+    reference = ShadingReference(
+        ref={c: np.linspace(28000, 32000, 16) for c in range(3)},
+        mean={c: 30000.0 for c in range(3)}, pixels_per_line=16)
+    shaded, _ = apply_shading(image, reference, None)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(shaded, {"resolution_dpi": 300, "channels": 3},
+                        root=tmp_path, reference=reference, raw=stream,
+                        raw_layout=layout, corrections=["shading"])
+    data = (path / "shading.npz").read_bytes()
+    (path / "shading.npz").write_bytes(data[: len(data) // 2])
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "shading.npz" in verdict
 
 
 # --- filed plain with the scanner open, compacted after -----------------------
