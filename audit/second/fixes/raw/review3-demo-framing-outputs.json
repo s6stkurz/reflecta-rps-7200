@@ -1,0 +1,73 @@
+{
+ "type": "result",
+ "key": "v2:282446dfea970d439bd03f45857f286c8370c949da99c09199a3a69c7ce62fdd",
+ "agentId": "a61aac27077a8f4ba",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "minor",
+    "file": "tools/gui.py",
+    "line": 4674,
+    "problem": "OUT-04: to get the rail counts, the full-resolution read now calls library.load(entry) and then library.corrected(entry). corrected() calls load() again, so every pass's scan.tif is read (and for a compacted entry inflated) twice. At 7200 dpi that is two reads of about 570 MB where one was enough, which doubles the time before the full-resolution view appears. It is also local work done while the window holds the device open. For a legacy entry whose pixels were corrected before filing (corrected == \"already\"), the counts come from corrected pixels, yet the caption says \"0 and full as the sensor read them\".",
+    "fix": "Load once. Split library.corrected into load plus a correct(image, record) step, or have it also return the stored array, and take the rail from that same array before correcting it. Leave rail as None, so the caption is not added, when record['corrected'] == 'already'."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 1633,
+    "problem": "OUT-15: to_monochrome now refuses any channel outside MONO_CHOICES. FrameWriter._write calls it before library.save, so a bad mono_channel raises before the entry is filed, and that pass's raw bytes are lost. Such a value can arrive from a roll manifest put back through RESTORABLE['mono_channel'], which is not validated, or from a hand-edited preset. This breaks the rule in the comment just below: library entry first, copies after. RGB passes already raised here before this change; the new check widens the refusal to every value outside MONO_CHOICES, including 'I' on RGBI, where the entry used to be filed.",
+    "fix": "Compute `delivered` after library.save, or inside the per-copy try so it becomes a copy problem rather than a lost entry. Also validate mono_channel when the Roll/Scan job is submitted, or in restorable(), dropping any value not in MONO_CHOICES."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/scan.py",
+    "line": 474,
+    "problem": "OUT-13: _unclaimed only checks the image names that export.outputs lists. The sidecar out.with_suffix('.json') is not checked. So `--out scan.jpg` followed by `--out scan.tif` in the same directory finds scan.tif free and overwrites the first run's scan.json. With --no-library that file was the only record of the first scan.",
+    "fix": "Treat the sidecar as taken too, for example with a local predicate that also checks candidate.with_suffix('.json'), or let _unclaimed take extra names. Then write the .json next to the image name that was actually chosen."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/demo.py",
+    "line": 885,
+    "problem": "DEMO-01/P27(c): BACKLASH_MM = BACKLASH_COMMANDS * FINE_MIN_MM reuses a constant that means something else. session.BACKLASH_COMMANDS is how many whole-frame commands a rewind may spend on backlash before giving up, a retry budget. It is not a measured sub-frame slack. The docstring cites a ladder that 'lost its first two small steps', but the value used is 3 × 2.84 = 8.5 units. Raising the rewind's tolerance would silently triple the demo's sub-frame backlash. This is the second-home drift CLAUDE.md warns about, reached from the other side.",
+    "fix": "Give the slack its own named constant in the driver or protocol, in units and with its measurement cited (for example protocol.BACKLASH_UNITS, if the section 11 ladder gives a figure), and take it from there. Do not derive it from the rewind's retry budget."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/demo.py",
+    "line": 565,
+    "problem": "P28/DEMO-06: the demo's ensure_shading claims to follow the driver, but it never writes the cache. The driver's calibration saves the reference to `path`, so the next reuse loads it. The demo returns 'calibrated' and writes nothing, so every later 'reuse' in a checkout without a real calibration cache runs the simulated 210 s calibration again. Where a real calibration/shading.npz exists, the demo also reports 'loaded' from a real file it never reads.",
+    "fix": "After a demo measurement, mark the cache under DEMO_ROOT, as the driver's save_shading would (a marker file, or the source entry's reference), and check that marker for reuse, so the reuse decision tracks what this session measured."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/demo.py",
+    "line": 1427,
+    "problem": "DEMO-09: the atomic write uses one fixed temp name, `.pictures.npz.part`. Two demo windows sharing the cache, the case the comment gives as the reason for the change, both open that same file with 'wb' and write into it at once, and one then renames a mixed file over the cache. On Windows, CPython opens with FILE_SHARE_WRITE, so both opens succeed. The load path now recovers by measuring again, but the claimed fix ('write whole') does not hold for concurrent writers. Stale keys (old mtime/size) are also never pruned, so the cache only grows.",
+    "fix": "Use a unique temp name in the same directory, such as tempfile.mkstemp(dir=self.cache.parent, prefix='.pictures.', suffix='.part') or one including the pid, before _replace. Write only the keys of entries seen in this pass, so stale signatures are dropped."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/gui.py",
+    "line": 915,
+    "problem": "FR-14: when a set key is refused, _bind_key falls back to the action's default without checking whether another action in the same scope already uses that key. Example: the user gives action A '<Foo>' and gives A's default key to action B. A's fallback rebinds B's key to A, since Tk's bind replaces the earlier binding, and B's shortcut then silently runs A. The log says 'using its default'.",
+    "fix": "Pass the set of sequences already bound or resolved in this scope into _bind_key, and skip a default that another action holds. In that case log 'left unbound' instead."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/usbpcap.py",
+    "line": 174,
+    "problem": "P32: a control record with stage None (a 27-byte header) is taken as a setup whenever its payload is at least 8 bytes, including records from the device. A keyboard's GET_REPORT reply in such a capture starts with its modifier byte. 0x00 (no modifiers) classifies as 'standard' and 0x40 (Right Alt) as 'vendor', so the reply, which holds keystrokes, is let out. Setup packets always go host to device.",
+    "fix": "Classify only when `not packet.from_device` and (stage == STAGE_SETUP or stage is None). Add a stage-None keyboard reply starting 0x00 to the synthetic bus in tests/test_usbpcap.py."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/scan_roll.py",
+    "line": 315,
+    "problem": "FR-05: hold_from_walk now holds every walked frame, with unplaced ones at 0 and source 'none', and clamps each offset to FINE_MAX_MM. held_note, however, still records only the placed frames' 'sources' and their unclamped 'offsets'. So 'holding N frame(s) ...: <counts>' printed in main() does not add up to N, and the recorded offsets can differ from what was actually held. Separately, this changes which SLIDEs `--approved` sends (each unplaced frame now gets a hold instead of none), and the PROTOCOL_REVISION 7 note does not mention it.",
+    "fix": "Build held_note from `held` itself: offsets = {n: a.offset_mm}, sources = {n: a.source}. Add one line on the unplaced-frame holds to the revision-7 comment in rps7200/protocol.py."
+   }
+  ]
+ }
+}
