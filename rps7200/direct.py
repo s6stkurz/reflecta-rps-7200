@@ -675,7 +675,13 @@ class DirectScanner:
 
     def _log(self, message: str) -> None:
         if self.verbose:
-            print(f"[scan] {message}")
+            try:
+                print(f"[scan] {message}")
+            except (OSError, ValueError):
+                # A terminal that has closed answers every write with EIO,
+                # and read_planes logs every chunk: raised, a line of progress
+                # abandoned the read it was reporting on.
+                pass
         # A UI wants these lines without capturing stdout. Swallowing the hook's
         # own failures is deliberate: a broken display must not take down the
         # scan it is displaying, least of all mid-read.

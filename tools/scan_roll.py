@@ -798,10 +798,10 @@ def main() -> int:
     except BaseException as exc:                          # noqa: BLE001
         # Recorded rather than raised: the frames already scanned are
         # worth filing and the manifest is worth finishing. The exit
-        # status says it went wrong. BaseException, because a second Ctrl-C,
-        # SIGTERM or closed terminal (KeyboardInterrupt, `DeferredInterrupt`)
-        # is exactly the exit that used to skip `writer.finish()` and lose
-        # queued frames.
+        # status says it went wrong. BaseException, because a second Ctrl-C
+        # or SIGTERM (KeyboardInterrupt, `DeferredInterrupt`; a closed
+        # terminal only ever asks) is exactly the exit that used to skip
+        # `writer.finish()` and lose queued frames.
         trouble = exc
         print(f"the roll stopped: {type(exc).__name__}: {exc}",
               file=sys.stderr)

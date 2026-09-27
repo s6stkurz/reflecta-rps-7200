@@ -8,6 +8,8 @@ stops all of it, and these are the places it has to hold.
 """
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import pytest
 
@@ -163,10 +165,11 @@ def test_the_handler_is_put_back_afterwards():
 
 
 @pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP", "SIGBREAK"])
-def test_the_other_ways_to_be_told_to_stop_are_taken_as_ctrl_c(name):
+def test_the_other_ways_to_be_told_to_stop_are_taken_as_ctrl_c(name, monkeypatch):
     """`kill`, and the terminal closing, ended a tool at once -- inside its
     read, with its queued frames unfiled -- where Ctrl-C had stopped doing
     that. Those a platform does not have are simply not there."""
+    import io
     import signal
 
     from rps7200.console import DeferredInterrupt
@@ -174,6 +177,10 @@ def test_the_other_ways_to_be_told_to_stop_are_taken_as_ctrl_c(name):
     signum = getattr(signal, name, None)
     if signum is None:
         pytest.skip(f"no {name} here")
+    # A hangup lets go of streams that are a terminal; under `pytest -s` the
+    # real ones would be, and would stay let go of after this test.
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    monkeypatch.setattr("sys.stderr", io.StringIO())
     before = signal.getsignal(signum)
     asked = []
     with DeferredInterrupt(say=lambda m: None,
@@ -219,6 +226,110 @@ def test_a_terminal_that_has_gone_does_not_turn_the_request_into_an_error():
     interrupt = DeferredInterrupt(say=say)
     interrupt._handler(1, None)                    # does not raise
     assert interrupt.requested()
+
+
+class _HungUpTerminal:
+    """A terminal after its hangup: every write is EIO. It was a terminal on
+    the way in, which is all `DeferredInterrupt` can go by -- a hung-up one
+    fails `isatty()` as well."""
+
+    def isatty(self):
+        return True
+
+    def write(self, text):
+        raise OSError(5, "Input/output error")
+
+    def flush(self):
+        raise OSError(5, "Input/output error")
+
+
+def _hangup():
+    import signal
+
+    signum = getattr(signal, "SIGHUP", None)
+    if signum is None:
+        pytest.skip("no SIGHUP here")
+    return signum
+
+
+def test_a_closed_terminal_takes_nothing_else_down_with_it(monkeypatch):
+    """Every write to a hung-up terminal raises EIO, and the tools print
+    between passes and as they read: the first line after the hangup ended
+    the roll the hangup had only asked to stop. A stream sent to a file is
+    still worth writing, and kept."""
+    import io
+
+    from rps7200.console import DeferredInterrupt
+
+    hangup = _hangup()
+    logged = io.StringIO()
+    monkeypatch.setattr("sys.stdout", _HungUpTerminal())
+    monkeypatch.setattr("sys.stderr", logged)
+    with DeferredInterrupt() as interrupt:
+        interrupt._handler(hangup, None)
+        assert interrupt.requested()
+        print("frame 3 filed")                     # does not raise
+        assert sys.stderr is logged
+    sys.stdout.close()
+
+
+def test_a_second_hangup_does_not_insist():
+    """The shell passes a hangup to its jobs as it exits and the kernel sends
+    the foreground its own once the shell has gone. The second, taken as the
+    operator's second Ctrl-C, raised inside the read."""
+    from rps7200.console import DeferredInterrupt
+
+    hangup = _hangup()
+    interrupt = DeferredInterrupt(say=lambda m: None)
+    interrupt._handler(hangup, None)
+    try:
+        interrupt._handler(hangup, None)
+    except KeyboardInterrupt:
+        pytest.fail("the second hangup was taken as the operator insisting")
+    assert interrupt.requested()
+    with pytest.raises(KeyboardInterrupt):         # a person still can
+        interrupt._handler(2, None)
+
+
+def test_a_line_of_progress_to_a_closed_terminal_does_not_end_the_read(monkeypatch):
+    """`read_planes` logs every chunk and the tools run verbose: a print
+    raising EIO inside the read abandoned it -- the wedge -- after a hangup
+    that was only asking the roll to stop."""
+    from rps7200.usb_transport import Transport
+
+    params = ScanParameters(width=4, lines=2, bytes_per_line=8,
+                            filter_offset1=0, filter_offset2=0,
+                            available_lines=2)
+    lines = b"".join(tag * 2 + np.arange(4, dtype="<u2").tobytes()
+                     for tag in (b"R", b"G", b"B") * 2)
+
+    class Payload(Transport):
+        """The real payload loop and its log, over a scripted bulk endpoint."""
+
+        def __init__(self):
+            self.verbose = True
+            self.max_window = 0x8000
+
+        def _announce_length(self, size):
+            pass
+
+        def _bulk_read_into(self, view, timeout_ms):
+            view[:] = lines[:len(view)]
+            return len(view)
+
+    class Reads:
+        def __init__(self):
+            self.usb = Payload()
+
+        def command(self, command, data=None, read_size=0, timeout_ms=0,
+                    max_wait_s=60.0):
+            return self.usb._read_payload(read_size, timeout_ms)
+
+    monkeypatch.setattr("sys.stdout", _HungUpTerminal())
+    s = DirectScanner(transport=Reads(), verbose=True, debug=False)
+    s._own_transport = False
+    image = s.read_planes(params, 3)
+    assert image.shape == (2, 4, 3) and s._read_complete
 
 
 def test_a_bracket_stopped_at_ctrl_c_files_the_passes_it_took(tmp_path, monkeypatch):

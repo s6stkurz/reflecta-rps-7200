@@ -63,6 +63,14 @@ class DeferredInterrupt:
     has to act rather than poll -- the window, whose loop is Tk's. A signal
     the process was started ignoring -- ``nohup``'s hangup -- is left ignored.
 
+    A hangup differs in two ways, both because no person sent it. It never
+    insists: the shell passes one to its jobs as it exits, and the kernel
+    sends the foreground its own once the shell has gone, so one closed
+    terminal can deliver two. And it takes the terminal with it: every later
+    write to stdout or stderr there raises EIO, so the streams that were the
+    terminal are pointed at the null device, where a line of progress cannot
+    end a read, or the roll after it.
+
     Only the main thread can install a signal handler; anywhere else, and
     where there is no SIGINT, this does nothing and Ctrl-C behaves as usual.
     """
@@ -78,6 +86,7 @@ class DeferredInterrupt:
         self._requested = False
         self._previous: dict = {}
         self._installed = False
+        self._terminal: list[str] = []
         self._say = say or (lambda message: print(message, file=sys.stderr,
                                                   flush=True))
         self._on_request = on_request
@@ -86,7 +95,16 @@ class DeferredInterrupt:
         return self._requested
 
     def _handler(self, signum, frame):
+        import signal
+        hangup = signum == getattr(signal, "SIGHUP", None)
+        if hangup:
+            self._let_go_of_the_terminal()
         if self._requested:
+            if hangup:
+                # A hangup never insists: taken as the second press, the
+                # other of the pair a closed terminal sends raised inside the
+                # read this exists to protect.
+                return
             self._restore()
             raise KeyboardInterrupt
         self._requested = True
@@ -101,6 +119,20 @@ class DeferredInterrupt:
             pass
         if self._on_request is not None:
             self._on_request()
+
+    def _let_go_of_the_terminal(self) -> None:
+        """Point the streams that were the terminal at the null device.
+
+        Decided from what they were on the way in: a hung-up terminal fails
+        `isatty()` too, and a stream sent to a file is still worth writing.
+        """
+        import os
+        for name in self._terminal:
+            try:
+                setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+            except OSError:
+                pass
+        self._terminal = []
 
     def _restore(self) -> None:
         if self._installed:
@@ -129,6 +161,8 @@ class DeferredInterrupt:
                     self._previous[signum] = signal.signal(signum,
                                                            self._handler)
                 self._installed = True
+                self._terminal = [name for name in ("stdout", "stderr")
+                                  if _is_terminal(getattr(sys, name, None))]
             except (ValueError, OSError):
                 # All of them or none: put back what was taken before the
                 # refusal, and leave Ctrl-C as it was.
@@ -138,6 +172,13 @@ class DeferredInterrupt:
 
     def __exit__(self, *exc) -> None:
         self._restore()
+
+
+def _is_terminal(stream) -> bool:
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 #: What a tool says before a calibration it has not been told the film is in

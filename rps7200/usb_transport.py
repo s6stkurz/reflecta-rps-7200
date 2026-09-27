@@ -444,7 +444,12 @@ class Transport:
 
     def _log(self, message: str) -> None:
         if self.verbose:
-            print(f"[usb] {message}")
+            try:
+                print(f"[usb] {message}")
+            except (OSError, ValueError):
+                # As `DirectScanner._log`: this runs inside a payload, and a
+                # closed terminal is no reason to abandon one.
+                pass
 
     def _on_the_bus(self) -> bool:
         """Is the scanner enumerated, whether or not it can be opened?
