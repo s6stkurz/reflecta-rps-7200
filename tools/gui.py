@@ -61,6 +61,7 @@ from rps7200.mono import (                                 # noqa: E402
     MONO_AVERAGE,
     MONO_CHANNEL,
     MONO_CHOICES,
+    infrared_left_out,
     to_monochrome,
 )
 from rps7200.protocol import (                             # noqa: E402
@@ -4389,6 +4390,7 @@ class ScannerGui:
             # the copy is gone deliberately rather than by oversight.
             full, entry_record = library.corrected(result.entry)
             full = preview.orient(full, result.rotation, result.flipped)
+            dropped = infrared_left_out(full) if mono else ""
             if mono:
                 full = to_monochrome(full, mono_channel)
             # The scan's own resolution, which every delivered file from here
@@ -4403,7 +4405,8 @@ class ScannerGui:
                        if result.rotation else "")
                     + (", one channel" if mono else "")
                     + ("" if how == "applied" else f" ({how})")
-                    + (f" -- {note}" if note else ""))
+                    + (f" -- {note}" if note else "")
+                    + (f" -- {dropped}" if dropped else ""))
         if result.image is not None:
             turned = preview.orient(result.image, result.rotation,
                                     result.flipped)

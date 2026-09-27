@@ -51,7 +51,7 @@ from .direct import METER_EACH, DirectScanner
 from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
-from .mono import MONO_CHANNEL, to_monochrome, wants_mono
+from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
 from .protocol import say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
@@ -1695,6 +1695,9 @@ class FrameWriter:
                 problems.append(f"could not write {path} ({exc})")
                 continue
             written.append(Path(path))
+            if job.get("mono"):
+                note = "; ".join(filter(None, (note,
+                                               infrared_left_out(turned))))
             if note:
                 self.notes.append(f"{Path(path).name}: {note}")
         if problems and entry is None:

@@ -34,7 +34,12 @@ from rps7200.direct import DirectScanner, supports_infrared
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
-from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
+from rps7200.mono import (
+    MONO_CHANNEL,
+    MONO_CHOICES,
+    infrared_left_out,
+    to_monochrome,
+)
 from rps7200.library import FilmNotes
 
 
@@ -453,6 +458,8 @@ def main() -> int:
                     channel_order=[args.mono_channel], channels=1)
     note = export.write(out, delivered, resolution=args.dpi,
                         quality=args.quality)
+    if args.mono:
+        note = "; ".join(filter(None, (note, infrared_left_out(image))))
     out.with_suffix(".json").write_text(
         json.dumps(meta, indent=2, default=str), encoding="utf-8")
     print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"

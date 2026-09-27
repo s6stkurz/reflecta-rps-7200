@@ -81,7 +81,34 @@ def test_an_infrared_scan_still_yields_its_visible_channel():
 
 def test_a_channel_the_scan_does_not_have_is_refused():
     with pytest.raises(ValueError, match="not in this scan"):
+        to_monochrome(scene(channels=2), "B")
+
+
+def test_the_dust_plane_is_never_delivered_as_the_picture():
+    """'I' is in a four-channel scan, so the check against the scan's own
+    channels let it through, and a hand-edited preset or roll setting
+    delivered the infrared plane as the photograph."""
+    with pytest.raises(ValueError, match="not one to deliver"):
+        to_monochrome(scene(channels=4), "I")
+    with pytest.raises(ValueError, match="not one to deliver"):
         to_monochrome(scene(channels=3), "I")
+
+
+def test_a_one_channel_file_says_it_left_the_infrared_behind(tmp_path):
+    """A mono delivery of an RGBI pass has no room for the plane the pass
+    paid for, and the file went without it with no word."""
+    from rps7200.session import FrameWriter
+
+    out = tmp_path / "frame.tif"
+    w = FrameWriter()
+    w.submit(seq=0, number=1, paths=[out], rotate=0,
+             image=scene(h=16, w=24, channels=4),
+             meta={"resolution_dpi": 900}, dpi=900, library=None,
+             film=None, tags=[], prescan=None, inquiry=None, capture={},
+             mono=True)
+    w.finish()
+    assert not w.errors, w.errors
+    assert any("infrared" in note for note in w.notes), w.notes
 
 
 def test_an_already_flat_image_passes_through():
