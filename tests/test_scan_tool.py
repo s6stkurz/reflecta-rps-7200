@@ -532,6 +532,24 @@ def test_the_run_says_how_long_it_will_take(tmp_path, monkeypatch, capsys):
     assert "estimated" in capsys.readouterr().out
 
 
+def test_the_backgrounding_warning_is_judged_on_the_slow_end(tmp_path,
+                                                            monkeypatch, capsys):
+    """The estimate sits at or below the library's medians, and the warning
+    was judged on it: two passes at 3600 dpi came to 4.4 minutes and no
+    warning, with the bracket's top pass pinned to the exposure ceiling --
+    the slowest a pass can be -- and a cold lamp still to wait out."""
+    _, code = run(tmp_path, monkeypatch, "--dpi", "3600", "--bracket", "2")
+    assert code == 0
+    assert "background" in capsys.readouterr().err
+
+
+def test_a_short_run_is_not_told_to_go_to_the_background(tmp_path, monkeypatch,
+                                                        capsys):
+    _, code = run(tmp_path, monkeypatch, "--dpi", "300")
+    assert code == 0
+    assert "background" not in capsys.readouterr().err
+
+
 # --- a library that will not take a pass --------------------------------------
 
 

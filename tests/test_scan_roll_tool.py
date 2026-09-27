@@ -1557,3 +1557,47 @@ def test_the_roll_records_what_its_frames_were_taken_with(tmp_path, monkeypatch)
     assert settings["correct"] is True
     assert settings["fast_infrared"] is False     # an RGB roll
     assert settings["max_failures"] == 3
+
+
+# --- what it says it will cost ------------------------------------------------
+
+
+def test_a_roll_says_how_long_it_will_take_before_it_opens(tmp_path,
+                                                          monkeypatch, capsys):
+    """CLAUDE.md sends a walk here and says a run past ~8 minutes must be
+    backgrounded; this tool, the likeliest to pass that line, said nothing."""
+    said_before_opening = []
+
+    class Watched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+            said_before_opening.append(capsys.readouterr())
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Watched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library", "",
+         "--no-shading", "--roll", "costed", "--dry-run", "--frames", "1"],
+    )
+    assert scan_roll.main() == 0
+    (said,) = said_before_opening
+    assert "estimated" in said.out
+    assert "background" not in said.err, "one prescan is not eight minutes"
+
+
+def test_a_roll_to_the_end_of_the_strip_is_told_to_go_to_the_background(
+        tmp_path, monkeypatch, capsys):
+    """With no --frames it runs until the strip does: a whole strip's walk
+    is a calibration and a prescan a frame, well past ten minutes."""
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run")
+    assert code == 0
+    out = capsys.readouterr()
+    assert "to the end of the strip" in out.out
+    assert "background" in out.err
+
+
+def test_a_real_roll_costs_its_scans(tmp_path, monkeypatch, capsys):
+    _scanner, code = run(tmp_path, monkeypatch, "--dpi", "3600", "--ir",
+                         "--frames", "3")
+    assert code == 0
+    assert "background" in capsys.readouterr().err

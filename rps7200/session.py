@@ -1339,6 +1339,44 @@ def estimate_seconds(resolution: int, infrared: bool,
     return max(INFRARED_UNTIED_S, tied)
 
 
+#: Past this a run from a tool should be backgrounded: a harness that kills a
+#: foreground command at 10 minutes abandons its read, which wedges the
+#: scanner. CLAUDE.md's figure.
+FOREGROUND_S = 8 * 60.0
+#: How much longer than typical a pass can run, for the warning above. Scan
+#: time tracks the exposure as well as the lines, and the 1800 dpi RGB entries
+#: span 36-162 s around their 85 s median (CLAUDE.md, "budget above the
+#: median, not at it"); `estimate_seconds` sits at or below the medians.
+SLOW_PASS = 162 / 85
+#: A calibration, 3-4 minutes, per the prompt a tool prints before one.
+CALIBRATION_S = 210.0
+#: Metering: up to three 300 dpi RGB probes, at CLAUDE.md's 22 s median.
+METERING_S = 3 * 22.0
+#: The lamp from cold, which `DirectScanner.wait_warm` waits out.
+WARM_UP_S = 80.0
+
+
+def say_estimate(passes_s: float, other_s: float, say=print,
+                 warn=None) -> float:
+    """Say how long a run should take, and when to background it.
+
+    ``passes_s`` is its passes at `estimate_seconds`; ``other_s`` the rest --
+    calibration, metering, film moves. The warning is judged on the slow end
+    (`SLOW_PASS`, the lamp from cold) rather than the typical: a run warned
+    about needlessly costs nothing, and one killed at 10 minutes is a wedge.
+    Returns the slow end, in seconds.
+    """
+    typical = passes_s + other_s
+    slow = passes_s * SLOW_PASS + other_s + WARM_UP_S
+    say(f"estimated {typical / 60:.1f} min, up to {slow / 60:.1f} on a dense "
+        "frame from cold (an estimate from the library's timings)")
+    if slow > FOREGROUND_S:
+        (warn or say)("  possibly longer than 8 minutes: run it in the "
+                      "background. A foreground command killed mid-read "
+                      "wedges the scanner.")
+    return slow
+
+
 # ---------------------------------------------------------------------------
 # Jobs -- what the UI can ask for
 # ---------------------------------------------------------------------------

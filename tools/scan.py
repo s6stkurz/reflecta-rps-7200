@@ -37,32 +37,24 @@ from rps7200.library import FilmNotes
 from rps7200.session import HeldOpen, keep_unfiled
 
 
-#: What a calibration costs, for the estimate: 3-4 minutes, per the prompt
-#: this tool prints before one.
-CALIBRATION_S = 210.0
-#: What auto-exposure costs: up to three 300 dpi RGB probes.
-METERING_S = 3 * 22.0
-#: Past this a run should be backgrounded -- a harness that kills a
-#: foreground command at 10 minutes abandons its read, which wedges the
-#: scanner. CLAUDE.md's figure.
-FOREGROUND_S = 8 * 60.0
-
-
 def say_estimate(*, passes: int, resolution: int, infrared: bool,
                  fast_infrared: bool, calibrating: bool, metering: bool) -> float:
-    """Print how long this run should take, before it starts. Returns seconds."""
-    from rps7200.session import estimate_seconds
+    """Print how long this run should take, before it starts.
 
-    seconds = passes * estimate_seconds(resolution, infrared, fast_infrared)
-    seconds += CALIBRATION_S if calibrating else 0.0
-    seconds += METERING_S if metering else 0.0
-    print(f"estimated {seconds / 60:.1f} min (an estimate from the library's "
-          f"medians; dense frames run longer)", flush=True)
-    if seconds > FOREGROUND_S:
-        print("  longer than 8 minutes: run it in the background. A "
-              "foreground command killed mid-read wedges the scanner.",
-              file=sys.stderr, flush=True)
-    return seconds
+    Returns the slow end, which is what the backgrounding warning is judged
+    on: `estimate_seconds` sits at or below the library's medians, and this
+    used to warn on it -- `--dpi 3600 --bracket 2` came to 7.9 minutes and no
+    warning, with the bracket's top pass pinned to the exposure ceiling, the
+    slowest a pass can be.
+    """
+    from rps7200 import session
+
+    return session.say_estimate(
+        passes * session.estimate_seconds(resolution, infrared, fast_infrared),
+        (session.CALIBRATION_S if calibrating else 0.0)
+        + (session.METERING_S if metering else 0.0),
+        say=lambda m: print(m, flush=True),
+        warn=lambda m: print(m, file=sys.stderr, flush=True))
 
 
 class _StoppedBetweenPasses(Exception):

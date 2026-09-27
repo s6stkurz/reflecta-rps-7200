@@ -28,8 +28,11 @@ new roll in a folder of its own, so the tool names the folder, and the frames
 left, when it says how to resume.
 
 Start with `--dry-run`. It prescans and advances only, so it walks the whole
-strip in a couple of minutes and shows where each picture sits before three
-hours are committed to scanning them. Its manifest is `survey.json`, beside the
+strip in minutes -- a calibration and some 25 s a frame -- and shows where
+each picture sits before three hours are committed to scanning them. Every run
+says how long it should take before it opens the scanner, and when to run it
+in the background: a foreground command killed at 10 minutes abandons its
+read, which wedges the scanner. Its manifest is `survey.json`, beside the
 `prescanNN.tif` it measured each frame on, so the walk survives the roll that
 follows it into the same directory.
 """
@@ -45,11 +48,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import preview, tiff
+from rps7200 import preview, session, tiff
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
     METER_MODES,
+    METER_ONCE,
     DirectScanner,
     supports_infrared,
 )
@@ -163,8 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="measure registration and log the correction that "
                          "would be sent, without moving the film")
     ap.add_argument("--dry-run", action="store_true",
-                    help="prescan and advance only -- no full scans. Walks a "
-                         "6-frame strip in about 2.5 minutes")
+                    help="prescan and advance only -- no full scans. A walk "
+                         "still calibrates first, so a 6-frame strip is about "
+                         "6 minutes; the run says its own estimate before it "
+                         "opens the scanner")
     ap.add_argument("--meter", choices=METER_MODES, default=METER_EACH,
                     help="'each' re-meters every frame, as CyberView does; "
                          "'once' meters the first picture and holds it, which "
@@ -336,6 +342,46 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
                               for n in offsets},
                   "walked": len(frames), "from": str(folder),
                   "prescan_resolution": walked_at, "film": film}
+
+
+def say_roll_estimate(args: argparse.Namespace) -> float:
+    """Say how long this roll should take before the device opens.
+
+    CLAUDE.md sends a walk here and says anything over ~8 minutes must run in
+    the background -- a foreground command killed at 10 minutes abandons its
+    read, which wedges the scanner -- and this tool, the one most likely to
+    pass that line, said nothing: a walk of a whole strip is a calibration
+    and twenty-odd prescans, and any roll is minutes a frame. `tools/scan.py`
+    has always said. With no --frames the roll runs to the end of the strip,
+    so it is costed to the last place a strip can have.
+
+    Returns the slow end, in seconds.
+    """
+    first = max(0, args.start_at - 1)
+    if args.frames is not None:
+        count, what = args.frames, f"{args.frames} frame(s)"
+    elif args.only is not None:
+        count, what = len(args.only), f"the {len(args.only)} chosen frame(s)"
+    else:
+        count = max(1, session.LAST_PLAUSIBLE_POSITION + 1 - first)
+        what = f"up to {count} frames -- to the end of the strip, as --frames is not given"
+    prescan = session.estimate_seconds(args.prescan_dpi, False)
+    scan = (0.0 if args.dry_run else session.estimate_seconds(
+        args.dpi, args.ir, bool(args.fast_ir and args.ir)))
+    metering = 0.0
+    if not args.dry_run and args.meter == METER_EACH:
+        metering = count * session.METERING_S
+    elif not args.dry_run and args.meter == METER_ONCE:
+        metering = session.METERING_S
+    calibrating = not args.no_shading and not (
+        args.reuse and Path(args.reference).exists())
+    print(f"{'walking' if args.dry_run else 'scanning'} {what}:", flush=True)
+    return session.say_estimate(
+        count * (prescan + scan),
+        count * session.FORWARD_FRAME_S + metering
+        + (session.CALIBRATION_S if calibrating else 0.0),
+        say=lambda m: print(m, flush=True),
+        warn=lambda m: print(m, file=sys.stderr, flush=True))
 
 
 def _differs_from_earlier(path: Path, args: argparse.Namespace) -> list[str]:
@@ -548,6 +594,8 @@ def main() -> int:
         "held": held_note,
         "frames": [],
     }
+    if args.frames != 0:
+        say_roll_estimate(args)
 
     #: The one writer of the manifest, from this thread and the writer's; see
     #: `session.RollManifest`. Made once the roll is placed, and not before.
