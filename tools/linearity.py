@@ -33,9 +33,21 @@ a -16% one.
 
 **Raw by default, not corrected.** The correction's per-column gain exceeds 1
 wherever the lamp falls off, so it pushes near-rail values around and inflates
-exactly the band under test. `--corrected` measures the delivered pixels instead,
-which is a different and also useful question -- what the *file* does -- and the
-two disagree, which is worth seeing.
+exactly the band under test. `--corrected` measures `library.corrected`'s
+recomputation instead -- today's correction on each entry's own reference,
+what the delivered pixels would be, not a delivered file -- which is a
+different and also useful question, and the two disagree, which is worth
+seeing. An entry that recomputation does not correct ("deliberately raw", "no
+reference", "already") is left out and named, rather than measured as though
+it were: a series mixing them compares the correction, not the sensor.
+
+**Registered, pair by pair.** A ratio per pixel needs the same film position in
+both passes, and consecutive passes of one frame do not give it: the carriage
+start has crept 0 to -3 lines across six passes here (`fast_ir_probe`'s
+report). Unregistered, edge pixels paired a bright place with a darker one and
+landed in the upper bands with inflated ratios -- biasing exactly the 70-95%
+departures the target was chosen on. Each adjacent pair is registered and
+cropped to its overlap first, and the shift is printed.
 
 ### `--probe`: one ladder per frame, and the pictures kept apart
 
@@ -71,6 +83,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library                                 # noqa: E402
 from rps7200.console import use_utf8_stdout
+from rps7200.uniformity import align, register              # noqa: E402
 
 #: Level bands, as fractions of full scale. Finer at the top, which is where the
 #: question is: 0.80 was chosen over 0.90 on what happens between them.
@@ -99,9 +112,28 @@ def middle(image: np.ndarray) -> np.ndarray:
                  int(width * CROP):int(width * (1 - CROP))]
 
 
+class NotCorrected(ValueError):
+    """An entry `--corrected` cannot measure: `library.corrected` left it as
+    it was, so its pixels are not the corrected ones the series claims."""
+
+
 def pixels(entry: Path, corrected: bool) -> np.ndarray | None:
-    return (library.corrected(entry)[0] if corrected
-            else library.decode_raw(entry))
+    if not corrected:
+        return library.decode_raw(entry)
+    image, record = library.corrected(entry)
+    state = record.get("corrected")
+    if state != "applied":
+        raise NotCorrected(f"{entry.name}: correction state {state!r}, not "
+                           "'applied' -- left out")
+    return image
+
+
+def aligned(dark: np.ndarray, bright: np.ndarray,
+            ) -> tuple[np.ndarray, np.ndarray, tuple[int, int]]:
+    """One adjacent pair, cropped to where both look at the same film."""
+    dy, dx, _confidence = register(dark, bright)
+    a, b = align(dark, bright, dy, dx)
+    return a, b, (dy, dx)
 
 
 def ladder(match: str, root="library", corrected: bool = False) -> list[dict]:
@@ -121,7 +153,11 @@ def ladder(match: str, root="library", corrected: bool = False) -> list[dict]:
             scale = scale[0] if scale else None
         if scale is None:
             continue
-        image = pixels(entry, corrected)
+        try:
+            image = pixels(entry, corrected)
+        except NotCorrected as exc:
+            print(f"  {exc}", file=sys.stderr)
+            continue
         if image is None:
             continue
         out.append({"name": entry.name, "scale": float(scale),
@@ -188,7 +224,11 @@ def by_frame(probe: str, root="library",
                 notes.append(f"frame {frame} x{row['rung']:.2f}: "
                              f"{len(candidates)} entries share exposure "
                              f"{list(key)}; used {candidates[0].name}")
-            image = pixels(candidates[0], corrected)
+            try:
+                image = pixels(candidates[0], corrected)
+            except NotCorrected as exc:
+                notes.append(f"frame {frame} x{row['rung']:.2f}: {exc}")
+                continue
             if image is None:
                 notes.append(f"frame {frame} x{row['rung']:.2f}: "
                              f"{candidates[0].name} has no readable pixels")
@@ -230,8 +270,9 @@ def report_walk(frames: dict[int, list[dict]], notes: list[str],
                 continue
             worst = 0.0
             for i in range(len(passes) - 1):
-                values = departures(passes[i]["image"][..., channel],
-                                    passes[i + 1]["image"][..., channel])
+                a, b, _shift = aligned(passes[i]["image"],
+                                       passes[i + 1]["image"])
+                values = departures(a[..., channel], b[..., channel])
                 for (low, _), value in zip(BANDS, values):
                     if value is not None and low >= 0.70:
                         worst = min(worst, value)
@@ -297,15 +338,16 @@ def report(passes: list[dict], corrected: bool) -> int:
               + "".join(f"{f'{lo:.0%}-{hi:.0%}':>10}" for lo, hi in BANDS))
         for i in range(len(passes) - 1):
             dark, bright = passes[i], passes[i + 1]
-            values = departures(dark["image"][..., channel],
-                                bright["image"][..., channel])
+            a, b, (dy, dx) = aligned(dark["image"], bright["image"])
+            values = departures(a[..., channel], b[..., channel])
             cells = "".join(f"{v:9.2f}%" if v is not None else f"{'--':>10}"
                             for v in values)
             # Labelled by the exposures rather than by the entry names: entries
             # taken in one second share a timestamp and differ only by a `-2`
             # suffix, so names made two rows read identically.
             print(f"x{dark['scale']:<6.3f}->x{bright['scale']:<6.3f}"
-                  f"{bright['scale'] / dark['scale']:7.3f}  {cells}")
+                  f"{bright['scale'] / dark['scale']:7.3f}  {cells}"
+                  f"   shift {dy:+d},{dx:+d}")
             # The top band each pair can still speak for, which is the figure
             # the target was chosen on.
             for (low, _), value in zip(BANDS, values):
@@ -333,10 +375,12 @@ def main() -> int:
                          "nothing about which frame a pass came from.")
     ap.add_argument("--root", default="library")
     ap.add_argument("--corrected", action="store_true",
-                    help="measure the delivered pixels instead of the raw ones. "
-                         "A different question, and the two disagree: the "
+                    help="measure today's correction of each entry "
+                         "(library.corrected) instead of the raw pixels. A "
+                         "different question, and the two disagree: the "
                          "correction's per-column gain exceeds 1 where the lamp "
-                         "falls off, which inflates the band under test.")
+                         "falls off, which inflates the band under test. "
+                         "Entries it does not correct are left out, and named.")
     args = ap.parse_args()
     if args.probe:
         frames, notes = by_frame(args.probe, args.root, args.corrected)
