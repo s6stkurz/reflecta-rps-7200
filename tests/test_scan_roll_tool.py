@@ -436,15 +436,15 @@ def test_the_advice_to_resume_names_the_roll_it_resumes(tmp_path, monkeypatch,
     assert scan_roll.main() == 1
     (folder,) = (tmp_path / "rolls").iterdir()
     (advice,) = [line for line in capsys.readouterr().err.splitlines()
-                 if "resume a failed picture" in line]
-    assert advice.endswith(f"with --roll {folder.name} --start-at N")
+                 if line.startswith("resume ")]
+    assert advice.endswith(f"with --roll {folder.name} --start-at 2 --only 2")
 
     # Followed as printed, it finishes that roll.
     monkeypatch.setattr(scan_roll, "DirectScanner",
                         lambda **kw: FakeRollScanner(frames=1))
     monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
-                                      "--no-shading", "--frames", "1",
-                                      "--roll", folder.name, "--start-at", "2"])
+                                      "--no-shading", "--roll", folder.name,
+                                      "--start-at", "2", "--only", "2"])
     assert scan_roll.main() == 0
     assert list((tmp_path / "rolls").iterdir()) == [folder]
     manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
@@ -465,7 +465,7 @@ def test_the_advice_to_resume_quotes_a_folder_a_shell_would_split(
                                       "--no-shading", "--frames", "1",
                                       "--out", str(out)])
     assert scan_roll.main() == 1
-    assert f'with --out "{out}" --start-at N' in capsys.readouterr().err
+    assert f'with --out "{out}" --start-at 1 --only 1' in capsys.readouterr().err
 
 
 def test_a_manifest_the_disk_refuses_does_not_stop_the_roll(tmp_path,
@@ -1396,3 +1396,56 @@ def test_a_roll_with_no_count_that_runs_to_the_end_is_not_short(tmp_path,
                                                                 monkeypatch):
     _scanner, code = run(tmp_path, monkeypatch)
     assert code == 0
+
+
+# --- resuming just the frames that were left ---------------------------------
+
+
+def test_only_reaches_the_driver_as_places_on_the_strip(tmp_path, monkeypatch):
+    """A resume that scans from --start-at to the end took again every frame
+    already done: hours at 3600 dpi, and a second library entry for each."""
+    scanner, code = run(tmp_path, monkeypatch, "--start-at", "3",
+                        "--only", "3,9,15")
+    assert code == 0
+    assert scanner.asked["only"] == (2, 8, 14)
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert manifest["settings"]["only"] == [3, 9, 15]
+
+
+@pytest.mark.parametrize("argv", [
+    ["--only", "0"],
+    ["--only", "two"],
+    ["--start-at", "5", "--only", "3,9"],     # 3 is behind where it starts
+])
+def test_an_only_that_cannot_be_reached_is_refused_before_opening(
+        tmp_path, monkeypatch, argv):
+    opened = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, *argv, opened=opened)
+    assert refused.value.code == 2
+    assert opened == []
+
+
+def test_the_advice_to_resume_names_every_frame_left(tmp_path, monkeypatch,
+                                                     capsys):
+    class TwoBad(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index in (0, 2):
+                    yield type(frame)(
+                        index=frame.index, position=frame.position,
+                        image=None, meta={}, prescan=frame.prescan,
+                        registration={}, error="the read timed out")
+                else:
+                    yield frame
+
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: TwoBad(frames=4))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
+                                      "--no-shading", "--frames", "4",
+                                      "--roll", "twobad",
+                                      "--out", str(tmp_path / "roll")])
+    assert scan_roll.main() == 1
+    err = capsys.readouterr().err
+    assert "--start-at 1 --only 1,3" in err

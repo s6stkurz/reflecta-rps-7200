@@ -20,10 +20,12 @@ film advances between frames.
 Every frame goes to disk the moment it exists: a library entry with the raw
 bytes, the shading reference and the CCD mask beside the pixels, plus a
 `roll.json` manifest rewritten after each one. A roll takes hours, and a crash
-two hours in should cost the frame it was on, not the roll -- `--start-at`,
-with the roll's `--roll` or `--out`, resumes from the manifest. Without either
-a run is a new roll in a folder of its own, so the tool names the folder when
-it says how to resume.
+two hours in should cost the frame it was on, not the roll -- given the roll's
+`--roll` or `--out`, a run adds to its manifest, and `--only` with `--start-at`
+takes again just the frames it lists; without `--only` a run scans every frame
+from `--start-at` on, finished or not. Without `--roll` or `--out` a run is a
+new roll in a folder of its own, so the tool names the folder, and the frames
+left, when it says how to resume.
 
 Start with `--dry-run`. It prescans and advances only, so it walks the whole
 strip in a couple of minutes and shows where each picture sits before three
@@ -115,6 +117,13 @@ def build_parser() -> argparse.ArgumentParser:
                          "N files its frames under the same numbers as "
                          "before, as long as the strip went back in the same "
                          "way -- which only you can see")
+    ap.add_argument("--only", type=_frame_list, default=None,
+                    metavar="N[,N...]",
+                    help="scan only these frames, by their place on the "
+                         "strip, advancing past the rest -- what a resume "
+                         "asks for: the frames an earlier run left unfinished, "
+                         "which it names when it ends. The window's chosen "
+                         "frames are the same thing")
     ap.add_argument("--rewind", type=int, default=0,
                     help="wind the film back this many frames before doing "
                          "anything else, one frame at a time, checking each "
@@ -191,6 +200,19 @@ def build_parser() -> argparse.ArgumentParser:
                     help="consecutive failed frames before the roll gives up")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     return ap
+
+
+def _frame_list(text: str) -> tuple[int, ...]:
+    """``--only``'s frame numbers: places on the strip, counted from 1."""
+    try:
+        numbers = tuple(sorted({int(part) for part in text.replace(",", " ").split()}))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: frame numbers, separated by commas") from None
+    if not numbers or numbers[0] < 1:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: frames are counted from 1")
+    return numbers
 
 
 def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
@@ -336,6 +358,11 @@ def main() -> int:
         ap.error(f"--frames must not be negative, got {args.frames}")
     if args.start_at < 1:
         ap.error(f"--start-at counts frames from 1, got {args.start_at}")
+    if args.only is not None and args.only[0] < args.start_at:
+        # The roll starts at --start-at and only goes forward, so a frame
+        # before it would be asked for and never reached.
+        ap.error(f"--only {args.only[0]} is before --start-at {args.start_at}; "
+                 f"start at {args.only[0]} or before it")
     if (not args.no_shading and not args.dry_run
             and not _Driver.correctable_at(args.dpi)):
         ap.error(
@@ -429,6 +456,7 @@ def main() -> int:
             "dpi": args.dpi, "infrared": args.ir, "meter": args.meter,
             "film": args.film, "dry_run": args.dry_run,
             "start_at": args.start_at, "frames": args.frames,
+            "only": list(args.only) if args.only is not None else None,
             # Written because the window pins a commissioned scan's prescan to
             # whatever the survey walked at, and reads that pin from here
             # (`tools/gui.py` `_survey_predpi`). That was not true when it was
@@ -649,6 +677,10 @@ def main() -> int:
                 # The film is on this frame now; the roll counts from it, so
                 # an index is a transport position and a number is that + 1.
                 first_index=max(0, args.start_at - 1),
+                # Counted from 1 here and from 0 by the transport, as the
+                # window's chosen frames are.
+                only=(None if args.only is None
+                      else tuple(n - 1 for n in args.only)),
                 keep_raw=bool(args.library),
                 max_failures=args.max_failures,
                 dry_run=args.dry_run,
@@ -929,8 +961,19 @@ def main() -> int:
         # never read the manifest that says what this one has done.
         again = (f"--out {_quoted(out)}" if args.out
                  else f"--roll {_quoted(out.name)}")
-        print(f"resume a failed picture with {again} --start-at N",
-              file=sys.stderr)
+        # And with the frames left named. "--start-at N" alone, as this
+        # used to say, scanned every frame from N to the end of the strip
+        # again -- hours, at 3600 dpi, and a second library entry for each
+        # frame already done -- and could not take 3, 9 and 15 in one run.
+        left = sorted({int(r["number"]) for r in manifest["frames"]
+                       if not r.get("done")})
+        if left and not args.dry_run:
+            print(f"resume the unfinished frames with {again} --start-at "
+                  f"{left[0]} --only {','.join(str(n) for n in left)}",
+                  file=sys.stderr)
+        else:
+            print(f"resume a failed picture with {again} --start-at N "
+                  "--only N", file=sys.stderr)
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
