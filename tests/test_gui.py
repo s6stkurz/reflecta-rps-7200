@@ -875,7 +875,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _working=lambda: False, _hand_over=submitted.append,
         _scanned_in=lambda folder: set(),
         _refused_up_front=lambda *a, **k: False,
-        _sheet_roll=None,
+        _sheet_roll=None, root=None,
     )
 
 
@@ -5521,6 +5521,26 @@ def test_a_roll_from_elsewhere_is_not_added_to_another_of_its_name(
     # The same folder for the rest of the session, however its survey grows.
     (ours / "survey.json").write_text('{"frames": [1]}', encoding="utf-8")
     assert app._roll_folder() == ours
+
+
+def test_the_sheet_stays_open_until_its_roll_is_handed_over(window, tmp_path,
+                                                             monkeypatch):
+    """It closed before the question, so a Cancel -- or a busy scanner, or a
+    calibration still to make -- left it gone, under a message saying to
+    press its button again."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    sheet = app.sheet
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: False)
+    sheet._scan()
+    assert sheet.alive() and jobs == []
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    sheet._scan()
+    assert not sheet.alive() and len(jobs) == 1
 
 
 def test_carrying_a_walk_never_writes_over_one_or_follows_a_path(tmp_path):

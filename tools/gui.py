@@ -3388,7 +3388,7 @@ class ScannerGui:
         return moved
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=(),
-                       options=None) -> None:
+                       options=None) -> bool:
         """Go to the first frame ticked, then scan only what was ticked.
 
         The frame numbers are places on the strip, so the roll goes to the
@@ -3418,9 +3418,12 @@ class ScannerGui:
         The window's controls are left alone, because they go on describing
         the next single scan. Absent -- a caller that has no sheet -- every
         value falls back to the window, which is what used to happen always.
+
+        True once the roll is handed over, and only then: the sheet closes on
+        that, so a refusal or a Cancel leaves it open as it was.
         """
         if not numbers:
-            return
+            return False
         if self._working():
             # The sheet stays open and readable while the scanner is working,
             # so this button is reachable mid-roll. Queueing a second roll
@@ -3429,13 +3432,13 @@ class ScannerGui:
                 "Scan chosen frames",
                 "The scanner is busy. Wait for it to finish, or stop it, then "
                 "press this again -- the ticks stay where they are.")
-            return
+            return False
         # Over the sheet when the sheet asked, so the prompt is not hidden
         # behind the window it was pressed in.
         if self._calibration_missing(
                 self.sheet.top if self.sheet is not None and self.sheet.alive()
                 else None):
-            return
+            return False
         if options:
             # Read from the sheet rather than through `_dpi`, which reads the
             # window's box and would complain about a value this roll is not
@@ -3451,11 +3454,11 @@ class ScannerGui:
                     "Scan chosen frames",
                     "The contact sheet's scan dpi and prescan dpi have to be "
                     "whole numbers between 25 and 7200.")
-                return
+                return False
         else:
             dpi, predpi = self._dpi(), self._prescan_dpi()
             if dpi is None or predpi is None:
-                return
+                return False
 
         def chose(key, variable):
             """The sheet's value where it set one, else the window's."""
@@ -3482,7 +3485,7 @@ class ScannerGui:
                 "Scan chosen frames", predpi, dpi, infrared=infrared,
                 film=film, parent=self.sheet.top
                 if self.sheet is not None and self.sheet.alive() else None):
-            return
+            return False
         start_at, span = chosen_span(numbers)
         walked = len(self.survey)
         per = self._per_frame_seconds(dpi=dpi, ir=infrared, fast_ir=fast_ir)
@@ -3493,6 +3496,7 @@ class ScannerGui:
         # other, and the count alone did not say that hours of it were
         # scans being taken a second time.
         again = [n for n in numbers if n in self._scanned_in(folder)]
+        sheet = self.sheet
         if not messagebox.askokcancel(
             "Scan chosen frames",
             f"Scan {len(numbers)} of the {walked} frames walked: "
@@ -3507,8 +3511,11 @@ class ScannerGui:
             + self._approved_note(approved, correct)
             + self._options_note(options) + self._edges_pending()
             + "\n\nStart?",
+            # Over the sheet, which is still open while he decides.
+            parent=sheet.top if sheet is not None and sheet.alive()
+            else self.root,
         ):
-            return
+            return False
         # A sheet opened from outside this session's rolls is scanned into a
         # folder here, and its walk goes with it, as a walk added to it does.
         # Without it the roll here held the frames and approved.json and no
@@ -3523,7 +3530,7 @@ class ScannerGui:
                     "Scan chosen frames",
                     f"The walk in {self._sheet_roll} could not be copied into "
                     f"{folder}: {exc}\n\nNothing has moved.")
-                return
+                return False
             if carried:
                 self._say(f"copied the walk in {self._sheet_roll} into "
                           f"{folder}, which the roll is scanned into; the "
@@ -3566,6 +3573,7 @@ class ScannerGui:
             out=str(folder),
             notes=self._notes(), tags=self._tags(),
         ))
+        return True
 
     def _scanned_in(self, folder) -> set[int]:
         """The frames of the sheet's roll that are already scanned.
@@ -9442,10 +9450,15 @@ class _ContactSheet:
         # Read before the window goes: these are Tk variables that live in it,
         # and `_dismiss` destroys it.
         options = self.scan_options()
+        # Closed once the roll is handed over, not before the question. It
+        # used to go first, so a Cancel, a busy scanner, a calibration still
+        # to make or a refused setting left the sheet closed behind a message
+        # telling him to "press this again".
+        if not self.gui.on_scan_chosen(picked, approved, options):
+            return
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.top.destroy()
         self._dismiss()
-        self.gui.on_scan_chosen(picked, approved, options)
 
     def alive(self) -> bool:
         try:
