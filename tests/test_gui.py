@@ -4694,6 +4694,33 @@ def test_a_walk_not_yet_commissioned_reopens_as_it_was_left(window, tmp_path,
     app.sheet.top.destroy()
 
 
+def test_a_decision_on_the_sheet_is_on_disk_before_the_sheet_closes(
+        window, tmp_path, monkeypatch):
+    """Filed only when the sheet closed, so a crash or a kill with it open
+    lost everything decided since it opened -- for a walk not yet
+    commissioned, the only record of it."""
+    app, root = window
+    monkeypatch.setattr(gui, "SHEET_KEEP_MS", 10, raising=False)
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    app.sheet._rotate(2, 90)
+    app.sheet._toggle(3)
+    deadline = time.monotonic() + 5
+    stored = {}
+    while time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+        on_disk = json.loads((tmp_path / "gui-settings.json").read_text(
+            encoding="utf-8"))
+        stored = (on_disk.get("sheet") or {}).get("walk") or {}
+        if (stored.get("rotations") or {}).get("2") == 90:
+            break
+    assert app.sheet.alive(), "and without closing it"
+    assert stored["rotations"]["2"] == 90 and stored["ticks"]["3"] is False
+    app.sheet.top.destroy()
+
+
 def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
         window, tmp_path, monkeypatch):
     app, root = window

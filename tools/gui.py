@@ -244,6 +244,9 @@ MAX_TRAVEL_MM = MAX_FINE_MM
 
 THUMB_H = 76
 POLL_MS = 120
+#: How soon after a decision on the contact sheet it is filed in the settings:
+#: one write for a burst of clicks, and at most this much lost to a crash.
+SHEET_KEEP_MS = 1500
 #: How long to wait before opening a roll named on the command line. The window
 #: is built inside `__init__`, which runs before `mainloop`, so the root is not
 #: mapped yet: `open_roll` ends in a dialog whose parent would be an unmapped
@@ -398,6 +401,8 @@ class ScannerGui:
         self._queued_run = None
         #: A calibration handed over whose "calibrated" has not come back.
         self._calibration_pending = False
+        #: The open sheet's decisions, booked to be filed; see `_keep_sheet_soon`.
+        self._sheet_keep_job = None
         #: Threads writing files (Save all, Export): Quit waits for them.
         self._writing: list[threading.Thread] = []
         self.closing = False
@@ -2725,6 +2730,29 @@ class ScannerGui:
             sheets = self.remembered["sheet"] = {}
         sheets[key] = dict(state, walk=walk_stamp(self._sheet_roll))
         self._remember()
+
+    def _keep_sheet_soon(self) -> None:
+        """File the open sheet's decisions shortly, as they are made.
+
+        They were filed when the sheet closed, and only then: a crash, a
+        kill, or a power cut with the sheet open lost everything decided in it
+        since it opened -- for a walk not yet commissioned, the only record of
+        it. One write for a burst of changes, `SHEET_KEEP_MS` after the first.
+        """
+        if self._sheet_keep_job is not None:
+            return
+
+        def keep() -> None:
+            self._sheet_keep_job = None
+            sheet = self.sheet
+            if sheet is None or not sheet.alive():
+                return
+            try:
+                self._store_sheet_state(sheet.state())
+            except Exception as exc:                      # noqa: BLE001
+                self._say(f"could not keep the contact sheet settings: {exc}")
+
+        self._sheet_keep_job = self._later(SHEET_KEEP_MS, keep)
 
     def _recall_sheet_state(self) -> dict:
         """What the sheet should open holding.
@@ -8703,6 +8731,7 @@ class _ContactSheet:
         # how this picture is arranged, so the preview behind this sheet and
         # the scan taken later both agree with what was just decided here.
         self.gui.remember_arrangement(result)
+        self.gui._keep_sheet_soon()
         return _arrangement(result)
 
     def _find(self, number: int):
@@ -8788,7 +8817,7 @@ class _ContactSheet:
         self._adjuster = _FrameAdjuster(self, self.gui, index)
 
     def _refresh_caption(self, number: int) -> None:
-        """The cell's line under the picture.
+        """The cell's line under the picture, and a position filed as it moves.
 
         When the operator has set a position, that is what the cell shows, in
         the sheet's amber -- it is his number and it is the one that will be
@@ -8808,6 +8837,8 @@ class _ContactSheet:
         The wording itself is `frame_caption`, which is testable without a
         window. This is the lookup around it.
         """
+        # Every change of position comes through here; see `_keep_sheet_soon`.
+        self.gui._keep_sheet_soon()
         caption = self._captions.get(number)
         if caption is None:
             return
@@ -8998,6 +9029,8 @@ class _ContactSheet:
                                      else colour))
 
     def _changed(self) -> None:
+        # Ticks and options, filed as they change; see `_keep_sheet_soon`.
+        self.gui._keep_sheet_soon()
         picked = self.chosen()
         self._paint_rings()
         for number in self._rings:
