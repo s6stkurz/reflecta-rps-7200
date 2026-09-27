@@ -8,12 +8,17 @@
 against Stefan's notes, and *inferred*. This settles the inferred ones against the
 hardware, cheapest first.
 
-Everything here is 300 dpi RGB 8-bit and sends only byte values the vendor sends.
+Everything here is 300 dpi RGB 8-bit. Not every stage keeps to byte values the
+vendor sends: 8a sends SLIDE action 0x01 with value 0x04, 12 raises param to
+255, 14 sends param 0 and 15 param 160 -- none of them in any capture. Each
+stage's docstring says what it sends; read it before running one.
 No shading calibration -- these are geometry and protocol questions, not colour.
 Nothing in stages 1-5 moves the transport.
 
 Results go to probe/, and every measurement is taken from the file that was
-written, never from the array it came from.
+written, never from the array it came from. results.json is written after each
+stage, so one that fails or is stopped keeps those before it. Ctrl-C finishes
+the stage in flight and starts no other; a second one aborts.
 """
 from __future__ import annotations
 
@@ -28,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import tiff
-from rps7200.console import use_utf8_stdout
+from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     DEPTH_8,
     FULL_FRAME,
@@ -38,6 +43,7 @@ from rps7200.direct import (
     frame_contrast,
 )
 from rps7200.protocol import Sense
+from rps7200.session import write_manifest
 from rps7200.usb_transport import CheckCondition, UsbError
 
 OUT = Path("probe")
@@ -1390,18 +1396,29 @@ def main() -> int:
     if wants_film:
         print(f"stages {wants_film} compare images and need film in the transport")
 
-    results = {}
-    with DirectScanner(verbose=False) as s:
+    path = OUT / "results.json"
+    results = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    # A stage runs whole: its passes and moves are one measurement, and
+    # several put the film back at their end. So Ctrl-C is taken between
+    # stages, never inside a read -- with the default handler one press
+    # abandoned the read in flight, the wedge.
+    interrupt = DeferredInterrupt(say=lambda m: print(
+        "\nstopping after the stage in flight -- interrupting a read wedges "
+        "the scanner. Press Ctrl-C again to abort anyway.",
+        file=sys.stderr, flush=True))
+    with interrupt, DirectScanner(verbose=False) as s:
         s.wait_ready(timeout=180.0)
         s.wait_warm(timeout=300.0)
         for n in sorted(set(args.stages)):
+            if interrupt.requested():
+                print(f"\nstopped at Ctrl-C, before stage {n}", file=sys.stderr)
+                return 130
             results[f"stage{n}"] = STAGES[n](s)
-
-    path = OUT / "results.json"
-    prev = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    prev.update(results)
-    path.write_text(json.dumps(prev, indent=2), encoding="utf-8")
-    print(f"\nwritten to {path}")
+            # After each stage, not once at the end: a stage that raised --
+            # a refusal, a suspect device -- took every earlier stage's
+            # results with it.
+            write_manifest(path, results)
+            print(f"\nwritten to {path}")
     return 0
 
 
