@@ -278,6 +278,18 @@ def test_the_last_chunk_returns_the_strip_to_its_first_frame(monkeypatch, tmp_pa
     assert scanner.position_now == 10
 
 
+def test_a_whole_walk_starts_wherever_the_film_is(monkeypatch, tmp_path):
+    """Only a chunk has a frame it must start on; a whole walk run again into
+    the same file starts at its frame 1, wherever that is now."""
+    out = tmp_path / "exposure.json"
+    scanner = ProbeScanner([])
+    argv = ["--frames", "2", "--ladder-every", "0", "--json", str(out)]
+    assert run(monkeypatch, "exposure_probe", scanner, *argv) == 0
+    scanner.position_now = 40
+    assert run(monkeypatch, "exposure_probe", scanner, *argv) == 0
+    assert scanner.position_now == 40, "not returned to where it started"
+
+
 def test_exposure_probe_leaves_a_suspect_device_where_it_is(monkeypatch, tmp_path):
     """Its rewind sent SLIDE_PREV to a scanner a stopped read left busy."""
     calls: list[str] = []

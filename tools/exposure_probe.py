@@ -286,7 +286,7 @@ def main() -> int:
             # see the transport, so this warns and carries on.
             print("   READ_STATE says no media -- a set bit is evidence and a "
                   "clear one is not, so this is a note, not a refusal")
-        if start is not None:
+        if args.only and start is not None:
             # Where the film has to be for frame numbers to mean frames. A
             # chunk used to begin wherever the transport was, so `--only 5-8`
             # after a rewound `--only 1-4` scanned frames 1-4 again and filed
@@ -414,7 +414,8 @@ def main() -> int:
                         print(f"\nthe film is on frame {schedule[-1][0] + 1}, "
                               f"where the next chunk starts")
                 else:
-                    first = min(positions) if start is None else start
+                    first = (start if args.only and start is not None
+                             else min(positions))
                     back = max(positions) - first
                     for _ in range(back):
                         if scanner.retreat() is None:
