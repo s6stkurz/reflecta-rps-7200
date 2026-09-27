@@ -3587,6 +3587,19 @@ def test_a_duplicate_and_its_original_each_export_their_own_frames(tmp_path):
     assert listed["R"]["entries"] == {1: again[1]}
 
 
+def test_an_entry_recorded_on_windows_is_found_elsewhere(tmp_path):
+    """roll.json records `str(entry)`, which on Windows has backslashes, and
+    a POSIX path reads the whole string as one name. A library and its rolls
+    on a shared disk, scanned on Windows and opened on a Mac, then called
+    every frame's entry deleted and exported nothing."""
+    folder = _shelf(tmp_path, name="R", done=(1, 2))
+    entries = {n: _filed(tmp_path, "R", n, f"2026a-{n}", folder) for n in (1, 2)}
+    _names_its_entries(folder, {1: rf"library\{entries[1].name}",
+                                2: rf"D:\scans\library\{entries[2].name}"})
+    listed = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")
+    assert listed[0]["entries"] == entries
+
+
 def test_a_name_typed_again_after_a_delete_is_a_new_roll(tmp_path):
     """The folder comes back under the same name and the same path, so
     neither the name nor the folder tells the two strips apart. Frames 7-12 of

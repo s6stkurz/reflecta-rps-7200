@@ -39,7 +39,7 @@ import time
 import threading
 import traceback
 import tkinter as tk
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 import numpy as np
@@ -6295,7 +6295,11 @@ def roll_entries(summary: dict, index: dict) -> dict[int, Path]:
     out: dict[int, Path] = {}
     for number in summary.get("done") or ():
         if number in recorded:
-            entry = ids.get(Path(recorded[number]).name)
+            # The last part on either separator: `RollManifest` records
+            # `str(entry)`, backslashes on Windows, which a POSIX `Path` reads
+            # as one name -- a roll scanned there and opened here on a shared
+            # disk found none of its entries and exported nothing.
+            entry = ids.get(PureWindowsPath(recorded[number]).name)
         else:
             entry = by_folder.get(number) or by_name.get(number)
         if entry is not None:
