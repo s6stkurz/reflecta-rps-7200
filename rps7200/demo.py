@@ -1517,7 +1517,12 @@ class DemoScanner:
                 self._log(f"demo frame from {path.name}")
                 return got
         self._next += 1
-        return {"pixels": _test_card(channels, self._next), "dpi": None,
+        # The card is drawn at 600 dpi's shape, and says so: with no dpi it
+        # came back 574 x 862 at every resolution, so a 300 dpi prescan was
+        # twice the device's width and every edge reading, offset and
+        # estimate made from it in an empty checkout was off by that factor.
+        return {"pixels": _test_card(channels, self._next),
+                "dpi": TEST_CARD_DPI,
                 "reference": None, "ccd_mask": None, "entry": None,
                 "file": "test card"}
 
@@ -1624,6 +1629,11 @@ def _entry_channels(path: Path) -> int:
         return int((record.get("scan") or {}).get("channels") or 0)
     except Exception:                                    # noqa: BLE001
         return 0
+
+
+#: The resolution `_test_card`'s shape is the device's at: 574 lines of 862
+#: columns is a 600 dpi pass.
+TEST_CARD_DPI = 600
 
 
 def _test_card(channels: int, seed: int) -> np.ndarray:

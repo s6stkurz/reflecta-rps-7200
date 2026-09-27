@@ -315,6 +315,19 @@ def test_a_film_with_nothing_stored_still_drives_the_window(tmp_path):
     assert meta["film"] == "positive"
 
 
+def test_an_empty_library_still_answers_at_the_resolution_asked(tmp_path):
+    """With nothing stored the test card came back 574 x 862 whatever was
+    asked, so a fresh checkout's 300 dpi prescan was twice the device's
+    width, and every edge reading and offset made from it was off by that."""
+    s = DemoScanner(tmp_path / "nothing-here", speed=1e9)
+    s.open()
+    low, _ = s.prescan(resolution=300)
+    high, _ = s.scan(resolution=1200, infrared=False)
+    s.close()
+    assert low.shape[:2] == (287, 431)
+    assert high.shape[:2] == (1148, 1724)
+
+
 def test_a_pass_comes_back_at_the_resolution_it_asked_for(tmp_path):
     """A pass reported as 900 dpi that hands back 1800 dpi pixels is a
     stand-in lying about the one thing the window sizes everything from -- the
