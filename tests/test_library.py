@@ -427,7 +427,10 @@ def test_the_scan_block_carries_everything_scan_records(tmp_path):
     `metering` was, which is why a blown blue channel could not be diagnosed
     from the entry. `filter_offsets` was, which is the field the pass-to-pass
     column offset would be investigated with. Both were noticed by accident.
-    This asserts the list keeps up with what scan() puts in meta.
+
+    The meta here is typed by hand, so this pins the two fields that were
+    dropped and cannot notice a third. That `scan()`'s own meta reaches the
+    record whole is `test_real_pass.py`'s, which runs the pass.
     """
     raw, image = index_stream(8, 4, 3)
     meta = {

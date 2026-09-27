@@ -430,6 +430,243 @@ class NoWaiting:
         return getattr(self._real, name)
 
 
+def _inquiry_answer() -> bytes:
+    """An INQUIRY answer long enough for every offset `inquiry()` reads."""
+    d = bytearray(120)
+    d[4] = len(d) - 4
+    d[8:16] = b"TESTDEV "
+    d[16:32] = b"command double  "
+    d[32:36] = b"0.00"
+    d[36:38] = (7200).to_bytes(2, "little")
+    d[40:42] = (10344).to_bytes(2, "little")
+    d[42:44] = (6888).to_bytes(2, "little")
+    d[44] = 0x10                                     # an infrared filter
+    d[45] = 0x24                                     # 8 and 16 bits
+    d[46] = 0x04                                     # the index format
+    d[54:56] = (300).to_bytes(2, "little")
+    return bytes(d)
+
+
+class DeviceAtCommands:
+    """The scanner itself, answering every command a pass sends, byte for byte.
+
+    `FakeTransport` answers what a test tells it to and everything else with
+    nothing, so `DirectScanner.scan()`, `prescan()` and `calibrate_shading()`
+    never got past GET PARAMETERS in any test: the meta, raw pixels, raw bytes
+    and command log every real entry is built from were checked by grepping
+    the source. This answers at the level `Transport.command` speaks, so the
+    driver's own code runs from the first READ STATE to the last line:
+
+    - SET SCAN FRAME and MODE SELECT are parsed, and each pass is the picture
+      they asked for: its width and lines from the frame at the resolution,
+      three planes or four, eight bits or sixteen.
+    - START SCAN makes that picture -- seeded, different for every pass -- and
+      encodes it with `direction.encode_index`, bottom-up for the pass numbers
+      in ``upward``, so GET PARAMETERS, the CCD mask (SCSI COPY) and every
+      READ describe it. Each pass's first READ answers "not yet", as the
+      device's first reads usually do.
+    - A calibration (MODE SELECT's calibrate bit) is sixteen-bit lines, a dark
+      phase and then a lit one, with a column falloff to correct, and ends on
+      END OF DATA the way the device's does.
+    - The calibration-info and shading-descriptor READs follow their prepare
+      WRITE, as on the device.
+
+    ``passes`` keeps every pass it served -- pixels, bytes and parameters -- so
+    a test can hold what the driver filed against what the device sent. An
+    opcode it does not know fails the test rather than answering empty: SET
+    SCAN HEAD among them, and STOP SCAN, which the vendor never sends either.
+    """
+
+    #: What READ GAIN/OFFSET reports: the device's own power-on values.
+    EXPOSURE = (9604, 6506, 6506, 7745)
+
+    def __init__(self, *, upward=(), seed=0, position=0):
+        self.upward = set(upward)
+        self.seed = seed
+        self.position = position
+        self.sent: list[tuple[int, bytes]] = []
+        self.passes: list[dict] = []
+        self.closed = False
+        from rps7200.framing import FULL_FRAME
+        from rps7200.protocol import DEPTH_8, ONE_PASS_COLOR
+        self._frame = FULL_FRAME
+        self._mode = {"resolution": 300, "passes": ONE_PASS_COLOR,
+                      "depth": DEPTH_8, "calibrate": False}
+        self._prepared = False
+        self._sense = bytes(14)
+        self._pass: dict | None = None
+        self._served = 0
+        self._waited = False
+
+    def close(self):
+        self.closed = True
+
+    def _refuse(self, opcode, asc):
+        sense = bytearray(14)
+        sense[2], sense[12] = 0x05, asc
+        self._sense = bytes(sense)
+        raise CheckCondition(opcode)
+
+    def command(self, command, data=None, read_size=0, timeout_ms=0,
+                max_wait_s=60.0):
+        from rps7200 import protocol as p
+
+        opcode = command[0]
+        data = bytes(data) if data else b""
+        self.sent.append((opcode, data))
+        if opcode == p.SCSI_REQUEST_SENSE:
+            sense, self._sense = self._sense, bytes(14)
+            return sense
+        if opcode in (p.SCSI_TEST_UNIT_READY, p.SCSI_WRITE_GAIN_OFFSET,
+                      p.SCSI_SLIDE, p.SCSI_VENDOR_E7):
+            return b""
+        if opcode == p.SCSI_INQUIRY:
+            return _inquiry_answer()[:read_size]
+        if opcode == p.SCSI_READ_STATE:
+            state = bytearray(13)
+            state[2] = self.position
+            return bytes(state)
+        if opcode == p.SCSI_READ_GAIN_OFFSET:
+            d = bytearray(123)
+            for offset, value in zip((60, 62, 64, 98), self.EXPOSURE):
+                d[offset:offset + 2] = value.to_bytes(2, "little")
+            d[66], d[67], d[68], d[100] = DEVICE_OFFSET
+            d[72], d[73], d[74], d[102] = DEVICE_GAIN
+            return bytes(d[:read_size])
+        if opcode == p.SCSI_WRITE:
+            sub = int.from_bytes(data[0:2], "little")
+            if sub == p.SUB_CALIBRATION_INFO | 0x80:
+                self._prepared = True
+            elif sub == p.SUB_SCAN_FRAME:
+                self._frame = tuple(int.from_bytes(data[i:i + 2], "little")
+                                    for i in (6, 8, 10, 12))
+            return b""
+        if opcode == p.SCSI_MODE_SELECT:
+            quality = int.from_bytes(data[9:11], "little")
+            self._mode = {"resolution": int.from_bytes(data[2:4], "little"),
+                          "passes": data[4], "depth": data[5],
+                          "calibrate": bool(quality & p.QUALITY_CALIBRATE)}
+            return b""
+        if opcode == p.SCSI_SCAN:
+            assert command[4] == 1, "STOP SCAN, which the vendor never sends"
+            self._start()
+            return b""
+        if opcode == p.SCSI_COPY:
+            return self._mask(read_size)
+        if opcode == p.SCSI_PARAM:
+            return self._parameters()
+        if opcode == p.SCSI_READ:
+            if self._prepared:
+                self._prepared = False
+                return self._descriptor() if read_size == 32 else bytes(read_size)
+            return self._read(read_size)
+        raise AssertionError(f"the driver sent {opcode:#04x}, which this "
+                             "device double does not answer")
+
+    def _width(self):
+        x0, _, x1, _ = self._frame
+        return round((x1 - x0 + 1) * self._mode["resolution"] / 7200)
+
+    def _descriptor(self):
+        d = bytearray(32)
+        d[4], d[5] = 1, 6
+        d[8:12] = bytes((0, 16, 16, 20))
+        d[12:14] = (2 * self._width()).to_bytes(2, "little")
+        return bytes(d)
+
+    def _start(self):
+        from rps7200.direction import encode_index
+        from rps7200.protocol import DEPTH_8, ONE_PASS_RGBI
+
+        number = len(self.passes)
+        rng = np.random.default_rng(self.seed + number)
+        width = self._width()
+        upward = False
+        if self._mode["calibrate"]:
+            # Dark first, then lit, interleaved by channel throughout; the
+            # levels are the device's own (~170 and ~47000), the falloff is
+            # what shading exists to take out.
+            falloff = 0.7 + 0.3 * np.cos(np.linspace(-1.2, 1.2, width))
+            rows = [170.0] * 8 + [47000.0] * 12
+            level = np.array(rows)[:, None, None] * falloff[None, :, None]
+            noisy = level * (1 + rng.normal(0, 0.004, (len(rows), width, 3)))
+            pixels = np.clip(noisy, 0, 65535).astype(np.uint16)
+            channels, per_sample = 3, 2
+        else:
+            _, y0, _, y1 = self._frame
+            lines = round((y1 - y0 + 1) * self._mode["resolution"] / 7200)
+            channels = 4 if self._mode["passes"] == ONE_PASS_RGBI else 3
+            eight = self._mode["depth"] == DEPTH_8
+            dtype = np.uint8 if eight else np.uint16
+            low, high = (5, 250) if eight else (500, 60000)
+            pixels = rng.integers(low, high, (lines, width, channels),
+                                  dtype=dtype)
+            per_sample = 1 if eight else 2
+            upward = number in self.upward
+        self._pass = {
+            "pixels": pixels, "blob": encode_index(pixels, reversed=upward),
+            "width": width, "lines": pixels.shape[0], "channels": channels,
+            "bytes_per_line": width * per_sample, "upward": upward,
+            "resolution": self._mode["resolution"], "frame": self._frame,
+            "calibrate": self._mode["calibrate"], "masks": [],
+        }
+        self.passes.append(self._pass)
+        self._served = 0
+        self._waited = False
+
+    def _mask(self, size):
+        from rps7200.shading import MASK_USED
+
+        width = self._pass["width"] if self._pass else size
+        mask = np.full(size, MASK_USED + 1, dtype=np.uint8)
+        used = np.round(np.linspace(0, size - 1, min(width, size))).astype(int)
+        mask[used] = MASK_USED
+        answer = mask.tobytes()
+        if self._pass is not None:
+            self._pass["masks"].append(answer)
+        return answer
+
+    def _parameters(self):
+        p = self._pass
+        d = bytearray(18)
+        d[0:2] = p["width"].to_bytes(2, "little")
+        d[2:4] = p["lines"].to_bytes(2, "little")
+        d[4:6] = p["bytes_per_line"].to_bytes(2, "little")
+        d[6], d[7] = 3, 5                                 # filter offsets
+        d[14:16] = p["lines"].to_bytes(2, "little")
+        return bytes(d)
+
+    def _read(self, read_size):
+        from rps7200.protocol import ASC_END_OF_DATA, SCSI_READ
+        from rps7200.usb_transport import NoDataYet
+
+        if self._pass is None:
+            self._refuse(SCSI_READ, ASC_END_OF_DATA)
+        if not self._waited:
+            self._waited = True
+            raise NoDataYet("not scanned that far yet")
+        blob = self._pass["blob"]
+        if self._served >= len(blob):
+            self._refuse(SCSI_READ, ASC_END_OF_DATA)
+        chunk = blob[self._served:self._served + read_size]
+        self._served += len(chunk)
+        return chunk
+
+
+def scanner_at_commands(monkeypatch, *, debug=False, **device):
+    """`DirectScanner` itself on a `DeviceAtCommands`, with the waiting out.
+
+    Returns ``(scanner, device)``. Every method is the driver's own; only the
+    clock is `NoWaiting`, because a calibration waits ten silent seconds and
+    every read polls.
+    """
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    device_ = DeviceAtCommands(**device)
+    return DirectScanner(transport=device_, verbose=False, debug=debug), device_
+
+
 #: `roll.json` as 8a9ba17 -- what `main` ran until the roll learned where the
 #: film is -- wrote it across a "Start at N, same roll name" resume: its own
 #: `ScanSession`, run twice into roll "r", each run counting `skip` from
