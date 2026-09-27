@@ -730,6 +730,9 @@ class DirectScanner:
     #: The command log of the last pass that raised, kept for a caller that
     #: wants to know what it sent. A pass read in full files its own.
     last_failed_commands: dict[str, Any] | None = None
+    #: The lines of the last calibration that raised, and what it was, for
+    #: `ensure_shading` to archive tagged failed. None once taken.
+    last_failed_calibration: dict[str, Any] | None = None
     #: What the next pass is being taken for, set by the loop that takes it
     #: -- a metering probe, a hold's verification prescan -- and recorded in
     #: its meta as ``pass_role``. Consumed by `scan`, so it describes one pass.
@@ -1041,6 +1044,11 @@ class DirectScanner:
             "reference": "shading.npz" if result.get("reference") is not None else None,
             "ccd_mask": "ccd_mask.bin" if mask is not None else None,
             "protocol_revision": PROTOCOL_REVISION,
+            # Why there is no reference beside lines that reduce to one: the
+            # device sent fewer than it declared (`calibrate_shading`).
+            "lines_declared": result.get("lines_declared"),
+            "lines_arrived": result.get("lines_arrived"),
+            "refused": result.get("refused"),
         }
         (folder / "calibration.json").write_text(
             json.dumps(record, indent=2, default=str), encoding="utf-8")
@@ -1118,6 +1126,8 @@ class DirectScanner:
             else " -- no usable shading reference; a corrected scan will be "
                  "refused until a calibration succeeds"
         )
+        if result.get("refused"):
+            summary += f" ({result['refused']})"
         if archive is not None:
             summary += f"; its bytes are in {archive}"
         return {
@@ -2674,6 +2684,7 @@ class DirectScanner:
           re-writing gain/offset between them
         """
         self._refuse_if_suspect("a calibration")
+        self.last_failed_calibration = None
         # Every command of the calibration, with what came back -- the
         # 128-byte calibration info block, the shading descriptor, the gain
         # read-back -- kept with its bytes (`archive_calibration`).
@@ -2749,6 +2760,9 @@ class DirectScanner:
         # against the 10344 every 7200 dpi pass has actually reported.
         x0, _, x1, _ = CALIBRATION_FRAME
         width = round((x1 - x0 + 1) * resolution / COORD_PER_INCH)
+        #: The lines the descriptor declares, all entries together, where it
+        #: could be read: see the check after the read.
+        lines_declared: int | None = None
         try:
             parms = self.get_shading_parms()
         except (CheckCondition, ScanReadError) as exc:
@@ -2762,9 +2776,10 @@ class DirectScanner:
                         f"implies {width}; using the descriptor"
                     )
                 width = declared[0]
+            lines_declared = sum(int(e.get("lines", 0) or 0) for e in parms)
             self._log(
                 f"shading descriptor: {len(parms)} entries, "
-                f"{sum(e.get('lines', 0) for e in parms)} lines declared, "
+                f"{lines_declared} lines declared, "
                 f"{width} columns"
             )
         bpl = 2 * width + INDEX_HEADER
@@ -2805,7 +2820,14 @@ class DirectScanner:
                 except NoDataYet:
                     time.sleep(0.05)
                     continue
-                except (EndOfData, ScanReadError):
+                except EndOfData:
+                    # End of data, and nothing else, ends it. Any refusal
+                    # used to -- a unit attention, a sense that could not be
+                    # read -- and the device, possibly still mid-calibration,
+                    # was driven on, with a reference built from however many
+                    # lines had arrived. Another refusal is a refused read
+                    # like any in an image pass: it leaves the loop as it
+                    # came, and the device suspect (below).
                     self._log(f"  scanner finished after {blocks} blocks")
                     ended = True
                     break
@@ -2836,6 +2858,20 @@ class DirectScanner:
             if not ended:
                 self._mark_suspect(f"{type(exc).__name__} during the calibration "
                                    f"read: {exc}")
+            # The lines that did arrive, for `ensure_shading` to archive
+            # tagged failed. A calibration that raised -- part way through
+            # its read, or after it, on the mask -- dropped them, and they
+            # are the only evidence of what the device sent.
+            self.last_failed_calibration = {
+                "data": b"".join(collected), "bytes_drained": drained,
+                "pixels_per_line": width, "bytes_per_line": bpl,
+                "resolution": int(resolution),
+                "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                              time.gmtime()),
+                "failed": {"stage": ("after the read" if ended
+                                     else "during the read"),
+                           "error": f"{type(exc).__name__}: {exc}"},
+            }
             raise
         finally:
             self.finish_scan()
@@ -2846,13 +2882,32 @@ class DirectScanner:
         # The point of the pass. The scanner measured its per-column response
         # and handed it back; it does not apply it, so a calibration whose
         # result is discarded genuinely changes nothing in the image.
-        self._shading = calculate_shading(data, width)
+        reference = calculate_shading(data, width)
+        # Held to the device's own count. It declares one phase's lines (4 x
+        # 20) and sends both, about 160, so fewer than it declares is a
+        # calibration that ended in its dark phase -- end of data early,
+        # which the loop above cannot tell from the real end. The reference
+        # reduced from those lines is the dark floor, ~170 counts where the
+        # lit path reads ~47,000: divided into every scan after it, and each
+        # filed as corrected. None instead, as for a pass with no usable
+        # lines, so a corrected scan is refused until a calibration succeeds.
+        # The lines are kept all the same (`archive_calibration`).
+        arrived = len(data) // bpl
+        refused = None
+        if reference is not None and lines_declared and arrived < lines_declared:
+            refused = (f"{arrived} lines arrived where the descriptor declared "
+                       f"{lines_declared}; a reference from them would be the "
+                       "dark phase, or part of it")
+            reference = None
+        self._shading = reference
         self._shading_origin = {
             "action": "calibrated", "resolution": int(resolution),
             "width": int(width),
             "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        if self._shading is None:
+        if refused is not None:
+            self._log(f"calibration refused: {refused}")
+        elif self._shading is None:
             self._log("calibration returned no usable shading lines")
         else:
             self._ccd_mask = mask
@@ -2876,6 +2931,9 @@ class DirectScanner:
             "duration_s": round(time.monotonic() - started, 1),
             "resolution": int(resolution),
             "commands": commands,
+            "lines_declared": lines_declared,
+            "lines_arrived": arrived,
+            "refused": refused,
         }
 
     # -- exposure ----------------------------------------------------------

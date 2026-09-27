@@ -271,3 +271,83 @@ def test_a_pass_records_what_it_was_taken_for_and_only_that_pass():
     assert meta["pass_role"] == {"kind": "metering probe", "round": 1}
     _, meta = scan(s, shading=False, keep_raw=True)
     assert "pass_role" not in meta
+
+
+# --- a calibration ends on end of data, and only on its whole -------------
+
+#: Calibration columns: lines are 16-bit whatever the mode depth.
+CAL_WIDTH = 8
+DARK, LIT = 170, 47000
+
+
+def calibration_lines(dark: int, lit: int) -> list[bytes]:
+    """Lines as the calibration sends them: the unlit phase first, then the
+    lit one, channel after channel throughout."""
+    out = []
+    for k in range(dark + lit):
+        level = DARK if k < dark else LIT
+        out.append(bytes([b"RGB"[k % 3]]) * INDEX_HEADER
+                   + np.full(CAL_WIDTH, level, "<u2").tobytes())
+    return out
+
+
+class Calibrating(OnePass):
+    """A calibration whose four-line reads are scripted, then ``then``.
+
+    Its descriptor declares ``declared`` lines, one phase's worth, as the
+    device's does (4 x 20, where about 160 arrive)."""
+
+    def __init__(self, lines, declared, then=EndOfData):
+        super().__init__(b"", CAL_WIDTH)
+        self.blocks = [b"".join(lines[k:k + 4]) for k in range(0, len(lines), 4)]
+        self.declared = declared
+        self.then = then
+
+    def get_shading_parms(self):
+        return [{"pixels_per_line": 2 * CAL_WIDTH,
+                 "lines": self.declared // 3}] * 3
+
+    def read_lines(self, lines, bytes_per_line, retries=3, **kw):
+        if self.blocks:
+            return self.blocks.pop(0)
+        raise self.then("refused: key=0x06 code=0x29 -- unit attention")
+
+
+@pytest.fixture
+def no_waiting(monkeypatch):
+    from conftest import NoWaiting
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+
+
+def test_a_whole_calibration_builds_its_reference(no_waiting):
+    s = Calibrating(calibration_lines(12, 12), declared=12)
+    result = s.calibrate_shading()
+    assert result["refused"] is None and s.suspect is None
+    assert s.shading is not None and s.shading.two_point
+    assert s.shading.mean[0] == LIT
+
+
+def test_a_calibration_refused_part_way_is_not_taken_as_finished(no_waiting):
+    """Any refusal ended it as though the device had finished: the device,
+    maybe still mid-calibration, was driven on, and the reference built from
+    the lines so far -- the dark floor -- corrected every scan after it."""
+    s = Calibrating(calibration_lines(12, 12)[:4], declared=12,
+                    then=ScanReadError)
+    before = s.shading
+    with pytest.raises(ScanReadError, match="unit attention"):
+        s.calibrate_shading()
+    assert s.suspect is not None, "the device may still be mid-calibration"
+    assert s.shading is before, "a reference was built from a partial pass"
+
+
+def test_a_calibration_ended_short_of_its_declared_lines_installs_nothing(
+        no_waiting):
+    """End of data in the dark phase: its reference would be ~170 counts,
+    divided into every scan and filed as corrected."""
+    s = Calibrating(calibration_lines(12, 12)[:8], declared=12)
+    result = s.calibrate_shading(keep_data=True)
+    assert s.shading is None and result["reference"] is None
+    assert "8 lines arrived where the descriptor declared 12" in result["refused"]
+    assert result["data"], "the lines are kept all the same"
