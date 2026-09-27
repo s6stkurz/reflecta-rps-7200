@@ -1265,6 +1265,99 @@ def test_a_copy_that_cannot_be_written_does_not_cost_the_entry(tmp_path):
     assert len(writer.errors) == 1 and "exported again" in writer.errors[0]
 
 
+RAW = b"\x00\x01" * 32
+LAYOUT = {"format": "index", "width": 36, "lines": 24, "channels": 4}
+
+
+def _refused_by_the_library(tmp_path, monkeypatch, everywhere=False):
+    """A writer whose library cannot be written, and what came of one job.
+
+    The library root is under a file, so `library.save` raises before it
+    writes anything -- as a full disk, an unplugged drive or a folder that
+    will not take a file does. ``everywhere`` makes every other place refuse
+    too.
+    """
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    if everywhere:
+        def refuse(*a, **kw):
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr(library, "save", refuse)
+    done: queue.Queue = queue.Queue()
+    writer = session.FrameWriter(on_done=lambda *a: done.put(a))
+    raw = picture(seed=5)
+    writer.submit(number=4, paths=[tmp_path / "out" / "frame04.tif"],
+                  image=(raw // 2).astype(raw.dtype), raw_image=raw,
+                  meta={"resolution_dpi": 600, "channel_order": list("RGBI")},
+                  dpi=600, library=str(blocker / "library"), film=FilmNotes(),
+                  tags=["roll"], prescan=None, inquiry=None,
+                  capture={"reference": None, "ccd_mask": None, "raw": RAW,
+                           "raw_layout": LAYOUT},
+                  seq=1)
+    writer.finish()
+    return writer, done.get_nowait(), raw
+
+
+def test_a_library_that_refuses_a_picture_does_not_cost_its_copies(
+        tmp_path, monkeypatch):
+    """The library entry first, the copies after -- and a library that
+    refused used to end the job there: no frameNN.tif, no output-folder copy,
+    although the disk they go to had room. The picture was lost entirely."""
+    writer, (_seq, _number, entry, err), _raw = _refused_by_the_library(
+        tmp_path, monkeypatch)
+    assert (tmp_path / "out" / "frame04.tif").exists(), (
+        "the library refused, and the delivered copy was never attempted")
+    assert entry is None and err is not None, "still a failure, said as one"
+    assert len(writer.errors) == 1
+
+
+def test_a_picture_the_library_refused_keeps_its_raw_data(tmp_path, monkeypatch):
+    """The raw bytes and pixels in the job are the only copy: nothing reads
+    them from the scanner again. Kept as a whole entry beside the copy that
+    was written, so moving the folder into the library files it."""
+    writer, (_seq, _number, _entry, err), raw = _refused_by_the_library(
+        tmp_path, monkeypatch)
+    kept = list((tmp_path / "out" / session.UNFILED).glob("*/scan.json"))
+    assert len(kept) == 1, "the raw data went nowhere"
+    folder = kept[0].parent
+    assert library.read_raw(folder) == RAW
+    assert np.array_equal(tiff.read(folder / "scan.tif"), raw), (
+        "kept the corrected pixels, not the ones the scanner sent")
+    assert str(folder) in err, "the operator is not told where it is"
+    assert session.UNFILED in library.entries(folder.parent)[0]["tags"]
+
+
+def test_a_picture_nowhere_will_take_says_so(tmp_path, monkeypatch):
+    writer, (_seq, _number, _entry, err), _raw = _refused_by_the_library(
+        tmp_path, monkeypatch, everywhere=True)
+    assert "could not be kept anywhere else" in err
+    assert (tmp_path / "out" / "frame04.tif").exists()
+
+
+def test_a_roll_frame_the_library_refused_is_still_in_the_roll(tmp_path):
+    """End to end: the frame's own TIFF is written, its raw data is kept in
+    the roll's folder, its record says where, and the roll stops."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    scanner = FakeScanner(frames=2)
+    s = ScanSession(root=str(blocker / "library"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, name="refused"))
+    s.shutdown()
+    s.join(timeout=10.0)
+    folder = tmp_path / "rolls" / "refused"
+    assert (folder / "frame01.tif").exists()
+    kept = list((folder / session.UNFILED).glob("*/scan.json"))
+    assert kept, "the frame's raw data went nowhere"
+    recorded = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    first = next(f for f in recorded["frames"] if f["number"] == 1)
+    assert first["done"] is False
+    # Frame 2 may have been scanned, and kept the same way, before the stop.
+    assert any(str(k.parent) in first["filing_error"] for k in kept)
+
+
 def test_the_writer_runs_off_the_calling_thread():
     seen = {}
 

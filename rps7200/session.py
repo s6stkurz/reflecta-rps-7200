@@ -1548,6 +1548,52 @@ KINDS = ("state", "log", "progress", "result", "filed", "transport",
 # ---------------------------------------------------------------------------
 
 
+#: The folder a picture the library refused is kept in instead, beside the
+#: delivered copies it was written with; see :func:`keep_unfiled`.
+UNFILED = "unfiled"
+#: And where it goes when there is no such folder, or it refuses as well.
+UNFILED_TEMP = "rps7200-unfiled"
+
+
+def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
+                 **save: Any) -> tuple[Path | None, list[str]]:
+    """File a picture the library refused somewhere else, whole.
+
+    The pixels and raw bytes in hand are the only copy of the pass: nothing
+    re-reads them from the scanner, and with RPS7200_DEBUG off nothing spooled
+    them either. When `library.save` raised -- a full library disk, an
+    unplugged drive, a folder that will not take a file -- they used to be
+    dropped with the job, so the pass was lost although the disk the roll's
+    own TIFF had just been written to still had room for it.
+
+    Kept as an ordinary entry, raw bytes and reference and mask beside the
+    pixels, so moving the folder into the library files it: tried in an
+    `unfiled` folder beside each of ``near`` -- the folders a delivered copy
+    was just written to, which are known to take a file -- and then in the
+    system's temporary directory. Written plain, like everything filed with
+    the scanner open. ``save`` is what `library.save` takes besides the
+    pixels, meta and root.
+
+    Returns the entry, or None, and why each place refused it.
+    """
+    import tempfile
+
+    places: list[Path] = []
+    for folder in [*(Path(p) / UNFILED for p in near),
+                   Path(tempfile.gettempdir()) / UNFILED_TEMP]:
+        if folder not in places:
+            places.append(folder)
+    save = dict(save, compress=False,
+                tags=sorted({*(save.get("tags") or ()), UNFILED}))
+    refused = []
+    for root in places:
+        try:
+            return library.save(image, meta, root=root, **save), refused
+        except Exception as exc:                         # noqa: BLE001
+            refused.append(f"{root}: {exc}")
+    return None, refused
+
+
 class FrameWriter:
     """Writes finished frames to disk on a thread, off the scanning loop.
 
@@ -1635,6 +1681,11 @@ class FrameWriter:
         # other way round, an unplugged drive or a full output folder raised
         # before `library.save` ran, and the scan's raw bytes were lost with it.
         entry = None
+        #: Why the library would not take this picture, if it would not.
+        refused: Exception | None = None
+        #: What it would have been filed with, kept for `keep_unfiled`.
+        pixels: np.ndarray = job["image"]
+        filing: dict[str, Any] = {}
         if job["library"]:
             # The raw pixels where the job carries them, the delivered
             # ones otherwise -- CLAUDE.md's rule that the library holds raw.
@@ -1653,21 +1704,32 @@ class FrameWriter:
                 self.notes.append(
                     f"picture {job['number']}: no raw pixels came with this "
                     "pass; filed its corrected pixels, labelled as corrected")
-            entry = library.save(
-                job["image"] if raw_image is None else raw_image,
-                job["meta"],
-                root=job["library"],
+            if raw_image is not None:
+                pixels = raw_image
+            filing = dict(
                 film=job["film"],
                 tags=job["tags"],
                 prescan=job["prescan"],
                 prescan_meta=job.get("prescan_meta"),
                 inquiry=job["inquiry"],
                 corrections=corrections,
-                compress=job.get("compress", True),
                 **job["capture"],
             )
-            if not job.get("compress", True):
-                self.uncompressed.append(entry)
+            try:
+                entry = library.save(pixels, job["meta"], root=job["library"],
+                                     compress=job.get("compress", True),
+                                     **filing)
+            except Exception as exc:                     # noqa: BLE001
+                # Not raised yet. The copies below are still written -- the
+                # corrected picture can reach a drive the library is not on --
+                # and the raw data is kept somewhere, before the job is
+                # reported as the failure it is. Raised here, both went with
+                # it: a full library disk lost the frame entirely, and the
+                # frame after it the same way.
+                refused = exc
+            else:
+                if not job.get("compress", True):
+                    self.uncompressed.append(entry)
         problems = []
         written = []
         for path in job.get("paths") or ():
@@ -1688,6 +1750,23 @@ class FrameWriter:
             written.append(Path(path))
             if note:
                 self.notes.append(f"{Path(path).name}: {note}")
+        if refused is not None:
+            kept, elsewhere = keep_unfiled(
+                pixels, job["meta"], near=[p.parent for p in written],
+                **filing)
+            said = [f"could not be filed in the library ({refused})"]
+            if kept is not None:
+                self.uncompressed.append(kept)
+                said.append(f"its raw data is kept in {kept} -- move that "
+                            "folder into the library to file it")
+            else:
+                said.append("and could not be kept anywhere else either ("
+                            + "; ".join(elsewhere) + ")")
+            if written:
+                said.append("written to " + ", ".join(str(p) for p in written))
+            # Still a failure, and reported as one by `_run`: the picture is
+            # not in the library, and a roll stops on it (`_filed`).
+            raise OSError("; ".join(said + problems))
         if problems and entry is None:
             # Nothing of this picture was kept anywhere: a failure, reported
             # as one by `_run`.
