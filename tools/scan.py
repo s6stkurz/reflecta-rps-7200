@@ -276,11 +276,11 @@ def main() -> int:
                 # Every pass from here asks first -- metering's probes and a
                 # bracket's passes go through `scan` as the frame does -- so
                 # a Ctrl-C during the calibration, metering or any pass stops
-                # before the next one starts, filed or not. It used to be
-                # asked in one place, after a bracket pass was filed: through
-                # a calibration and metering the operator was told "stopping"
-                # and then saw a full pass start, and pressed again -- the
-                # second Ctrl-C, which abandons the read.
+                # before the next one starts, filed or not. The check in
+                # `hold` below is made only after a bracket pass is filed:
+                # alone, through a calibration and metering it told the
+                # operator "stopping" and then let a full pass start, and
+                # invited the second Ctrl-C -- the one that abandons a read.
                 scan_now = s.scan
 
                 def scan_unless_stopped(*a, **kw):
@@ -318,6 +318,12 @@ def main() -> int:
                         dict(capture, inquiry=info, meta=meta,
                              image=image if raw is None else raw)
                     )
+                    if args.bracket and interrupt.requested():
+                        # Between passes: this one is complete and held, and
+                        # the next has not started, so stopping here abandons
+                        # nothing. A single pass has nothing after it to stop.
+                        raise _StoppedBetweenPasses(
+                            f"after pass {len(pending)}, at Ctrl-C")
 
                 bracket = None
                 if args.bracket:
