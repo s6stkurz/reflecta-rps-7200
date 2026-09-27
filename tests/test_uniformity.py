@@ -525,6 +525,52 @@ def test_analyse_end_to_end(tmp_path, capsys, monkeypatch):
     assert "a field is present above the floor" in out
 
 
+def test_a_pass_rejected_at_capture_is_not_analysed(tmp_path, capsys, monkeypatch):
+    """A pass answered "redo" keeps the study's tag and subject, and is older
+    than its redo -- so it became the reference pass. Mis-seated, as a redo
+    usually is, it refused the whole study on an orientation nobody kept."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    from rps7200 import library
+
+    h = w = 576
+    s_field = known_field(h, w, mp=0.05)
+    root = tmp_path / "library"
+    base = greyscale_it8(h, w)
+    # the rejected one: claimed as-is, seated turned, and first in the library
+    bad = build_entry(root, "2026_0_rejected",
+                      render(s_field, un.apply_orientation(base, ROT180)), AS_IS)
+    library.add_tags(bad, ["rejected"])
+    (bad / "REJECTED").write_text("rejected at capture time\n", encoding="utf-8")
+    for i, name in enumerate(un.ORIENTATIONS):
+        build_entry(root, f"2026_{i + 1}_{name}",
+                    render(s_field, un.apply_orientation(base, name)), name)
+    build_entry(root, "2026_9_repeat", render(s_field, base), AS_IS)
+
+    assert bad not in tool.select(root, "vignette-study")
+    args = argparse.Namespace(library=str(root), tag="vignette-study", out=None)
+    assert tool.cmd_analyse(args) == 0, capsys.readouterr().err
+
+
+def test_analyse_says_which_code_it_ran(tmp_path, capsys, monkeypatch):
+    """It read a provenance key that does not exist, and printed "unknown"."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    from rps7200 import library
+
+    commit = library.provenance()["driver_commit"]
+    if not commit:
+        pytest.skip("no git to say which commit this is")
+    root = tmp_path / "library"
+    build_entry(root, "2026_0", render(np.zeros((64, 64)), greyscale_it8(64, 64)),
+                AS_IS)
+    args = argparse.Namespace(library=str(root), tag="vignette-study", out=None)
+    tool.cmd_analyse(args)
+    assert f"pipeline: {commit}" in capsys.readouterr().out
+
+
 def test_analyse_refuses_when_the_set_is_not_a_permutation(tmp_path, capsys, monkeypatch):
     """A wrong orientation must stop the run, not quietly produce an answer."""
     import importlib

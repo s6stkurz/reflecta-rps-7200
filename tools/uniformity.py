@@ -158,15 +158,29 @@ def rebuild(entry: Path) -> tuple[np.ndarray, dict]:
     }
 
 
+#: The tag, and the file, a pass the operator answered "redo" to carries.
+REJECTED = "rejected"
+
+
 def select(root: Path, tag: str) -> list[Path]:
-    """Entry directories carrying a tag, oldest first."""
+    """Entry directories carrying a tag, oldest first, without rejected ones.
+
+    A pass answered "redo" at capture keeps the study's tag and its subject --
+    it is kept as evidence about handling -- and it is always older than its
+    redo. Selected with the rest, it became the reference pass or the pass for
+    its orientation: every difference and repeat floor measured against the
+    one the operator threw out, or, for a mis-seated one, the whole study
+    refused on an orientation nobody meant to keep.
+    """
     out = []
     for candidate in sorted(root.glob("*/scan.json")):
         try:
             record = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if tag in (record.get("tags") or []):
+        tags = record.get("tags") or []
+        if (tag in tags and REJECTED not in tags
+                and not (candidate.parent / "REJECTED").exists()):
             out.append(candidate.parent)
     return out
 
@@ -374,7 +388,11 @@ def cmd_analyse(args: argparse.Namespace) -> int:
         print(f"no entries tagged {args.tag!r} in {root}", file=sys.stderr)
         return 1
 
-    print(f"pipeline: {library.provenance().get('commit', 'unknown')}")
+    # `driver_commit`: there is no "commit" key, so this printed "unknown" on
+    # every run, and two runs from different code could not be told apart.
+    code = library.provenance()
+    print(f"pipeline: {code.get('driver_commit') or 'unknown'}"
+          + (" (with uncommitted changes)" if code.get("driver_dirty") else ""))
     print(f"{len(entries)} entries tagged {args.tag!r}\n")
 
     images, meta = {}, {}
@@ -640,10 +658,11 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
             (entry / "REJECTED").write_text(
                 "rejected at capture time; kept because how a pass went wrong "
                 "is evidence about handling\n", encoding="utf-8")
-            record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
-            record["tags"] = list(record.get("tags") or []) + ["rejected"]
-            (entry / "scan.json").write_text(json.dumps(record, indent=2),
-                                             encoding="utf-8")
+            # Through the library, which rewrites the record beside and swaps
+            # it in: this was a plain rewrite in place, which a kill part way
+            # left as half a scan.json -- an entry no reader could open.
+            library.add_tags(entry, [REJECTED])
+            library.reindex(Path(args.library))
             return entry, "redo"
         if reply in ("abort", "q", "quit"):
             return entry, "abort"
