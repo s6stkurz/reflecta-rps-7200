@@ -65,7 +65,7 @@ def say_estimate(*, passes: int, resolution: int, infrared: bool,
 
 
 class _StoppedBetweenPasses(Exception):
-    """A bracket stopped at Ctrl-C, after a pass had landed and before the next."""
+    """Stopped at Ctrl-C between two things the scanner does, never inside one."""
 
 
 def main() -> int:
@@ -272,6 +272,14 @@ def main() -> int:
                           "per power-on) ...", flush=True)
                 print(s.ensure_shading(ref_path, reuse=args.reuse,
                                        skip=args.no_shading)["summary"])
+                # A Ctrl-C through the calibration's three or four minutes was
+                # told "stopping after the pass in flight", and then metering
+                # and a whole pass ran anyway -- 138 s at 3600 dpi, 314 s at
+                # 7200. Nothing visibly stopping is what makes an operator press
+                # it again, and a second press lands mid-read: the wedge.
+                if interrupt.requested():
+                    raise _StoppedBetweenPasses(
+                        "after the calibration, at Ctrl-C; nothing scanned")
 
                 # Everything the library needs is gathered while the session is open and
                 # written after it closes: filing an entry gzips well over a hundred
@@ -363,16 +371,33 @@ def main() -> int:
         print(f"stopped: {type(exc).__name__}: {exc}" if str(exc)
               else f"stopped: {type(exc).__name__}", file=sys.stderr)
 
+    # Every pass held in memory is its only copy until this loop files it, so
+    # it runs under its own deferred Ctrl-C -- the first press waits for the
+    # filing, as the scan's did for its read -- and one pass that cannot be
+    # filed is reported and does not stop the ones behind it. Unguarded, a
+    # Ctrl-C here (the operator had just been told a second one aborts) or one
+    # full-disk save lost every pass after it, and the delivered file too.
     entries = []
-    for held in pending:
-        entries.append(library.save(
-            held.pop("image"), held.pop("meta"),
-            root=args.library,
-            film=FilmNotes(stock=args.stock, frame=args.frame,
-                           subject=args.subject, notes=args.notes),
-            tags=args.tags,
-            **held,
-        ))
+    unfiled: list[str] = []
+    filing = DeferredInterrupt(say=lambda _said: print(
+        "\nstill filing the passes held in memory -- they exist nowhere "
+        "else yet. Press Ctrl-C again to abandon them.",
+        file=sys.stderr, flush=True))
+    with filing:
+        for number, held in enumerate(pending, start=1):
+            try:
+                entries.append(library.save(
+                    held.pop("image"), held.pop("meta"),
+                    root=args.library,
+                    film=FilmNotes(stock=args.stock, frame=args.frame,
+                                   subject=args.subject, notes=args.notes),
+                    tags=args.tags,
+                    **held,
+                ))
+            except Exception as exc:                      # noqa: BLE001
+                unfiled.append(f"pass {number}: {exc}")
+                print(f"could not file pass {number} of {len(pending)}: "
+                      f"{exc}", file=sys.stderr, flush=True)
 
     if trouble is not None:
         for e in entries:
@@ -433,6 +458,10 @@ def main() -> int:
             print(f"  {e}")
         print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
               f"re-decoded and re-corrected without the scanner")
+    if unfiled:
+        print(f"NOT filed ({len(unfiled)} of {len(pending)}), so their raw "
+              "bytes are gone: " + "; ".join(unfiled), file=sys.stderr)
+        return 1
     return 0
 
 

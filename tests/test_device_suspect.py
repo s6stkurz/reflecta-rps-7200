@@ -167,9 +167,20 @@ def test_a_bracket_stopped_at_ctrl_c_files_the_passes_it_took(tmp_path, monkeypa
     the passes used to be held in memory until the end and die with the
     exception."""
     from rps7200 import console
-    from test_scan_tool import _filed, run_correcting
+    from test_scan_tool import FakeCorrectingScanner, _filed, run_correcting
 
-    monkeypatch.setattr(console.DeferredInterrupt, "requested", lambda self: True)
+    # Pressed during the first pass. Pressed before it -- the calibration --
+    # stops before anything is scanned, which is its own test.
+    pressed = []
+    real = FakeCorrectingScanner.scan
+
+    def scan(self, **kw):
+        pressed.append(True)
+        return real(self, **kw)
+
+    monkeypatch.setattr(FakeCorrectingScanner, "scan", scan)
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: bool(pressed))
     _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
     assert code == 130
     assert len(_filed(tmp_path)) == 1, "the pass taken before Ctrl-C was not filed"

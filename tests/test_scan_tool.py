@@ -530,3 +530,79 @@ def test_the_run_says_how_long_it_will_take(tmp_path, monkeypatch, capsys):
     _, code = run(tmp_path, monkeypatch, "--bracket", "3")
     assert code == 0
     assert "estimated" in capsys.readouterr().out
+
+
+# --- Ctrl-C and filing -------------------------------------------------------
+
+
+def test_ctrl_c_through_the_calibration_scans_nothing(tmp_path, monkeypatch):
+    """The console said 'stopping after the pass in flight' and the tool went
+    on to meter and take a whole pass -- minutes of nothing visibly stopping,
+    which is what makes an operator press it again, mid-read."""
+    from rps7200 import console
+
+    pressed = []
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: bool(pressed))
+
+    class PressedWhileCalibrating(FakeCorrectingScanner):
+        def ensure_shading(self, path, reuse=False, skip=False):
+            pressed.append(True)
+            return super().ensure_shading(path, reuse=reuse, skip=skip)
+
+    for argv in ((), ("--bracket", "3")):
+        pressed.clear()
+        created, code = run_correcting(tmp_path, monkeypatch, *argv,
+                                       scanner=PressedWhileCalibrating)
+        assert code == 130, argv
+        assert created[-1].scans == [], f"{argv}: scanned after the Ctrl-C"
+        assert not (tmp_path / "out.tif").exists()
+
+
+def test_a_pass_that_cannot_be_filed_does_not_cost_the_rest(tmp_path,
+                                                            monkeypatch):
+    """Filing ran with no per-pass handling: one save refused by the disk
+    stopped the loop, and every pass behind it -- held only in memory -- was
+    lost with the delivered file."""
+    real = scan_tool.library.save
+    calls = {"n": 0}
+
+    def save(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("No space left on device")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(scan_tool.library, "save", save)
+    _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 1, "a pass was lost, and the exit status must say so"
+    assert calls["n"] == 3, "the pass after the refused one was never tried"
+    assert len(_filed(tmp_path)) == 2
+    assert (tmp_path / "out.tif").exists(), "the delivered file was lost too"
+
+
+def test_ctrl_c_while_filing_waits_for_the_filing(tmp_path, monkeypatch):
+    """The device is closed by then, so nothing can wedge -- but the passes are
+    held only in memory, and filing them was outside any guard: a Ctrl-C there
+    abandoned every one not yet written."""
+    import signal
+
+    real = scan_tool.library.save
+    calls = {"n": 0}
+
+    def save(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # What pressing Ctrl-C does: call whatever handles SIGINT now.
+            handler = signal.getsignal(signal.SIGINT)
+            if callable(handler):
+                handler(signal.SIGINT, None)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(scan_tool.library, "save", save)
+    try:
+        _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
+    except KeyboardInterrupt:
+        pytest.fail("one Ctrl-C while filing abandoned the passes held")
+    assert code == 0
+    assert len(_filed(tmp_path)) == 3
