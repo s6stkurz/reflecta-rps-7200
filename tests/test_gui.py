@@ -5272,3 +5272,39 @@ def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     app.on_nudge(1, 0.5)
     app.on_move_frames(1)
     assert submitted == []
+
+
+# -- the event pump survives a handler that fails -----------------------------
+
+
+def test_one_failing_event_neither_stops_the_pump_nor_drops_the_rest(
+        window, monkeypatch):
+    """The pump booked its next tick on its last line, so one exception in any
+    handler stopped it for good -- and `session.poll` had already drained the
+    events behind the failing one, which were lost with it. The worker went on
+    scanning and filing; the window showed nothing more, not even the end of
+    the job, and an operator who took that for a hang and killed it abandoned
+    the read in flight."""
+    from rps7200.session import Event
+
+    app, root = window
+    real, handled = app._handle, []
+
+    def handle(event):
+        if event.text == "boom":
+            raise RuntimeError("a handler that fails")
+        handled.append(event.text)
+        real(event)
+
+    monkeypatch.setattr(app, "_handle", handle)
+    for text in ("boom", "after it"):
+        app.session._events.put(Event(kind="log", text=text))
+    app._pump()
+    assert "after it" in handled, "the rest of the batch was dropped"
+    assert "could not handle" in app.log.get("1.0", "end")
+    app.session._events.put(Event(kind="log", text="next tick"))
+    deadline = time.monotonic() + 10
+    while "next tick" not in handled and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    assert "next tick" in handled, "the pump stopped"

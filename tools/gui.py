@@ -36,6 +36,7 @@ import subprocess
 import sys
 import time
 import threading
+import traceback
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
@@ -3546,25 +3547,51 @@ class ScannerGui:
     # -- the event pump ----------------------------------------------------
 
     def _pump(self) -> None:
+        """Everything the threads have handed back, then the next tick.
+
+        The next tick is booked whatever happens in between, and each message
+        is handled on its own. It used to be booked on the last line, so one
+        exception anywhere above it -- a sheet torn down under its readings,
+        a pyramid too big for memory -- stopped the pump for good, and the
+        events `session.poll` had already drained behind it were dropped with
+        it: the worker scanned and filed on, and the window showed nothing
+        more, not even the job's end, with its buttons greyed. An operator
+        who took that for a hang and killed the process abandoned the read in
+        flight, which is the wedge.
+        """
         if not self._alive:
             return
+        try:
+            self._drain()
+        finally:
+            self._later(POLL_MS, self._pump)
+
+    def _safely(self, what: str, call, *args) -> None:
+        """Run one handler; a failure is said and costs that message only."""
+        try:
+            call(*args)
+        except Exception as exc:                          # noqa: BLE001
+            # Printed in full as well, since the log line is for the operator
+            # and the traceback is for whoever fixes it.
+            traceback.print_exc()
+            try:
+                self._say(f"the window could not handle {what}: "
+                          f"{type(exc).__name__}: {exc}")
+            except Exception:                             # noqa: BLE001
+                pass
+
+    def _drain(self) -> None:
         version = self.edge_watch.version
         if version != self._edge_seen:
             self._edge_seen = version
-            self._edges_changed(self.edge_watch.progress())
+            self._safely("the frame edges", self._edges_changed,
+                         self.edge_watch.progress())
         while True:
             try:
                 message = self._saves.get_nowait()
             except queue.Empty:
                 break
-            if message[0] == "line":
-                self._say(message[1])
-            else:
-                self._saving = False
-                _, written, total = message
-                self._say(f"saved {written} of {total} passes"
-                          + ("" if written == total
-                             else " -- the rest are in the log above"))
+            self._safely("a save", self._saved, message)
         while True:
             try:
                 seq, image, problem = self._reads.get_nowait()
@@ -3572,7 +3599,7 @@ class ScannerGui:
                 break
             if problem:
                 self._say(problem)
-            self._loaded(seq, image)
+            self._safely("the full-resolution pixels", self._loaded, seq, image)
         while True:
             try:
                 token, counts, clipped, problem = self._measured.get_nowait()
@@ -3582,18 +3609,29 @@ class ScannerGui:
                 continue          # a later measurement is already the answer
             if problem:
                 self._say(f"could not measure: {problem}")
-                self.histogram.failed()
+                self._safely("the histogram", self.histogram.failed)
             else:
-                self.histogram.show(counts, clipped)
+                self._safely("the histogram", self.histogram.show,
+                             counts, clipped)
         for event in self.session.poll():
-            self._handle(event)
+            self._safely(f"a {event.kind!r} event", self._handle, event)
             if not self._alive:
                 return
         # Ticks the roll countdown between frames, not only when one lands --
         # cheap string formatting, and "left" that only moved at frame
         # boundaries would sit still for minutes at a time.
         self._update_roll_eta()
-        self._later(POLL_MS, self._pump)
+
+    def _saved(self, message) -> None:
+        """One message from a Save all or an Export thread."""
+        if message[0] == "line":
+            self._say(message[1])
+        else:
+            self._saving = False
+            _, written, total = message
+            self._say(f"saved {written} of {total} passes"
+                      + ("" if written == total
+                         else " -- the rest are in the log above"))
 
     def _handle(self, event) -> None:
         if event.kind == "log":
