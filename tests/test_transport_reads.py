@@ -158,3 +158,50 @@ def test_the_stall_clock_restarts_when_data_resumes():
 def test_poll_interval_is_short_enough_to_keep_up():
     """The vendor software retries an empty read about every 20 ms."""
     assert PARTIAL_READ_POLL_S <= 0.05
+
+
+# --- the caller's patience --------------------------------------------------
+
+
+def test_a_pause_is_waited_out_as_long_as_the_caller_waits_for_the_read():
+    """An untied infrared pass holds the device ~220 s. Its read waits that
+    long for a READ answered "not yet", and passes the same patience down as
+    the bulk timeout -- but a pause part way through a payload was given up
+    at a flat 120 s, an abandoned read."""
+    pause = int(150 / PARTIAL_READ_POLL_S)            # 150 s without a byte
+    t = ScriptedTransport([10] + [0] * pause + [54])
+    assert len(t._read_payload(64, 287_000)) == 64
+
+    t = ScriptedTransport([10] + [0] * pause + [54])
+    with pytest.raises(UsbError, match="mid-payload"):
+        t._read_payload(64, 30_000)                   # the default command's
+
+
+def test_a_pass_hands_its_patience_to_the_bulk_read():
+    """The bulk transfer timed out at 120 s whatever the pass: a device that
+    stays silent through an untied infrared pass's floor, rather than
+    answering "not yet", was abandoned mid-read."""
+    import numpy as np
+
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import ScanParameters
+
+    params = ScanParameters(width=4, lines=2, bytes_per_line=8,
+                            filter_offset1=0, filter_offset2=0,
+                            available_lines=2)
+    lines = b"".join(tag * 2 + np.arange(4, dtype="<u2").tobytes()
+                     for tag in (b"R", b"G", b"B") * 2)
+
+    class Reads:
+        def __init__(self):
+            self.timeouts = []
+
+        def command(self, command, data=None, read_size=0, timeout_ms=0,
+                    max_wait_s=60.0):
+            self.timeouts.append(timeout_ms)
+            return lines[:read_size]
+
+    s = DirectScanner(transport=Reads(), debug=False)
+    s._own_transport = False
+    s.read_planes(params, 3, idle_timeout=DirectScanner.UNTIED_INFRARED_IDLE_S)
+    assert s.t.timeouts == [int(DirectScanner.UNTIED_INFRARED_IDLE_S * 1000)]

@@ -1875,7 +1875,13 @@ class DirectScanner:
 
             n = min(batch, total_lines - got)
             try:
-                chunk = self.read_lines(n, bpl, retries=1)
+                # The bulk transfer, and a pause part way through its payload,
+                # get the same patience as a READ answered "not yet": a device
+                # that stays silent rather than saying so used to be given up
+                # at 120 s whatever the pass, short of an untied infrared
+                # pass's ~220 s floor (`read_idle_s`).
+                chunk = self.read_lines(n, bpl, retries=1,
+                                        timeout_ms=int(idle_timeout * 1000))
             except NoDataYet:
                 # The scanner has not scanned this far yet. This is its normal
                 # way of saying "wait" -- the vendor software sees it on most

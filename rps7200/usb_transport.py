@@ -740,6 +740,11 @@ class Transport:
         out = bytearray(size)
         view = memoryview(out)
         got = 0
+        # A pause as long as the caller would wait for the bulk read itself:
+        # an untied infrared pass holds the device ~220 s, and its read passes
+        # that down as its timeout. The 120 s here was shorter, so a pause
+        # mid-payload in such a pass was given up -- an abandoned read.
+        stall_limit = max(PARTIAL_READ_TIMEOUT_S, timeout_ms / 1000.0)
         while got < size:
             window = min(self.max_window, size - got)
             self._announce_length(window)
@@ -755,11 +760,11 @@ class Transport:
                         raise NoDataYet(f"scanner has no data ready (of {size} bytes)")
                     now = time.monotonic()
                     stalled_since = stalled_since or now
-                    if now - stalled_since > PARTIAL_READ_TIMEOUT_S:
+                    if now - stalled_since > stall_limit:
                         raise UsbError(
                             f"scanner stopped mid-payload: {got + window_got} of "
                             f"{size} bytes, then nothing for "
-                            f"{PARTIAL_READ_TIMEOUT_S:.0f}s"
+                            f"{stall_limit:.0f}s"
                         )
                     time.sleep(PARTIAL_READ_POLL_S)
                     continue
