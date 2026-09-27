@@ -484,7 +484,10 @@ class _CommandLog:
         try:
             reply = self._inner.command(command, *args, **kwargs)
         except Exception as exc:
-            entry["refused"] = type(exc).__name__
+            # The message too, not the class alone: "OSError" cannot tell the
+            # known stall from any other, and the sense bytes or the libusb
+            # code that could are in the message.
+            entry["refused"] = f"{type(exc).__name__}: {exc}"
             self.record.append(entry)
             raise
         if reply and len(reply) >= self.BULK and command[0] == SCSI_READ:
