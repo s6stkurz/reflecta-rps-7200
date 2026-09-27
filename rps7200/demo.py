@@ -779,9 +779,13 @@ class DemoScanner:
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1))
-        # Only for a scan that did its own metering, as on the real one.
+        # Only for a scan that did its own metering, as on the real one --
+        # and marked: the stored pictures ignore the exposure asked for, so
+        # every round measures the same levels, and a channel clipped in the
+        # stored picture is backed off round after round to about 1/64. Filed
+        # unmarked, that read as the metering's own behaviour.
         if auto_exposure and self.last_metering is not None:
-            meta["metering"] = self.last_metering
+            meta["metering"] = dict(self.last_metering, simulated=True)
         self.last_scan_meta = dict(meta)
         return image, meta
 

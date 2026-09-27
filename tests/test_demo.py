@@ -1485,6 +1485,9 @@ def test_what_a_demo_session_files_is_raw_and_reconstructs(tmp_path):
         assert record["extra"]["demo"] is True
         assert record["extra"]["demo_source"]["entry"] == source.name
     assert any(r["metering"] for r in records), "the RGBI scan metered itself"
+    # Metered on stored pictures that ignore the exposure, and filed saying so.
+    assert all(r["metering"]["simulated"] is True
+               for r in records if r["metering"])
 
 
 def _through_a_session(demo, root, jobs):
