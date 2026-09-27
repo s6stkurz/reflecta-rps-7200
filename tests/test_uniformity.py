@@ -664,7 +664,7 @@ def _capture_args(tmp_path, **kw):
     return argparse.Namespace(**base)
 
 
-def _study_scanner(events):
+def _study_scanner(events, interrupt_on=None):
     """A stand-in with DirectScanner's refusal: no corrected pass, metering
     included, without a reference in the session."""
     from rps7200.direction import encode_index
@@ -708,6 +708,9 @@ def _study_scanner(events):
             if self._ref is None:
                 raise ShadingUnavailable("no shading reference in this session")
             events.append("scan")
+            if interrupt_on == events.count("scan"):
+                import signal
+                signal.raise_signal(signal.SIGINT)   # Ctrl-C, mid-read
             raw = np.random.default_rng(len(events)).integers(
                 1000, 30000, (h, w, 3), dtype=np.uint16)
             self.last_pixels_raw = raw
@@ -762,6 +765,24 @@ def test_capture_calibrates_with_film_in_and_then_meters(tmp_path, monkeypatch):
     assert len(library.entries(root)) == len(tool.PHASE1)
     assert not list(root.glob("*/raw.bin")), "left uncompressed"
     assert [p for p in library.verify(root) if "never be corrected" not in p] == []
+
+
+def test_ctrl_c_in_a_capture_pass_files_it_and_stops(tmp_path, monkeypatch):
+    """Nothing deferred it, so a Ctrl-C during a pass abandoned its read."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    from rps7200 import library
+
+    events: list[str] = []
+    monkeypatch.setattr(tool, "DirectScanner",
+                        _study_scanner(events, interrupt_on=2))
+    monkeypatch.setattr("builtins.input", _answer(events))
+    monkeypatch.chdir(tmp_path)
+    assert tool.cmd_capture(_capture_args(tmp_path)) == 1
+    assert events.count("scan") == 2, "a pass started after the stop"
+    assert len(library.entries(tmp_path / "library")) == 2, \
+        "the pass in flight was not filed"
 
 
 def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypatch):

@@ -36,6 +36,7 @@ from rps7200.console import use_utf8_stdout
 from rps7200.direct import DirectScanner, ScanParameters
 from rps7200.shading import apply_shading
 from rps7200.uniformity import AS_IS, MIRROR_X, MIRROR_Y, ROT180
+from tools import probing  # noqa: E402  (the repo root is on the path above)
 
 #: Subjects, in the order the transport is loaded: each is put in once and
 #: never revisited. Handling is the largest uncontrolled variable in the study.
@@ -608,6 +609,9 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
         return None, "abort"
 
     scanner = scanner_factory()
+    # Ctrl-C finishes the pass in flight -- which is then filed -- instead of
+    # abandoning its read, which wedges the scanner; the capture stops after.
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         scanner.load_shading(reference_path)
@@ -649,6 +653,7 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
         if callable(claim):
             claim(raw_pixels)
     finally:
+        guard.release()
         scanner.close()
     try:
         library.compact(entry)
@@ -656,6 +661,9 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
         # Plain is complete and verifiable; `tools/library.py compact` can
         # finish it later.
         print(f"    {entry.name} left uncompressed ({exc})")
+    if guard.requested():
+        print(f"    stopped at the operator's request; {entry.name} is filed")
+        return entry, "abort"
 
     if orientation is not None and subject == IT8:
         sig = un.orientation_signature(image)
@@ -765,6 +773,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         if confirm("    press Enter with film in the transport: ") == "abort":
             return 1
         scanner = factory()
+        guard = probing.Guard(scanner)
         try:
             scanner.open()
             # `ensure_shading`, not `calibrate_shading`: it keeps the
@@ -773,7 +782,12 @@ def cmd_capture(args: argparse.Namespace) -> int:
             # thrown away and the reference was written in place.
             result = scanner.ensure_shading(reference_path)
         finally:
+            guard.release()
             scanner.close()
+        if guard.requested():
+            print("stopped at the operator's request, after the calibration",
+                  file=sys.stderr)
+            return 1
         reference = result.get("reference")
         if reference is None:
             print("no usable shading reference; stopping", file=sys.stderr)
@@ -797,12 +811,17 @@ def cmd_capture(args: argparse.Namespace) -> int:
                    "empty: ") == "abort":
             return 1
         scanner = factory()
+        guard = probing.Guard(scanner)
         try:
             scanner.open()
             scanner.load_shading(reference_path)
             exposure_scale = scanner.auto_exposure(
                 target=args.target, infrared=args.ir, film="positive")
+        except probing.Stopped as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            return 1
         finally:
+            guard.release()
             scanner.close()
         print(f"    exposure locked at {[round(v, 3) for v in exposure_scale]}")
 
