@@ -78,7 +78,12 @@ from rps7200.session import (
     walked_prescans,
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
-from rps7200.session import raw_bytes_disagree, roll_frame_label, roll_membership
+from rps7200.session import (
+    bytes_are_another_pass,
+    raw_bytes_disagree,
+    roll_frame_label,
+    roll_membership,
+)
 from rps7200.session import rewind as _rewind
 from tools import frame_edges  # noqa: E402  (repo root is on the path above)
 
@@ -699,9 +704,14 @@ def main() -> int:
                         meta = dict(frame.prescan_meta or {},
                                     roll_membership=roll_membership(
                                         roll_name, number, "prescan", out))
-                        if filing and raw_bytes_disagree(
-                                frame.raw_prescan.shape,
-                                capture.get("raw_layout"), meta):
+                        # Bytes of another pass decode to another picture:
+                        # one laid out for another shape, or a later pass's
+                        # of the same shape (`bytes_are_another_pass`).
+                        if filing and (
+                                raw_bytes_disagree(frame.raw_prescan.shape,
+                                                   capture.get("raw_layout"),
+                                                   meta)
+                                or bytes_are_another_pass(s, frame.raw_prescan)):
                             capture.update(raw=None, raw_layout=None)
                         writer.submit(
                             number=number, paths=[pre], dpi=args.prescan_dpi,

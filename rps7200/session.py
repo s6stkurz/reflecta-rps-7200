@@ -766,6 +766,23 @@ def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
     }
 
 
+def bytes_are_another_pass(scanner: Any, raw_pixels: Any) -> bool:
+    """Whether the bytes the scanner holds now belong to a later pass.
+
+    `capture_record()` describes the scanner's **last** pass, and a picture
+    carried on from before it -- a walk frame whose aim or hold failed after
+    a verification prescan, filed with the prescan it arrived with -- is not
+    that pass. `raw_bytes_disagree` cannot see it: both are prescans of the
+    same frame at the same resolution, identically shaped. Identity can: the
+    scanner's `last_pixels_raw` is the very array its last pass produced, so
+    a picture whose raw pixels are some other array was not that pass.
+
+    False where the scanner keeps no such array, which says nothing.
+    """
+    last = getattr(scanner, "last_pixels_raw", None)
+    return raw_pixels is not None and last is not None and last is not raw_pixels
+
+
 def roll_frame_label(roll: str, number: int) -> str:
     """The `film.frame` every roll entry carries: ``<roll>-<NN>``.
 
@@ -3056,6 +3073,20 @@ class ScanSession:
                 self._emit("log", text=(
                     f"raw bytes do not describe this image ({detail}); "
                     "filing it without them rather than filing the wrong ones"))
+                capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
+            elif bytes_are_another_pass(self._scanner, raw_image):
+                # The same failure in the shape the guard above is blind to:
+                # a walk frame whose aim failed after a verification prescan
+                # is filed with the prescan it arrived with, and the bytes on
+                # hand are the verification's -- the same frame, the same
+                # shape. Filed together, the entry decoded to a different
+                # picture from the one it held, and `reconstruct` called it a
+                # changed decode. The pass's own bytes are in the debug spool
+                # when that is on, and are left there (see the claim below).
+                self._emit("log", text=(
+                    f"picture {number}: the raw bytes on hand are a later "
+                    "pass's; filing it without them rather than filing the "
+                    "wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
         # One answer, recorded and applied, so the entry's record says what the
         # delivered file actually got rather than what the session default was.

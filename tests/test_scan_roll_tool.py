@@ -1323,3 +1323,40 @@ def test_a_walk_with_the_library_off_still_leaves_its_prescans(tmp_path,
     assert scan_roll.main() == 0
     assert sorted(p.name for p in (tmp_path / "roll").glob("prescan*.tif")) \
         == ["prescan01.tif", "prescan02.tif"]
+
+
+def test_a_walk_prescan_is_not_filed_with_a_later_passs_bytes(tmp_path,
+                                                             monkeypatch):
+    """The bytes on hand are the scanner's last pass's. A prescan whose raw
+    pixels are not that pass's array was not that pass, however alike their
+    shapes -- a verification prescan taken after it looks exactly the same."""
+    from rps7200 import library
+
+    created = []
+
+    class Verified(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+            self.last_pixels_raw = np.zeros((3, 3, 3), np.uint8)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Verified)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "verified", "--dry-run", "--frames", "1"],
+    )
+    assert scan_roll.main() == 0
+    (entry,) = [p.parent for p in (tmp_path / "lib").glob("*/scan.json")]
+    assert library.read_raw(entry) is None
+
+
+def test_a_walk_prescan_that_was_the_last_pass_keeps_its_bytes(tmp_path,
+                                                              monkeypatch):
+    from rps7200 import library
+
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1")
+    assert code == 0
+    (entry,) = [p.parent for p in (tmp_path / "lib").glob("*/scan.json")]
+    assert library.read_raw(entry) == b"raw-bytes"

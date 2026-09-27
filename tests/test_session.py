@@ -1546,6 +1546,53 @@ def test_raw_bytes_that_describe_another_image_are_not_filed(tmp_path):
     assert any("do not describe this image" in e.text for e in kinds(events, "log"))
 
 
+class _AimedScanner(FakeScanner):
+    """A walk frame whose aim failed after it had taken a verification prescan.
+
+    The driver yields the frame with the prescan it arrived with, while the
+    scanner's last pass -- and so every byte `capture_record` holds -- is the
+    verification's: the same frame, the same resolution, the same shape.
+    ``verified=False`` is the ordinary walk, where the two are one pass.
+    """
+
+    def __init__(self, verified=True, **kw):
+        super().__init__(**kw)
+        self.own = picture(channels=3, seed=1)
+        self.last_pixels_raw = (picture(channels=3, seed=2) if verified
+                                else self.own)
+
+    def capture_record(self):
+        return {"reference": None, "ccd_mask": None, "raw": RAW,
+                "raw_layout": {"format": "index", "width": 36, "lines": 24,
+                               "channels": 3}}
+
+    def scan_roll(self, frames=None, first_index=0, **kw):
+        yield RollFrame(
+            index=first_index, position=self.pos, image=None, meta={},
+            prescan=self.own, registration={},
+            error="the second nudge was refused", raw_prescan=self.own,
+            prescan_meta={"resolution_dpi": 300, "channel_order": list("RGB")})
+
+
+def test_a_walk_frame_is_not_filed_with_a_later_passs_bytes(tmp_path):
+    """Filed together, the entry held one prescan's pixels and another's
+    bytes: `reconstruct` called it a changed decode, and the frame's own
+    bytes were gone. The shape guard cannot see it; identity can."""
+    _s, _scanner, events = run(Roll(frames=1, dry_run=True, name="aimed"),
+                               tmp_path, scanner=_AimedScanner())
+    (record,) = library.entries(tmp_path)
+    assert library.read_raw(tmp_path / record["id"]) is None, (
+        "filed beside the verification prescan's bytes")
+    assert any("later pass" in (e.text or "") for e in kinds(events, "log"))
+
+
+def test_a_walk_frame_that_is_the_last_pass_keeps_its_bytes(tmp_path):
+    _s, _scanner, _events = run(Roll(frames=1, dry_run=True, name="plain"),
+                                tmp_path, scanner=_AimedScanner(verified=False))
+    (record,) = library.entries(tmp_path)
+    assert library.read_raw(tmp_path / record["id"]) == RAW
+
+
 def test_a_pass_that_ended_early_keeps_its_own_bytes(tmp_path):
     """The bytes of a short read are the ones worth keeping most. Judged
     against the line count GET PARAMETERS *declared*, a pass that ended early
