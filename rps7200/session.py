@@ -1675,9 +1675,15 @@ class FrameWriter:
                 # roll's own `rolls/...tif` and an output folder set to JPEG are
                 # written correctly side by side without this having to know
                 # the setting.
+                # Plain when the entry is, for the same reason: a single pass
+                # is written with the scanner open and idle, and the deflate
+                # of a full-resolution copy is the work that must not happen
+                # then. Its library entry is compacted after close; a
+                # delivered copy stays as written, larger and lossless.
                 note = export.write(str(path), delivered, resolution=job["dpi"],
                                     quality=job.get("quality")
-                                    or export.DEFAULT_QUALITY)
+                                    or export.DEFAULT_QUALITY,
+                                    compress=job.get("compress", True))
             except Exception as exc:                     # noqa: BLE001
                 problems.append(f"could not write {path} ({exc})")
                 continue
@@ -2874,7 +2880,8 @@ class ScanSession:
             # A single scan or prescan is filed with the scanner open and idle
             # between jobs, and compressing then -- gzip, and TIFF deflate --
             # is what preceded a wedge (CLAUDE.md). So those are written plain
-            # and compressed when the session closes. A roll's frames keep
+            # -- the entry and the output-folder copy alike -- and the entry
+            # is compressed when the session closes. A roll's frames keep
             # compressing on the writer thread while the next frame scans: the
             # device is busy there, which is the exception CLAUDE.md argues
             # and `tools/filing_load_test.py` exists to measure.

@@ -335,6 +335,44 @@ def test_a_single_scan_is_compressed_only_after_the_scanner_closes(
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
 
 
+def test_the_delivered_copy_of_a_single_scan_is_written_plain_too(
+        tmp_path, monkeypatch):
+    """The entry was kept plain until close and the output-folder copy of the
+    very same pass was deflated straight away, scanner open and idle -- the
+    comment choosing plain named TIFF deflate as the hazard. A roll's copies
+    still compress: the device is busy with the next frame then."""
+    from rps7200 import tiff
+
+    written = []
+    real = tiff.write
+
+    def spy(path, image, *a, compress=True, **kw):
+        written.append((Path(path), compress))
+        return real(path, image, *a, compress=compress, **kw)
+
+    monkeypatch.setattr(tiff, "write", spy)
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    s.join(timeout=15)
+    delivered = [c for p, c in written if out in p.parents]
+    assert delivered == [False], written
+
+    written.clear()
+    out = tmp_path / "out-roll"
+    s = ScanSession(root=str(tmp_path / "lib2"), rolls=str(tmp_path / "r2"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, resolution=600, infrared=False, name="r"))
+    s.shutdown()
+    s.join(timeout=15)
+    delivered = [c for p, c in written if out in p.parents]
+    assert delivered and all(delivered), written
+
+
 def test_a_prescan_is_filed_too(tmp_path):
     """CLAUDE.md says file every scan, without an exception for the cheap ones.
     A prescan is ~370 KB and it is the evidence about framing."""

@@ -161,6 +161,7 @@ def write(
     *,
     resolution: int | None = None,
     quality: int = DEFAULT_QUALITY,
+    compress: bool = True,
 ) -> str:
     """Write one delivered file, in the format its name asks for.
 
@@ -177,6 +178,10 @@ def write(
     that is not installed is no reason to lose one -- the same line
     `FrameWriter` takes about a frame that cannot be filed. No DNG is written
     in that case: the TIFF it fell back to carries the plane itself.
+
+    ``compress=False`` writes a TIFF plain, for a caller writing with the
+    scanner open and idle -- where deflate is the heavy local work CLAUDE.md
+    names as preceding a wedge. It is the caller's to know; this cannot.
     """
     path = Path(path)
     fmt = format_of(path)
@@ -185,9 +190,10 @@ def write(
             _write_jpeg(path, image, quality)
         except ImportError:
             path = path.with_suffix(SUFFIXES["tiff"])
-            tiff.write(str(path), image, resolution=resolution)
+            tiff.write(str(path), image, resolution=resolution,
+                       compress=compress)
             return (f"Pillow is not installed, so this was written as "
                     f"{path.name} instead. `uv sync --extra jpeg` adds it.")
         return _write_infrared(path, image, resolution)
-    tiff.write(str(path), image, resolution=resolution)
+    tiff.write(str(path), image, resolution=resolution, compress=compress)
     return ""
