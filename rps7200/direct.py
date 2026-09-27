@@ -3310,7 +3310,6 @@ class DirectScanner:
         prescan_resolution: int,
         approved: Any,
         keep_raw: bool = False,
-        reverse: bool = False,
         should_stop: Callable[[], bool] | None = None,
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
         source: str = "operator",
@@ -3340,11 +3339,21 @@ class DirectScanner:
         It never reverses within a frame, never exceeds a travel budget, and
         caps at :data:`~rps7200.framing.MAX_HOLD_MOVES` moves. Whatever
         happens, the frame is scanned: the outcome is recorded, not enforced.
+
+        The target is never negated. It is a distance in the *picture*,
+        measured against the reference by `measure_shift_mm`, so the loop is
+        closed where the operator looked and the transport's physical sense
+        does not enter it. It used to take the window's "reverse the direction"
+        tick, which is for hand moves, and negate the target with it: on a
+        transport that goes the way the code assumes, every frame of the roll
+        was driven to the mirror of where he put it and reported `held`, and on
+        one that did not, the first move tripped `wrong_way`. An inverted
+        transport is what the direction check below exists to catch.
         """
-        target = -approved.offset_mm if reverse else approved.offset_mm
+        target = approved.offset_mm
         out: dict[str, Any] = {
             "target_mm": round(target, 4), "outcome": "held", "moves": 0,
-            "spent_mm": 0.0, "reverse_applied": bool(reverse),
+            "spent_mm": 0.0,
             "history": [], "prescan": None, "roll_abort": None,
             "source": source, "clamped": False,
         }
@@ -3783,7 +3792,6 @@ class DirectScanner:
         correct: bool = False,
         correct_dry_run: bool = False,
         approved: dict[int, Any] | None = None,
-        reverse_hold: bool = False,
         fast_infrared: bool = True,
         first_index: int = 0,
         edge_reader: Callable[[str], Any] | None = None,
@@ -4005,7 +4013,7 @@ class DirectScanner:
                 if held is not None and holding:
                     fix = self._hold_to_approved(
                         index, prescan_image, prescan_resolution, held,
-                        keep_raw=keep_raw, reverse=reverse_hold,
+                        keep_raw=keep_raw,
                         should_stop=should_stop,
                         # Without this every machine proposal logged as
                         # `operator` -- the one thing `source`'s own docstring

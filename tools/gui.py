@@ -3191,7 +3191,9 @@ class ScannerGui:
             fast_infrared=fast_ir,
             film=film, meter=meter, dry_run=False,
             correct=correct, only=tuple(numbers),
-            approved=tuple(approved), reverse_hold=self.v_reverse.get(),
+            # Not the 'reverse the direction' tick: that is for hand moves,
+            # and holding is closed in the picture -- see `_hold_to_approved`.
+            approved=tuple(approved),
             mono=mono,
             mono_channel=self.v_mono_channel.get(),
             # Beside its walk and its `approved.json`; see `_roll_folder`.
@@ -5231,6 +5233,9 @@ def read_survey(folder, say=None) -> dict:
 #: Only the ones a resume should put back: `mono` is missing deliberately,
 #: because `_sync_film` derives it from the film type and restoring it would be
 #: overwritten a moment later by something that looks like it disagreed.
+#: `reverse_hold`, which older manifests carry, is missing too: it was the
+#: hand-move tick handed to the hold loop, and putting it back from a roll
+#: would set a control that no longer reaches a roll at all.
 RESTORABLE = {
     "resolution": ("dpi", str),
     "prescan_resolution": ("predpi", str),
@@ -5240,7 +5245,6 @@ RESTORABLE = {
     "meter": ("meter", str),
     "mono_channel": ("mono_channel", str),
     "correct": ("correct", bool),
-    "reverse_hold": ("reverse", bool),
     "start_at": ("startat", str),
 }
 

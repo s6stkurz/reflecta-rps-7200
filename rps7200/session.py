@@ -1462,10 +1462,6 @@ class Roll:
     #: unaffected, so a mixed roll is coherent and a roll without approvals
     #: behaves exactly as it did before this existed.
     approved: tuple[Approved, ...] = ()
-    #: Whether the transport's +x is the operator's +x. Mirrors the window's
-    #: "reverse the direction" tick, which exists because the physical sense
-    #: was never certain.
-    reverse_hold: bool = False
     max_failures: int = 3
     name: str = ""
     out: str = ""
@@ -2442,7 +2438,6 @@ class ScanSession:
                 "prescan_resolution": job.prescan_resolution,
                 "correct": job.correct,
                 "correct_dry_run": job.correct_dry_run,
-                "reverse_hold": job.reverse_hold,
                 "max_failures": job.max_failures,
                 "frames": count,
                 "start_at": start_at,
@@ -2509,7 +2504,6 @@ class ScanSession:
             correct_dry_run=job.correct_dry_run,
             # Keyed the driver's way, from 1-based as the window counts.
             approved={a.number - 1: a for a in job.approved},
-            reverse_hold=job.reverse_hold,
             keep_raw=True,
             edge_reader=self.edge_reader,
         )

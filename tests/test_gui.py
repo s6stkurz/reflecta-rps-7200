@@ -879,6 +879,55 @@ def test_the_sheet_scans_the_frames_it_showed_wherever_the_film_is(
     assert frames == [(2, 1), (4, 3)]
 
 
+def test_the_hand_move_reverse_tick_never_mirrors_a_sheets_positions(
+        monkeypatch, tmp_path):
+    """The Transport panel's 'reverse the direction' is remembered between
+    launches and was handed to every roll the sheet commissioned, where it
+    negated each approved position before the hold loop ran. The loop is
+    closed in the picture, so the mirror was reached and logged `held`: a
+    frame set 40 units right was scanned 40 units left, all roll long."""
+    from conftest import ScannerOnStrip
+
+    from rps7200.session import ScanSession
+
+    reached = []
+
+    class Recording(ScannerOnStrip):
+        def _hold_to_approved(self, index, image, prescan_resolution,
+                              approved, **kw):
+            reached.append((approved.offset_mm, dict(kw)))
+            return super()._hold_to_approved(index, image, prescan_resolution,
+                                             approved, **kw)
+
+    submitted = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    survey = [types.SimpleNamespace(number=n, position=n - 1)
+              for n in range(1, 4)]
+    window = _stub_window(survey, 0, submitted, tmp_path)
+    window.v_reverse = types.SimpleNamespace(get=lambda: True)
+    reference = np.zeros((8, 8, 3), np.uint8)
+    gui.ScannerGui.on_scan_chosen(
+        window, (2,), (Approved(number=2, offset_mm=0.5, reference=reference),),
+        {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
+         "film": "negative", "meter": "none", "correct": False})
+    assert len(submitted) == 1
+
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: Recording(at=0), verbose=False)
+    s.start()
+    s.submit(submitted[0])
+    s.shutdown()
+    s.join(timeout=20)
+
+    assert [offset for offset, _ in reached] == [0.5]
+    assert not any(kw.get("reverse") for _, kw in reached), reached
+    settings = json.loads((tmp_path / "rolls" / "sheet-roll" / "roll.json")
+                          .read_text(encoding="utf-8"))["settings"]
+    assert not settings.get("reverse_hold")
+    # Nor does reopening an older roll that recorded it put the tick back.
+    assert "reverse" not in gui.restorable({"reverse_hold": True})
+
+
 def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
     """rolls/2026-09-23, as it is on disk: a second walk, begun on the
     counter's 5, called that frame 1 -- and the roll beside it, begun on 0,
