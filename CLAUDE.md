@@ -419,7 +419,8 @@ It needs a power cycle afterwards, so avoid these:
   session refuses everything that would drive the device (`DeviceSuspect`);
   status queries still go through. The recovery is a power cycle and a new
   session. Ctrl-C in `tools/scan.py` and `tools/scan_roll.py` finishes the pass
-  in flight and stops there; a second one aborts.
+  in flight and stops there; a second one aborts. SIGTERM and the terminal
+  closing are taken the same way, and in the window too (`DeferredInterrupt`).
 - **Do not hold the session open through heavy local work.** Gzipping a 140 MB
   library entry with the device open and idle preceded one wedge.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both

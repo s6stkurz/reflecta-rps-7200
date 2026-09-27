@@ -58,16 +58,28 @@ class DeferredInterrupt:
     Ctrl-C is taken at its word and raises, for the operator who has decided a
     power cycle is cheaper than waiting.
 
+    The other ways a process is told to stop are taken the same way:
+    `SIGNALS`. ``on_request`` is called once, on the first, for a caller that
+    has to act rather than poll -- the window, whose loop is Tk's.
+
     Only the main thread can install a signal handler; anywhere else, and
     where there is no SIGINT, this does nothing and Ctrl-C behaves as usual.
     """
 
-    def __init__(self, say=None):
+    #: SIGTERM is `kill`'s default and a service manager's; SIGHUP is the
+    #: terminal the tool was started from closing; SIGBREAK is Windows'
+    #: Ctrl-Break. Each killed a tool mid-read, so each abandoned the read --
+    #: and `writer.finish()` never ran -- where Ctrl-C had stopped doing that.
+    #: Those a platform lacks are left out.
+    SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
+
+    def __init__(self, say=None, on_request=None):
         self._requested = False
-        self._previous = None
+        self._previous: dict = {}
         self._installed = False
         self._say = say or (lambda message: print(message, file=sys.stderr,
                                                   flush=True))
+        self._on_request = on_request
 
     def requested(self) -> bool:
         return self._requested
@@ -77,13 +89,24 @@ class DeferredInterrupt:
             self._restore()
             raise KeyboardInterrupt
         self._requested = True
-        self._say("\nstopping after the pass in flight -- interrupting a read "
-                  "wedges the scanner. Press Ctrl-C again to abort anyway.")
+        try:
+            self._say("\nstopping after the pass in flight -- interrupting a "
+                      "read wedges the scanner. Press Ctrl-C again to abort "
+                      "anyway.")
+        except (OSError, ValueError):
+            # A terminal that has closed -- SIGHUP -- takes stderr with it,
+            # and raising here would land in the middle of the very read
+            # this exists to protect.
+            pass
+        if self._on_request is not None:
+            self._on_request()
 
     def _restore(self) -> None:
         if self._installed:
             import signal
-            signal.signal(signal.SIGINT, self._previous)
+            for signum, previous in self._previous.items():
+                signal.signal(signum, previous)
+            self._previous = {}
             self._installed = False
 
     def __enter__(self) -> "DeferredInterrupt":
@@ -92,10 +115,18 @@ class DeferredInterrupt:
         if (threading.current_thread() is threading.main_thread()
                 and hasattr(signal, "SIGINT")):
             try:
-                self._previous = signal.signal(signal.SIGINT, self._handler)
+                for name in self.SIGNALS:
+                    signum = getattr(signal, name, None)
+                    if signum is None:
+                        continue
+                    self._previous[signum] = signal.signal(signum,
+                                                           self._handler)
                 self._installed = True
             except (ValueError, OSError):
-                self._installed = False
+                # All of them or none: put back what was taken before the
+                # refusal, and leave Ctrl-C as it was.
+                self._installed = True
+                self._restore()
         return self
 
     def __exit__(self, *exc) -> None:

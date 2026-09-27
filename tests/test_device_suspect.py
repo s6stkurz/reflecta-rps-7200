@@ -162,6 +162,41 @@ def test_the_handler_is_put_back_afterwards():
     assert signal.getsignal(signal.SIGINT) == before
 
 
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP", "SIGBREAK"])
+def test_the_other_ways_to_be_told_to_stop_are_taken_as_ctrl_c(name):
+    """`kill`, and the terminal closing, ended a tool at once -- inside its
+    read, with its queued frames unfiled -- where Ctrl-C had stopped doing
+    that. Those a platform does not have are simply not there."""
+    import signal
+
+    from rps7200.console import DeferredInterrupt
+
+    signum = getattr(signal, name, None)
+    if signum is None:
+        pytest.skip(f"no {name} here")
+    before = signal.getsignal(signum)
+    asked = []
+    with DeferredInterrupt(say=lambda m: None,
+                           on_request=lambda: asked.append(1)) as interrupt:
+        assert signal.getsignal(signum) == interrupt._handler
+        interrupt._handler(signum, None)
+        assert interrupt.requested() and asked == [1]
+    assert signal.getsignal(signum) == before
+
+
+def test_a_terminal_that_has_gone_does_not_turn_the_request_into_an_error():
+    """SIGHUP means stderr may be gone too, and the handler runs in the
+    middle of whatever the tool was doing -- a read, most likely."""
+    from rps7200.console import DeferredInterrupt
+
+    def say(message):
+        raise OSError(5, "Input/output error")
+
+    interrupt = DeferredInterrupt(say=say)
+    interrupt._handler(1, None)                    # does not raise
+    assert interrupt.requested()
+
+
 def test_a_bracket_stopped_at_ctrl_c_files_the_passes_it_took(tmp_path, monkeypatch):
     """Stopped between passes, never inside one, and nothing scanned is lost:
     the passes used to be held in memory until the end and die with the

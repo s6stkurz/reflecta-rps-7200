@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rps7200 import (                                     # noqa: E402
     export, library, preview, settings, shortcuts, tiff,
 )
-from rps7200.console import use_utf8_stdout
+from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
@@ -3449,6 +3449,29 @@ class ScannerGui:
         # with it open is one: for a walk not yet commissioned its state is the
         # only record of the ticks, positions and turns. Before `_remember`,
         # which is what writes them.
+        self._close_sheet()
+        self._remember()
+        self.session.shutdown()
+        self._wait_to_quit()
+
+    def on_interrupt(self) -> None:
+        """Ctrl-C in the terminal the window came from, SIGTERM, or that
+        terminal closing: Quit's "stop after the frame in flight".
+
+        Asked of nobody, because whoever sent it may not be at the window --
+        the terminal may be gone. Each of these used to end the process at
+        once, the scanner thread inside its bulk read and the writer part way
+        through an entry: the abandoned read, left INCOMPLETE. A second one
+        aborts, as in the tools (`DeferredInterrupt`).
+        """
+        if self.closing:
+            return
+        self._say("interrupted from the terminal: stopping after the frame in "
+                  "flight, then quitting")
+        if self.busy:
+            self.session.request_stop()
+        self.closing = True
+        self.v_state.set("closing ...")
         self._close_sheet()
         self._remember()
         self.session.shutdown()
@@ -8906,10 +8929,16 @@ def main() -> int:
             libraries=libraries, cache=home / "pictures.npz")
 
     root = tk.Tk()
-    ScannerGui(root, session, demo=args.demo, settings_path=settings_path,
-               look_only=args.look_only, open_roll=open_roll)
-    root.mainloop()
-    return 0
+    app = ScannerGui(root, session, demo=args.demo,
+                     settings_path=settings_path, look_only=args.look_only,
+                     open_roll=open_roll)
+    # Tk runs the handler between events, on this thread; it only schedules
+    # the orderly quit, which then waits for the scanner thread as Quit does.
+    interrupt = DeferredInterrupt(
+        on_request=lambda: root.after(0, app.on_interrupt))
+    with interrupt:
+        root.mainloop()
+    return 130 if interrupt.requested() else 0
 
 
 if __name__ == "__main__":
