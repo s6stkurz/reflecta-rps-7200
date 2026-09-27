@@ -1142,12 +1142,27 @@ def prunable(
 
     Within a group the ones kept are chosen on what they can still be used for,
     not on age: an entry carrying its raw bytes and its calibration can be
-    re-decoded and re-corrected, and one without cannot. Ties go to the newest.
+    re-decoded and re-corrected, and one without cannot. Then on what else it
+    carries that its twin may not -- a prescan, film notes, tags, the pass's
+    own record -- so a bare copy never survives a rich one. Ties go to the
+    newest.
+
+    And only once the survivor has been checked on disk. The choice is made
+    from the records; a survivor whose raw bytes were truncated since would
+    otherwise be kept while the intact copy went.
     """
     def usefulness(record: dict[str, Any]) -> tuple:
         raw = bool((record.get("raw") or {}).get("file"))
         cal = bool((record.get("calibration") or {}).get("shading"))
-        return (raw, cal, str(record.get("created")))
+        # Everything a byte-identical twin can still differ by. The newest
+        # used to win outright, so a debug copy filed after close() -- the
+        # pass alone, "captured with RPS7200_DEBUG on" -- could survive the
+        # tool's own entry with its film notes, prescan and roll membership.
+        carries = (bool(record.get("prescan")),
+                   sum(1 for v in (record.get("film") or {}).values() if v)
+                   + len(record.get("tags") or ())
+                   + len(record.get("extra") or {}))
+        return (raw, cal, *carries, str(record.get("created")))
 
     out = []
     for group in duplicates(root).values():
@@ -1160,7 +1175,8 @@ def prunable(
             # empty, or two strips filed under one day's default roll name,
             # gave different photographs one signature, and `--delete` then
             # destroyed all but one of them, raw bytes included.
-            twin = next((k for k in kept if same_data(record, k)), None)
+            twin = next((k for k in kept if same_data(record, k)
+                         and not damage(entry_path(root, k), k)), None)
             if twin is None:
                 kept.append(record)
                 continue
@@ -1251,21 +1267,11 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
         path = entry_path(root, record)
         if str(record.get("id")) != path.name:
             problems.append(f"{path.name}: records itself as {record.get('id')}")
+        problems += [f"{path.name}: {p}" for p in damage(path, record)]
         image = record.get("image") or {}
-        scan = path / str(image.get("file", "scan.tif"))
-        if not scan.exists():
-            problems.append(f"{path.name}: {scan.name} is missing")
+        if not (path / str(image.get("file", "scan.tif"))).exists():
             continue
-        if image.get("sha256") and _sha256(scan) != image["sha256"]:
-            problems.append(f"{path.name}: {scan.name} does not match its checksum")
         cal = record.get("calibration") or {}
-        for key in ("shading", "ccd_mask"):
-            name = cal.get(key)
-            if name and not (path / name).exists():
-                problems.append(f"{path.name}: {name} is missing")
-        for name, digest in (record.get("files") or {}).items():
-            if (path / name).exists() and _sha256(path / name) != digest:
-                problems.append(f"{path.name}: {name} does not match its checksum")
         if not cal.get("shading"):
             # Say which kind this is. A scan deliberately taken raw and one that
             # wanted correction and silently went without look the same here
@@ -1286,17 +1292,54 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                     f"be corrected"
                     + (f" -- correction was asked for: {why}" if why else "")
                 )
-        raw = record.get("raw") or {}
-        if not raw.get("file"):
+        if not (record.get("raw") or {}).get("file"):
             problems.append(
                 f"{path.name}: no raw bytes, so it cannot be re-decoded"
             )
-        elif not (path / raw["file"]).exists():
-            problems.append(f"{path.name}: {raw['file']} is missing")
+    return problems
+
+
+def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
+    """What is wrong with the files one entry's record names. Empty if none.
+
+    Integrity only: every file the record names is there and matches its
+    checksum. Whether the entry is *complete* -- a reference, raw bytes at
+    all -- is `verify`'s other half, and not asked here, so a caller about to
+    rely on an entry (`prunable`, choosing which copy survives) can ask just
+    this.
+    """
+    path = Path(path)
+    found: list[str] = []
+    image = record.get("image") or {}
+    scan = path / str(image.get("file", "scan.tif"))
+    if not scan.exists():
+        return [f"{scan.name} is missing"]
+    if image.get("sha256") and _sha256(scan) != image["sha256"]:
+        found.append(f"{scan.name} does not match its checksum")
+    cal = record.get("calibration") or {}
+    named = {cal.get("shading"), cal.get("ccd_mask"),
+             (record.get("prescan") or {}).get("file")}
+    files = record.get("files") or {}
+    # A file the record names and checksums is part of the entry whether or
+    # not anything else points at it; only the reference and the mask were
+    # checked for being there, so a lost prescan.tif passed as intact.
+    for name in sorted(n for n in named | set(files) if n):
+        if not (path / name).exists():
+            found.append(f"{name} is missing")
+        elif name in files and _sha256(path / name) != files[name]:
+            found.append(f"{name} does not match its checksum")
+    raw = record.get("raw") or {}
+    if raw.get("file"):
+        if not (path / raw["file"]).exists():
+            found.append(f"{raw['file']} is missing")
         elif raw.get("sha256"):
             data = read_raw(path)
             if data is None or hashlib.sha256(data).hexdigest() != raw["sha256"]:
-                problems.append(
-                    f"{path.name}: raw bytes do not match their checksum"
-                )
-    return problems
+                found.append("raw bytes do not match their checksum")
+    # Every rewrite here goes beside and is renamed over, so a name left
+    # behind is a write that stopped part way -- or one in progress while
+    # this looks. Either way it is not part of the entry, and it was never
+    # reported.
+    for part in sorted(path.glob(".*.part")):
+        found.append(f"{part.name} is a partial write left behind")
+    return found

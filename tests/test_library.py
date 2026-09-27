@@ -340,6 +340,47 @@ def test_an_entry_with_no_checksum_is_never_proved_the_same():
     assert not library.same_data(a, b)
 
 
+def test_a_survivor_damaged_on_disk_never_costs_the_intact_copy(tmp_path):
+    """The survivor was chosen from the records alone. With its raw bytes
+    truncated since, `--delete` removed the only intact copy."""
+    first = entry_with(tmp_path)
+    second = entry_with(tmp_path)
+    [(doomed, _)] = library.prunable(tmp_path)
+    survivor = second if doomed["id"] == first.name else first
+    data = (survivor / "raw.bin.gz").read_bytes()
+    (survivor / "raw.bin.gz").write_bytes(data[: len(data) // 2])
+    assert library.prunable(tmp_path) == []
+
+
+def test_the_twin_that_carries_more_is_the_one_kept(tmp_path):
+    """The newest won every tie, so a bare copy filed later -- the debug
+    flush's, say -- survived the entry with the prescan and the tags."""
+    rich = entry_with(tmp_path)
+    record = json.loads((rich / "scan.json").read_text(encoding="utf-8"))
+    record["tags"] = ["roll-7"]
+    record["extra"] = {"roll_membership": {"roll": "r", "frame": 3}}
+    record["created"] = "2026-09-01T10:00:00+00:00"           # the older one
+    (rich / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    entry_with(tmp_path)                                   # newer, and bare
+    [(doomed, _)] = library.prunable(tmp_path)
+    assert doomed["id"] != rich.name
+
+
+def test_verify_reports_a_missing_prescan(tmp_path):
+    """Only the reference and the mask were checked for being there: a
+    prescan.tif the record names and checksums could vanish unremarked."""
+    path, _, _ = make_entry(tmp_path, prescan=np.zeros((4, 6, 3), np.uint8))
+    assert library.verify(tmp_path) == []
+    (path / "prescan.tif").unlink()
+    assert any("prescan.tif is missing" in p for p in library.verify(tmp_path))
+
+
+def test_verify_reports_a_partial_write_left_behind(tmp_path):
+    path, _, _ = make_entry(tmp_path)
+    (path / ".scan.tif.part").write_bytes(b"half a file")
+    assert any(".scan.tif.part" in p for p in library.verify(tmp_path))
+
+
 def test_keep_two_retains_a_pair_for_comparison(tmp_path):
     for _ in range(3):
         entry_with(tmp_path)
