@@ -763,11 +763,16 @@ def test_every_walked_frame_is_held_and_none_past_one_command(
                                    {1: {"source": "measured"},
                                     2: {"source": "none"},
                                     3: {"source": "measured"}}))
-    held, _note = scan_roll.hold_from_walk(folder)
+    held, note = scan_roll.hold_from_walk(folder)
     assert sorted(held) == [1, 2, 3], "a frame with no proposal went unheld"
     assert held[2].offset_mm == 0.0 and held[2].source == "none"
     assert held[1].offset_mm == pytest.approx(0.4)
     assert held[3].offset_mm == pytest.approx(FINE_MAX_MM)
+    # And the note -- what `main` prints and the manifest records -- says
+    # what is held: every frame, each at the offset it will be sent to.
+    assert note["sources"] == {1: "measured", 2: "none", 3: "measured"}
+    assert note["offsets"] == {n: round(a.offset_mm, 4)
+                               for n, a in held.items()}
 
 
 def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(

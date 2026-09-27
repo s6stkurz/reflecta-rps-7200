@@ -311,9 +311,14 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     # The film too, as the one the positions above were read on: whether the
     # walk's prescans could be read at all is a question about its film, and
     # `--film` is negative unless told whatever the walk was.
-    return held, {"offsets": {n: round(v, 4) for n, v in offsets.items()},
-                  "sources": {n: (notes.get(n) or {}).get("source")
-                              for n in offsets},
+    #
+    # Said from `held`, what the roll will be sent to, not from the proposal:
+    # read off the proposal, the note left the unplaced frames out and kept
+    # the offsets unclamped, so "holding N frame(s)" counted fewer sources
+    # than N and the manifest recorded moves the roll never asked for.
+    return held, {"offsets": {n: round(a.offset_mm, 4)
+                              for n, a in held.items()},
+                  "sources": {n: a.source for n, a in held.items()},
                   "walked": len(frames), "from": str(folder),
                   "prescan_resolution": walked_at, "film": film}
 

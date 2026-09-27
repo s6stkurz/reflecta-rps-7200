@@ -18,7 +18,9 @@ from dataclasses import dataclass
 #    `01` where `00` was meant, and the reverse, driving each frame to the
 #    mirror of where it was set. And a walk that aims each frame sends no
 #    SLIDE for a position only one edge-reader member read (`unconfirmed`),
-#    where it used to move on it.
+#    where it used to move on it. And `tools/scan_roll.py --approved` holds
+#    every frame its walk saw -- one the detector left unplaced to 0, where
+#    it sent nothing -- and none past one command's reach, `FINE_MAX_MM`.
 # 6: the transport is asked where the film is, and a roll goes there first.
 #    No payload changes; the sequence does. READ STATE is sent when a window
 #    session opens and after every job that ended normally, a whole-frame
