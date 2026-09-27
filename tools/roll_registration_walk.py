@@ -133,11 +133,17 @@ class Walk:
 
     def frame(self, number: int) -> dict:
         """Two prescans, nothing moved between them."""
-        first, _meta, a = self._prescan(f"{self.label}{number:02d}_p1.tif")
-        second, _meta2, b = self._prescan(f"{self.label}{number:02d}_p2.tif")
+        first, meta, a = self._prescan(f"{self.label}{number:02d}_p1.tif")
+        second, meta2, b = self._prescan(f"{self.label}{number:02d}_p2.tif")
         record = {
             "number": number,
             "passes": [a, b],
+            # The join key to each pass's library entry (`extra.started_utc`):
+            # entries are named from when they were filed, after close(), so
+            # without it a corpus TIFF could be matched to its raw bytes only
+            # by content.
+            "started_utc": [(meta or {}).get("started_utc"),
+                            (meta2 or {}).get("started_utc")],
             "contrast": [round(frame_contrast(first), 4),
                          round(frame_contrast(second), 4)],
             "position": self.scanner.position(),
@@ -160,10 +166,11 @@ class Walk:
         # travels 0.034 mm more than three rungs.
         commanded = float(sent.get("asked_mm", -RUNGS * RUNG_MM))
         for step in range(2 * RUNGS + 1):
-            image, _meta, name = self._prescan(
+            image, meta, name = self._prescan(
                 f"{self.label}{number:02d}_L{step:02d}.tif")
             rungs.append({
                 "step": step,
+                "started_utc": (meta or {}).get("started_utc"),
                 "commanded_mm": round(commanded, 4),
                 "requested_mm": round(excursion, 4),
                 "pass": name,
