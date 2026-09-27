@@ -92,6 +92,25 @@ def test_an_entry_keeps_everything_needed_to_use_it_again(tmp_path):
     assert "numpy" in record["provenance"]["versions"]
 
 
+def test_values_json_cannot_hold_are_kept_whole_not_printed(tmp_path):
+    """`default=str` wrote an array over a thousand elements with "..." in
+    the middle, bytes as "b'...'" and a numpy integer as a string."""
+    profile = np.arange(2000, dtype=np.float64) / 7
+    path, _, _ = make_entry(tmp_path)
+    stream, image = index_stream(16, 8, 3)
+    other = library.save(image, {"resolution_dpi": 300, "channels": 3,
+                                 "profile": profile, "count": np.int64(7),
+                                 "answer": b"\x00\xff"},
+                         root=tmp_path / "b", raw=stream,
+                         raw_layout={"bytes_per_line": 32, "width": 16,
+                                     "lines": 8, "channels": 3})
+    extra = json.loads((other / "scan.json").read_text(encoding="utf-8"))["extra"]
+    assert extra["profile"] == profile.tolist()
+    assert extra["count"] == 7
+    assert extra["answer"] == "00ff"
+    assert path.exists()
+
+
 def test_the_raw_bytes_are_stored_byte_for_byte(tmp_path):
     path, _, raw = make_entry(tmp_path)
     with gzip.open(path / "raw.bin.gz", "rb") as fh:

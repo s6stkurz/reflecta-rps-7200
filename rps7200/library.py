@@ -42,7 +42,7 @@ import threading
 import time
 import warnings
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -146,6 +146,28 @@ def _identity_now() -> dict[str, Any]:
 
 
 _AT_IMPORT: dict[str, Any] = _identity_now()
+
+
+def _plain(value: Any) -> Any:
+    """A value JSON cannot hold, as the nearest thing it can: losslessly
+    where there is such a thing.
+
+    The record used `default=str`, which wrote whatever reached it as its
+    printed form: an array over a thousand elements as "[0.1 0.2 ... 0.9]",
+    bytes as "b'...'", a numpy integer as a string. Nothing failed, and the
+    value -- a registration profile, say -- was gone for good.
+    """
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=str)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    return str(value)
 
 
 def _sha256(path: Path) -> str:
@@ -437,7 +459,7 @@ def save(
     # so a reader never meets half of one. Every file above was synced before
     # it, so a power cut cannot leave a durable record naming data that never
     # reached the disk -- the marker going would otherwise vouch for it.
-    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     _sync_dir(path)
     (path / INCOMPLETE).unlink(missing_ok=True)
     _sync_dir(path)
@@ -524,7 +546,7 @@ def compact(path: Path | str) -> bool:
                 record.setdefault("image", {})["sha256"] = digest_now
             else:
                 record.setdefault("files", {})[name] = digest_now
-    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     plain.unlink()
     return True
 
@@ -640,7 +662,7 @@ def add_tags(path: Path | str, tags: list[str]) -> list[str]:
     path = Path(path)
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     record["tags"] = sorted(set(record.get("tags") or ()) | set(tags))
-    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     return record["tags"]
 
 
@@ -1132,7 +1154,7 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
                     + f" ({judged.get('why', '')})")
 
     if done and write:
-        _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+        _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     return done
 
 
