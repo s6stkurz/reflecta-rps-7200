@@ -31,7 +31,7 @@ Not in the plan, by CLAUDE.md: anything that drives the scanner.
 |---|---|---|
 | 1. Second audit | **done** | 15 areas and 6 gap passes, every finding verified: 437 findings (0 critical, 24 high), 1 refuted |
 | 2. Write-up | **done** | README, status.md, areas/, dataflow, persisted state, library exactness, demo, user errors, doc mismatches; regenerate with `run/gen/merge2.py` then `run/gen/gen3.py` |
-| 3. Fix round 3 | running | base `e700609`. Done: `fix3/library`, `fix3/filing`, `fix3/window` (26, 26 and 29 commits; merged and green in the local worktree `/home/user/integ3`, branch `integ3`, not yet pushed). Cut off by the spend limit and restarted 21:15 UTC: capture (continues its 10 commits), device, tests, demo-framing-outputs, and the reviews of library, filing and window -- runs `wf_72b1e5c3-8d7` and `wf_19b1cafc-b5a` |
+| 3. Fix round 3 | running | base `e700609`. Fixed and reviewed: capture, device, filing, library, tests, window (`fix3/<group>`; reports and reviews in `fixes/raw/`). Their review issues are being fixed on the same branches by `run/audit-fixes-wave3-reviews.js` (run `wf_98e160af-0b4`). demo-framing-outputs: fix and review still running (`wf_19b1cafc-b5a`). Then all seven are merged, tested and pushed. |
 | 3b. Follow-up round | not started | from the merged base: the cross-subsystem items the fixers left to each other, and the gap passes' findings (CRA, THR, FED, RDM, PLAT, UAM) |
 | 4. Docs, re-check | not started | docs pass with the fixers' proposals as "Decisions for Stefan" in TODO.md; re-check P01-P32 and the round-3 items; CI on three systems |
 
@@ -49,6 +49,7 @@ that says what is already done.
   `run/rps7200-full-audit-2b.js` with what it prints as `args`. It reads
   `audit/second/raw/` and skips every reader, verifier, critic and gap reader
   whose result is already there -- nothing is run twice.
+- **Review fixes:** start `run/audit-fixes-wave3-reviews.js` with `{"base": "e700609", "groups": [the groups not yet done]}`; an agent continues its branch.
 - **Fix round 3:** start `run/audit-fixes-wave3.js` again with the same `args`
   plus `"skip": [groups already finished]` (their results are in
   `audit/second/fixes/raw/fix3-<group>.json`). An agent whose branch
