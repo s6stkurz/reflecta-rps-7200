@@ -18,7 +18,13 @@ from typing import Any
 
 import numpy as np
 
-from .protocol import COORD_PER_INCH, MM_PER_INCH, say_units
+from .protocol import (
+    COMMAND_UNITS,
+    COORD_PER_INCH,
+    MM_PER_INCH,
+    MM_PER_UNIT,
+    say_units,
+)
 
 MIN_INSET_X = 96
 MIN_INSET_Y = 71
@@ -1146,9 +1152,11 @@ def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
 #: one SLIDE command at param 1, `STEP_MM + OVERHEAD_MM` on `DirectScanner`.
 #: That value and not a smaller one is what makes a limit cycle impossible: the
 #: loop can never ask for a correction it cannot deliver, so it cannot chatter
-#: between two positions either side of the target. Duplicated rather than
-#: imported because `direct` imports this module; a test pins the two together,
-#: which is the same arrangement `tools/gui.py`'s FINE_STEP_MM already has.
+#: between two positions either side of the target. Built from `protocol`'s
+#: law, as the driver's is: it was typed out as 0.3002 "because `direct`
+#: imports this module", when this module imports `protocol` like `direct`
+#: does, and a typed copy is what went stale at 0.2719 once already. A test
+#: still pins it to the driver's.
 #:
 #: 0.3002 since 2026-09-22, up from 0.2719, because the ramp a command pays was
 #: re-measured at 1.84 units rather than 1.572 and this constant is *defined*
@@ -1156,7 +1164,7 @@ def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
 #: smallest move, and the no-limit-cycle argument above goes with it: the loop
 #: would start commanding moves it cannot deliver and chatter either side of
 #: the target, which is the one failure this number exists to prevent.
-HOLD_TOLERANCE_MM = 0.3002
+HOLD_TOLERANCE_MM = MM_PER_UNIT * (1.0 + COMMAND_UNITS)
 
 #: Moves per frame. Four prescans is already 70 s added to a frame.
 MAX_HOLD_MOVES = 3
@@ -1373,7 +1381,7 @@ def frame_offset_mm(
 
 def right_gap_closure(
     image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM,
-    frame_mm: float = 36.0,
+    frame_mm: float = FRAME_WIDTH_MM,
 ) -> Reading:
     """Where this frame sits, from the gap at the *right* -- and a check.
 
@@ -1953,8 +1961,11 @@ COLUMNS_PER_UNIT = 1.2423
 
 #: What issuing a command costs, in units, before any param is applied. Real,
 #: and 21% larger than the fit in `docs/protocol.md` section 11 -- that fit used
-#: single commands only, so nothing in it could see a per-command term.
-COMMAND_COST = 1.84
+#: single commands only, so nothing in it could see a per-command term. The
+#: driver's own term, `protocol.COMMAND_UNITS`, not a second 1.84: the two
+#: were typed separately and nothing held them equal, so a re-measured ramp
+#: would have moved the mover and left the detector's deadband behind.
+COMMAND_COST = COMMAND_UNITS
 
 #: The width a 300 dpi prescan comes back as. Columns scale with it.
 PRESCAN_COLUMNS = 428.0
