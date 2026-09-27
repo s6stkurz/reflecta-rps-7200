@@ -1,0 +1,167 @@
+{
+ "type": "result",
+ "key": "v2:e3cf248f7392621ec46ee304c62a27712e558d0f4f247af8aea0a7a9e4b971e1",
+ "agentId": "a9a151cfe96c92b8c",
+ "result": {
+  "verdicts": [
+   {
+    "id": "SR-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The code does what the finding says. _file calls `claim(raw_image)` (session.py:2872-2875) before `self._writer.submit(...)`, so the claim comes before anything is filed. It also fires after `raw_bytes_disagree` has dropped the capture's bytes (2847): the guard only nulls `capture` and never stops the claim. In `_run`'s finally, `self._scanner.close()` (1974) comes before `self._writer.finish()` (1979). DirectScanner.close() calls `_debug_flush()` (direct.py:1145), and for a claimed item that runs `stuck += self._debug_unlink(item); continue` (1055-1059), which deletes image.npy, raw.bin, meta.json and ccd_mask.bin. FrameWriter._run only appends a save failure to `errors` (1594-1598). So a pass whose library.save fails, whether earlier in the session or after close, survives nowhere. The worst case is the SR-06 walk error path: the entry gets the wrong pass's bytes, which have the same shape, and the claim deletes the spool holding the right ones. tools/scan_roll.py has the same order: it claims before `writer.submit`, and `with ... DirectScanner(...) as s` exits before `writer.finish()` at 803. The two threads calling `reindex` at once (flush on the worker thread, the writer still filing) is also real, but index.json is derived. Loss needs debug on plus a failed save, which is narrow, but it defeats the one backup that exists for exactly that case."
+   },
+   {
+    "id": "SR-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "`compress=bool(roll)` (2887) makes every roll frame gzip plus deflate on the writer thread. `_roll` returns right after the loop (2701) without waiting for the writer; ScanSession has no queue.join or similar (grep for `_writer` shows only submit, finish and notes). `_run` then emits finished and idle and blocks on `self._jobs.get()` with the device open. The window keeps the session open for its whole life. So the last frame's entry, and any backlog, is compressed with the device open and idle. The FrameWriter docstring's 'busy rather than idle throughout' (1554-1558) is false for the final frame. The tool closes the device first (scan_roll.py:792-803). The `_roll` comment at 2338-2341 even says that waiting for the writer was removed so as not to hold the device idle, but it did not add anything that stops compression after the final yield."
+   },
+   {
+    "id": "SR-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_file` appends an out_dir path for every Scan and Prescan (2827-2831). FrameWriter._write calls `export.write(str(path), delivered, ...)` (1682), which calls `tiff.write(str(path), image, resolution=resolution)` with the default `compress=True`, i.e. zlib plus predictor (tiff.py:149-153), or a JPEG plus DNG. That happens straight after a single pass, with the device open and idle, which contradicts the comment at 2880-2886 and CLAUDE.md's 'files a single scan or prescan plain'. library.save(compress=False) still writes `reference.save(...)`, which is `np.savez_compressed`, though that is small. The window's Export and Save-all threads (gui.py:2757-2777, 4288-4307) also run while the session holds the device. Deflate is less costly than gzip over the raw bytes, and when tifffile is absent the built-in TIFF writer is uncompressed, so medium is right."
+   },
+   {
+    "id": "SR-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "In `_roll`, prescans are filed as their own entries with `raw_image=rf.raw_prescan` only under `if job.dry_run:` (2536-2587). A real roll passes `prescan=rf.prescan` into the frame's entry (2627). That is the corrected pass: the driver calls `self.prescan(..., shading=shading)` (direct.py:3968). library.save writes it as prescan.tif, and its record holds only `file`, `read_direction` and `carriage_state` (library.py:376-382): no corrections label and no raw bytes or mask of its own. On a real roll a failed frame only produces `self._emit(\"log\", ...)` (2594-2595). prescan_before is handled only inside the dry_run branch, and the real-roll driver path keeps no before-picture on a hold. The session's survey records never name `prescan_before`, while the tool's do (scan_roll.py:694), so gui.carry_walk (5792) does not copy it. test_session.py:828-833 asserts that real-roll prescans are not filed separately. Outside debug mode, none of a real roll's prescans survives in raw form."
+   },
+   {
+    "id": "SR-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`entry = library.save(...)` (1656) is not wrapped in a try. An exception leaves `_write` before the loop over `paths` at 1673, so neither rolls/…/frameNN.tif nor the out_dir copy is attempted. `_run`'s except only records the error and calls on_done/_tell (1594-1599). `_filed` then stops the roll (2005-2014). library.save leaves the directory with INCOMPLETE in it (263, 398). The scenario of a full library disk with the out_dir on another volume is plausible."
+   },
+   {
+    "id": "SR-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_hold_to_approved` runs nudge then prescan in a loop, with no try (direct.py:3368-3380), so a UsbError or CheckCondition from a second nudge or prescan propagates to scan_roll's except (4147-4156). That except yields `RollFrame(index, position, None, {}, prescan_image, marks, error=..., raw_prescan=raw_prescan, prescan_meta=prescan_meta)`, still P1's pixels, because they are replaced only after `fix` returns (4031-4036, 4057-4067). On a walk the session files error frames that carry a prescan (the `if rf.prescan is not None` / `if job.dry_run` branch runs regardless of rf.error), with `capture = self._scanner.capture_record()` (2832), which holds the last pass's `last_raw`, i.e. verification prescan P2's bytes. `raw_bytes_disagree` compares only shape and layout, which are identical. The entry pairs P1's pixels with P2's bytes, and with debug on the claim then deletes P1's correct spool (SR-01). This applies to walks only: on a real roll, error frames are not filed."
+   },
+   {
+    "id": "SR-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`renumbered` rewrites only `record[\"number\"]` and `record[\"index\"]` (session.py:585-601) and leaves `record[\"prescan\"]` as it was. An extending walk (`carried = not job.dry_run or job.extend_walk`, 2330, which the GUI sets via `extend_walk=keep`, gui.py:2351) carries the legacy records forward and writes `out / f\"prescan{number:02d}.tif\"` (2549) without checking whether another record names that file. walked_prescans resolves pictures through `record.get(\"prescan\")` (661-668), so a legacy record whose file index differs from its strip number ends up pointing at a picture of another frame. This needs a pre-'strip'-numbering walk that did not start on frame 1 and then an extension of it, which is narrow but reachable. The `walked_prescans` docstring itself describes such a folder."
+   },
+   {
+    "id": "SR-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "frameNN.tif (2629) and prescanNN.tif (2549) are written in place through `export.write`, which calls `tiff.write` and then `tifffile.imwrite(path, ...)` or `open(path, \"wb\")`: no temp file and rename. Only the out_dir path goes through `_unclaimed`. `RollManifest.record` replaces the earlier record for the same number (1121-1123), so the first take's `entry` is dropped from roll.json, although both library entries carry the same roll_membership. keep_first_numbering copies non-atomically under `if not legacy.exists()` (1012-1013). The raw data survives in the library, so low. gui.folder_note does warn that frame files are overwritten."
+   },
+   {
+    "id": "SR-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_unclaimed(where / self._out_name(number, meta, roll))` is evaluated on the scanner thread at submit time (2831). The final prescan and prescan_before are submitted back to back (2549-2587) with the same number, the same meta dpi/channels and the same roll, so both resolve to `{roll}_frameNN_300dpi.tif` in out_dir/prescans. The first is still queued, or sitting in its library.save, when the second is named, so neither exists yet. The writer writes them in queue order, so the before-picture silently replaces the final one."
+   },
+   {
+    "id": "SR-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`if not self.dead: self._scanner.close()` (1973-1974) skips close after force_abort. close() is the only caller of `_debug_flush()` (direct.py:1145), so the spool in `tempfile.mkdtemp(prefix=\"rps7200-debug-\")` is never filed or removed, and its path is never logged. The transport's close is guarded (`if self._handle:`), so calling close() or `_debug_flush` after an abort would be safe. The writer.finish and compact steps do still run."
+   },
+   {
+    "id": "SR-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:1929-1939: when `open()` succeeds and `inquiry()` raises, the except branch emits failed/closed and returns without calling `self._scanner.close()`. The session object stays referenced by the window, so the libusb handle and claimed interface persist until the process exits."
+   },
+   {
+    "id": "SR-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "For `file_entry=False`, `library=None` (2895), so `_write` leaves `entry=None` and calls `self.on_done(seq, number, None, None)` (1700-1701). `_filed` then logs `picture {number} could not be filed: {err}` unconditionally when entry is None (2003-2004), giving 'could not be filed: None' for every prescan_before on a corrected walk, and for every pass of a session with root None."
+   },
+   {
+    "id": "SR-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`self._current = job` (1952) is never cleared. `_filed` runs on the writer thread and calls `self.request_stop()` whenever `err is not None and isinstance(self._current, Roll)` (2005-2014). A late failure from a finished roll's last frame, arriving while a later Roll is running, therefore stops that roll and drains the queue. While the worker is idle it only sets `_stop` (cleared at the next job start) and logs a misleading message. Narrow timing window."
+   },
+   {
+    "id": "SR-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_roll` calls `seek(...)` (2288) and `out.mkdir(...)` (2312) before `scan_roll`, whose film and meter checks run only at the first `next()` (direct.py:3853-3871). Nothing in scan_roll, the session or gui.py calls `correctable_at` (grep finds none in session.py or gui.py). At 7200 dpi the refusal comes inside `scan()` (direct.py:2942-2947) after that frame's prescan and metering, and ShadingUnavailable is in the per-frame except tuple, so the roll spends max_failures frames and then returns as 'finished'. The GUI accepts 25..7200 (gui.py:1787). The tool refuses up front (scan_roll.py:333-338)."
+   },
+   {
+    "id": "SR-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_prescan_here` returns the stored prescan when `where == self._position()` (2146), and `_position()` returns None on any exception (2738-2743), so None == None counts as a match. `_last_prescan` is set only in `_prescan` (2079) and never cleared. The effect is limited: `_note_reversal` acts only when `match_prescan` is on and the pass's own line tags did not settle its direction (2175-2186), so the scenario is narrow."
+   },
+   {
+    "id": "SR-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:94 says 'for param 1 and param 8' while FINE_MAX_MM uses MAX_CORRECTION_PARAM = 87 (about 9.39 mm = 88.84 units). plan_nudges' docstring says 'integer param in 1..8' and 'clamps silently at param 8' (1208, 1222). `_move` says 'tops out at ~1.01 mm' (2229). MAX_FINE_STEPS = 8 now allows about 75 mm, roughly two frame widths. The window adds its own one-command cap (gui.py:3394-3401), but the session API does not."
+   },
+   {
+    "id": "SR-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`nudge` returns `param` (direct.py:3638-3641), but `_hold_to_approved` keeps only `asked_mm` summed into `spent_mm`, plus `moves` and `clamped` (3368-3374), and per-move values are not kept. `_move` accumulates `moved += abs(out.get(\"asked_mm\", 0.0))` and returns only a string (2245-2253). _CommandLog records commands only between start() and stop() inside a pass, so SLIDEs between passes appear in no entry. approved.json stores `round(a.offset_mm, 4)` in mm (gui.py:3314)."
+   },
+   {
+    "id": "SR-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The session's manifest dict (2387-2466) has no started, finished or stopped fields, and `_roll`'s end (2688-2701) writes nothing about why it ended. A stop is only returned as a note, and DeviceSuspect, max_failures or an exception reach only the event queue. The tool writes `finished`, `duration_s` and `stopped` (scan_roll.py:822-827) and `prescan_before` (694)."
+   },
+   {
+    "id": "SR-19",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Both threads are daemon threads (1819, 1584). gui.py `main()` ends with `root.mainloop(); return 0` (8911-8912), and gui.py has no signal or KeyboardInterrupt handling (grep finds only a comment). _tkinter's mainloop calls PyErr_CheckSignals between events, so SIGINT can surface as KeyboardInterrupt out of mainloop, and SIGHUP or SIGTERM kill the process outright. Either way the interpreter exits without joining daemon threads, which abandons any bulk read in flight and any entry being written. The CLI tools use DeferredInterrupt. When the interrupt instead lands inside a Tk callback, tkinter's CallWrapper reports it and carries on, so Ctrl-C does not always kill the window, but closing the terminal or SIGTERM does. Launching the GUI from a terminal is the documented route (make run-demo, uv run python tools/gui.py)."
+   },
+   {
+    "id": "SR-20",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "`submit` (`queue.put`) and `finish` (`put(None)` then `join()`) have no liveness check or timeout (1705-1711). The `on_done` call in the failure branch is unguarded (1596-1597), unlike `_tell`. As the reader says, no realistic escaping exception was found: `_filed` only emits events and calls request_stop. This is an observation, not a defect."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "SR-A1",
+    "title": "A hold or aim that raises part-way loses every record of the SLIDE moves it already sent, and the walk's travel budget never counts them",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:3368-3380",
+     "rps7200/direct.py:4001-4011",
+     "rps7200/direct.py:4040-4046",
+     "rps7200/direct.py:3585-3595",
+     "rps7200/direct.py:4147-4156"
+    ],
+    "evidence": "`_hold_to_approved` accumulates `out[\"moves\"]`, `out[\"spent_mm\"]` and `out[\"history\"]` in a local dict and sends `asked = self.nudge(want)` then `self.prescan(...)` with no try (3368-3380). If either raises, `out` is discarded. scan_roll's except yields `RollFrame(index, position, None, {}, prescan_image, marks, error=str(exc), ...)` (4152-4156) with `marks` lacking `approved`/`correction`, because `marks[\"approved\"] = ...` / `marks[\"correction\"] = ...` run only after `fix` returns (4028, 4046). In `_aim_frame`, `walk.record(index, fix.get(\"residual_mm\"), fix.get(\"spent_mm\", 0.0), ...)` (3585-3587) is skipped too.",
+    "description": "The film may already have been moved several commands' worth when the loop fails, and nothing in the survey.json or roll.json record, the library entry or the StripWalk says so. The frame's registration describes the pre-move picture as if the film were still there. The roll-wide travel budget (`walk.affordable`) undercounts, so later frames may be allowed moves the budget was meant to refuse. `misses` is not incremented either.",
+    "failure_scenario": "On a walk with 'correct', frame 6's aim sends two param-40 nudges (about 84 units). The second verification prescan fails with a CheckCondition. survey.json records frame 6 with its original registration and an error, and nothing records that the film moved. The sheet's positions for the frames after it are measured on film shifted by an amount nobody recorded, and the budget check lets the next frame spend travel it should have been denied.",
+    "recommendation": "Wrap the hold loop so that on an exception the partial `out` (moves, per-move params, history) is attached to the exception or returned alongside it, and record it in `marks` in scan_roll's except branch. Call `walk.record(..., verified=False)` with the spent travel on that path as well.",
+    "doc_reference": ""
+   },
+   {
+    "id": "SR-A2",
+    "title": "tools/scan_roll.py writes walk prescans with TIFF deflate inline on the scanning thread, with the device open",
+    "severity": "low",
+    "category": "hardware-safety",
+    "locations": [
+     "tools/scan_roll.py:657-660",
+     "tools/scan_roll.py:688-694",
+     "rps7200/tiff.py:97-103",
+     "rps7200/session.py:2544-2548"
+    ],
+    "evidence": "Inside `with interrupt, DirectScanner(...) as s:` the dry-run branch does `tiff.write(str(pre), frame.prescan)` (659-660) and `tiff.write(str(was), frame.prescan_before)` (690-691), with tiff.write's default `compress: bool = True` (zlib plus predictor). The session's equivalent comment says: 'Written by the writer thread, not here: it is only ~370 KB, but nothing local happens on the scanning thread with the device open' (session.py:2544-2548).",
+    "description": "The tool and the window diverge on the rule that nothing is compressed on the scanning thread with the device open. The tool compresses each walk prescan inline between passes. The files are small (about 370 KB), so the exposure is brief, but the last frame's write happens with the device open and idle. The tool's walk also leaves a failed frame's prescan unfiled and unwritten (`if frame.error:` branch), whereas the session files it.",
+    "failure_scenario": "A 38-frame walk from tools/scan_roll.py --dry-run deflates 38 to 76 small TIFFs on the scanning thread with the scanner open, which is the state CLAUDE.md warns against, and the window's code comment says the window avoids it.",
+    "recommendation": "Route the tool's prescanNN.tif and -before.tif writes through the FrameWriter's `paths` as the session does, or write them uncompressed (`compress=False`).",
+    "doc_reference": "rps7200/session.py:2544-2548 ('nothing local happens on the scanning thread with the device open')"
+   }
+  ],
+  "persisted_state_corrections": "- **Library entry compression.** `compress=True` in scan.tif, prescan.tif and every delivered TIFF means zlib plus predictor only when tifffile is installed. The built-in writer ignores `compress` and always writes uncompressed (tiff.py:108-113 docstring, 163-165). So \"zlib+predictor TIFF for roll passes\" holds only on the tifffile path.\n- **Walk prescan library entries** are filed with `compress=bool(roll)`, which is True because a walk has a roll name. They are gzipped and deflated on the writer thread while the walk goes on, and the last one is compressed with the device idle. The session passes no `on_filed` for them, so survey.json records never name the prescan's library entry. Only the prescanNN.tif filename is recorded.\n- **Real-roll frame entries** also carry `extra.registration`, which includes the hold/aim record (`approved` or `correction`: target_mm, moves, spent_mm, history, clamped). It is in mm, has no per-command params, and is lost when a hold raises part-way (SR-A1).\n- **Debug spool.** shading.npz is written once per reference object, as `NNN-shading.npz` for the first pass that used it, not once per pass. image.npy holds the raw pixels (`_debug_capture(raw_pixels, meta)`, direct.py:3222).\n- **Output-folder copies.** For a single Scan the name comes from a timestamp to the second. For walk prescans it comes from roll and frame, and that is what collides in SR-09. A real roll writes no prescan into out_dir at all.\n- **Pre-correction walk prescan.** It is oriented with the session's prescan rotation and flip at write time, but no record says so. The survey record carries `prescan_rotation`/`prescan_flipped` only for prescanNN.tif.\n- **roll.json frame records** can also carry `filing_error`. `entry` is set only once the writer reports success (RollManifest._apply). If a rescan's earlier take answers late, that answer is swallowed by the `waiting > 1` branch (session.py:1147-1152), so the earlier take's entry path is never recorded anywhere in the manifest."
+ }
+}
