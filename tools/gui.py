@@ -30,6 +30,7 @@ import ctypes
 import itertools
 import json
 import math
+import os
 import queue
 import shutil
 import subprocess
@@ -5390,9 +5391,16 @@ def roll_exports(summary: dict) -> list:
     turn = int(settings.get("rotation") or 0)
     mirrored = bool(settings.get("flipped"))
     arranged = summary.get("arranged") or {}
-    channels = 4 if settings.get("infrared") else 3
+    # The roll's last run, for an entry whose own record cannot be read. The
+    # command-line tool calls the resolution `dpi`, and read as `resolution`
+    # alone its rolls were exported as "0dpi".
+    fallback = {"resolution_dpi": summary.get("resolution")
+                or settings.get("resolution")
+                or settings.get(SETTING_ALIASES["resolution"]) or 0,
+                "channels": 4 if settings.get("infrared") else 3}
     out = []
     for number in sorted(summary.get("entries") or {}):
+        entry = Path(summary["entries"][number])
         # What its frameNN.tif was written with, where the roll recorded it:
         # a turn made in the window while the roll ran reached the frames
         # written after it, and the roll's one `rotation` is the one it began
@@ -5401,17 +5409,34 @@ def roll_exports(summary: dict) -> list:
         # way out.
         own = arranged.get(number)
         out.append(SimpleNamespace(
-            entry=Path(summary["entries"][number]),
+            entry=entry,
             rotation=own[0] if own else rotations.get(number, turn),
             flipped=own[1] if own else flips.get(number, mirrored),
             image=None,
             kind="frame",
             number=number,
             seq=-number,
-            meta={"resolution_dpi": settings.get("resolution") or 0,
-                  "channels": channels},
+            meta=_scanned_as(entry, fallback),
         ))
     return out
+
+
+def _scanned_as(entry, fallback: dict) -> dict:
+    """The resolution and channel count an entry's own record gives.
+
+    What an exported file is named by. The roll's `settings` describe its
+    last run only -- a roll resumed at 3600 dpi RGBI after twelve frames at
+    1800 dpi RGB says 3600 and infrared for all of them -- and the entry is
+    the pass the file is re-corrected from.
+    """
+    try:
+        scan = json.loads((Path(entry) / "scan.json").read_text(
+            encoding="utf-8")).get("scan") or {}
+    except (OSError, ValueError, AttributeError):
+        return dict(fallback)
+    return {"resolution_dpi": scan.get("resolution_dpi")
+            or fallback["resolution_dpi"],
+            "channels": scan.get("channels") or fallback["channels"]}
 
 
 def duplicate_name(folder) -> Path:
@@ -5513,23 +5538,34 @@ def read_approved(folder, legacy: int = 0, say=None):
     return offsets, rotations, flips, entries, sources
 
 
-def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
-    """Every library entry that belongs to a roll, by roll name and frame.
+def roll_entry_index(library_root) -> dict:
+    """Every library entry a roll could name, gathered in one pass.
 
     One glob for the whole library rather than one per roll: there are two
     hundred entries and a dozen rolls, and asking the question per roll turns a
-    listing into a quadratic one.
+    listing into a quadratic one. `roll_entries` makes the join from this.
 
-    The join is on the entry's own `roll_membership`, or on `film.frame`,
-    which `ScanSession._file` sets to ``"{roll}-{NN}"`` for every roll frame.
-    A roll's manifest names each frame's entry now too, once the writer has
-    filed it (`session.RollManifest`), but no roll written before that does,
-    and the entries are what an export re-corrects from -- so they are asked.
+    Three ways in, from surest to weakest:
+
+    - ``"ids"``: every entry by its directory name, for the entry a roll's own
+      `roll.json` names for each frame it filed (`session.RollManifest`).
+    - ``"folders"``: scanned frames by the roll folder their
+      `roll_membership` records, then by frame number.
+    - ``"names"``: frames that record no folder -- filed before entries said
+      where they belonged, found by `film.frame`, which `ScanSession._file`
+      sets to ``"{roll}-{NN}"`` -- by roll name, then number.
+
+    Within the last two, the newest entry of a number wins (entry ids start
+    with their UTC time, and the glob is sorted).
+
+    The roll *name* is not an identity. A duplicate keeps its original's name,
+    and so do a renamed folder and a name typed again after a Delete, so a
+    join on the name alone exported one roll's rescans as another's frames.
 
     `library.entries()` cannot be used here: it returns the records and throws
     away the folder each came from, which is the only part this needs.
     """
-    out: dict[str, dict[int, Path]] = {}
+    out: dict = {"ids": {}, "folders": {}, "names": {}}
     root = Path(library_root)
     if not root.is_dir():
         return out
@@ -5538,6 +5574,8 @@ def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
             record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        entry = record_path.parent
+        out["ids"][entry.name] = entry
         member = (record.get("extra") or {}).get("roll_membership")
         if isinstance(member, dict):
             # Said by the entry itself. Only a scanned frame is the frame:
@@ -5546,9 +5584,13 @@ def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
             if member.get("kind") != "frame":
                 continue
             roll, number = str(member.get("roll") or ""), member.get("number")
-            if not roll or not isinstance(number, int):
+            if not isinstance(number, int):
                 continue
-            out.setdefault(roll, {})[number] = record_path.parent
+            if member.get("folder"):
+                out["folders"].setdefault(
+                    _folder_key(member["folder"]), {})[number] = entry
+            elif roll:
+                out["names"].setdefault(roll, {})[number] = entry
             continue
         # Filed before entries said so: parse the label, and leave out what
         # is tagged a prescan for the same reason as above. `tools/scan_roll.py`
@@ -5559,7 +5601,47 @@ def roll_entry_index(library_root) -> dict[str, dict[int, Path]]:
         roll, _, number = frame.rpartition("/" if "/" in frame else "-")
         if not roll or not number.isdigit():
             continue
-        out.setdefault(roll, {})[int(number)] = record_path.parent
+        out["names"].setdefault(roll, {})[int(number)] = entry
+    return out
+
+
+def _folder_key(folder) -> str:
+    """A roll folder as one string, however it was written down.
+
+    `roll_membership` records the folder as the session had it -- relative to
+    where the window ran, or absolute -- and the browser lists it however
+    `--rolls` was given. Resolved and case-folded where the filesystem folds
+    case, so the two meet.
+    """
+    return os.path.normcase(str(Path(folder).resolve()))
+
+
+def roll_entries(summary: dict, index: dict) -> dict[int, Path]:
+    """Which library entry is each finished frame of this roll.
+
+    The roll's own word first: `roll.json` names the entry it filed for each
+    frame, and a duplicate or a renamed folder carries that record with it. A
+    frame it names is that entry or, if the entry has since been deleted,
+    none -- never another roll's frame of the same number. Only a roll
+    written before it named its entries is joined on the folder its entries
+    record, and only one older than that on its name.
+
+    Only frames the roll says are done: a name typed again after a Delete
+    starts a new roll in the same folder, and the old roll's frames 7-12 are
+    not frames of a new roll that scanned 1-6.
+    """
+    recorded = summary.get("recorded") or {}
+    by_folder = index.get("folders", {}).get(_folder_key(summary["folder"]), {})
+    by_name = index.get("names", {}).get(str(summary.get("roll") or ""), {})
+    ids = index.get("ids", {})
+    out: dict[int, Path] = {}
+    for number in summary.get("done") or ():
+        if number in recorded:
+            entry = ids.get(Path(recorded[number]).name)
+        else:
+            entry = by_folder.get(number) or by_name.get(number)
+        if entry is not None:
+            out[number] = entry
     return out
 
 
@@ -5615,8 +5697,9 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     settings = progress.get("settings") or manifest.get("settings") or {}
     wanted = wanted_frames(manifest, progress)
     done = scanned_frames(progress)
-    # How each scanned frame's file was arranged, where the roll said.
-    arranged = {}
+    # How each scanned frame's file was arranged, where the roll said, and
+    # which library entry the roll filed for it (`roll_entries`).
+    arranged, recorded = {}, {}
     for record in progress.get("frames") or ():
         try:
             number = int(record["number"])
@@ -5625,6 +5708,8 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
                                     bool(record.get("flipped")))
         except (KeyError, TypeError, ValueError):
             continue
+        if record.get("done") and record.get("entry"):
+            recorded[number] = str(record["entry"])
     # `stat` only, no pixels: a roll directory can hold 38 frames at 142 MB, and
     # the whole point of this function is that listing a shelf of them is cheap.
     sizes, newest = 0, 0.0
@@ -5663,6 +5748,8 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         "done": sorted(done),
         "remaining": [n for n in wanted if n not in done],
         "arranged": arranged,
+        #: The entry `roll.json` says it filed for each done frame, by number.
+        "recorded": recorded,
     }
 
 
@@ -5689,7 +5776,7 @@ def rolls_on_disk(root, library_root=None) -> list[dict]:
         summary = roll_summary(folder)
         if summary is None:
             continue
-        summary["entries"] = dict(index.get(summary["roll"], {}))
+        summary["entries"] = roll_entries(summary, index) if index else {}
         out.append(summary)
     return out
 

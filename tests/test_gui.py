@@ -3194,9 +3194,9 @@ def test_entries_are_joined_to_rolls_by_the_frame_they_name(tmp_path):
     (broken / "scan.json").write_text("{not json", encoding="utf-8")
 
     index = gui.roll_entry_index(tmp_path / "library")
-    assert sorted(index["strip"]) == [1, 2]
-    assert sorted(index["other"]) == [1]
-    assert "" not in index
+    assert sorted(index["names"]["strip"]) == [1, 2]
+    assert sorted(index["names"]["other"]) == [1]
+    assert "" not in index["names"]
 
 
 def _member(tmp_path, roll, number, kind, name):
@@ -3218,7 +3218,7 @@ def test_a_walks_prescan_is_never_joined_as_the_frame(tmp_path):
     frame = _member(tmp_path, "strip", 3, "frame", "a-frame")
     _member(tmp_path, "strip", 3, "prescan", "z-prescan")
     index = gui.roll_entry_index(tmp_path / "library")
-    assert index["strip"][3] == frame
+    assert index["names"]["strip"][3] == frame
 
 
 def test_entries_filed_by_the_roll_tool_are_found_too(tmp_path):
@@ -3228,7 +3228,7 @@ def test_entries_filed_by_the_roll_tool_are_found_too(tmp_path):
     entry.mkdir(parents=True)
     (entry / "scan.json").write_text(json.dumps(
         {"film": {"frame": "cli-roll/04"}}), encoding="utf-8")
-    assert gui.roll_entry_index(tmp_path / "library")["cli-roll"][4] == entry
+    assert gui.roll_entry_index(tmp_path / "library")["names"]["cli-roll"][4] == entry
 
 
 def test_an_old_walk_prescan_without_a_membership_is_left_out(tmp_path):
@@ -3237,7 +3237,8 @@ def test_an_old_walk_prescan_without_a_membership_is_left_out(tmp_path):
     (old / "scan.json").write_text(json.dumps(
         {"film": {"frame": "strip-02"}, "tags": ["gui", "roll", "prescan"]}),
         encoding="utf-8")
-    assert gui.roll_entry_index(tmp_path / "library") == {}
+    index = gui.roll_entry_index(tmp_path / "library")
+    assert index["names"] == {} and index["folders"] == {}
 
 
 def test_a_rolls_own_date_beats_the_filesystems(tmp_path):
@@ -3388,6 +3389,94 @@ def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):
     summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
     assert [item.number for item in gui.roll_exports(summary)] == [1]
     assert len(summary["done"]) == 2, "both were scanned; only one survives"
+
+
+def _filed(tmp_path, roll, number, name, folder, *, dpi=1800, channels=3):
+    """A frame's entry as the session files one: it records its folder."""
+    entry = tmp_path / "library" / name
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text(json.dumps({
+        "scan": {"resolution_dpi": dpi, "channels": channels},
+        "film": {"frame": f"{roll}-{number:02d}"},
+        "extra": {"roll_membership": {"roll": roll, "number": number,
+                                      "kind": "frame", "folder": str(folder)}},
+    }), encoding="utf-8")
+    return entry
+
+
+def _names_its_entries(folder, entries):
+    """roll.json naming the entry filed for each frame, as `RollManifest` does."""
+    progress = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    for record in progress["frames"]:
+        if record["number"] in entries:
+            record.update(done=True, entry=str(entries[record["number"]]))
+    (folder / "roll.json").write_text(json.dumps(progress), encoding="utf-8")
+
+
+def test_a_duplicate_and_its_original_each_export_their_own_frames(tmp_path):
+    """A duplicate keeps its original's roll name, and Export joined entries
+    to rolls on that name alone: after the original was rescanned -- what the
+    Duplicate dialog says the copy is for -- both exported the rescans, and
+    the scans the copy was made to keep were delivered from neither."""
+    import shutil
+
+    original = _shelf(tmp_path, name="R", done=(1, 2))
+    first = {n: _filed(tmp_path, "R", n, f"2026a-{n}", original) for n in (1, 2)}
+    _names_its_entries(original, first)
+    shutil.copytree(original, original.with_name("R-2"))     # Duplicate
+    again = {n: _filed(tmp_path, "R", n, f"2026b-{n}", original, dpi=3600)
+             for n in (1, 2)}
+    _names_its_entries(original, again)
+
+    listed = {s["folder"].name: s for s in
+              gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")}
+    assert listed["R-2"]["entries"] == first
+    assert listed["R"]["entries"] == again
+    assert [i.entry for i in gui.roll_exports(listed["R-2"])] == [first[1], first[2]]
+    # A frame whose own entry has gone has none: not the older take the
+    # folder also holds, which a name typed again after a Delete would make
+    # another strip's.
+    shutil.rmtree(again[2])
+    listed = {s["folder"].name: s for s in
+              gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")}
+    assert listed["R"]["entries"] == {1: again[1]}
+
+
+def test_a_name_typed_again_after_a_delete_is_a_new_roll(tmp_path):
+    """The folder comes back under the same name and the same path, so
+    neither the name nor the folder tells the two strips apart. Frames 7-12 of
+    the deleted roll are not frames of a new one that scanned 1-6."""
+    import shutil
+
+    old = _shelf(tmp_path, name="Portra", wanted=range(1, 13), done=range(1, 13))
+    _names_its_entries(old, {n: _filed(tmp_path, "Portra", n, f"2026a-{n:02d}", old)
+                             for n in range(1, 13)})
+    shutil.rmtree(old)                                       # Delete
+    new = _shelf(tmp_path, name="Portra", wanted=range(1, 7), done=range(1, 7))
+    ours = {n: _filed(tmp_path, "Portra", n, f"2026b-{n:02d}", new)
+            for n in range(1, 7)}
+    _names_its_entries(new, ours)
+    summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
+    assert summary["entries"] == ours
+
+
+def test_an_exported_frame_is_named_by_its_own_entry(tmp_path):
+    """The roll's settings are its last run's: twelve frames at 1800 dpi RGB
+    resumed at 3600 dpi RGBI said "3600dpi_ir" of all of them. And a roll the
+    command-line tool made records `dpi`, which read as `resolution` alone was
+    "0dpi"."""
+    folder = _shelf(tmp_path, name="R", done=(1, 2), dpi=3600, ir=True)
+    entries = {1: _filed(tmp_path, "R", 1, "2026a-1", folder, dpi=1800),
+               2: _filed(tmp_path, "R", 2, "2026a-2", folder, dpi=3600,
+                         channels=4)}
+    _names_its_entries(folder, entries)
+    summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
+    named = [gui.batch_name(i, "tiff") for i in gui.roll_exports(summary)]
+    assert named == ["frame01_1800dpi.tif", "frame02_3600dpi_ir.tif"]
+
+    cli = {"folder": tmp_path / "nowhere", "entries": {4: tmp_path / "gone"},
+           "settings": {"dpi": 1800}}
+    assert gui.roll_exports(cli)[0].meta["resolution_dpi"] == 1800
 
 
 def test_approvals_are_read_without_loading_a_survey(tmp_path):
