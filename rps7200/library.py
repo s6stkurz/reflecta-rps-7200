@@ -233,6 +233,7 @@ def save(
     raw_path: Path | str | None = None,
     raw_layout: dict[str, Any] | None = None,
     corrections: list[str] | None = None,
+    prescan_corrections: list[str] | None = None,
     compress: bool = True,
 ) -> Path:
     """Write one scan and everything needed to use it again. Returns its path.
@@ -256,6 +257,13 @@ def save(
     ``prescan_meta`` is the framing pass's own meta, from the scanner, for a
     frame filed with its prescan: `prescan.tif` has no raw bytes of its own,
     so this is the only record of which way it was read.
+
+    ``prescan_corrections`` is `corrections` for the prescan, recorded as
+    `prescan.corrections_applied`. Every caller today hands over what
+    `prescan()` returned, which is corrected exactly when its meta carries a
+    shading report, so that is what an unstated one is taken to be; a caller
+    filing the prescan's raw pixels says ``prescan_corrections=[]``. With no
+    meta and nothing said, the record says None: not known.
     """
     film = film or FilmNotes()
     when = datetime.now(timezone.utc)
@@ -392,6 +400,16 @@ def save(
         # Absent when there is no `prescan.tif`.
         **({"prescan": {
             "file": "prescan.tif",
+            # Labelled, as `image.corrections_applied` labels scan.tif. A roll's
+            # frame entries file the prescan corrected, with no bytes and no
+            # mask of its own, and nothing said so: the convention lived only
+            # in the demo's docstring, and a reader of the entry had to guess.
+            "corrections_applied": (
+                list(prescan_corrections) if prescan_corrections is not None
+                else None if prescan_meta is None
+                else ["shading"] if (prescan_meta.get("shading")
+                                     and not prescan_meta.get("shading_skipped"))
+                else []),
             "read_direction": (prescan_meta or {}).get("read_direction"),
             "carriage_state": (prescan_meta or {}).get("carriage_state"),
         }} if prescan is not None else {}),

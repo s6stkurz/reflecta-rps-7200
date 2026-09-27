@@ -655,6 +655,26 @@ def test_an_entry_says_which_way_its_pass_and_its_prescan_were_read(tmp_path):
     assert library.reconstruct(path)[1].startswith("identical")
 
 
+def test_a_stored_prescan_says_whether_it_was_corrected(tmp_path):
+    """A roll's frame entry files the prescan `prescan()` returned, which is
+    corrected, beside raw pixels in scan.tif -- and the record said nothing."""
+    prescan = np.zeros((4, 4, 3), np.uint8)
+    report = {"columns": 4, "width": 4, "clipped": 0}
+
+    def label(**kw):
+        root = tmp_path / str(len(list(tmp_path.iterdir())))
+        path, _, _ = make_entry(root, prescan=prescan, **kw)
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+        return record["prescan"]["corrections_applied"]
+
+    assert label(prescan_meta={"shading": report}) == ["shading"]
+    assert label(prescan_meta={"shading": None,
+                               "shading_skipped": SHADING_SKIPPED_EXPLICIT}) == []
+    assert label(prescan_meta={"shading": report},
+                 prescan_corrections=[]) == [], "a caller filing it raw says so"
+    assert label() is None, "nothing to go on: not known"
+
+
 def test_an_entry_filed_bottom_up_is_named_not_called_a_regression(tmp_path):
     path, _ = bottom_up_entry(tmp_path, stored_as_read=True)
     _, verdict = library.reconstruct(path)
