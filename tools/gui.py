@@ -402,11 +402,12 @@ class ScannerGui:
         #: When this window opened: a cached reference older than this is
         #: another power-on's, as far as the window can tell.
         self._opened_at = time.time()
-        #: A pass or a roll handed to the session whose start the worker has
-        #: not reported yet. `busy` follows the worker's own "state" event,
-        #: which the pump reads up to a tick after the job was taken, so a
-        #: double press of Scan inside that tick queued a second pass.
-        self._queued_run = None
+        #: The jobs handed to the session whose start the worker has not
+        #: reported yet, oldest first (`_hand_over`). `busy` follows the
+        #: worker's own "state" event, which the pump reads up to a tick after
+        #: the job was taken, so a double press of Scan inside that tick
+        #: queued a second pass.
+        self._queued: list = []
         #: The prescan an aim-click may measure from: the newest one taken of
         #: the film where it still is. None once anything has moved it.
         self._aim_from = None
@@ -2029,6 +2030,9 @@ class ScannerGui:
         frame after was corrected with it. An older one goes through the
         prompt, which offers it with its age beside it.
         """
+        # Said before the prompt asks about the film, not after it is answered.
+        if self._no_scanner("Calibrate"):
+            return
         if (self.v_shading.get() == "reuse" and self._cached_reference()
                 and self._cached_since_opened()):
             self.on_calibrate("reuse")
@@ -2074,8 +2078,12 @@ class ScannerGui:
                 "this question stays open until then.",
                 parent=self._calibrate_prompt or self.root)
             return
-        self.session.submit(Calibrate(mode=mode or self.v_shading.get(),
-                                      reference=self.session.reference))
+        # And not with nothing to run it: queued there, it left the window
+        # calling itself calibrated with no reference anywhere.
+        if self._no_scanner("Calibrate", self._calibrate_prompt):
+            return
+        self._hand_over(Calibrate(mode=mode or self.v_shading.get(),
+                                  reference=self.session.reference))
         # Ahead of the answer, so a scan pressed next is queued behind it
         # rather than asking again; the "calibrated" event then says how it
         # ended -- or, when a stop kept it from running, the job's end does.
@@ -2259,20 +2267,64 @@ class ScannerGui:
         return True
 
     def _working(self) -> bool:
-        """Whether the scanner has a job, running or handed over and not begun."""
-        return self.busy or self._queued_run is not None
+        """Whether the scanner has a job, running or handed over and not begun.
+
+        A calibration handed over and not begun is not one: a pass pressed
+        next is queued behind it on purpose, rather than asked to calibrate
+        a second time.
+        """
+        return self.busy or any(not isinstance(job, Calibrate)
+                                for job in self._queued)
 
     def _hand_over(self, job) -> None:
-        """Hand a pass or a roll to the session, and be working from now."""
+        """Hand any job to the session, and be working from now.
+
+        Every job, moves and calibrations as well as passes. The worker takes
+        them in order and says so once for each, which is what `_queued`
+        follows. It used to hold one pass, cleared by whichever job started
+        next: a Move handed over just before a Scan cleared the Scan's, and
+        once the Move had ended a second press queued a second pass.
+        """
         self.session.submit(job)
-        self._queued_run = job
+        self._queued.append(job)
         if isinstance(job, Roll):
             self._aim_from = None                # a roll moves the film
+
+    def _scannerless(self) -> str:
+        """Why nothing would take a job handed over now, or "" if something would.
+
+        The scanner not found at launch, or the session closed or aborted
+        since: its queue still takes a job and nothing reads it. A pass handed
+        over then never said it had started, and the window counted it as
+        about to for good -- every Open, Rename, Delete and Calibrate after it
+        answered that the scanner was working, where browsing and exporting
+        rolls with the scanner off is ordinary use of this window.
+        """
+        if getattr(self.session, "dead", False):
+            return ("There is no scanner to do that now: it was force-aborted. "
+                    "Power-cycle it at its own switch, then start this window "
+                    "again.")
+        if self._session_closed:
+            return ("There is no scanner to do that now: the session that "
+                    "drives it has closed. Start this window again once the "
+                    "scanner is connected and switched on.")
+        return ""
+
+    def _no_scanner(self, title: str, parent=None) -> bool:
+        """True, having said why, when there is nothing to take a job."""
+        why = self._scannerless()
+        if why:
+            messagebox.showinfo(title, why + "\n\nRolls can still be opened, "
+                                "looked at and exported.",
+                                parent=parent or self.root)
+        return bool(why)
 
     def on_prescan(self) -> None:
         # The buttons grey only once the worker reports the job it took, so a
         # double press reached here twice and queued two passes.
         if self._working():
+            return
+        if self._no_scanner("Prescan"):
             return
         if self._calibration_missing():
             return
@@ -2284,6 +2336,8 @@ class ScannerGui:
 
     def on_scan(self) -> None:
         if self._working():                     # see `on_prescan`
+            return
+        if self._no_scanner("Scan"):
             return
         if self._calibration_missing():
             return
@@ -2321,6 +2375,10 @@ class ScannerGui:
         if self._working():
             self._say("the scanner is working -- a roll starts once it has "
                       "finished")
+            return
+        # Before anything below: a walk forgets the survey and starts reading
+        # one, and with nothing to take it, it would read nothing for good.
+        if self._no_scanner("Scan roll"):
             return
         if self._calibration_missing():
             return
@@ -3435,9 +3493,11 @@ class ScannerGui:
             return False
         # Over the sheet when the sheet asked, so the prompt is not hidden
         # behind the window it was pressed in.
-        if self._calibration_missing(
-                self.sheet.top if self.sheet is not None and self.sheet.alive()
-                else None):
+        over = (self.sheet.top if self.sheet is not None and self.sheet.alive()
+                else None)
+        if self._no_scanner("Scan chosen frames", over):
+            return False
+        if self._calibration_missing(over):
             return False
         if options:
             # Read from the sheet rather than through `_dpi`, which reads the
@@ -3729,18 +3789,25 @@ class ScannerGui:
 
         The buttons grey while the scanner works; the keys and an aim-click
         on the picture did not, and queued a move that ran wherever the job
-        ended -- a distance measured on one frame applied to another.
+        ended -- a distance measured on one frame applied to another. Asked
+        of `_working()`, not of `busy` alone: `busy` comes a tick after the
+        job is handed over, and a key in that tick after a Scan still queued
+        its move behind the pass.
         """
-        if self.busy:
+        if self._working():
             self._say("the scanner is working -- the film is not moved "
                       "while it does")
+            return True
+        why = self._scannerless()
+        if why:
+            self._say(f"the film is not moved -- {why[0].lower()}{why[1:]}")
             return True
         return False
 
     def on_move_frames(self, frames: int) -> None:
         if self._moving_refused():
             return
-        self.session.submit(Move(frames=frames))
+        self._hand_over(Move(frames=frames))
         self._aim_from = None                    # the film is somewhere else now
 
     def on_nudge(self, direction: int, millimetres: float | None = None) -> None:
@@ -3791,13 +3858,13 @@ class ScannerGui:
             self._say("changing direction: expect the first two or three steps "
                       "to go into backlash")
         self._last_nudge = direction
-        self.session.submit(Move(millimetres=millimetres * direction))
+        self._hand_over(Move(millimetres=millimetres * direction))
         self._aim_from = None                    # the film is somewhere else now
 
     def on_stop(self) -> None:
         self.session.request_stop()
         # A job not yet begun is dropped by the stop and never reports.
-        self._queued_run = None
+        self._queued.clear()
         self._say("stop requested -- finishing what is already running")
         self.b_stop.configure(state="disabled")
 
@@ -4027,8 +4094,9 @@ class ScannerGui:
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
             if event.busy:
-                # Taken: from here `busy` says so.
-                self._queued_run = None
+                # Taken, and the oldest handed over: from here `busy` says so.
+                if self._queued:
+                    self._queued.pop(0)
                 self._job = event.text
                 self.v_progress.set(event.text)
                 self.v_pass_eta.set("")
@@ -4131,7 +4199,7 @@ class ScannerGui:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
             # Nothing handed over now will start.
-            self._queued_run = None
+            self._queued.clear()
             self._session_closed = True
             self._set_busy(False)
             self.v_state.set("scanner closed")

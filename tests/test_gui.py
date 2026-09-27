@@ -873,6 +873,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         session=types.SimpleNamespace(submit=submitted.append,
                                       rolls=str(tmp_path / "rolls")),
         _working=lambda: False, _hand_over=submitted.append,
+        _no_scanner=lambda *a, **k: False,
         _scanned_in=lambda folder: set(),
         _refused_up_front=lambda *a, **k: False,
         _sheet_roll=None, root=None,
@@ -6352,3 +6353,79 @@ def test_a_calibration_that_never_ran_does_not_leave_the_window_calibrated(
     app._handle(Event(kind="state", text="idle", busy=False))
     assert app.calibrated is False
     assert app.b_calibrate.cget("text") == "Calibrate"
+
+
+def test_a_move_and_a_pass_are_never_queued_one_behind_the_other(
+        window, monkeypatch):
+    """`busy` follows the worker's event, a tick after the job was taken. A
+    move key or an aim-click in that tick after a Scan was queued behind it
+    and moved the film once the pass had ended; and a Move's own start
+    cleared the note that a Scan was waiting behind it, so once the Move had
+    ended a second press queued a second pass. A pass queued behind a
+    calibration, as it is meant to be, is still waiting while that runs."""
+    from rps7200.session import Event
+
+    app, root = window
+    app.calibrated = True
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+
+    def taken(text, *between):
+        app._handle(Event(kind="state", text=text, busy=True))
+        for event in between:
+            app._handle(event)
+        app._handle(Event(kind="state", text="idle", busy=False))
+
+    app.on_scan()
+    app.on_move_frames(1)
+    app.on_nudge(1, 0.5)
+    assert [type(j).__name__ for j in jobs] == ["Scan"]
+    taken("scanning")
+    app.on_move_frames(1)
+    app.on_scan()
+    assert [type(j).__name__ for j in jobs] == ["Scan", "Move"]
+    taken("moving")
+    app.on_calibrate("measure")
+    app.on_prescan()
+    taken("calibrating", Event(kind="calibrated", done=1))
+    app.on_scan()
+    assert [type(j).__name__ for j in jobs] == [
+        "Scan", "Move", "Calibrate", "Prescan"]
+    taken("prescanning")
+    app.on_scan()
+    assert [type(j).__name__ for j in jobs] == [
+        "Scan", "Move", "Calibrate", "Prescan", "Scan"]
+
+
+def test_a_pass_pressed_with_no_scanner_leaves_the_window_usable(
+        window, monkeypatch, tmp_path):
+    """With no scanner on the bus the session closes at launch and nothing
+    reads its queue. A pass pressed then was never taken, so it never said
+    it had started, and the window counted it as about to for good: Open,
+    Rename, Delete and Calibrate all answered that the scanner was working,
+    where browsing and exporting rolls with the scanner off is ordinary use."""
+    from rps7200.session import Event
+
+    app, root = window
+    app.calibrated = True
+    jobs, said = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: False)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: None)
+    app._handle(Event(kind="closed"))
+    app.on_prescan()
+    assert jobs == [] and not app._working(), "nothing would ever take it"
+    for press in (app.on_prescan, app.on_scan, app.on_roll,
+                  lambda: app.on_calibrate("measure")):
+        press()
+        assert "There is no scanner" in said[-1]
+    app.on_move_frames(1)
+    assert "no scanner" in app.log.get("1.0", "end")
+    assert jobs == [] and not app._working()
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    assert app._loaded_roll == folder
+    app.sheet.top.destroy()
