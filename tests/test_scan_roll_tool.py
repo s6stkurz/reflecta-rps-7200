@@ -1360,3 +1360,39 @@ def test_a_walk_prescan_that_was_the_last_pass_keeps_its_bytes(tmp_path,
     assert code == 0
     (entry,) = [p.parent for p in (tmp_path / "lib").glob("*/scan.json")]
     assert library.read_raw(entry) == b"raw-bytes"
+
+
+def test_a_roll_that_ends_short_of_the_frames_asked_for_says_so(
+        tmp_path, monkeypatch, capsys):
+    """A frame with no picture in it reads as the end of the film. With
+    --frames 36 the roll could end at 12, print "12 scanned, 0 failed" and
+    exit 0 -- success, to whatever was checking an unattended run."""
+
+    class EndsEarly(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index == 2:
+                    return            # frame 3 held no picture
+                yield frame
+
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: EndsEarly(frames=5))
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "short", "--frames", "5"],
+    )
+    code = scan_roll.main()
+    assert len(list((tmp_path / "roll").glob("frame*.tif"))) == 2
+    assert code != 0, "ended short of what was asked, and called it success"
+    assert "ended after 2 of the 5 frames" in capsys.readouterr().err
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert "ended after 2 of the 5" in manifest["stopped"]
+
+
+def test_a_roll_with_no_count_that_runs_to_the_end_is_not_short(tmp_path,
+                                                                monkeypatch):
+    _scanner, code = run(tmp_path, monkeypatch)
+    assert code == 0

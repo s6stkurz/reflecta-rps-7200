@@ -452,6 +452,9 @@ def main() -> int:
 
     started = time.monotonic()
     scanned = failed = 0
+    #: Every place the roll reached, scanned, walked or failed, and the last.
+    covered = 0
+    reached: int | None = None
     #: Whether the film reached the roll's first frame and the calibration
     #: after it succeeded, and so whether this run has a manifest at all.
     #: Nothing is written before that, which is `ScanSession._roll`'s
@@ -666,6 +669,7 @@ def main() -> int:
                 shading=not args.no_shading,
             ):
                 number = frame.index + 1
+                covered, reached = covered + 1, number
                 record = {
                     "number": number,
                     "index": frame.index,
@@ -896,6 +900,16 @@ def main() -> int:
                                "could not be filed")
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
+    #: Ended short of the --frames asked for, with nobody asking it to: a
+    #: frame with no picture in it reads as the end of the film -- a missed
+    #: shot, a fogged frame -- and so does the end of the transport. It
+    #: ended with a line in the driver's log and exit 0, so an unattended
+    #: roll of 36 that stopped at 12 reported success to whatever checked.
+    short = (args.frames is not None and covered < args.frames
+             and "stopped" not in manifest)
+    if short:
+        manifest["stopped"] = (f"ended after {covered} of the {args.frames} "
+                               "frames asked for")
     # Placed, so it was made. Not a traceback when the disk refuses it: the
     # manifest says so on stderr, and the exit status says it went wrong.
     saved = record_of is None or record_of.save()
@@ -903,6 +917,12 @@ def main() -> int:
     print(f"\n{scanned} scanned, {failed} failed, "
           f"{manifest['duration_s']/60:.1f} min")
     print(f"manifest: {manifest_path}")
+    if short:
+        print(f"the roll ended after {covered} of the {args.frames} frames "
+              "asked for" + (f", after frame {reached}" if reached else "")
+              + ": the log above says why. A frame with no picture in it is "
+              "taken as the end of the film, and so is the end of the "
+              "transport.", file=sys.stderr)
     if failed:
         # With the folder named. An unnamed roll's folder is new every run,
         # so "--start-at N" alone started another roll beside this one, and
@@ -914,7 +934,7 @@ def main() -> int:
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    return 1 if trouble is not None or failed or not saved else 0
+    return 1 if trouble is not None or failed or short or not saved else 0
 
 
 def _quoted(value) -> str:
