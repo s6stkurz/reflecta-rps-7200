@@ -297,6 +297,29 @@ def test_non_positive_exposure_is_refused():
         merge_bracket(f, [1.0, 0.0])
 
 
+def test_the_merge_never_holds_a_float64_copy_of_every_pass():
+    """The z-medians read a 1024-pixel sample of each pass, and the offsets
+    were taken off the whole passes first: a float64 copy of every one at
+    once, 3.9 GB for nine passes at 3600 dpi. After twenty minutes of
+    scanning with the library off, a MemoryError there lost every pass."""
+    import tracemalloc
+
+    rng = np.random.default_rng(3)
+    # Tall enough that the statistics really are strided (4096 // 1024 = 4).
+    base = rng.integers(2000, 15000, (4096, 256, 3)).astype(np.uint16)
+    frames = [base * np.uint16(k) for k in (1, 2, 4)]
+    one_float64_pass = base.size * 8
+    tracemalloc.start()
+    try:
+        merge_bracket(frames, [1.0, 2.0, 4.0])
+        _now, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * one_float64_pass, (
+        f"peak {peak / 1e6:.0f} MB against {one_float64_pass / 1e6:.0f} MB "
+        "for one pass in float64")
+
+
 # --- 4. misregistration must not become colour fringes ----------------------
 
 @pytest.mark.parametrize("shift", [1, 4, 16])

@@ -333,15 +333,24 @@ def _subsample(frames: list[np.ndarray]) -> list[np.ndarray]:
 
 
 def _z_medians(
-    frames: list[np.ndarray], ratios: list[float], alpha: float, beta: float
+    frames: list[np.ndarray], ratios: list[float], alpha: float, beta: float,
+    offsets: list[float] | None = None,
 ) -> list[float]:
     """The systematic part of each pass's disagreement with the reference.
 
     Subtracted before the residual gate so that a pass which is uniformly a
     little off -- a slightly wrong exposure ratio, say -- is not mistaken for a
     frame full of misregistration.
+
+    ``offsets`` are each pass's fitted intercept, taken off *after* the
+    frames are strided down. The caller used to subtract them first, which
+    made a float64 copy of every whole pass at once -- 3.9 GB for nine
+    passes at 3600 dpi, beside everything else a bracket holds -- only for
+    this to read a 1024-pixel sample of each.
     """
     subs = _subsample(frames)
+    if offsets is not None:
+        subs = [s.astype(np.float64) - o for s, o in zip(subs, offsets)]
     lum_ref = subs[0].astype(np.float32).mean(axis=2)
     v_ref = alpha * np.maximum(lum_ref, 0.0) + beta
     out = []
@@ -444,10 +453,8 @@ def merge_bracket(
         offsets.append(intercept)
     h, w = ref.shape[:2]
     out = np.empty((h, w, 3), dtype=np.uint16)
-    medians = _z_medians(
-        [np.asarray(f).astype(np.float64) - o for f, o in zip(frames, offsets)],
-        ratios, alpha, beta,
-    )
+    medians = _z_medians([np.asarray(f) for f in frames], ratios, alpha, beta,
+                         offsets)
 
     w_first = w_last = conf_sum = 0.0
     n_samples = zero_pixels = fallback_pixels = 0
