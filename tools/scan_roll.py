@@ -641,7 +641,8 @@ def main() -> int:
                            if library_root and raw is not None
                            and capture.get("raw") is not None else None)
                 writer.submit(
-                    number=number, paths=[path] if path is not None else [],
+                    number=number, kind="prescan",
+                    paths=[path] if path is not None else [],
                     dpi=args.prescan_dpi, image=image, raw_image=raw,
                     meta=meta, prescan=None, library=library_root,
                     inquiry=info, capture=capture,

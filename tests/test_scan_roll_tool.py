@@ -187,6 +187,24 @@ def test_a_real_roll_files_each_prescan_raw_in_its_own_entry(tmp_path,
         "a real roll's folder holds its frames"
 
 
+def test_its_prescans_wait_against_their_own_bound(tmp_path, monkeypatch):
+    """`FrameWriter` bounds frames and prescans apart, by the job's kind. A
+    prescan not said to be one takes a frame's room, and the scanning thread
+    stops a frame early behind a writer held up for a moment."""
+    submitted = []
+    real = scan_roll.FrameWriter.submit
+
+    def noted(self, **job):
+        submitted.append((job.get("kind"), "prescan" in job["tags"]))
+        real(self, **job)
+
+    monkeypatch.setattr(scan_roll.FrameWriter, "submit", noted)
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    assert sorted(submitted, key=str) == [("prescan", True)] * 2 + [
+        (None, False)] * 2
+
+
 def test_a_frame_that_failed_keeps_its_prescan_and_is_not_named_by_it(
         tmp_path, monkeypatch):
     """Its prescan is the only account of it, and was dropped. Filed now, it

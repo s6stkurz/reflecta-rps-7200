@@ -987,6 +987,23 @@ def test_a_real_roll_files_each_prescan_raw_in_its_own_entry(tmp_path):
         assert (entry / "ccd_mask.bin").exists()
 
 
+def test_a_rolls_prescans_wait_against_their_own_bound(tmp_path, monkeypatch):
+    """`FrameWriter` bounds frames and prescans apart, by the job's kind. A
+    prescan not said to be one takes a frame's room, and the scanning thread
+    stops a frame early behind a writer held up for a moment."""
+    submitted = []
+    real = session.FrameWriter.submit
+
+    def noted(self, **job):
+        submitted.append((job.get("kind"), "prescan" in job["tags"]))
+        real(self, **job)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", noted)
+    run(Roll(frames=2, dry_run=False, name="real"), tmp_path,
+        scanner=PrescanningScanner())
+    assert sorted(submitted) == [("prescan", True)] * 2 + [("scan", False)] * 2
+
+
 def _raw_prescan(seed):
     """A prescan's raw pixels, its bytes laid out as the device sends them,
     and the record the driver takes as the pass is taken."""

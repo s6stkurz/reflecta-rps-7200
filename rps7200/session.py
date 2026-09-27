@@ -1543,25 +1543,37 @@ class FrameWriter:
     (see CLAUDE.md). On this thread the write instead overlaps the next frame's
     scan, so the device is busy rather than idle throughout.
 
-    The queue is bounded. A scan costs far longer than a write, so the writer is
-    normally idle waiting; a bound only matters if that stops being true, and
-    then blocking is right -- an unbounded queue would hold whole frames in
-    memory, and at 3600 dpi one frame is over a hundred megabytes.
+    What waits is bounded (`DEPTH`). A scan costs far longer than a write, so
+    the writer is normally idle waiting; a bound only matters if that stops
+    being true, and then blocking is right -- an unbounded queue would hold
+    whole frames in memory, and at 3600 dpi one frame is over a hundred
+    megabytes.
 
     Failures are collected, not raised: a roll runs for hours, and a frame that
     cannot be filed should cost that frame, not the thirty after it. `errors`
     is drained by the caller once the roll ends.
     """
 
-    #: Four jobs, which is the two frames the bound was chosen for: a roll's
-    #: prescans are jobs of their own now, filed raw in their own entries,
-    #: one or two ahead of each frame, and a few hundred kilobytes each. At
-    #: two, a writer held up for a moment stopped the scanning thread after
-    #: one frame rather than two.
-    DEPTH = 4
+    #: Two frames waiting, besides the one being written. Frames, not jobs:
+    #: a roll's prescans are jobs of their own now, filed raw in their own
+    #: entries, one or two ahead of each frame and a few hundred kilobytes
+    #: each, and they wait against a bound of their own (`PRESCANS`).
+    #: Counted as jobs, two stopped the scanning thread after one frame, and
+    #: the four that made room for the prescans was four frames wherever
+    #: none is queued -- `tools/scan_roll.py --no-library` on a real roll --
+    #: where a 7200 dpi RGBI frame job holds about 1.7 GB.
+    DEPTH = 2
+    #: Two frames' prescans: the picture each was framed on, and the one a
+    #: hold or an aim replaced.
+    PRESCANS = 4
 
     def __init__(self, depth: int = DEPTH, on_done: Any = None):
-        self.queue: queue.Queue = queue.Queue(maxsize=depth)
+        # One queue, so jobs are written in the order they came -- a walk's
+        # record names the last prescan filed under its number -- and bounded
+        # by what waits in it rather than by its length (`submit`).
+        self.queue: queue.Queue = queue.Queue()
+        self._frames = threading.BoundedSemaphore(depth)
+        self._prescans = threading.BoundedSemaphore(self.PRESCANS)
         self.errors: list[str] = []
         # Not failures: things the chosen format could not carry, like the
         # infrared plane in a JPEG. Drained per frame by `_filed` so they are
@@ -1577,9 +1589,17 @@ class FrameWriter:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def _room(self, job: dict) -> threading.BoundedSemaphore:
+        """The bound a job waits against: see `DEPTH`."""
+        return self._prescans if job.get("kind") == "prescan" else self._frames
+
     def _run(self) -> None:
         while True:
             job = self.queue.get()
+            if job is not None:
+                # No longer waiting once taken: the bound is on what waits,
+                # as the queue's length was, the job being written on top.
+                self._room(job).release()
             try:
                 if job is None:
                     return
@@ -1696,6 +1716,9 @@ class FrameWriter:
         self._tell(job, entry, None, written)
 
     def submit(self, **job) -> None:
+        """Queue one job, waiting while its kind's bound is full. ``kind``
+        "prescan" waits against `PRESCANS`; anything else is a frame."""
+        self._room(job).acquire()
         self.queue.put(job)
 
     def finish(self) -> None:
@@ -2928,6 +2951,7 @@ class ScanSession:
         self._writer.submit(
             seq=seq,
             number=number,
+            kind=kind,
             paths=paths,
             # A single scan or prescan is filed with the scanner open and idle
             # between jobs, and compressing then -- gzip, and TIFF deflate --
