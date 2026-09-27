@@ -97,7 +97,8 @@ INFRARED_UNTIED_S = 219.8
 INFRARED_TIE_CROSSOVER_DPI = 3600
 
 #: What one SLIDE sub-frame command can move, from the calibrated law:
-#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and param 8.
+#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and the largest
+#: correction, `DirectScanner.MAX_CORRECTION_PARAM` (87): 2.84 and 88.8 units.
 FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
 FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
                + DirectScanner.OVERHEAD_MM)
@@ -1234,6 +1235,11 @@ def walk_span(earlier: dict, start_at: int,
 #: twenty steps and goes sub-linear past them, but the guard sits lower: a
 #: sub-frame move asked to travel further than this is a whole-frame job, and
 #: SLIDE_NEXT/SLIDE_PREV do that properly.
+#:
+#: Set when a command topped out at param 8, about 1 mm. At param 87 eight
+#: commands are some 710 units -- two frames -- so as a "whole-frame job"
+#: line it is loose now. The window keeps its own copy of the 8 for what it
+#: says, so the two move together or not at all.
 MAX_FINE_STEPS = 8
 
 
@@ -1241,8 +1247,9 @@ def plan_nudges(millimetres: float) -> list[float]:
     """The sub-frame moves a request actually becomes, in order and signed.
 
     The transport cannot travel an arbitrary distance. One `SLIDE` command
-    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in 1..8,
-    so the reachable set is a lattice starting at ``FINE_MIN_MM`` -- and
+    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in
+    1..``MAX_CORRECTION_PARAM`` (87), so the reachable set is a lattice
+    starting at ``FINE_MIN_MM`` -- and
     **nothing in ``(0, FINE_MIN_MM)`` exists at all**. Asking for 0.1 mm does
     not get you 0.1 mm; it gets you nothing or a whole first command.
 
@@ -1255,8 +1262,9 @@ def plan_nudges(millimetres: float) -> list[float]:
     Returns an empty list when the distance is below half the smallest
     deliverable move -- the same "leave it alone" the mover applies. Raises
     ``ValueError`` past :data:`MAX_FINE_STEPS`, deliberately rather than
-    clamping: `DirectScanner.param_for_mm` already clamps silently at param 8,
-    and a caller that cannot see its request was truncated will keep issuing
+    clamping: `DirectScanner.param_for_mm` already clamps silently at the
+    largest correction, and a caller that cannot see its request was
+    truncated will keep issuing
     commands against a ceiling it does not know is there.
     """
     want = abs(float(millimetres))
@@ -2535,11 +2543,12 @@ class ScanSession:
             return f"on frame {_frame(landed)} of the strip"
 
         if job.millimetres:
-            # One SLIDE command tops out at ~1.01 mm, so anything further is
-            # several of them. Doing that here rather than making the caller
-            # loop is what stops a request for 7 mm quietly becoming a single
-            # 1.01 mm move -- which is exactly what it used to do, so every
-            # click on the prescan moved the film the same distance.
+            # One SLIDE command tops out at the largest correction, param 87
+            # (88.8 units), so anything further is several of them. Doing
+            # that here rather than making the caller loop is what stops a
+            # long request quietly becoming a single command's worth --
+            # which is exactly what it used to do, when that was param 8, so
+            # every click on the prescan moved the film the same distance.
             #
             # The planning itself lives in `plan_nudges` so the adjuster and
             # any correction loop can ask what a distance becomes without
