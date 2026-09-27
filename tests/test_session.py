@@ -3461,6 +3461,32 @@ def test_a_prescan_of_a_different_picture_is_never_used_to_judge_a_scan(tmp_path
     assert s._prescan_here() is None, "and nothing at all is not a reference"
 
 
+def test_a_position_nobody_knows_is_never_the_same_place(tmp_path):
+    """None == None: a prescan taken while the transport said nothing was
+    the reference for any scan taken while it said nothing again -- another
+    strip's picture included, which can turn a scan in every file."""
+    s = ScanSession(root=str(tmp_path / "lib"), open_scanner=FakeScanner,
+                    verbose=False)
+    s._last_prescan = (np.zeros((4, 4)), None, {})
+    s._position = lambda: None
+    assert s._prescan_here() is None
+
+
+@pytest.mark.parametrize("job", [Move(frames=1), Move(millimetres=0.5),
+                                 Roll(frames=1, dry_run=True, name="since")])
+def test_a_prescan_does_not_outlive_the_film_moving(tmp_path, job):
+    """A nudge moves the film where the counter cannot see, and a roll winds
+    it through the transport; the prescan before either is of somewhere
+    else."""
+    scanner = FakeTransportScanner(position=3)
+    holder = {}
+    # The prescan queued first, then the job.
+    run(job, tmp_path, scanner=scanner,
+        extra=lambda s, _sc: (holder.update(s=s), s.submit(Prescan())))
+    assert scanner.calls[0][0] == "prescan"
+    assert holder["s"]._last_prescan is None
+
+
 def test_the_correction_reaches_every_file_that_leaves_here(tmp_path):
     """The reversal is recorded in the meta so the library entry can stay
     exactly what the scanner sent. That is bookkeeping, not restraint: every

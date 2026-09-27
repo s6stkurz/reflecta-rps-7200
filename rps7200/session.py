@@ -2438,6 +2438,11 @@ class ScanSession:
         if not self._last_prescan:
             return None
         image, where, meta = self._last_prescan
+        # A position the transport would not say is unknown, never "the same
+        # place": two of them compared equal, and a scan was judged against a
+        # prescan of whatever the film held when the counter last said nothing.
+        if where is None:
+            return None
         return (image, meta) if where == self._position() else None
 
     def _note_reversal(self, meta, image, reference, reference_meta=None,
@@ -2497,6 +2502,9 @@ class ScanSession:
 
     def _move(self, job: Move) -> str | None:
         """Whole frames, or a sub-frame nudge. Never both in one job."""
+        # The last prescan is of where the film was. A nudge moves it without
+        # the counter seeing, so the position would still vouch for it.
+        self._last_prescan = None
         if job.frames:
             step = self._scanner.advance if job.frames > 0 else self._scanner.retreat
             landed = None
@@ -3032,6 +3040,10 @@ class ScanSession:
             # frame 3's arrangement would be a silent wrong answer.
             self._frame_rotation = {}
             self._frame_flip = {}
+            # And so does any prescan from before it: the film has been
+            # through the transport since, and a counter that comes back to
+            # the same number is no longer evidence of the same picture.
+            self._last_prescan = None
         return stopped
 
     # -- shared ------------------------------------------------------------
