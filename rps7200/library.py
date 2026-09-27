@@ -448,6 +448,14 @@ def compact(path: Path | str) -> bool:
     against their recorded checksum before the plain file goes; the TIFFs are
     rewritten compressed with identical pixels. Each file is swapped in whole
     and the record last, so an interruption leaves a readable entry.
+
+    And one a second call finishes. `raw.bin` goes only after the record, so
+    an entry still holding it has not finished compacting; a TIFF swapped in
+    before the stop no longer matches the checksum the record still holds.
+    That is not damage and is not passed over as none: `scan.tif` is proved
+    against the decode of its bytes, and `prescan.tif` -- which has no bytes
+    of its own -- is accepted only where `scan.tif`, swapped before it, shows
+    the compaction got that far. Anything else stops here, left as it is.
     """
     path = Path(path)
     plain = path / RAW_PLAIN
@@ -465,11 +473,23 @@ def compact(path: Path | str) -> bool:
         temp.unlink(missing_ok=True)
         raise OSError(f"{path.name}: {RAW_PLAIN} does not match its checksum; "
                       "left as it is")
-    os.replace(temp, path / RAW_FILE)
+    _replace(temp, path / RAW_FILE)
     raw["file"] = RAW_FILE
+    swapped = False
     for name in ("scan.tif", "prescan.tif"):
         if (path / name).exists():
             pixels = tiff.read(str(path / name))
+            said = ((record.get("image") or {}).get("sha256") if name == "scan.tif"
+                    else (record.get("files") or {}).get(name))
+            if said and _sha256(path / name) != said:
+                if name == "scan.tif":
+                    decoded = decode_raw(path)
+                    swapped = bool(decoded is not None
+                                   and decoded.dtype == pixels.dtype
+                                   and np.array_equal(decoded, pixels))
+                if not swapped:
+                    raise OSError(f"{path.name}: {name} does not match its "
+                                  "checksum; left as it is")
             resolution = ((record.get("scan") or {}).get("resolution_dpi")
                           if name == "scan.tif" else None) or None
             _replace_tiff(path / name, pixels, resolution=resolution)
@@ -606,7 +626,7 @@ def _replace_tiff(path: Path, image: np.ndarray, **kw: Any) -> None:
     """
     temp = path.with_name(f".{path.name}.part")
     tiff.write(str(temp), image, **kw)
-    os.replace(temp, path)
+    _replace(temp, path)
 
 
 def entry_path(root: Path | str, record: dict[str, Any]) -> Path:
@@ -778,7 +798,11 @@ def decode_raw(path: Path | str) -> np.ndarray | None:
         image = DirectScanner._deinterleave(raw, params, int(layout["channels"]))
         stored = (record.get("image") or {}).get("shape") or [None]
         return _replay(image, record, stored[0])
-    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError):
+    # ScanReadError is what the decode raises for tags it cannot place; it is
+    # a RuntimeError, and escaped the "None when the layout cannot drive a
+    # decode" this promises.
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError,
+            ScanReadError):
         return None
 
 
@@ -984,6 +1008,14 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
             if plain and np.array_equal(stored, decoded):
                 done.append(f"scan: read {direction.state} -- recorded")
                 upright = decoded
+                # The pixels are proved against the bytes here, so a checksum
+                # that disagrees is stale, not damage: a run stopped after it
+                # turned scan.tif and before the record said so arrives here
+                # the second time, and left the old checksum for ever -- a
+                # mismatch verify reported on an intact picture.
+                if write and stored.dtype == decoded.dtype:
+                    record.setdefault("image", {})["sha256"] = _sha256(
+                        path / "scan.tif")
             elif (plain and direction.reversed
                     and np.array_equal(stored, decoded[::-1])):
                 done.append("scan: read bottom-up and stored that way -- "

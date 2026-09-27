@@ -277,6 +277,43 @@ def test_a_kept_file_holding_another_picture_is_never_overwritten(tmp_path):
     assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
 
 
+def test_compact_finishes_what_a_killed_window_left_plain(tmp_path):
+    """Nothing else ever compacts them: the window's list of plain entries
+    lives in memory and dies with it."""
+    from rps7200 import library
+
+    root = tmp_path / "library"
+    path = _good(root, compress=False)
+    assert (path / library.RAW_PLAIN).exists()
+    dry = subprocess.run(
+        [sys.executable, str(TOOL), "compact", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    assert (path / library.RAW_PLAIN).exists(), "a dry run wrote"
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert not (path / library.RAW_PLAIN).exists()
+    assert (path / library.RAW_FILE).exists()
+    assert [p for p in library.verify(root) if "never be corrected" not in p] == []
+
+
+def test_migrate_direction_carries_on_past_bytes_it_cannot_decode(tmp_path):
+    """One entry whose tags the decode could not place ended the run with a
+    traceback part way, before the reindex."""
+    root = tmp_path / "library"
+    bad = _good(root, raw=b"\x00" * (8 * 3 * (16 * 2 + 2)))
+    record = json.loads((bad / "scan.json").read_text(encoding="utf-8"))
+    record["scan"]["read_direction"] = None
+    (bad / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "migrate-direction", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert "Traceback" not in done.stderr, done.stderr
+    assert f"! {bad.name}" in done.stdout
+
+
 # -- reconstruct: its exit status is the regression gate ----------------------
 
 

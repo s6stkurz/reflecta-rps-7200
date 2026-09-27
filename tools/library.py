@@ -7,6 +7,7 @@
     uv run python tools/library.py duplicates         # what is redundant, and why
     uv run python tools/library.py duplicates --delete
     uv run python tools/library.py migrate-direction  # which way each pass was read
+    uv run python tools/library.py compact            # gzip what a window left plain
     uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
 
 `reconstruct` is the one worth running after any change to how the scanner's
@@ -26,6 +27,12 @@ their own line tags up to date: every entry records which way the carriage
 read it, a scan stored bottom-up is turned upright from its raw bytes, and a
 stored `prescan.tif` is judged against its upright scan and turned only when
 that is decisive. A dry run unless given `--write`.
+
+`compact` gzips the entries a window filed plain -- `raw.bin` and uncompressed
+TIFFs, written that way because compressing with the scanner open preceded a
+wedge -- and was killed before it compacted them itself, and finishes any
+compaction a kill stopped part way. Run it with the scanner closed, for the
+same reason. A dry run unless given `--write`.
 """
 from __future__ import annotations
 
@@ -39,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library
 from rps7200.console import use_utf8_stdout
+from rps7200.protocol import ScanReadError
 
 
 #: What `migrate-raw --write` keeps of the file it replaces.
@@ -75,7 +83,7 @@ def main() -> int:
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
                              "duplicates", "migrate-raw", "migrate-direction",
-                             "tag"])
+                             "compact", "tag"])
     ap.add_argument("entries", nargs="*", metavar="ENTRY",
                     help="tag: the entry ids (directory names) to tag")
     ap.add_argument("--add", action="append", default=[], metavar="TAG",
@@ -85,8 +93,8 @@ def main() -> int:
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
     ap.add_argument("--write", action="store_true",
-                    help="migrate-raw, migrate-direction: actually rewrite "
-                         "the entries (default is a dry run)")
+                    help="migrate-raw, migrate-direction, compact: actually "
+                         "rewrite the entries (default is a dry run)")
     ap.add_argument("--keep", type=int, default=1, metavar="N",
                     help="duplicates: how many of each group to keep (default 1). "
                          "Use 2 to retain a pair for pass-to-pass comparisons")
@@ -370,7 +378,10 @@ def main() -> int:
             path = scan_json.parent
             try:
                 done = library.migrate_direction(path, write=args.write)
-            except (OSError, ValueError, KeyError) as exc:
+            # ScanReadError too: bytes whose tags the decode cannot place are
+            # this entry's problem, and one of them ended the run part way,
+            # after rewriting the entries before it and before the reindex.
+            except (OSError, ValueError, KeyError, ScanReadError) as exc:
                 print(f"! {path.name}: {exc}")
                 left += 1
                 continue
@@ -387,6 +398,33 @@ def main() -> int:
               + ("" if args.write else " -- pass --write"))
         if args.write:
             library.reindex(root)
+
+    elif args.action == "compact":
+        # The window files single scans plain and compacts them once its
+        # device has closed; a window killed before that left them plain for
+        # good, at about twice their size, with nothing that would ever
+        # finish the job -- or finish one a kill had stopped part way, whose
+        # swapped TIFF then failed its checksum in verify on every run.
+        plain = sorted(p.parent for p in root.glob(f"*/{library.RAW_PLAIN}")
+                       if (p.parent / "scan.json").exists())
+        done = failed = 0
+        for path in plain:
+            if not args.write:
+                print(f"would compact: {path.name}")
+                continue
+            try:
+                library.compact(path)
+                done += 1
+                print(f"compacted: {path.name}")
+            except (OSError, ValueError, KeyError) as exc:
+                failed += 1
+                print(f"! {path.name}: {exc}")
+        print(f"\n{len(plain)} entr{'y' if len(plain) == 1 else 'ies'} held "
+              f"plain raw bytes"
+              + (f"; {done} compacted" if args.write else " -- pass --write"))
+        if args.write and done:
+            library.reindex(root)
+        return 1 if failed else 0
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

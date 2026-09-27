@@ -1008,6 +1008,84 @@ def test_an_entry_filed_plain_reads_like_any_other_and_compacts_losslessly(tmp_p
     assert library.compact(path) is False, "compacted twice"
 
 
+def _plain_entry(tmp_path, prescan=None):
+    stream, image = index_stream(16, 8, 3, seed=5)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"format": "index", "bytes_per_line": 32,
+              "line_stride": 32 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, compress=False, prescan=prescan)
+    return path, image
+
+
+def _integrity(tmp_path):
+    return [p for p in library.verify(tmp_path) if "never be corrected" not in p]
+
+
+def test_a_compaction_a_kill_stopped_is_finished_by_a_second_one(tmp_path):
+    """Stopped after scan.tif was swapped and before the record: the stale
+    checksum made verify report damage on an intact picture for ever."""
+    prescan = np.full((4, 6, 3), 7, np.uint8)
+    path, image = _plain_entry(tmp_path, prescan=prescan)
+    # the swap, with the record left as it was: same pixels, other bytes
+    library._replace_tiff(path / "scan.tif", image, resolution=None)
+    library._replace_tiff(path / "prescan.tif", prescan, resolution=72)
+    assert _integrity(tmp_path), "the fixture must leave stale checksums"
+    assert library.compact(path) is True
+    assert _integrity(tmp_path) == []
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+
+
+def test_compaction_does_not_bless_a_damaged_picture(tmp_path):
+    """A checksum that disagrees is re-taken only where the pixels are proved;
+    re-checksumming whatever is there would hide real damage for good."""
+    path, image = _plain_entry(tmp_path)
+    damaged = image.copy()
+    damaged[0, 0, 0] ^= 1
+    tiff.write(str(path / "scan.tif"), damaged, resolution=300,
+               compress=False)
+    import pytest
+    with pytest.raises(OSError, match="scan.tif does not match"):
+        library.compact(path)
+    assert (path / library.RAW_PLAIN).exists()
+    assert any("scan.tif does not match" in p for p in library.verify(tmp_path))
+
+
+def test_a_damaged_prescan_is_not_mistaken_for_a_stopped_compaction(tmp_path):
+    """prescan.tif has no bytes to prove it by. It is swapped after scan.tif,
+    so a compaction stopped past it shows in scan.tif too; alone, it is
+    damage."""
+    path, _ = _plain_entry(tmp_path, prescan=np.full((4, 6, 3), 7, np.uint8))
+    tiff.write(str(path / "prescan.tif"), np.full((4, 6, 3), 9, np.uint8),
+               compress=False)
+    import pytest
+    with pytest.raises(OSError, match="prescan.tif does not match"):
+        library.compact(path)
+
+
+def test_migrating_again_after_a_stop_refreshes_the_turned_checksum(tmp_path):
+    """Stopped after scan.tif was turned upright and before the record: the
+    re-run recorded the direction and kept the old checksum."""
+    path, image = bottom_up_entry(tmp_path, stored_as_read=True)
+    library._replace_tiff(path / "scan.tif", image, resolution=600)
+    assert any("scan.tif does not match" in p for p in library.verify(tmp_path))
+    library.migrate_direction(path, write=True)
+    assert [p for p in library.verify(tmp_path)
+            if "never be corrected" not in p] == []
+
+
+def test_decode_raw_is_none_for_bytes_it_cannot_place(tmp_path):
+    """It promised None when a decode is impossible, and let the decode's
+    ScanReadError escape instead."""
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(np.zeros((8, 16, 3), np.uint16),
+                        {"resolution_dpi": 300, "channels": 3}, root=tmp_path,
+                        raw=b"\x00" * (8 * 3 * 34), raw_layout=layout)
+    assert library.decode_raw(path) is None
+
+
 def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):
     """Built from a finished picture, it has no calibration by design."""
     stream, image = index_stream(16, 8, 3)
