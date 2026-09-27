@@ -39,7 +39,7 @@ import queue
 import shutil
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -1251,6 +1251,32 @@ def walk_span(earlier: dict, start_at: int,
     if last is None or frames is None:
         return begin, None
     return begin, max(last, start_at + frames - 1) - begin + 1
+
+
+def frames_asked(start_at: int, frames: int | None,
+                 only: Iterable[int] | None) -> list[int] | None:
+    """The frames a roll from ``start_at`` is asked to yield, in order.
+
+    Numbered from 1, as a manifest numbers them. ``frames`` counts places on
+    the strip from ``start_at`` -- where `DirectScanner.roll_ends` ends the
+    roll -- and ``only`` is the frames chosen among them: one outside that
+    range is never reached, and one nobody chose is advanced past without
+    being yielded, so neither is here. None is a roll that runs to the end of
+    the strip, and only the strip says when that is.
+
+    One answer for both rolls that say whether they ended short, the window's
+    and `tools/scan_roll.py`'s. The tool held what it got to ``frames`` alone,
+    so a resume given `--only 2,5` beside its first run's `--frames 10`
+    scanned both frames it chose and still failed, "after 2 of the 10"; the
+    window held it to the smaller of ``frames`` and the frames chosen, which
+    counts a chosen frame past the end of ``frames`` that the roll never
+    reaches.
+    """
+    end = None if frames is None else start_at + frames
+    if only is None:
+        return None if end is None else list(range(start_at, end))
+    return sorted(n for n in set(only)
+                  if n >= start_at and (end is None or n < end))
 
 
 #: How many sub-frame commands one move may use. The law itself holds over

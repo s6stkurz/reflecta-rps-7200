@@ -1452,6 +1452,149 @@ def test_the_advice_to_resume_names_every_frame_left(tmp_path, monkeypatch,
     assert "--start-at 1 --only 1,3" in err
 
 
+class _Driven(FakeRollScanner):
+    """Ends where the driver's own loop ends, and yields what it yields.
+
+    `DirectScanner.roll_ends` for --frames and --only, a frame nobody chose
+    advanced past without being yielded, ``failing`` (places on the strip,
+    from 1) yielded with an error, and `max_failures` of those in a row
+    ending the roll with no word to the caller. The fake above yields
+    ``frames`` pictures whatever --only says, so it could not show a roll
+    that scanned every frame it chose being called short.
+    """
+
+    failing: frozenset = frozenset()
+    #: The last place with a picture in it, from 1.
+    strip = 12
+
+    def scan_roll(self, **kw):
+        self.asked = dict(kw)
+        first = kw.get("first_index", 0)
+        only = kw.get("only")
+        wanted = None if only is None else frozenset(only)
+        finished = DirectScanner.roll_ends(first, 0, kw.get("frames"), wanted)
+        index, in_a_row = first, 0
+        while not finished(index) and index < self.strip:
+            if wanted is None or index in wanted:
+                if index + 1 in self.failing:
+                    in_a_row += 1
+                    yield RollFrame(index=index, position=self.at, image=None,
+                                    meta={}, prescan=None, registration={},
+                                    error="the read timed out")
+                    if in_a_row >= kw.get("max_failures", 3):
+                        return
+                else:
+                    in_a_row = 0
+                    shape = (6, 6, 3)
+                    yield RollFrame(
+                        index=index, position=self.at,
+                        image=np.full(shape, CORRECTED_LEVEL, np.uint16),
+                        meta={"resolution_dpi": 1800,
+                              "channel_order": list("RGB")},
+                        prescan=None, registration={},
+                        raw_image=np.full(shape, RAW_LEVEL, np.uint16))
+            index += 1
+            self.at += 1
+
+
+def _driven(tmp_path, monkeypatch, *argv, failing=()):
+    class Patched(_Driven):
+        pass
+
+    Patched.failing = frozenset(failing)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: Patched(frames=0))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--library", "",
+                                      "--no-shading", "--roll", "driven",
+                                      "--out", str(tmp_path / "roll"), *argv])
+    return scan_roll.main()
+
+
+def test_a_resume_with_only_and_frames_is_not_short(tmp_path, monkeypatch,
+                                                    capsys):
+    """--frames counts places on the strip and --only the frames chosen
+    among them. The advice's --start-at and --only, added to a first run's
+    command line with its --frames, scanned both frames it chose and failed,
+    "ended after 2 of the 10 frames asked for"."""
+    code = _driven(tmp_path, monkeypatch, "--start-at", "2", "--only", "2,5",
+                   "--frames", "10")
+    err = capsys.readouterr().err
+    assert len(list((tmp_path / "roll").glob("frame*.tif"))) == 2
+    assert "ended after" not in err
+    assert code == 0
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert "stopped" not in manifest
+
+
+def test_a_roll_that_ends_before_its_chosen_frames_is_short(tmp_path,
+                                                            monkeypatch,
+                                                            capsys):
+    """And short is still short: judged on the frames chosen, the strip
+    running out before the last of them is a roll that did not finish."""
+    code = _driven(tmp_path, monkeypatch, "--only", "2,5,14")
+    assert code == 1
+    assert "ended after 2 of the 3 frames" in capsys.readouterr().err
+
+
+def test_an_only_past_the_end_of_frames_is_refused_before_opening(
+        tmp_path, monkeypatch):
+    opened = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--start-at", "2", "--only", "2,5",
+            "--frames", "3", opened=opened)
+    assert refused.value.code == 2
+    assert opened == []
+
+
+def test_the_estimate_costs_the_chosen_frames_not_frames(tmp_path, monkeypatch,
+                                                         capsys):
+    _driven(tmp_path, monkeypatch, "--start-at", "2", "--only", "2,5",
+            "--frames", "10")
+    assert "scanning the 2 chosen frame(s)" in capsys.readouterr().out
+
+
+def _advice(err: str) -> list[str]:
+    return [line for line in err.splitlines()
+            if line.startswith(("resume ", "and "))]
+
+
+def test_the_advice_names_the_frames_a_roll_that_gave_up_never_reached(
+        tmp_path, monkeypatch, capsys):
+    """Frames 3-5 of 8 fail, and the driver gives up. The advice named only
+    the frames with a record, and followed as printed it never scanned 6-8."""
+    code = _driven(tmp_path, monkeypatch, "--frames", "8",
+                   failing=(3, 4, 5))
+    assert code == 1
+    assert _advice(capsys.readouterr().err) == [
+        "resume the unfinished frames with --out "
+        f"{tmp_path / 'roll'} --start-at 3 --only 3,4,5,6,7,8"]
+
+
+def test_the_advice_goes_on_to_the_end_of_a_strip_it_did_not_reach(
+        tmp_path, monkeypatch, capsys):
+    """With no --frames the roll runs to the end of the strip, and giving up
+    at frame 5 is not that end: the rest has to be asked for as well."""
+    code = _driven(tmp_path, monkeypatch, failing=(3, 4, 5))
+    assert code == 1
+    out = tmp_path / "roll"
+    assert _advice(capsys.readouterr().err) == [
+        f"resume the unfinished frames with --out {out} --start-at 3 "
+        "--only 3,4,5",
+        "and the frames this run never reached, to the end of the strip, "
+        f"with --out {out} --start-at 6"]
+
+
+def test_a_strip_that_ran_out_is_not_advised_past(tmp_path, monkeypatch,
+                                                  capsys):
+    """A roll with no end asked for that ended at a blank frame ended where
+    the strip does; only its failed frame is left."""
+    code = _driven(tmp_path, monkeypatch, failing=(3,))
+    assert code == 1
+    (advice,) = _advice(capsys.readouterr().err)
+    assert advice.endswith("--start-at 3 --only 3")
+
+
 def test_approved_scans_as_the_film_its_walk_was_made_on(tmp_path, monkeypatch,
                                                          capsys):
     """--film was negative unless typed, whatever the walk was: a slide walk

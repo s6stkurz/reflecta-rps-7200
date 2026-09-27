@@ -377,13 +377,20 @@ def say_roll_estimate(args: argparse.Namespace) -> float:
     Returns the slow end, in seconds.
     """
     first = max(0, args.start_at - 1)
-    if args.frames is not None:
-        count, what = args.frames, f"{args.frames} frame(s)"
-    elif args.only is not None:
-        count, what = len(args.only), f"the {len(args.only)} chosen frame(s)"
-    else:
+    # The frames the roll will yield, as its end is judged (`frames_asked`):
+    # with --only beside --frames it was costed as --frames full scans, the
+    # places it advances past unscanned included.
+    asked = session.frames_asked(args.start_at, args.frames, args.only)
+    if asked is None:
         count = max(1, session.LAST_PLAUSIBLE_POSITION + 1 - first)
         what = f"up to {count} frames -- to the end of the strip, as --frames is not given"
+        places = count
+    else:
+        count = len(asked)
+        what = (f"the {count} chosen frame(s)" if args.only is not None
+                else f"{count} frame(s)")
+        # Every place up to the last one scanned is moved over, chosen or not.
+        places = asked[-1] - args.start_at + 1 if asked else 0
     prescan = session.estimate_seconds(args.prescan_dpi, False)
     scan = (0.0 if args.dry_run else session.estimate_seconds(
         args.dpi, args.ir, bool(args.fast_ir and args.ir)))
@@ -397,7 +404,7 @@ def say_roll_estimate(args: argparse.Namespace) -> float:
     print(f"{'walking' if args.dry_run else 'scanning'} {what}:", flush=True)
     return session.say_estimate(
         count * (prescan + scan),
-        count * session.FORWARD_FRAME_S + metering
+        places * session.FORWARD_FRAME_S + metering
         + (session.CALIBRATION_S if calibrating else 0.0),
         say=lambda m: print(m, flush=True),
         warn=lambda m: print(m, file=sys.stderr, flush=True))
@@ -466,6 +473,20 @@ def main() -> int:
         # before it would be asked for and never reached.
         ap.error(f"--only {args.only[0]} is before --start-at {args.start_at}; "
                  f"start at {args.only[0]} or before it")
+    if (args.only is not None and args.frames is not None
+            and args.only[-1] >= args.start_at + args.frames):
+        # And one past the places --frames counts from --start-at: the roll
+        # ends there (`DirectScanner.roll_ends`) before it is reached. The
+        # advice a failed run prints is a --start-at and an --only, and
+        # added to the first run's command line it keeps that run's
+        # --frames -- which would drop the end of the list without a word.
+        beyond = [n for n in args.only if n >= args.start_at + args.frames]
+        ap.error(f"--only {','.join(str(n) for n in beyond)}: --frames "
+                 f"{args.frames} from --start-at {args.start_at} ends the roll "
+                 f"after frame {args.start_at + args.frames - 1}, so "
+                 f"{'it' if len(beyond) == 1 else 'they'} would never be "
+                 "reached. Leave --frames out -- --only ends the roll after "
+                 "its last frame -- or give more.")
     if (not args.no_shading and not args.dry_run
             and not _Driver.correctable_at(args.dpi)):
         ap.error(
@@ -638,6 +659,11 @@ def main() -> int:
     #: Every place the roll reached, scanned, walked or failed, and the last.
     covered = 0
     reached: int | None = None
+    #: Which frames those were, for the frames asked for that were not.
+    seen: set[int] = set()
+    #: Failed frames in a row at the end, which the driver gives up at
+    #: (`--max-failures`) without a word to this loop.
+    in_a_row = 0
     #: Whether the film reached the roll's first frame and the calibration
     #: after it succeeded, and so whether this run has a manifest at all.
     #: Nothing is written before that, which is `ScanSession._roll`'s
@@ -862,6 +888,8 @@ def main() -> int:
             ):
                 number = frame.index + 1
                 covered, reached = covered + 1, number
+                seen.add(number)
+                in_a_row = in_a_row + 1 if frame.error else 0
                 record = {
                     "number": number,
                     "index": frame.index,
@@ -1104,15 +1132,21 @@ def main() -> int:
                                "could not be filed")
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
-    #: Ended short of the --frames asked for, with nobody asking it to: a
+    #: The frames this run was asked for, where the driver ends the roll:
+    #: --only's inside the places --frames counts (`frames_asked`), or None
+    #: to the end of the strip. It was --frames alone, and a resume that
+    #: added the --only it was advised to the first run's --frames scanned
+    #: every frame it chose and failed, "after 2 of the 10".
+    asked = session.frames_asked(args.start_at, args.frames, args.only)
+    #: Ended short of the frames asked for, with nobody asking it to: a
     #: frame with no picture in it reads as the end of the film -- a missed
     #: shot, a fogged frame -- and so does the end of the transport. It
     #: ended with a line in the driver's log and exit 0, so an unattended
     #: roll of 36 that stopped at 12 reported success to whatever checked.
-    short = (args.frames is not None and covered < args.frames
+    short = (asked is not None and covered < len(asked)
              and "stopped" not in manifest)
     if short:
-        manifest["stopped"] = (f"ended after {covered} of the {args.frames} "
+        manifest["stopped"] = (f"ended after {covered} of the {len(asked)} "
                                "frames asked for")
     # Placed, so it was made. Not a traceback when the disk refuses it: the
     # manifest says so on stderr, and the exit status says it went wrong.
@@ -1122,30 +1156,54 @@ def main() -> int:
           f"{manifest['duration_s']/60:.1f} min")
     print(f"manifest: {manifest_path}")
     if short:
-        print(f"the roll ended after {covered} of the {args.frames} frames "
+        print(f"the roll ended after {covered} of the {len(asked)} frames "
               "asked for" + (f", after frame {reached}" if reached else "")
               + ": the log above says why. A frame with no picture in it is "
               "taken as the end of the film, and so is the end of the "
               "transport.", file=sys.stderr)
-    if failed:
-        # With the folder named. An unnamed roll's folder is new every run,
-        # so "--start-at N" alone started another roll beside this one, and
-        # never read the manifest that says what this one has done.
-        again = (f"--out {_quoted(out)}" if args.out
-                 else f"--roll {_quoted(out.name)}")
+    # What is left of this roll: its frames not done -- failed, or never
+    # filed, in this run or an earlier one -- and the frames this run was
+    # asked for and never reached. Those have no record at all, and the
+    # advice named only the recorded ones: frames 10-12 of 36 failing, the
+    # driver giving up, and "--start-at 10 --only 10,11,12" followed as
+    # printed never scanned 13-36 -- nor the rest after a Ctrl-C, a device
+    # gone suspect or a frame the library refused.
+    done = {int(r["number"]) for r in manifest["frames"] if r.get("done")}
+    left = {int(r["number"]) for r in manifest["frames"] if not r.get("done")}
+    #: Where the rest of the strip starts, when this run ended before the
+    #: strip did and was asked for all of it. A roll with no end asked for
+    #: ends at a blank frame or a transport that does not move, which is
+    #: the strip's own end; only these end it early.
+    rest: int | None = None
+    if asked is not None:
+        left |= {n for n in asked if n not in seen and n not in done}
+    elif (trouble is not None or filing_failed.is_set()
+          or interrupt.requested()
+          or (in_a_row and in_a_row >= args.max_failures)):
+        rest = args.start_at if reached is None else reached + 1
+    # With the folder named. An unnamed roll's folder is new every run, so
+    # "--start-at N" alone started another roll beside this one, and never
+    # read the manifest that says what this one has done.
+    again = (f"--out {_quoted(out)}" if args.out
+             else f"--roll {_quoted(out.name)}")
+    if (left or rest is not None) and not args.dry_run:
         # And with the frames left named. "--start-at N" alone, as this
         # used to say, scanned every frame from N to the end of the strip
         # again -- hours, at 3600 dpi, and a second library entry for each
         # frame already done -- and could not take 3, 9 and 15 in one run.
-        left = sorted({int(r["number"]) for r in manifest["frames"]
-                       if not r.get("done")})
-        if left and not args.dry_run:
+        if left:
             print(f"resume the unfinished frames with {again} --start-at "
-                  f"{left[0]} --only {','.join(str(n) for n in left)}",
+                  f"{min(left)} --only {','.join(str(n) for n in sorted(left))}",
                   file=sys.stderr)
-        else:
-            print(f"resume a failed picture with {again} --start-at N "
-                  "--only N", file=sys.stderr)
+        if rest is not None:
+            # Its own run: --only ends a roll after its last frame, so one
+            # list cannot also say "and on to the end of the strip".
+            print(("and " if left else "resume ")
+                  + "the frames this run never reached, to the end of the "
+                  f"strip, with {again} --start-at {rest}", file=sys.stderr)
+    elif failed:
+        print(f"resume a failed picture with {again} --start-at N "
+              "--only N", file=sys.stderr)
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
