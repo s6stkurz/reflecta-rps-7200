@@ -1588,7 +1588,14 @@ class FrameWriter:
     is drained by the caller once the roll ends.
     """
 
-    def __init__(self, depth: int = 2, on_done: Any = None):
+    #: Four jobs, which is the two frames the bound was chosen for: a roll's
+    #: prescans are jobs of their own now, filed raw in their own entries,
+    #: one or two ahead of each frame, and a few hundred kilobytes each. At
+    #: two, a writer held up for a moment stopped the scanning thread after
+    #: one frame rather than two.
+    DEPTH = 4
+
+    def __init__(self, depth: int = DEPTH, on_done: Any = None):
         self.queue: queue.Queue = queue.Queue(maxsize=depth)
         self.errors: list[str] = []
         # Not failures: things the chosen format could not carry, like the
@@ -2569,58 +2576,88 @@ class ScanSession:
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
+                    # Filed in its own right, raw, with its own bytes, mask
+                    # and reference, on a walk and on a real roll alike, and
+                    # whether or not the frame then failed. It used to be
+                    # filed only on a walk: a real roll's prescan survived
+                    # only inside the frame's entry, as the corrected 8-bit
+                    # `prescan.tif` -- nothing that could be re-decoded or
+                    # corrected again, with nothing in the record to say so --
+                    # and a frame that failed kept no prescan at all. It is
+                    # what every hold, aim and reversal was judged from.
+                    #
+                    # On a walk it also goes into the roll directory beside
+                    # the manifest, the way `tools/scan_roll.py` writes it, so
+                    # a survey can be opened again tomorrow instead of being
+                    # walked again, and into the output folder's prescans. A
+                    # real roll's goes into neither: those have always held
+                    # its frames. Written by the writer thread, not here: it
+                    # is only ~370 KB, but nothing local happens on the
+                    # scanning thread with the device open.
+                    #
+                    # With the record the driver took as the pass was taken
+                    # (`RollFrame.prescan_capture`). The scanner's own is its
+                    # last pass's: on a real roll the frame scan, and on a
+                    # walk whatever a hold last read -- the same shape as the
+                    # prescan, so no guard could tell. A scanner that does
+                    # not carry one is read as before on a walk, where the
+                    # prescan is its last pass unless a hold ran, and gives
+                    # none on a real roll.
+                    capture = rf.prescan_capture
+                    if capture is None and not job.dry_run:
+                        capture = {}
+                    walked = self._file(
+                        seq, number, rf.prescan,
+                        # The pass's own meta. A hand-built one here is
+                        # what filed 26 prescans describing themselves as
+                        # uncorrected raw when they were neither.
+                        dict(rf.prescan_meta or {
+                            "resolution_dpi": job.prescan_resolution,
+                            "channel_order": ["R", "G", "B"]},
+                             roll_membership=roll_membership(
+                                 name, number, "prescan", out)),
+                        replace(job.notes, frame=roll_frame_label(name, number)),
+                        tuple(job.tags) + ("gui", "roll", "prescan", name),
+                        kind="prescan",
+                        raw_image=rf.raw_prescan,
+                        capture=capture,
+                        path=(out / f"prescan{number:02d}.tif"
+                              if job.dry_run else None),
+                        copies=job.dry_run,
+                        roll=name,
+                    )
                     if job.dry_run:
-                        # On a dry run the prescans are the entire product --
-                        # there is no frame entry to hang them off, so they are
-                        # filed in their own right. On a real roll they ride
-                        # along with the frame instead, which is why this is not
-                        # unconditional: that would file every one of them twice.
-                        #
-                        # One of them also goes into the roll directory beside
-                        # the manifest, the way `tools/scan_roll.py` writes it, so
-                        # a survey can be opened again tomorrow instead of being
-                        # walked again. Written by the writer thread, not here:
-                        # it is only ~370 KB, but nothing local happens on the
-                        # scanning thread with the device open.
-                        surveyed = out / f"prescan{number:02d}.tif"
-                        walked_as = self._file(
-                            seq, number, rf.prescan,
-                            # The pass's own meta. A hand-built one here is
-                            # what filed 26 prescans describing themselves as
-                            # uncorrected raw when they were neither.
-                            dict(rf.prescan_meta or {
+                        walked_as = walked
+                    if rf.prescan_before is not None:
+                        # The picture as the frame arrived, kept beside the
+                        # one that replaced it. Without it a correction that
+                        # moved a frame somewhere worse is indistinguishable
+                        # from one that worked, and the only account of
+                        # either would be the detector's own -- which is the
+                        # thing under test. An entry of its own now, from
+                        # its own record: it used to be written with no entry
+                        # at all, because the scanner's last pass by then was
+                        # the verification prescan, and on a real roll it was
+                        # not kept anywhere.
+                        self._file(
+                            seq, number, rf.prescan_before,
+                            dict(rf.prescan_before_meta or rf.prescan_meta or {
                                 "resolution_dpi": job.prescan_resolution,
                                 "channel_order": ["R", "G", "B"]},
                                  roll_membership=roll_membership(
                                      name, number, "prescan", out)),
-                            replace(job.notes, frame=roll_frame_label(name, number)),
-                            tuple(job.tags) + ("gui", "roll", "prescan", name),
+                            replace(job.notes,
+                                    frame=roll_frame_label(name, number)),
+                            tuple(job.tags) + ("gui", "roll", "prescan",
+                                               "before", name),
                             kind="prescan",
-                            raw_image=rf.raw_prescan,
-                            path=surveyed,
+                            raw_image=rf.raw_prescan_before,
+                            capture=rf.prescan_before_capture or {},
+                            path=(out / f"prescan{number:02d}-before.tif"
+                                  if job.dry_run else None),
+                            copies=job.dry_run,
                             roll=name,
                         )
-                        if rf.prescan_before is not None:
-                            # The picture as the frame arrived, kept beside the
-                            # one that replaced it. Without it a correction
-                            # that moved a frame somewhere worse is
-                            # indistinguishable from one that worked, and the
-                            # only account of either would be the detector's
-                            # own -- which is the thing under test.
-                            self._file(
-                                seq, number, rf.prescan_before,
-                                dict(rf.prescan_meta or {
-                                    "resolution_dpi": job.prescan_resolution,
-                                    "channel_order": ["R", "G", "B"]}),
-                                replace(job.notes,
-                                        frame=roll_frame_label(name, number)),
-                                tuple(job.tags) + ("gui", "roll", "prescan",
-                                                   name),
-                                kind="prescan",
-                                path=out / f"prescan{number:02d}-before.tif",
-                                roll=name,
-                                file_entry=False,
-                            )
                 # The scan's own meta, for the manifest below. Bound out here
                 # because `record` is written for a dry run too, where there is
                 # no scan and no exposure to record.
@@ -2702,6 +2739,12 @@ class ScanSession:
                     record["rotation"], record["flipped"] = arranged
                 if job.dry_run and rf.prescan is not None:
                     record["prescan"] = f"prescan{number:02d}.tif"
+                    if rf.prescan_before is not None:
+                        # Named, as the roll tool's walks name it, so what
+                        # copies a walk by its records (`gui.carry_walk`)
+                        # takes it along.
+                        record["prescan_before"] = (
+                            f"prescan{number:02d}-before.tif")
                     # How that file was turned, per frame, as it was written:
                     # the pair `_file` applied, not the session's asked for
                     # again afterwards. The manifest's one `rotation` is the
@@ -2830,21 +2873,22 @@ class ScanSession:
         roll: str = "",
         mono: bool = False,
         mono_channel: str = MONO_CHANNEL,
-        file_entry: bool = True,
         on_filed: Callable[..., Any] | None = None,
+        capture: dict[str, Any] | None = None,
+        copies: bool = True,
     ) -> tuple[int, bool]:
-        """Write this picture, and unless told otherwise file it in the library.
+        """Write this picture and file it in the library.
 
-        ``file_entry=False`` writes the file and no entry. It exists for the
-        prescan a correction replaced, and the reason is specific: the capture
-        record below describes the scanner's **last** pass, which by then is the
-        verification prescan -- and the shape guard cannot catch the swap,
-        because both passes are identically shaped prescans of the same frame at
-        the same resolution. That is exactly the failure the guard was written
-        for, in the one form it is blind to. Under `RPS7200_DEBUG=1` that
-        picture already has a correct entry anyway, filed at the instant it was
-        taken, which is the only moment its bytes and its pixels are certainly
-        the same pass.
+        ``capture`` is the pass's own `capture_record`, taken when the pass
+        was. None reads the scanner's now, which describes its **last** pass
+        -- right for the pass that just ran, and nothing else: a roll's
+        prescan runs several passes before it is filed, and a hold's
+        verification prescan is identically shaped, so the guard below cannot
+        catch that swap. ``{}`` files it with none.
+
+        ``copies=False`` leaves the operator's output folder out: a real
+        roll's prescans are evidence for the library, and that folder has
+        always held its frames.
 
         ``on_filed(entry, error, written)`` is called on the writer thread
         once the picture has been filed, or has failed to be; see
@@ -2861,11 +2905,12 @@ class ScanSession:
         # copy wherever the operator asked for one. Setting `path` used to skip
         # the output folder entirely, so a whole roll went missing from it.
         paths = [path] if path is not None else []
-        if self.out_dir is not None:
+        if self.out_dir is not None and copies:
             where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
                      else self.out_dir)
             paths.append(_unclaimed(where / self._out_name(number, meta, roll)))
-        capture = self._scanner.capture_record()
+        capture = (self._scanner.capture_record() if capture is None
+                   else dict(capture))
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
                                           meta)
@@ -2910,7 +2955,7 @@ class ScanSession:
         # it, or failed to, and only then is the spooled copy let go.
         claim = getattr(self._scanner, "debug_claim", None)
         receipt = None
-        if (raw_image is not None and file_entry and self.root is not None
+        if (raw_image is not None and self.root is not None
                 and callable(claim)
                 and (capture.get("raw") is not None
                      or capture.get("raw_path") is not None)):
@@ -2934,7 +2979,7 @@ class ScanSession:
             quality=self.jpeg_quality,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
-            library=self.root if file_entry else None,
+            library=self.root,
             film=notes,
             tags=list(tags),
             prescan=prescan,

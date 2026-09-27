@@ -216,6 +216,11 @@ def kinds(events, kind):
     return [e for e in events if e.kind == kind]
 
 
+def frame_entries(root):
+    """The library's entries less the prescans a roll files beside each frame."""
+    return [e for e in library.entries(root) if "prescan" not in e["tags"]]
+
+
 # -- filing -----------------------------------------------------------------
 
 
@@ -492,7 +497,7 @@ def test_film_notes_reach_the_entry(tmp_path):
 
 def test_every_frame_of_a_roll_is_filed(tmp_path):
     run(Roll(frames=3, resolution=600, name="strip1"), tmp_path)
-    entries = library.entries(tmp_path)
+    entries = frame_entries(tmp_path)
     # Three pictures, and nothing filed twice.
     assert len(entries) == 3
     assert all("roll" in e["tags"] and "strip1" in e["tags"] for e in entries)
@@ -931,12 +936,147 @@ def test_a_walk_records_the_folder_it_wrote_into(tmp_path):
     assert (session.last_roll_dir / "survey.json").exists()
 
 
-def test_a_real_roll_does_not_file_its_prescans_separately(tmp_path):
-    """They ride along with the frame instead. Filing both would double a roll."""
-    run(Roll(frames=3, dry_run=False, name="real"), tmp_path)
-    entries = library.entries(tmp_path)
-    assert len(entries) == 3
-    assert not any("prescan" in e["tags"] for e in entries)
+class PrescanningScanner(FakeScanner):
+    """Yields a real roll the way the driver does: each frame's prescan with
+    its raw pixels, its meta and the record taken as it was taken -- bytes
+    laid out for the prescan, not for the frame scanned after it."""
+
+    def scan_roll(self, frames=None, dry_run=False, **kw):
+        for rf in FakeScanner.scan_roll(self, frames=frames, dry_run=dry_run,
+                                        **kw):
+            n = rf.index
+            raw = picture(h=4, w=6, channels=3, seed=40 + n).astype(np.uint8)
+            layout = {"format": "index", "bytes_per_line": 6,
+                      "line_stride": 8, "index_header": 2, "width": 6,
+                      "lines": 4, "channels": 3, "byte_order": "little",
+                      "lines_received": 12}
+            blob = b"".join(bytes([ch, 0]) + raw[y, :, c].tobytes()
+                            for y in range(4)
+                            for c, ch in enumerate(b"RGB"))
+            yield RollFrame(
+                index=rf.index, position=rf.position, image=rf.image,
+                meta=rf.meta, prescan=(raw // 2).astype(np.uint8),
+                registration=rf.registration, raw_image=rf.image,
+                raw_prescan=raw,
+                prescan_meta={"resolution_dpi": 300, "channels": 3,
+                              "channel_order": ["R", "G", "B"], "depth": 8,
+                              "shading": {"columns": 6, "width": 6}},
+                prescan_capture={"reference": None, "ccd_mask": b"\x00" * 6,
+                                 "raw": blob, "raw_layout": layout})
+
+
+def test_a_real_roll_files_each_prescan_raw_in_its_own_entry(tmp_path):
+    """The framing pass every hold, aim and reversal was judged from. It rode
+    along inside the frame's entry as the corrected 8-bit `prescan.tif` --
+    no bytes, no mask, nothing to say it was corrected -- so it could never
+    be re-decoded or corrected again."""
+    run(Roll(frames=3, dry_run=False, name="real"), tmp_path,
+        scanner=PrescanningScanner())
+    prescans = [e for e in library.entries(tmp_path) if "prescan" in e["tags"]]
+    assert len(prescans) == 3
+    assert len(frame_entries(tmp_path)) == 3
+    for record in prescans:
+        member = record["extra"]["roll_membership"]
+        assert member["kind"] == "prescan" and member["roll"] == "real"
+        entry = tmp_path / record["id"]
+        assert record["image"]["corrections_applied"] == []
+        image, verdict = library.reconstruct(entry)
+        assert image is not None, verdict
+        assert np.array_equal(image, tiff.read(entry / "scan.tif")), \
+            "the bytes filed are not this prescan's"
+        assert (entry / "ccd_mask.bin").exists()
+
+
+def _raw_prescan(seed):
+    """A prescan's raw pixels, its bytes laid out as the device sends them,
+    and the record the driver takes as the pass is taken."""
+    raw = picture(h=4, w=6, channels=3, seed=seed).astype(np.uint8)
+    layout = {"format": "index", "bytes_per_line": 6, "line_stride": 8,
+              "index_header": 2, "width": 6, "lines": 4, "channels": 3,
+              "byte_order": "little", "lines_received": 12}
+    blob = b"".join(bytes([ch, 0]) + raw[y, :, c].tobytes()
+                    for y in range(4) for c, ch in enumerate(b"RGB"))
+    return raw, {"reference": None, "ccd_mask": b"\x00" * 6, "raw": blob,
+                 "raw_layout": layout}
+
+
+_PRESCAN_META = {"resolution_dpi": 300, "channels": 3,
+                 "channel_order": ["R", "G", "B"], "depth": 8,
+                 "shading": {"columns": 6, "width": 6}}
+
+
+class CorrectedAndFailingScanner(FakeScanner):
+    """Frame 1 is held, which replaces its prescan; frame 2 fails after its
+    prescan. The scanner's own last record is a third pass of the prescan's
+    very shape, which no guard can tell from it."""
+
+    def capture_record(self):
+        return _raw_prescan(99)[1]
+
+    def scan_roll(self, frames=None, dry_run=False, first_index=0, **kw):
+        self.calls.append(("roll", frames, dry_run))
+        before, before_capture = _raw_prescan(10)
+        after, after_capture = _raw_prescan(11)
+        image = None if dry_run else picture(seed=1)
+        yield RollFrame(
+            index=first_index, position=self.pos, image=image,
+            meta={} if dry_run else {"resolution_dpi": 600,
+                                     "channel_order": list("RGBI")},
+            prescan=after // 2, registration={}, raw_image=image,
+            raw_prescan=after, prescan_meta=dict(_PRESCAN_META),
+            prescan_capture=after_capture,
+            prescan_before=before // 2, raw_prescan_before=before,
+            prescan_before_meta=dict(_PRESCAN_META),
+            prescan_before_capture=before_capture)
+        self.pos += 1
+        failed, failed_capture = _raw_prescan(12)
+        yield RollFrame(
+            index=first_index + 1, position=self.pos, image=None, meta={},
+            prescan=failed // 2, registration={}, error="the scanner said no",
+            raw_prescan=failed, prescan_meta=dict(_PRESCAN_META),
+            prescan_capture=failed_capture)
+
+
+def _prescan_entries(root):
+    out = {}
+    for record in library.entries(root):
+        if "prescan" in record["tags"]:
+            out[(record["extra"]["roll_membership"]["number"],
+                 "before" in record["tags"])] = root / record["id"]
+    return out
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_every_prescan_a_roll_took_is_filed_raw_with_its_own_bytes(
+        tmp_path, dry_run):
+    """The one a hold replaced, the one it replaced it with, and a failed
+    frame's -- on a walk and on a real roll -- each with the bytes it was
+    read from. A real roll filed none of them raw, a failed frame's prescan
+    nowhere, and the replaced one nowhere at all; a walk filed its prescans
+    with the scanner's *last* bytes, which were not theirs."""
+    run(Roll(frames=2, dry_run=dry_run, name="held"), tmp_path,
+        scanner=CorrectedAndFailingScanner())
+    filed = _prescan_entries(tmp_path)
+    assert sorted(filed) == [(1, False), (1, True), (2, False)]
+    for key, seed in (((1, True), 10), ((1, False), 11), ((2, False), 12)):
+        entry = filed[key]
+        assert np.array_equal(tiff.read(entry / "scan.tif"),
+                              _raw_prescan(seed)[0])
+        image, verdict = library.reconstruct(entry)
+        assert image is not None and np.array_equal(
+            image, _raw_prescan(seed)[0]), (key, verdict)
+
+
+def test_a_walk_names_the_prescan_a_correction_replaced(tmp_path):
+    """So what copies a walk by its records takes it along, as the roll
+    tool's walks already said it."""
+    run(Roll(frames=2, dry_run=True, name="named"), tmp_path,
+        scanner=CorrectedAndFailingScanner())
+    out = tmp_path / "rolls" / "named"
+    survey = json.loads((out / "survey.json").read_text(encoding="utf-8"))
+    first = [f for f in survey["frames"] if f["number"] == 1][0]
+    assert first["prescan_before"] == "prescan01-before.tif"
+    assert (out / "prescan01-before.tif").exists()
 
 
 def test_only_the_chosen_frames_are_scanned(tmp_path):
@@ -946,7 +1086,7 @@ def test_only_the_chosen_frames_are_scanned(tmp_path):
     )
     # The window counts pictures from 1; the driver counts them from 0.
     assert scanner.only == (0, 3)
-    assert len(library.entries(tmp_path)) == 2
+    assert len(frame_entries(tmp_path)) == 2
     assert sorted(f.name for f in (tmp_path / "rolls" / "picked").glob("*.tif")) \
         == ["frame01.tif", "frame04.tif"]
 
@@ -962,7 +1102,7 @@ def test_choosing_every_frame_is_not_the_same_as_choosing_none(tmp_path):
 def test_a_roll_with_no_choice_scans_everything(tmp_path):
     _, scanner, _ = run(Roll(frames=3, resolution=600, name="all"), tmp_path)
     assert scanner.only is None
-    assert len(library.entries(tmp_path)) == 3
+    assert len(frame_entries(tmp_path)) == 3
 
 
 def test_a_scan_of_chosen_frames_does_not_overwrite_the_survey(tmp_path):
@@ -991,7 +1131,8 @@ def test_a_survey_leaves_its_prescans_beside_the_manifest(tmp_path):
 
 
 def test_a_real_roll_leaves_no_loose_prescans(tmp_path):
-    """They ride along inside the frame's entry; a stray copy is just clutter."""
+    """They are filed in the library, each in an entry of its own; the roll's
+    folder holds its frames, and a stray copy there is just clutter."""
     run(Roll(frames=2, resolution=600, name="real2"), tmp_path)
     assert list((tmp_path / "rolls" / "real2").glob("prescan*.tif")) == []
 
@@ -1017,7 +1158,7 @@ def test_a_stop_ends_the_roll_after_the_frame_in_flight(tmp_path):
                              scanner=scanner, extra=remember)
     # Frame 2 was produced and kept; frames 3-5 never started.
     assert scanner.produced == 2
-    assert len(library.entries(tmp_path)) == 2
+    assert len(frame_entries(tmp_path)) == 2
     assert any("stopped after frame 2" in e.text for e in kinds(events, "finished"))
 
 
@@ -1827,7 +1968,7 @@ def test_a_roll_name_cannot_leave_the_rolls_folder(tmp_path):
     s, _scanner, _events = run(Roll(frames=1, resolution=600,
                                     name="../../Gold 200"), tmp_path)
     assert s.last_roll_dir == tmp_path / "rolls" / "Gold-200"
-    assert [e["film"]["frame"] for e in library.entries(tmp_path)] == [
+    assert [e["film"]["frame"] for e in frame_entries(tmp_path)] == [
         "Gold-200-01"], "labelled by the folder it is in"
 
 
@@ -1861,7 +2002,7 @@ def test_a_folder_named_before_names_were_cleaned_is_still_found(tmp_path):
     s, _scanner, _events = run(Roll(frames=1, resolution=600,
                                     name="Gold 200"), tmp_path)
     assert s.last_roll_dir == folder
-    assert [e["film"]["frame"] for e in library.entries(tmp_path)] == [
+    assert [e["film"]["frame"] for e in frame_entries(tmp_path)] == [
         "Gold 200-01"]
 
 

@@ -613,6 +613,46 @@ def main() -> int:
             record_of.write()
             placed = True
 
+            def file_prescan(number, image, raw, meta, capture, path,
+                             before=False) -> None:
+                """One prescan, filed raw in its own entry and written to
+                ``path`` (a walk's `prescanNN.tif`), on the writer thread.
+
+                On a walk and on a real roll alike, and for a frame that then
+                failed: a real roll's prescans used to survive only inside
+                the frame's entry, as the corrected `prescan.tif`, and a
+                failed frame's not at all. Written by the writer rather than
+                here, as the window's are: nothing local happens on this
+                thread with the device open, and the TIFF compresses.
+                """
+                library_root = args.library or None
+                if library_root is None and path is None:
+                    return
+                meta = dict(meta or {}, roll_membership=roll_membership(
+                    roll_name, number, "prescan", out))
+                capture = dict(capture or {})
+                if raw is not None and raw_bytes_disagree(
+                        raw.shape, capture.get("raw_layout"), meta):
+                    capture.update(raw=None, raw_layout=None)
+                # Claimed only with its bytes, and let go by debug filing
+                # when the writer says it is filed: see
+                # `DirectScanner.debug_claim`.
+                receipt = (s.debug_claim(raw)
+                           if library_root and raw is not None
+                           and capture.get("raw") is not None else None)
+                writer.submit(
+                    number=number, paths=[path] if path is not None else [],
+                    dpi=args.prescan_dpi, image=image, raw_image=raw,
+                    meta=meta, prescan=None, library=library_root,
+                    inquiry=info, capture=capture,
+                    tags=sorted({*args.tags, "roll", "prescan", roll_name,
+                                 *(("before",) if before else ())}),
+                    film=FilmNotes(stock=args.stock, process=args.process,
+                                   frame=roll_frame_label(roll_name, number),
+                                   notes=args.notes),
+                    on_filed=answering(receipt),
+                )
+
             for frame in s.scan_roll(
                 frames=args.frames,
                 resolution=args.dpi,
@@ -657,57 +697,47 @@ def main() -> int:
                 }
                 submitted = False
 
+                # The prescans first, whatever became of the frame. The
+                # frame as it arrived, before a hold or an aim moved it,
+                # before the one that replaced it: a corrected prescan
+                # replaces the original outright, so without it the only
+                # account of whether a correction helped is the detector's
+                # own -- which is the thing being checked. First, too, so a
+                # walk's record names the final prescan's entry below.
+                if frame.prescan_before is not None:
+                    was = (out / f"prescan{number:02d}-before.tif"
+                           if args.dry_run else None)
+                    file_prescan(number, frame.prescan_before,
+                                 frame.raw_prescan_before,
+                                 frame.prescan_before_meta or frame.prescan_meta,
+                                 frame.prescan_before_capture, was, before=True)
+                    if was is not None:
+                        record["prescan_before"] = was.name
+                if frame.prescan is not None:
+                    # Kept on a walk beside the manifest. The registration
+                    # numbers are derived from it, and a number that looks
+                    # wrong can only be settled by looking at what it was
+                    # measured on. Filed with the record the driver took as
+                    # the pass was taken (`RollFrame.prescan_capture`); a
+                    # scanner that carries none is read as before on a walk,
+                    # and on a real roll -- whose last pass is the frame --
+                    # gives none.
+                    pre = (out / f"prescan{number:02d}.tif"
+                           if args.dry_run else None)
+                    capture = (frame.prescan_capture
+                               if frame.prescan_capture is not None
+                               else s.capture_record() if args.dry_run else {})
+                    file_prescan(number, frame.prescan, frame.raw_prescan,
+                                 frame.prescan_meta, capture, pre)
+                    if pre is not None:
+                        record["prescan"] = pre.name
+
                 if frame.error:
                     failed += 1
                     print(f"picture {number}: FAILED -- {frame.error}", file=sys.stderr)
                 elif args.dry_run:
                     r = frame.registration
                     short = r.get("shortfall_mm", 0.0)
-                    # Keep the prescan. The registration numbers are derived from
-                    # it, and a number that looks wrong can only be settled by
-                    # looking at what it was measured on.
-                    if frame.prescan is not None:
-                        pre = out / f"prescan{number:02d}.tif"
-                        tiff.write(str(pre), frame.prescan)
-                        record["prescan"] = pre.name
-                    # And filed, with its raw bytes, as the window files a
-                    # walk's prescans. A walk from here used to leave only the
-                    # corrected TIFF above: nothing that could be re-decoded,
-                    # and the references `--approved` holds frames to later.
-                    if (args.library and frame.prescan is not None
-                            and frame.raw_prescan is not None):
-                        capture = dict(s.capture_record())
-                        meta = dict(frame.prescan_meta or {},
-                                    roll_membership=roll_membership(
-                                        roll_name, number, "prescan", out))
-                        if raw_bytes_disagree(frame.raw_prescan.shape,
-                                              capture.get("raw_layout"), meta):
-                            capture.update(raw=None, raw_layout=None)
-                        # Claimed only with its bytes, and let go by debug
-                        # filing when the writer says it is filed: see
-                        # `DirectScanner.debug_claim`.
-                        receipt = (s.debug_claim(frame.raw_prescan)
-                                   if capture.get("raw") is not None else None)
-                        writer.submit(
-                            number=number, paths=[], dpi=args.prescan_dpi,
-                            image=frame.prescan, raw_image=frame.raw_prescan,
-                            meta=meta, prescan=None, library=args.library,
-                            inquiry=info, capture=capture,
-                            tags=sorted({*args.tags, "roll", "prescan", roll_name}),
-                            film=FilmNotes(stock=args.stock, process=args.process,
-                                           frame=roll_frame_label(roll_name, number),
-                                           notes=args.notes),
-                            on_filed=answering(receipt),
-                        )
-                    if frame.prescan_before is not None:
-                        # The frame as it arrived, before aiming moved it. A
-                        # corrected prescan replaces the original outright, so
-                        # without this the only account of whether a correction
-                        # helped is the detector's own -- which is the thing
-                        # being checked.
-                        was = out / f"prescan{number:02d}-before.tif"
-                        tiff.write(str(was), frame.prescan_before)
-                        record["prescan_before"] = was.name
                     # Every number here is optional. `registration` abstains on
                     # a loaded strip -- and once it says so honestly rather than
                     # returning a fallback zero, these keys go missing. Formatting
@@ -767,9 +797,10 @@ def main() -> int:
                         raw_image=frame.raw_image,
                         meta=dict(frame.meta, roll_membership=roll_membership(
                             roll_name, number, "frame", out)),
+                        # The corrected prescan, as the operator's framing
+                        # picture beside the frame; the pass itself is its
+                        # own entry, raw, filed above.
                         prescan=frame.prescan,
-                        # Which way the prescan was read; it has no raw bytes
-                        # of its own to say so in the entry.
                         prescan_meta=frame.prescan_meta,
                         library=args.library,
                         inquiry=info,
@@ -828,7 +859,12 @@ def main() -> int:
             scanner.debug_settle()
         except Exception as exc:                          # noqa: BLE001
             print(f"debug filing: {exc}", file=sys.stderr)
-    filed = dict(writer.done)
+    # A walk's record names its prescan's entry: the last filed under its
+    # number, which is why the prescan before a correction is queued first. A
+    # roll's frames are named as they are filed (`RollManifest.filed`), and
+    # only then: taken from here, a frame that failed was named by the entry
+    # of the prescan it left.
+    filed = dict(writer.done) if args.dry_run else {}
     for record in manifest["frames"]:
         entry = filed.get(record["number"])
         if entry is not None:

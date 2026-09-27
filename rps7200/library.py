@@ -199,6 +199,21 @@ _RECORDED = frozenset(SCAN_FIELDS) | {
 }
 
 
+def _corrections_of(meta: dict[str, Any] | None) -> list[str] | None:
+    """What a pass's own meta says was applied to the pixels it returned.
+
+    ``["shading"]`` where a correction ran, ``[]`` where the pass was taken
+    raw, and None where the meta does not say -- which is not the same as
+    raw, and is not written down as though it were.
+    """
+    meta = meta or {}
+    if meta.get("shading"):
+        return ["shading"]
+    if meta.get("shading_skipped"):
+        return []
+    return None
+
+
 def _describe_inquiry(inquiry: Any) -> dict[str, Any] | None:
     """The scanner's INQUIRY as a record: vendor, model, firmware and the rest."""
     if inquiry is None:
@@ -379,6 +394,12 @@ def save(
             "file": "prescan.tif",
             "read_direction": (prescan_meta or {}).get("read_direction"),
             "carriage_state": (prescan_meta or {}).get("carriage_state"),
+            # What is baked into it, as `image.corrections_applied` says of
+            # `scan.tif`. It is the framing picture the operator was shown,
+            # corrected by that day's code -- the pass itself is filed raw in
+            # an entry of its own -- and nothing said so: a reader taking the
+            # library's pixels for raw corrected it a second time.
+            "corrections_applied": _corrections_of(prescan_meta),
         }} if prescan is not None else {}),
         "film": asdict(film),
         "tags": sorted(set(tags or [])),

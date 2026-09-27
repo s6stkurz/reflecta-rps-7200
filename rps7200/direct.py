@@ -413,9 +413,36 @@ class RollFrame:
     #: picture was made from.
     prescan_before: np.ndarray | None = None
 
+    #: The prescan pass's own `capture_record` -- its bytes, its CCD mask and
+    #: the reference in force -- taken the moment the pass was, for the same
+    #: reason as `raw_prescan`. Read from the scanner when the frame is
+    #: yielded, it is the frame scan's on a real roll, and on a walk whatever
+    #: pass ran last: a hold's verification prescan that raised after its
+    #: read left its bytes there, and the walk filed them beside the prescan
+    #: it had not replaced -- the same shape, and a different photograph.
+    prescan_capture: dict[str, Any] | None = None
+    #: The same three for `prescan_before`, so the picture a hold or an aim
+    #: replaced is filed raw as well rather than only drawn as a TIFF.
+    raw_prescan_before: np.ndarray | None = None
+    prescan_before_meta: dict[str, Any] = field(default_factory=dict)
+    prescan_before_capture: dict[str, Any] | None = None
+
     @property
     def ok(self) -> bool:
         return self.error is None and self.image is not None
+
+
+def _prescans_kept(capture: dict[str, Any] | None,
+                   before: dict[str, Any]) -> dict[str, Any]:
+    """A frame's prescan records, as `RollFrame` carries them.
+
+    A function rather than a method: the demo runs `DirectScanner.scan_roll`
+    with itself as the scanner, and it is no subclass.
+    """
+    return {"prescan_capture": capture,
+            "raw_prescan_before": before.get("raw"),
+            "prescan_before_meta": dict(before.get("meta") or {}),
+            "prescan_before_capture": before.get("capture")}
 
 
 @dataclass(frozen=True)
@@ -508,6 +535,12 @@ class DirectScanner:
     #: should read "nothing yet", not raise AttributeError.
     last_pixels_raw: np.ndarray | None = None
     last_scan_meta: dict[str, Any] | None = None
+    #: And what `capture_record` hands over, for the same reason: a roll
+    #: takes each prescan's record as it is taken, stand-in or not.
+    last_raw: bytes | None = None
+    last_raw_layout: dict[str, Any] | None = None
+    _shading: ShadingReference | None = None
+    _ccd_mask: bytes | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
     #: resolutions. Here, beside the read it guards, rather than only in the
@@ -4080,6 +4113,10 @@ class DirectScanner:
             prescan_image = None
             raw_prescan = None
             prescan_meta: dict[str, Any] = {}
+            prescan_capture: dict[str, Any] | None = None
+            #: The raw pixels, meta and record of the picture a hold or an
+            #: aim replaced, beside `prescan_before`.
+            before: dict[str, Any] = {}
             marks: dict[str, Any] = {}
 
             try:
@@ -4092,6 +4129,8 @@ class DirectScanner:
                 )
                 raw_prescan = self.last_pixels_raw
                 prescan_meta = dict(self.last_scan_meta or {})
+                # Now, while the last pass is this one: see `prescan_capture`.
+                prescan_capture = self.capture_record()
                 contrast = frame_contrast(prescan_image)
                 marks = dict(registration(prescan_image, window))
                 marks["contrast"] = round(contrast, 4)
@@ -4147,11 +4186,18 @@ class DirectScanner:
                     marks["approved"] = {k: v for k, v in fix.items()
                                          if k != "prescan"}
                     if fix.get("prescan") is not None:
+                        # The picture as it arrived, kept as the aim below
+                        # keeps it: the hold moved the film away from it, and
+                        # it is what the hold was judged from.
+                        prescan_before = prescan_image
+                        before = {"raw": raw_prescan, "meta": prescan_meta,
+                                  "capture": prescan_capture}
                         prescan_image = fix["prescan"]
                         # The replacement prescan was the helper's last pass,
                         # so its raw pixels are the ones on hand now.
                         raw_prescan = self.last_pixels_raw
                         prescan_meta = dict(self.last_scan_meta or {})
+                        prescan_capture = self.capture_record()
                         marks.update(
                             {k: v for k, v in registration(
                                 prescan_image, window).items()}
@@ -4178,11 +4224,14 @@ class DirectScanner:
                         # and a correction that moved the frame somewhere worse
                         # would look exactly like one that worked.
                         prescan_before = prescan_image
+                        before = {"raw": raw_prescan, "meta": prescan_meta,
+                                  "capture": prescan_capture}
                         prescan_image = fix.pop("prescan")
                         # The replacement prescan was the helper's last pass,
                         # so its raw pixels are the ones on hand now.
                         raw_prescan = self.last_pixels_raw
                         prescan_meta = dict(self.last_scan_meta or {})
+                        prescan_capture = self.capture_record()
                         marks.update(
                             {k: v for k, v in registration(
                                 prescan_image, window).items()}
@@ -4207,7 +4256,9 @@ class DirectScanner:
                     yield RollFrame(index, position, None, {}, prescan_image,
                                     marks, raw_prescan=raw_prescan,
                                     prescan_meta=prescan_meta,
-                                    prescan_before=prescan_before)
+                                    prescan_before=prescan_before,
+                                    **_prescans_kept(prescan_capture,
+                                                     before))
                 else:
                     if meter != METER_NONE and not (meter == METER_ONCE and metered):
                         # `infrared` here says the scan that follows is RGBI;
@@ -4256,7 +4307,9 @@ class DirectScanner:
                                     marks, raw_image=self.last_pixels_raw,
                                     raw_prescan=raw_prescan,
                                     prescan_meta=prescan_meta,
-                                    prescan_before=prescan_before)
+                                    prescan_before=prescan_before,
+                                    **_prescans_kept(prescan_capture,
+                                                     before))
                 failures = 0
             # UsbError covers CheckCondition and NoDataYet. ValueError is in
             # here because a roll runs for hours unattended: one frame that
@@ -4267,10 +4320,15 @@ class DirectScanner:
                 failures += 1
                 self._log(f"frame {index + 1} failed "
                           f"({failures}/{max_failures}): {exc}")
+                # With the prescans it did take, and their records: a frame
+                # that failed is the one whose prescan is the only account
+                # of it, and it was dropped by every caller.
                 yield RollFrame(
                     index, position, None, {}, prescan_image, marks,
                     error=str(exc), raw_prescan=raw_prescan,
                     prescan_meta=prescan_meta,
+                    prescan_before=prescan_before,
+                    **_prescans_kept(prescan_capture, before),
                 )
                 if self.suspect is not None:
                     # Not a frame that failed but a device that may still be

@@ -1600,6 +1600,73 @@ def test_a_frame_without_an_approval_still_gets_the_old_behaviour():
     assert "correction" in frames[1].registration
 
 
+class RecordingRoll(FakeRoll):
+    """Each pass leaves its own record behind, as the real scanner's does:
+    raw pixels, meta, bytes and mask, all overwritten by the next pass."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.passes = 0
+
+    def _took(self, image, what):
+        self.passes += 1
+        self.last_pixels_raw = image
+        self.last_scan_meta = {"pass": self.passes, "what": what}
+        self.last_raw = f"{what}-{self.passes}".encode()
+        self.last_raw_layout = {"pass": self.passes}
+        self._ccd_mask = bytes([self.passes])
+
+    def prescan(self, **kw):
+        image, params = super().prescan(**kw)
+        self._took(image, "prescan")
+        return image, params
+
+    def scan(self, **kw):
+        image, meta = super().scan(**kw)
+        self._took(image, "frame")
+        return image, meta
+
+
+def test_a_frame_carries_its_prescans_own_record():
+    """Read off the scanner when the frame is yielded, the record is the frame
+    scan's -- its bytes filed beside the prescan's pixels, which is the entry
+    that decodes to a different photograph."""
+    scanner = RecordingRoll([_lit()])
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter=METER_NONE))[0]
+    assert frame.prescan_capture["raw"] == b"prescan-1"
+    assert frame.prescan_capture["ccd_mask"] == bytes([1])
+    assert scanner.capture_record()["raw"] == b"frame-2", \
+        "the scanner's own record has moved on to the frame, as it does"
+
+
+def test_a_hold_that_moved_the_film_keeps_the_prescan_it_replaced_raw():
+    """The picture the hold was judged from, with its own bytes. The hold
+    replaced it outright, and nothing kept it -- not on a walk either."""
+    reference = _lit()
+    scanner = RecordingRoll([reference])
+    arrived = reference.copy()
+    scanner.prescans = [arrived, np.roll(reference, 6, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+
+    assert frame.registration["approved"]["moves"] == 1
+    assert frame.prescan_before is arrived
+    assert frame.raw_prescan_before is arrived
+    assert frame.prescan_before_capture["raw"] == b"prescan-1"
+    assert frame.prescan_before_meta == {"pass": 1, "what": "prescan"}
+    assert frame.prescan_capture["raw"] == b"prescan-2"
+
+
+def test_a_frame_that_failed_still_carries_its_prescans_record():
+    """Its prescan is the only account of it."""
+    scanner = RecordingRoll([_lit()], fail_at={0})
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter=METER_NONE, max_failures=1))[0]
+    assert frame.error
+    assert frame.prescan_capture["raw"] == b"prescan-1"
+
+
 def test_every_prescan_through_a_hold_keeps_its_raw_bytes():
     """last_raw is only written when keep_raw is set and is never cleared, so
     a verification prescan without it leaves capture_record holding the
