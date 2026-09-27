@@ -1180,6 +1180,39 @@ def window(tmp_path):
         root.destroy()
 
 
+def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
+    """gui-settings.json is meant to be edited by hand, and `resolve` takes
+    any string. `<Foo>` raised TclError from the constructor's bind, so one
+    typo in a shortcut and the window never opened again."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200 import shortcuts
+    from rps7200.demo import DemoScanner
+    from rps7200.session import ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    stored = tmp_path / "gui-settings.json"
+    stored.write_text(json.dumps({"shortcuts": {"save_as": "<Foo>"}}),
+                      encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"), verbose=False)
+    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
+    try:
+        app = load_tool("gui").ScannerGui(root, session, demo=True,
+                                          settings_path=str(stored))
+        default = shortcuts.defaults()["save_as"]
+        assert default in app._bound and "<Foo>" not in app._bound
+        assert "<Foo>" in app.log.get("1.0", "end")
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
 def test_the_monochrome_controls_follow_the_film(window):
     """Enabled only for black and white, because reducing a colour negative or
     a slide to one channel throws the picture away rather than a redundant copy
@@ -2690,10 +2723,14 @@ def test_a_modified_key_fires_even_while_a_text_field_has_the_focus():
 def test_the_binding_tells_the_handler_which_key_it_is():
     """Or the handler cannot know whether to stand aside for a text field."""
     import inspect
+    # Every scope binds through `_bind_key`, which hands the handler the key
+    # it actually bound -- the one set, or the default it fell back to.
     for source in (inspect.getsource(gui.ScannerGui._bind_shortcuts),
                    inspect.getsource(gui._ContactSheet.rebind),
                    inspect.getsource(gui._FrameAdjuster.rebind)):
-        assert "_runner(run, sequence)" in source
+        assert "_bind_key(" in source
+    assert "self._runner(run, candidate)" in inspect.getsource(
+        gui.ScannerGui._bind_key)
 
 
 def test_rebinding_takes_the_old_key_off_the_window():
@@ -2718,9 +2755,13 @@ def test_keys_are_bound_on_the_window_and_not_on_everything():
                   gui._FrameAdjuster.rebind):
         source = inspect.getsource(owner)
         assert ".bind_all(" not in source, owner.__qualname__
-    assert "self.root.bind(" in inspect.getsource(gui.ScannerGui._bind_shortcuts)
-    assert "self.top.bind(" in inspect.getsource(gui._ContactSheet.rebind)
-    assert "self.top.bind(" in inspect.getsource(gui._FrameAdjuster.rebind)
+    assert ".bind_all(" not in inspect.getsource(gui.ScannerGui._bind_key)
+    assert "_bind_key(self.root," in inspect.getsource(
+        gui.ScannerGui._bind_shortcuts)
+    assert "_bind_key(self.top," in inspect.getsource(gui._ContactSheet.rebind)
+    assert "_bind_key(self.top," in inspect.getsource(gui._FrameAdjuster.rebind)
+    assert "widget.bind(candidate," in inspect.getsource(
+        gui.ScannerGui._bind_key)
 
 
 def test_only_the_changed_keys_reach_the_settings_file():
@@ -4975,7 +5016,8 @@ def test_a_sheet_walked_another_way_is_not_added_to(window, monkeypatch):
 @pytest.mark.parametrize(("dry", "correct", "predpi", "warned"), [
     (True, False, "600", True),        # the sheet's positions come from it
     (True, False, "300", False),
-    (False, True, "900", True),        # "correct" reads edges as it goes
+    # "correct" at 900 dpi is refused rather than warned about now; see
+    # test_aiming_at_a_prescan_the_edges_cannot_be_read_at_is_refused.
     (False, False, "600", False),      # nothing reads edges on this roll
 ])
 def test_a_prescan_the_edges_are_not_read_at_is_said_before_the_walk(

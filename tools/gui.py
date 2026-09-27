@@ -907,8 +907,34 @@ class ScannerGui:
             run = actions.get(action_id)
             if run is None:
                 continue
-            self.root.bind(sequence, self._runner(run, sequence))
-            self._bound.append(sequence)
+            bound = self._bind_key(self.root, sequence, action_id, run)
+            if bound:
+                self._bound.append(bound)
+
+    def _bind_key(self, widget, sequence: str, action_id: str, run) -> str | None:
+        """Bind one key, or its default where Tk will not take the one set.
+
+        `shortcuts.resolve` promises a hand-editing mistake costs a key rather
+        than the window, and it cannot keep that promise alone: it accepts any
+        string, and a sequence Tk does not know -- `<Foo>` -- raised TclError
+        here, from the window's constructor, and the window never opened.
+        Returns the sequence bound, or None.
+        """
+        default = shortcuts.defaults().get(action_id, "")
+        for candidate in dict.fromkeys((sequence, default)):
+            if not candidate:
+                continue
+            try:
+                widget.bind(candidate, self._runner(run, candidate))
+            except tk.TclError as exc:
+                self._say(f"shortcut {candidate!r} for {action_id} is not a "
+                          f"key Tk knows ({exc}); "
+                          + ("using its default" if candidate == sequence
+                             and default and default != sequence
+                             else "left unbound"))
+                continue
+            return candidate
+        return None
 
     def _runner(self, run, sequence: str = ""):
         """One handler shape, and the rule about text fields.
@@ -7382,8 +7408,9 @@ class _FrameAdjuster:
                 self.gui.keys, "adjuster").items():
             run = actions.get(action_id)
             if run is not None:
-                self.top.bind(sequence, self.gui._runner(run, sequence))
-                self._bound.append(sequence)
+                bound = self.gui._bind_key(self.top, sequence, action_id, run)
+                if bound:
+                    self._bound.append(bound)
 
     def _accept(self) -> None:
         """Keep this frame and move on to the next one.
@@ -8187,8 +8214,9 @@ class _ContactSheet:
                 self.gui.keys, "sheet").items():
             run = actions.get(action_id)
             if run is not None:
-                self.top.bind(sequence, self.gui._runner(run, sequence))
-                self._bound.append(sequence)
+                bound = self.gui._bind_key(self.top, sequence, action_id, run)
+                if bound:
+                    self._bound.append(bound)
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.rebind()
 
