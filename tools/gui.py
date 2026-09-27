@@ -391,6 +391,13 @@ class ScannerGui:
         self.results: list = []
         self.current = None
         self.busy = False
+        #: A pass or a roll handed to the session whose start the worker has
+        #: not reported yet. `busy` follows the worker's own "state" event,
+        #: which the pump reads up to a tick after the job was taken, so a
+        #: double press of Scan inside that tick queued a second pass.
+        self._queued_run = None
+        #: A calibration handed over whose "calibrated" has not come back.
+        self._calibration_pending = False
         #: Threads writing files (Save all, Export): Quit waits for them.
         self._writing: list[threading.Thread] = []
         self.closing = False
@@ -1998,10 +2005,27 @@ class ScannerGui:
         Reached once the film has been confirmed in the transport, or for a
         cached reference, which moves nothing. Nothing else calls it, and no
         key does (`shortcuts.NEVER_BOUND`).
+
+        Not while the scanner works. The prompt is not a modal, so it stays up
+        through a move or a roll, and a calibration queued behind one that
+        Stop then dropped never ran and never said so: the window went on
+        calling itself calibrated, and every scan after it failed in the
+        driver instead of being asked about here.
         """
+        if self._working():
+            messagebox.showinfo(
+                "Calibrate",
+                "The scanner is working. Calibrate once it has finished -- "
+                "this question stays open until then.",
+                parent=self._calibrate_prompt or self.root)
+            return
         self.session.submit(Calibrate(mode=mode or self.v_shading.get(),
                                       reference=self.session.reference))
+        # Ahead of the answer, so a scan pressed next is queued behind it
+        # rather than asking again; the "calibrated" event then says how it
+        # ended -- or, when a stop kept it from running, the job's end does.
         self.calibrated = True
+        self._calibration_pending = True
         self._sync_calibration()
         # Whichever button started it, the question the prompt asks is answered.
         top, self._calibrate_prompt = self._calibrate_prompt, None
@@ -2140,24 +2164,38 @@ class ScannerGui:
         y = parent.winfo_rooty() + 120
         top.geometry(f"+{max(0, x)}+{max(0, y)}")
 
+    def _working(self) -> bool:
+        """Whether the scanner has a job, running or handed over and not begun."""
+        return self.busy or self._queued_run is not None
+
+    def _hand_over(self, job) -> None:
+        """Hand a pass or a roll to the session, and be working from now."""
+        self.session.submit(job)
+        self._queued_run = job
+
     def on_prescan(self) -> None:
+        # The buttons grey only once the worker reports the job it took, so a
+        # double press reached here twice and queued two passes.
+        if self._working():
+            return
         if self._calibration_missing():
             return
         dpi = self._prescan_dpi()
         if dpi is None:
             return
-        self.session.submit(Prescan(resolution=dpi, film=self.v_film.get(),
-                                    notes=self._notes(),
-                                    tags=self._tags()))
+        self._hand_over(Prescan(resolution=dpi, film=self.v_film.get(),
+                                notes=self._notes(), tags=self._tags()))
 
     def on_scan(self) -> None:
+        if self._working():                     # see `on_prescan`
+            return
         if self._calibration_missing():
             return
         dpi, exposure = self._dpi(), self._exposure()
         if dpi is None or exposure is None:
             return
         self._pin_arrangement()
-        self.session.submit(Scan(
+        self._hand_over(Scan(
             resolution=dpi, infrared=self.v_ir.get(),
             fast_infrared=self.v_fast_ir.get(), film=self.v_film.get(),
             auto_exposure=self.v_expmode.get() == "auto",
@@ -2184,7 +2222,7 @@ class ScannerGui:
         # The key reaches here as well as the button, and only the button is
         # greyed while the scanner works: a second roll was queued behind the
         # first, and a dry run reset the walk still being read.
-        if self.busy:
+        if self._working():
             self._say("the scanner is working -- a roll starts once it has "
                       "finished")
             return
@@ -2323,8 +2361,8 @@ class ScannerGui:
         # above just showed, so the number on screen does not jump the moment
         # scanning begins. `frames` is already "how many this run will do",
         # counted from `start_at` rather than added on top of it.
-        # The button this handler is behind is disabled while busy, so this
-        # cannot race a job that is still running.
+        # Refused above while a job runs or waits to start, which is what keeps
+        # this from racing one -- the key reaches here as well as the button.
         self._roll_wall_start = time.monotonic()
         self._roll_seeking = True
         self._roll_dry = dry
@@ -2335,7 +2373,7 @@ class ScannerGui:
         if unread:
             # In the log too, where a frame's "refused" is read afterwards.
             self._say(unread)
-        self.session.submit(Roll(
+        self._hand_over(Roll(
             frames=frames, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
             fast_infrared=self.v_fast_ir.get(),
@@ -2694,14 +2732,34 @@ class ScannerGui:
 
     def _roll_is_busy(self, summaries, what: str) -> bool:
         """Refuse to touch a roll the scanner or the window is using."""
-        if self.busy:
+        if self._working():
             messagebox.showinfo(
                 what, "The scanner is working. Wait for it to finish -- a roll "
                 "it is writing into is not one to move or remove.")
             return True
-        loaded = self._loaded_roll and Path(self._loaded_roll).resolve()
+        # The roll open here is the one reopened from the browser, and the one
+        # the sheet belongs to -- a walk made in this session is only the
+        # latter. Renamed or deleted under an open sheet, its "Scan chosen
+        # frames" recreated the old folder empty and scanned into it, so the
+        # walk and the frames ended up in two folders.
+        open_here = {_folder_key(f) for f in (self._loaded_roll, self._sheet_roll)
+                     if f is not None}
+        # And any folder the session is still filing into: the job is over,
+        # but its last frames are still with the writer and land in roll.json
+        # afterwards.
+        # A copy of the items: the worker adds to it as a roll starts.
+        filing = {_folder_key(Path(path).parent) for path, manifest
+                  in list(getattr(self.session, "_manifests", {}).items())
+                  if manifest.ahead_of_disk()}
         for summary in summaries:
-            if loaded and Path(summary["folder"]).resolve() == loaded:
+            key = _folder_key(summary["folder"])
+            if key in filing:
+                messagebox.showinfo(
+                    what, f"{summary['roll']} is still being filed: its last "
+                    "frames are on their way to the library and its roll.json. "
+                    "Try again in a moment.")
+                return True
+            if key in open_here:
                 messagebox.showinfo(
                     what, f"{summary['roll']} is the roll open in this window. "
                     "Open another, or restart, before changing it on disk.")
@@ -2887,8 +2945,18 @@ class ScannerGui:
         thing that still does.
         """
         folder = Path(folder)
+        # Here rather than only where the browser is opened: the browser stays
+        # open, and its Open went straight through while a walk ran. The walk's
+        # later prescans joined the opened roll's survey under the same frame
+        # numbers, its end pointed the sheet at the new folder, and the other
+        # strip's positions and references were commissioned into it.
+        if self._working() or self._surveying:
+            messagebox.showinfo(
+                "Open a roll",
+                "The scanner is working. Wait for it to finish, then try "
+                "again -- opening a roll replaces whatever is loaded now.")
+            return
         self._note_roll_opened(folder)
-        self._loaded_roll = folder
         try:
             out = read_survey(folder, say=self._say)
         except (OSError, ValueError, KeyError) as exc:
@@ -2898,6 +2966,10 @@ class ScannerGui:
                 f"{exc}\n\nA roll folder has a survey.json or a roll.json, "
                 "and the prescanNN.tif files beside it.")
             return
+        # Only once it has been read: a folder that failed to open is not the
+        # roll open in this window, and was kept from Rename and Delete as if
+        # it were until the window restarted.
+        self._loaded_roll = folder
 
         done = out["scanned"]
         remaining = [n for n in out["wanted"] if n not in done]
@@ -3087,7 +3159,7 @@ class ScannerGui:
         """
         if not numbers:
             return
-        if self.busy:
+        if self._working():
             # The sheet stays open and readable while the scanner is working,
             # so this button is reachable mid-roll. Queueing a second roll
             # behind the first is not what anyone pressing it means.
@@ -3187,7 +3259,7 @@ class ScannerGui:
         # logs before taking the next job -- so a rewind that got three of
         # fourteen was followed straight away by a roll scanning frames it had
         # mis-numbered. The roll refuses instead, and scans nothing.
-        self.session.submit(Roll(
+        self._hand_over(Roll(
             frames=span, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=infrared,
             fast_infrared=fast_ir,
@@ -3412,6 +3484,8 @@ class ScannerGui:
 
     def on_stop(self) -> None:
         self.session.request_stop()
+        # A job not yet begun is dropped by the stop and never reports.
+        self._queued_run = None
         self._say("stop requested -- finishing what is already running")
         self.b_stop.configure(state="disabled")
 
@@ -3640,6 +3714,8 @@ class ScannerGui:
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
             if event.busy:
+                # Taken: from here `busy` says so.
+                self._queued_run = None
                 self._job = event.text
                 self.v_progress.set(event.text)
                 self.v_pass_eta.set("")
@@ -3651,6 +3727,13 @@ class ScannerGui:
                 self._pass_started_at = None
                 self._pass_total_seen = 0
                 self._pass_done_seen = 0
+            if not event.busy and self.busy and self._calibration_pending:
+                # A job ended and no "calibrated" came: a stop kept the
+                # calibration from running at all. What the session has is
+                # the answer, not the hope set when it was queued.
+                self._calibration_pending = False
+                self.calibrated = bool(self.session.calibrated)
+                self._sync_calibration()
             self._set_busy(event.busy)
         elif event.kind == "progress":
             self._progress(event.done, event.total)
@@ -3689,6 +3772,7 @@ class ScannerGui:
                     self._roll_wall_start = time.monotonic()
                     self._update_roll_eta()
         elif event.kind == "calibrated":
+            self._calibration_pending = False
             self.calibrated = bool(event.done)
             self._sync_calibration()
         elif event.kind == "filed":
@@ -3729,6 +3813,8 @@ class ScannerGui:
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
+            # Nothing handed over now will start.
+            self._queued_run = None
             self._session_closed = True
             self._set_busy(False)
             self.v_state.set("scanner closed")

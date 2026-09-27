@@ -513,7 +513,7 @@ def test_the_loader_thread_never_touches_tk():
     source = inspect.getsource(gui.ScannerGui._load_full)
     assert "self._reads.put" in source
     assert "self.root" not in source, "the reading thread must not call Tk"
-    assert "_reads" in inspect.getsource(gui.ScannerGui._pump), (
+    assert "_reads" in inspect.getsource(gui.ScannerGui._drain), (
         "and the main loop has to collect it")
 
 
@@ -669,7 +669,7 @@ def test_the_histogram_is_measured_off_the_ui_thread():
     source = inspect.getsource(gui.ScannerGui._measure_histogram)
     assert "threading.Thread" in source
     assert "self._measured.put" in source
-    assert "self._measured" in inspect.getsource(gui.ScannerGui._pump), (
+    assert "self._measured" in inspect.getsource(gui.ScannerGui._drain), (
         "and the main loop collects it")
 
 
@@ -694,7 +694,7 @@ def test_a_measurement_overtaken_by_a_later_one_is_dropped():
     replace the fine one, and clicking quickly along the filmstrip leaves the
     wrong frame's numbers on screen."""
     import inspect
-    pump = inspect.getsource(gui.ScannerGui._pump)
+    pump = inspect.getsource(gui.ScannerGui._drain)
     assert "if token != self._histogram_token:" in pump
     assert "continue" in pump
     # A counter, not the result's seq, which cannot tell the two apart.
@@ -834,6 +834,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _tags=lambda: (), _say=lambda *a: None,
         session=types.SimpleNamespace(submit=submitted.append,
                                       rolls=str(tmp_path / "rolls")),
+        _working=lambda: False, _hand_over=submitted.append,
     )
 
 
@@ -5397,3 +5398,127 @@ def test_one_failing_event_neither_stops_the_pump_nor_drops_the_rest(
         root.update()
         time.sleep(0.02)
     assert "next tick" in handled, "the pump stopped"
+
+
+# -- a job handed over is a job running, for every way in ---------------------
+
+
+def test_a_double_pressed_scan_queues_one_pass(window, monkeypatch):
+    """The buttons grey when the worker reports the job it took, a tick or so
+    after it was handed over; a double press inside that tick queued two
+    passes -- minutes of scanner time and a second entry nobody asked for."""
+    from rps7200.session import Event
+
+    app, root = window
+    app.calibrated = True
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.on_scan()
+    app.on_scan()
+    app.on_prescan()
+    assert len(jobs) == 1
+    # Taken and finished: the next press is a new pass.
+    app._handle(Event(kind="state", text="scanning", busy=True))
+    app._handle(Event(kind="state", text="idle", busy=False))
+    app.on_prescan()
+    assert len(jobs) == 2
+    # And a Stop drops a pass that has not begun, which then never reports.
+    app.on_stop()
+    app.on_scan()
+    assert len(jobs) == 3
+
+
+def test_a_roll_is_not_opened_while_the_scanner_works(window, monkeypatch,
+                                                      tmp_path):
+    """The busy check sat on the button that opens the browser, and the
+    browser stays open: its Open replaced the survey mid-walk, the walk's
+    later prescans joined the other roll's under the same numbers, and the
+    walk's end pointed that sheet at the new folder."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    for working in ("busy", "_surveying"):
+        setattr(app, working, True)
+        app.open_roll(folder)
+        setattr(app, working, False)
+        assert app.survey == [] and app._sheet_roll is None, working
+        assert app._loaded_roll is None, working
+        assert "The scanner is working" in said[-1]
+
+
+def test_a_folder_that_would_not_open_is_not_the_open_roll(window, monkeypatch,
+                                                          tmp_path):
+    """It was marked open before it was read, and so kept from Rename and
+    Delete until the window restarted."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: None)
+    broken = tmp_path / "rolls" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "survey.json").write_text("{not json", encoding="utf-8")
+    app.open_roll(broken)
+    assert app._loaded_roll is None
+
+
+def test_the_sheets_own_roll_and_one_still_filing_are_not_moved(window,
+                                                               monkeypatch,
+                                                               tmp_path):
+    """Only a roll reopened from the browser was protected. The walk the open
+    sheet belongs to could be renamed or deleted, and its commission then
+    recreated the old folder empty and scanned into it; and a roll whose last
+    frames were still with the writer could be moved under them."""
+    app, root = window
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    walked = tmp_path / "rolls" / "walked"
+    filing = tmp_path / "rolls" / "filing"
+    other = tmp_path / "rolls" / "other"
+    app._sheet_roll = walked
+
+    class Behind:
+        unsaved = None
+
+        def ahead_of_disk(self):
+            return True
+
+    monkeypatch.setitem(app.session._manifests,
+                        (filing / "roll.json").resolve(), Behind())
+    for folder, refused in ((walked, "open in this window"),
+                            (filing, "still being filed")):
+        assert app._roll_is_busy([{"folder": folder, "roll": folder.name}],
+                                 "Delete")
+        assert refused in said[-1]
+    assert not app._roll_is_busy([{"folder": other, "roll": "other"}], "Delete")
+
+
+def test_a_calibration_is_not_queued_behind_a_running_job(window, monkeypatch):
+    app, root = window
+    jobs, said = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.busy = True
+    app.on_calibrate("measure")
+    assert jobs == [] and app.calibrated is False
+    assert "The scanner is working" in said[-1]
+
+
+def test_a_calibration_that_never_ran_does_not_leave_the_window_calibrated(
+        window, monkeypatch):
+    """The window calls itself calibrated as the job is queued, and only the
+    "calibrated" event corrected it -- which a calibration a stop kept from
+    running never sends. Every scan after it was then refused by the driver
+    instead of being asked about here."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    app.on_calibrate("measure")
+    assert app.calibrated is True
+    app._handle(Event(kind="state", text="calibrating", busy=True))
+    app._handle(Event(kind="finished", text="stopped"))
+    app._handle(Event(kind="state", text="idle", busy=False))
+    assert app.calibrated is False
+    assert app.b_calibrate.cget("text") == "Calibrate"
