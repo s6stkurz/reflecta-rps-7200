@@ -508,17 +508,20 @@ class DirectScanner:
     last_scan_meta: dict[str, Any] | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
-    #: resolutions. Here, beside the read it guards, rather than only in the
-    #: estimates -- it used to guard nothing, while the read gave up after
-    #: 120 s without data, short of the floor: the combination that wedged the
-    #: device once, as a 60 s timeout.
+    #: resolutions; this is the conservative end, which the estimates use.
+    #: It guards no read: `UNTIED_INFRARED_IDLE_S` below does, from the top
+    #: of the range. Changing this moves no timeout.
     INFRARED_FLOOR_S = 212.0
     #: How long a read waits for data that has not come yet before it gives up.
     READ_IDLE_S = 120.0
-    #: What an untied infrared pass may sit silent for: the floor plus the
-    #: 227 s top of its measured range, and a minute on top. Waiting longer
-    #: only delays noticing a stall; giving up early *is* the stall.
-    UNTIED_INFRARED_IDLE_S = 227.0 + 60.0
+    #: The top of the measured range, which the read is held to.
+    INFRARED_FLOOR_MAX_S = 227.0
+    #: What an untied infrared pass may sit silent for: the 227 s top of its
+    #: measured range, and a minute on top. Short of the floor, the read gave
+    #: up after 120 s -- the combination that wedged the device once, as a
+    #: 60 s timeout. Waiting longer only delays noticing a stall; giving up
+    #: early *is* the stall.
+    UNTIED_INFRARED_IDLE_S = INFRARED_FLOOR_MAX_S + 60.0
 
     #: Why this device may still be mid-scan, once a pass or a calibration
     #: stopped part way through its read; None while it is not. Set, it makes
@@ -2174,13 +2177,20 @@ class DirectScanner:
         return image, params
 
     def session_start(self) -> None:
-        """Open a session the way the vendor software does after power-on.
+        """Open a session nearly the way the vendor software does after power-on.
 
-        INQUIRY, then the vendor command 0xE7, then REQUEST SENSE and a SLIDE
-        with `00 01 00 04`. 0xE7 takes no data and its meaning is unknown, but
-        it appears at the start of every captured session and only in the two
-        captures that contain a successful calibration -- so it may be what
-        puts the scanner into a state where calibration is accepted.
+        INQUIRY, then the vendor command 0xE7, then REQUEST SENSE and a SLIDE.
+        0xE7 is refused on this model as an invalid opcode, and the vendor is
+        refused too -- its REQUEST SENSE is the answer to that; measured, it is
+        not what lets a calibration run (`docs/protocol.md` section 11).
+
+        The SLIDE is not the vendor's. CyberView sends `00 01 00 04`; this
+        sends `00 01 00 00`, `slide`'s value left at 0 -- and a value-0
+        sub-frame command does move the film. So this moves it forward from
+        where the operator put it, by `param 1`'s 2.84 units if value 0 moves
+        as value 4 does, and no caller -- the probes, all of them -- records
+        the move. Said here rather than changed: which of the two to send is
+        a change to what the device is sent.
         """
         self.inquiry(refresh=True)
         try:
@@ -3018,10 +3028,13 @@ class DirectScanner:
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
-        The command order here is the vendor software's, recovered from a USB
-        capture. It is load-bearing: in particular :meth:`cmd_17` must follow
-        the scan frame, or the scanner refuses to skip shading analysis and the
-        scan cannot complete. See the README.
+        The command order follows the vendor software's, recovered from a USB
+        capture, where it is known to be load-bearing: :meth:`cmd_17` must
+        follow the scan frame, or the scanner refuses to skip shading analysis
+        and the scan cannot complete. See the README. It is not the vendor's
+        order throughout -- gain and offset come after the frame, COPY and
+        PARAM between SCAN and the first READ -- and `docs/protocol.md`
+        section 8 lists where it differs.
 
         ``film`` reaches auto-exposure, and only auto-exposure: it decides
         whether the visible channels are metered together or apart. Getting it
@@ -3737,9 +3750,11 @@ class DirectScanner:
             return True, ""
         return look
 
-    #: The calibrated law for SLIDE actions 0x00 / 0x01, fitted over both
-    #: directions: distance = STEP_MM x param + OVERHEAD_MM. Worst residual
-    #: 0.0185 mm across ten points; see docs/protocol.md section 11.
+    #: The calibrated law for SLIDE actions 0x00 / 0x01: distance =
+    #: STEP_MM x param + OVERHEAD_MM, which is `param + COMMAND_UNITS` (1.84)
+    #: units -- `rps7200/protocol.py`, docs/protocol.md section 5. The fit of
+    #: ten points with a 0.0185 mm residual that stood here was the first
+    #: one, whose 1.57-unit ramp is ruled out.
     STEP_MM = MM_PER_UNIT
     OVERHEAD_MM = MM_PER_COMMAND
 

@@ -42,7 +42,7 @@ from rps7200.direct import (
     _cmd,
     frame_contrast,
 )
-from rps7200.protocol import Sense
+from rps7200.protocol import COMMAND_UNITS, Sense
 from rps7200.session import write_manifest
 from rps7200.usb_transport import CheckCondition, UsbError
 
@@ -1243,7 +1243,8 @@ def stage15(s: DirectScanner) -> dict:
         print(f"  fit over {len(good)} confident steps: "
               f"{slope:.4f} px/param + {intercept:.3f} px")
         print(f"  -> one unit is {slope:.4f} px, a command costs {cost:.3f} units")
-        print("     direct.py says 1.572, framing.py says 1.84")
+        print(f"     the driver moves by {COMMAND_UNITS} "
+              "(rps7200.protocol.COMMAND_UNITS, which framing shares)")
         for param, _n in STAGE15_RUNGS:
             at = [r["moved_px"] for r in good if r["param"] == param]
             if len(at) > 1:

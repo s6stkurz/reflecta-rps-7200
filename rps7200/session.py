@@ -56,9 +56,9 @@ from .protocol import DeviceSuspect, say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
-#: resolutions, and the reason a short timeout once wedged the device -- so it
-#: stays the conservative end of the range, because what it guards is a read
-#: that must not be abandoned.
+#: resolutions, and the reason a short timeout once wedged the device. The
+#: conservative end of the range, for the estimates; the read itself is held
+#: to the top of it (`DirectScanner.UNTIED_INFRARED_IDLE_S`).
 #:
 #: A *tied* pass does not spend it at all; see :data:`INFRARED_UNTIED_S` and
 #: :func:`estimate_seconds`.
