@@ -168,6 +168,115 @@ def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
     assert not (path / "scan.before-migrate-raw.tif").exists()
 
 
+def _label(path: Path, corrections=("shading",)):
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["image"]["corrections_applied"] = list(corrections)
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_a_labelled_entry_one_shading_explains_is_rewritten(tmp_path):
+    import numpy as np
+
+    from rps7200 import tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, decode, stored = _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    _label(path)
+    done = _migrate(root)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), decode)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert record["image"]["corrections_applied"] == []
+    # the kept original is checksummed like every other file
+    from rps7200 import library
+    assert "scan.before-migrate-raw.tif" in record["files"]
+    assert library.verify(root) == []
+
+
+def test_a_labelled_entry_whose_decode_changed_is_left_alone(tmp_path):
+    """The laundering guard ran only for unlabelled entries, so a labelled one
+    whose decode had moved became today's decode of it, relabelled raw --
+    and `reconstruct` then called it identical."""
+    import numpy as np
+
+    from rps7200 import tiff
+    from rps7200.shading import apply_shading
+
+    def drifted(d, r, m):
+        out = apply_shading(d, r, m)[0]
+        out[0, 0, 0] ^= 1
+        return out
+
+    root = tmp_path / "library"
+    path, _decode, stored = _filed(root, drifted)
+    _label(path)
+    done = _migrate(root)
+    assert "left alone" in done.stdout, done.stdout
+    assert done.returncode == 1
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
+    assert not (path / "scan.before-migrate-raw.tif").exists()
+
+
+def test_a_labelled_entry_without_its_reference_is_left_alone(tmp_path):
+    """Nothing then proves the stored pixels came from these bytes, and the
+    rewrite turned an entry whose Save As was corrected into a striped one."""
+    import numpy as np
+
+    from rps7200 import tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, _decode, stored = _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    _label(path)
+    (path / "shading.npz").unlink()
+    done = _migrate(root)
+    assert "left alone" in done.stdout, done.stdout
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
+
+
+def test_a_rewrite_stopped_before_its_record_is_finished_not_undone(tmp_path):
+    """Stopped after the swap: raw pixels under a record still saying
+    corrected. A re-run moved scan.tif over the kept file, replacing the one
+    corrected rendition with the raw decode."""
+    import numpy as np
+
+    from rps7200 import tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, decode, stored = _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    _label(path)
+    # the state a kill between the swap and the record leaves
+    tiff.write(str(path / "scan.before-migrate-raw.tif"), stored, resolution=300)
+    tiff.write(str(path / "scan.tif"), decode, resolution=300)
+    done = _migrate(root)
+    assert done.returncode == 0, done.stdout
+    assert "earlier run" in done.stdout
+    assert np.array_equal(
+        tiff.read(str(path / "scan.before-migrate-raw.tif")), stored)
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), decode)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert record["image"]["corrections_applied"] == []
+
+
+def test_a_kept_file_holding_another_picture_is_never_overwritten(tmp_path):
+    import numpy as np
+
+    from rps7200 import tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, _decode, stored = _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    other = np.zeros_like(stored)
+    tiff.write(str(path / "scan.before-migrate-raw.tif"), other, resolution=300)
+    done = _migrate(root)
+    assert "left alone" in done.stdout
+    assert np.array_equal(
+        tiff.read(str(path / "scan.before-migrate-raw.tif")), other)
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
+
+
 # -- reconstruct: its exit status is the regression gate ----------------------
 
 

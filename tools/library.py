@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -49,22 +48,24 @@ KEPT = "scan.before-migrate-raw.tif"
 def _one_shading_explains(path: Path, plain, stored) -> bool:
     """Whether the stored pixels are this decode with the entry's shading once.
 
-    That is what a mislabelled entry is -- corrected pixels filed as raw --
-    and the only difference `migrate-raw` may repair. Anything else is a
-    decode that changed.
+    That is what a legacy entry is, labelled or not -- corrected pixels -- and
+    the only difference `migrate-raw` may repair. Anything else is a decode
+    that changed, or an entry with no reference to prove it did not.
     """
+    import zipfile
+
     import numpy as np
 
     from rps7200.shading import apply_shading
 
     try:
         _image, record = library.load(path)
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
         return False
     if record.get("reference") is None:
         return False
     shaded, _ = apply_shading(plain, record["reference"], record.get("ccd_mask"))
-    return bool(np.array_equal(shaded, stored))
+    return bool(np.array_equal(shaded, stored) and shaded.dtype == stored.dtype)
 
 
 def main() -> int:
@@ -237,7 +238,6 @@ def main() -> int:
         planned, skipped, failed = [], [], []
         for r in library.entries(root):
             path = library.entry_path(root, r)
-            stored_shape = tuple((r.get("image") or {}).get("shape") or ())
             applied = (r.get("image") or {}).get("corrections_applied") or []
             decoded, verdict = library.reconstruct(path)
             if decoded is None:
@@ -260,42 +260,95 @@ def main() -> int:
                 continue
             if np.array_equal(plain, stored) and not applied:
                 continue                       # already raw and says so
-            if not applied and not _one_shading_explains(path, plain, stored):
-                # Not corrected pixels filed as raw: a decode that no longer
-                # reproduces what was stored. That is the regression
-                # `reconstruct` exists to report, and rewriting would launder
-                # it into the library for good.
+            kept = path / KEPT
+            if (applied and kept.exists()
+                    and np.array_equal(plain, stored) and plain.dtype == stored.dtype):
+                # A run stopped after the fresh decode was swapped in and
+                # before the record said so: raw pixels labelled corrected,
+                # which `corrected()` hands out as "already" corrected. The
+                # corrected original is the kept file; if one shading of this
+                # decode is exactly it, only the record is left to write.
+                try:
+                    before = tiff.read(str(kept))
+                except (OSError, ValueError) as exc:
+                    failed.append((path.name, f"cannot read {KEPT}: {exc}"))
+                    continue
+                if not _one_shading_explains(path, plain, before):
+                    failed.append((path.name,
+                                   f"scan.tif is the plain decode but the record "
+                                   f"says corrected, and {KEPT} is not this "
+                                   f"decode shaded once; left alone"))
+                    continue
+                planned.append((path, plain, applied, "finish"))
+                continue
+            if not _one_shading_explains(path, plain, stored):
+                # Not corrected pixels at all: a decode that no longer
+                # reproduces what was stored, or a reference that cannot say.
+                # That is the regression `reconstruct` exists to report, and
+                # rewriting would launder it into the library for good.
+                #
+                # Labelled entries too. They were rewritten on the label's
+                # word alone, so a labelled entry whose decode had changed --
+                # or whose bytes were another pass's, the stale-raw case --
+                # became today's decode of it, labelled raw, and `reconstruct`
+                # then called it identical.
                 failed.append((path.name,
                                "stored pixels are neither this decode nor this "
-                               "decode shaded once -- a decode change, not a "
-                               "mislabelled entry; left alone"))
+                               "decode shaded once with the entry's own "
+                               "reference -- a decode change, or no reference "
+                               "to prove it; left alone"))
                 continue
-            planned.append((path, plain, applied, stored_shape))
+            if kept.exists():
+                # Never over the one corrected rendition a rewrite keeps.
+                try:
+                    same = np.array_equal(tiff.read(str(kept)), stored)
+                except (OSError, ValueError):
+                    same = False
+                if not same:
+                    failed.append((path.name,
+                                   f"{KEPT} already holds another picture; "
+                                   f"left alone"))
+                    continue
+            planned.append((path, plain, applied, "rewrite"))
 
-        for path, _plain, applied, _shape in planned:
-            why = ("mislabelled: corrected pixels filed as raw" if not applied
+        for path, _plain, applied, how in planned:
+            why = ("finishing a rewrite an earlier run was stopped in"
+                   if how == "finish"
+                   else "mislabelled: corrected pixels filed as raw" if not applied
                    else "corrected pixels, and the correction cannot be improved")
             print(f"{'rewriting' if args.write else 'would rewrite'}: "
                   f"{path.name}\n    {why}")
 
         if args.write:
-            for path, plain, _applied, _shape in planned:
+            for path, plain, _applied, how in planned:
                 record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
                 resolution = ((record.get("scan") or {}).get("resolution_dpi")
                               or None)
-                # Written beside and swapped in, and the old file kept: it may
-                # be the only corrected rendition the entry has, and an
-                # interruption part way used to leave a truncated scan.tif.
-                fresh = path / ".scan.tif.part"
-                tiff.write(str(fresh), plain, resolution=resolution)
-                os.replace(path / "scan.tif", path / KEPT)
-                os.replace(fresh, path / "scan.tif")
+                kept = path / KEPT
+                if how == "rewrite":
+                    # Written beside and swapped in, and the old file kept: it
+                    # may be the only corrected rendition the entry has. Kept
+                    # by copying, not moving, so scan.tif is whole at every
+                    # moment -- the move left an entry with no scan.tif at all
+                    # when a run stopped between it and the swap -- and only
+                    # where there is no kept file yet, which a re-run found
+                    # and overwrote with the raw decode.
+                    fresh = path / ".scan.tif.part"
+                    tiff.write(str(fresh), plain, resolution=resolution)
+                    if not kept.exists():
+                        copy = path / f".{KEPT}.part"
+                        shutil.copyfile(path / "scan.tif", copy)
+                        library._replace(copy, kept)
+                    library._replace(fresh, path / "scan.tif")
                 image = record.setdefault("image", {})
                 image["corrections_applied"] = []
                 image["shape"] = list(plain.shape)
                 image["dtype"] = str(plain.dtype)
                 image["sha256"] = library._sha256(path / "scan.tif")
                 image["replaced"] = KEPT
+                # Checksummed like every other file, so `verify` sees damage
+                # to the corrected original as it does to the rest.
+                record.setdefault("files", {})[KEPT] = library._sha256(kept)
                 library._write_atomic(path / "scan.json",
                                       json.dumps(record, indent=2, default=str))
             library.reindex(root)
