@@ -5449,6 +5449,30 @@ def test_the_commission_names_frames_it_would_scan_again(window, monkeypatch,
     assert "scanned again" not in asked[0]
 
 
+def test_a_sheet_opened_mid_walk_holds_the_whole_walk_at_its_end(window,
+                                                                 tmp_path):
+    """Opened while the walk was still going, it held the frames walked by
+    then, and the walk's end only raised it: the rest had no cell and no tick,
+    and a commission from it left them unscanned without a word."""
+    from rps7200.session import Event
+
+    app, root = window
+    results = gui.read_survey(_walked_folder(tmp_path, count=3))["results"]
+    app._surveying = True
+    app.survey = results[:2]
+    app.on_contact_sheet()
+    root.update()
+    assert sorted(app.sheet.ticks) == [1, 2]
+    app.sheet.ticks[1].set(False)                    # decided while it walked
+    app.survey.append(results[2])
+    app._handle(Event(kind="finished", text="walked 3 frames"))
+    root.update()
+    assert sorted(app.sheet.ticks) == [1, 2, 3]
+    assert app.sheet.ticks[1].get() is False, "what was decided is kept"
+    assert app.sheet.ticks[3].get() is True
+    app.sheet.top.destroy()
+
+
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     """Only the buttons grey while the scanner works. The roll key queued a
     second roll behind the first, and an aim-click or a fine move queued a

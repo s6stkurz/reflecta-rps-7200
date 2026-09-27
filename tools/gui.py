@@ -3885,6 +3885,14 @@ class ScannerGui:
                 self._store_sheet_state(self.sheet_state)
         self._kept_walk, self._rewalked = set(), set()
         self.b_sheet.configure(state="normal" if self.survey else "disabled")
+        if self.sheet is not None and self.sheet.alive():
+            # Opened while the walk was still going, so it holds the frames
+            # walked by then and no others: raised as it was, the frames after
+            # it had no cell, no tick and no approval, and a commission from
+            # it left them unscanned with nothing on screen to say so. Built
+            # again on the whole walk, keeping what was decided in it.
+            self._close_sheet()
+            self.on_contact_sheet()
 
     def _report_held(self) -> None:
         """Say, once and by name, which frames did not reach their position.
