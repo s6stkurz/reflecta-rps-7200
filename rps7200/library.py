@@ -245,6 +245,7 @@ def save(
     raw_layout: dict[str, Any] | None = None,
     corrections: list[str] | None = None,
     compress: bool = True,
+    created: datetime | None = None,
 ) -> Path:
     """Write one scan and everything needed to use it again. Returns its path.
 
@@ -267,9 +268,14 @@ def save(
     ``prescan_meta`` is the framing pass's own meta, from the scanner, for a
     frame filed with its prescan: `prescan.tif` has no raw bytes of its own,
     so this is the only record of which way it was read.
+
+    ``created`` is when the pass was taken, for one filed well after it. A
+    debug spool is filed after close(), or days later by `file-spool`, and
+    its id and ``created`` said when it was filed -- among another day's
+    scans. Unsaid, it is now.
     """
     film = film or FilmNotes()
-    when = datetime.now(timezone.utc)
+    when = created or datetime.now(timezone.utc)
     root = Path(root)
     path = _reserve(root, entry_id(meta, film, when))
     # Present until the record is in place, so an entry a crash or a full

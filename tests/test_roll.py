@@ -956,6 +956,35 @@ def test_a_spool_left_behind_can_be_filed(tmp_path, monkeypatch):
     assert not spool.exists(), "the spool outlived its filing"
 
 
+def test_a_spooled_pass_is_filed_under_the_time_it_was_taken(
+        tmp_path, monkeypatch):
+    """Filed after close(), or days later from a spool left behind, its id
+    and `created` said when it was filed -- among another day's scans."""
+    from rps7200 import library
+    from rps7200.direct import file_spool
+
+    taken = 1767323045.0                                 # 2026-01-02 03:04:05
+    spool, _ = _left_behind(tmp_path, monkeypatch)
+    for side in spool.glob("*-meta.json"):
+        record = json.loads(side.read_text(encoding="utf-8"))
+        side.write_text(json.dumps(dict(record, captured=taken)),
+                        encoding="utf-8")
+    later = file_spool(spool, tmp_path / "lib", say=lambda m: None)
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "own"))
+    s = _debug_scanner(debug=True)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    s._debug_pending[0]["captured"] = taken
+    s.close()
+    own = [tmp_path / "own" / r["id"] for r in library.entries(tmp_path / "own")]
+
+    assert len(later) == 2 and len(own) == 1
+    for entry in later + own:
+        record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+        assert record["created"] == "2026-01-02T03:04:05+00:00"
+        assert entry.name.startswith("20260102T030405Z")
+
+
 def test_a_claimed_pass_in_a_spool_left_behind_is_filed_only_when_asked(
         tmp_path, monkeypatch):
     """Its caller files its own, and probably did."""

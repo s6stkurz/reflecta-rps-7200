@@ -661,6 +661,7 @@ def file_spool(folder: str | Path, root: str | Path, *,
                          if mask is not None and mask.exists() else None),
             "tags": list(record.get("tags") or ["debug"]) + ["from-spool"],
             "notes": record.get("notes") or "filed from a spool left behind",
+            "captured": record.get("captured"),
         }
         try:
             entry = DirectScanner._file_spooled(item, root)
@@ -1539,9 +1540,17 @@ class DirectScanner:
         directory, for ever. Letting go of the array is enough:
         `library.save` keeps no reference to it.
         """
+        from datetime import datetime, timezone
+
         from . import library
         from .library import FilmNotes
 
+        # When the pass was taken, which is what its id and `created` say:
+        # filed after close(), or days later from a spool left behind, they
+        # said when it was filed.
+        captured = item.get("captured")
+        created = (datetime.fromtimestamp(float(captured), timezone.utc)
+                   if captured else None)
         image = np.load(item["image_path"], mmap_mode="r")
         try:
             return library.save(
@@ -1555,6 +1564,7 @@ class DirectScanner:
                 raw_path=item.get("raw_path"),
                 raw_layout=item.get("raw_layout"),
                 inquiry=inquiry,
+                created=created,
             )
         finally:
             del image
