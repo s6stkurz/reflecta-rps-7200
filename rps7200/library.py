@@ -424,6 +424,16 @@ def compact(path: Path | str) -> bool:
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     if not plain.exists():
         return False
+    # The TIFFs are rewritten below and given fresh checksums, so a TIFF
+    # damaged since it was filed would have come out *verified*: a prescan,
+    # with no raw bytes to rebuild it from, damaged beyond anyone's telling.
+    # Checked first, before anything is touched, as the raw bytes are.
+    recorded = {"scan.tif": (record.get("image") or {}).get("sha256"),
+                "prescan.tif": (record.get("files") or {}).get("prescan.tif")}
+    for name, want in recorded.items():
+        if want and (path / name).exists() and _sha256(path / name) != want:
+            raise OSError(f"{path.name}: {name} does not match its checksum; "
+                          "left as it is")
     raw = record.setdefault("raw", {})
     temp = path / f".{RAW_FILE}.part"
     digest = hashlib.sha256()
