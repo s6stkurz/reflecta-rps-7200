@@ -287,7 +287,7 @@ def units(millimetres: float) -> float:
 def units_for_param(param: int) -> float:
     """How far one command at this param actually travels, in units.
 
-    Not `param`: a command pays the ramp first, so `param 1` travels 2.57.
+    Not `param`: a command pays the ramp first, so `param 1` travels 2.84.
     """
     return float(param) + COMMAND_UNITS
 

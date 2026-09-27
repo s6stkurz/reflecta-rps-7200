@@ -1,10 +1,13 @@
 """Where the film and the picture sit in the transport window.
 
-The aperture is 36.5 mm and a 35 mm frame is 36 mm, so there is half a
-millimetre of slack. A frame that has drifted is a frame with its edge outside
-the aperture, and no scan window can get that back -- which is why a drifted
-frame shows up as a picture *narrower* than a whole one rather than as a picture
-in the wrong place. The prescan cannot see what the window does not cover.
+A frame is wider than the aperture: `FRAME_WIDTH_UNITS`, 350.6 units, against
+the 428-column prescan's 344.5, measured on prescans of one frame -- so a
+centred frame shows no unexposed base at either edge, and even a sliver of base
+means the frame is several units off. That is the model `tools/frame_edges`
+centres with. The older one this module grew up on -- a 36.0 mm frame in a
+36.5 mm aperture, half a millimetre of slack (`FRAME_WIDTH_MM`,
+`TARGET_GAP_MM`) -- still aims a roll that has no edge reader: a positive,
+Kodachrome, or `DirectScanner.scan_roll` called on its own.
 
 Everything here measures. Nothing here moves the film.
 """
@@ -851,9 +854,14 @@ def fill_from_neighbours(
 #: caught on the scanner 2026-09-14, where a true match scored 41.5 against a
 #: floor of 40 and came within 1.5 points of refusing a good frame.
 #:
-#: Just over MAX_TRAVEL_MM, so any displacement the transport can produce is
-#: inside the window. Expressed in mm rather than pixels so the figure means
-#: the same at any prescan resolution.
+#: Chosen just over the largest move when a move chained param-8 commands.
+#: It is no longer that: one param-87 command, `MAX_CORRECTION_PARAM`, travels
+#: 88.8 units -- about 110 columns of a 300 dpi prescan against the 105 this
+#: searches -- so a hold asked for more than about 84.7 units lands its true
+#: match outside the window and reads `unverified`. Widening it moves the
+#: confidence scale below, so it waits on `tools/registration_margin.py` being
+#: run over the library again. Expressed in mm rather than pixels so the figure
+#: means the same at any prescan resolution.
 SEARCH_MM = 9.0
 
 #: Correlation z-score below which a match is not believed -- **only

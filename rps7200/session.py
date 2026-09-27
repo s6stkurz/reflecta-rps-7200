@@ -91,7 +91,10 @@ INFRARED_UNTIED_S = 219.8
 INFRARED_TIE_CROSSOVER_DPI = 3600
 
 #: What one SLIDE sub-frame command can move, from the calibrated law:
-#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and param 8.
+#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and for
+#: `DirectScanner.MAX_CORRECTION_PARAM` (87) -- the cap was 8 once, and the
+#: demo's copy of that 8 is how its hold loop came to fail where the
+#: scanner's held.
 FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
 FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
                + DirectScanner.OVERHEAD_MM)
@@ -256,8 +259,10 @@ def seek(scanner, target: int, say=None) -> int:
 
     Above the seam on purpose. It speaks only through `wait_warm`,
     `position`, `advance` and `retreat`, so the demo's stand-in runs it
-    unchanged -- the arrangement CLAUDE.md asks for, and the reason it is not
-    inside `scan_roll`, which each backend has its own copy of.
+    unchanged -- the arrangement CLAUDE.md asks for. It was kept out of
+    `scan_roll` when each backend had its own copy of that; the demo now runs
+    the driver's, and the seek stays here, where the window and the tool
+    share it.
     """
     def tell(message):
         if say is not None:
@@ -1205,7 +1210,8 @@ def plan_nudges(millimetres: float) -> list[float]:
     """The sub-frame moves a request actually becomes, in order and signed.
 
     The transport cannot travel an arbitrary distance. One `SLIDE` command
-    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in 1..8,
+    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param from 1 to
+    `DirectScanner.MAX_CORRECTION_PARAM`,
     so the reachable set is a lattice starting at ``FINE_MIN_MM`` -- and
     **nothing in ``(0, FINE_MIN_MM)`` exists at all**. Asking for 0.1 mm does
     not get you 0.1 mm; it gets you nothing or a whole first command.
@@ -1219,7 +1225,8 @@ def plan_nudges(millimetres: float) -> list[float]:
     Returns an empty list when the distance is below half the smallest
     deliverable move -- the same "leave it alone" the mover applies. Raises
     ``ValueError`` past :data:`MAX_FINE_STEPS`, deliberately rather than
-    clamping: `DirectScanner.param_for_mm` already clamps silently at param 8,
+    clamping: `DirectScanner.param_for_mm` already clamps silently at
+    `MAX_CORRECTION_PARAM`,
     and a caller that cannot see its request was truncated will keep issuing
     commands against a ceiling it does not know is there.
     """

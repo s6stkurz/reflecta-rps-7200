@@ -125,8 +125,10 @@ def write(
     """Write ``image`` as an uncompressed LinearRaw DNG.
 
     ``image`` is ``(H, W, 4)`` of uint8 or uint16 -- R, G, B, IR, in the
-    scanner's own linear samples, corrected the same way everything else
-    delivered is corrected. The samples are written as they arrive: an 8-bit
+    scanner's own linear samples. R, G and B are corrected the same way
+    everything else delivered is; the infrared plane is **not**, because the
+    calibration pass is RGB and there is no infrared reference to divide by.
+    The samples are written as they arrive: an 8-bit
     array stays 8-bit rather than being stretched into 16, because the reader
     scales by the dtype's own maximum and inventing precision here would only
     make the file bigger.

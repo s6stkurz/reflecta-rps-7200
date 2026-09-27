@@ -5074,10 +5074,11 @@ class ScannerGui:
             messagebox.showinfo(
                 "Aim",
                 f"That point is {say_units(want, signed=False)} from the {side} edge, which "
-                f"would take more than {MAX_FINE_STEPS} sub-frame moves. Past "
-                "that the calibration goes sub-linear and the film would not "
-                "travel what was asked for.\n\nClick nearer the edge you want "
-                "it to reach, or use the slide buttons.", parent=self.root)
+                f"is past what one command delivers "
+                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and chaining "
+                "them pays the ramp and the scatter again for each.\n\n"
+                "Click nearer the edge you want it to reach, or use the "
+                "slide buttons.", parent=self.root)
             return
         steps = max(1, -(-int(abs(want) * 1000) // int(MAX_FINE_MM * 1000)))
         way = "forward" if want > 0 else "back"
@@ -5919,9 +5920,9 @@ def snap_offset(millimetres: float) -> float:
     A number finer than the hardware is a lie. The reachable set starts at one
     SLIDE command and steps by param, so there is nothing at all between zero
     and `FINE_STEP_MM` -- showing an operator "+1.3 units" invites him to aim at
-    a place that does not exist. Clamped to what eight commands can chain,
-    which is `MAX_TRAVEL_MM`, so the planner is never asked for a distance it
-    would refuse.
+    a place that does not exist. Clamped to what one command delivers at
+    `MAX_CORRECTION_PARAM`, which is `MAX_TRAVEL_MM`, so the planner is never
+    asked for a distance it would refuse.
     """
     want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, float(millimetres)))
     sign = -1.0 if want < 0 else 1.0
@@ -5930,10 +5931,9 @@ def snap_offset(millimetres: float) -> float:
     except ValueError:
         plan = []
     # The result has to be re-plannable, or the adjuster stores a number the
-    # mover would later refuse. Eight commands of the largest step sum to
-    # slightly more than eight times the nominal maximum, so the top of the
-    # range can snap to a value just past what the planner accepts back. Drop
-    # a step until it survives the round trip.
+    # mover would later refuse. The top of the range can snap to a value just
+    # past what the planner accepts back, so drop a step until it survives the
+    # round trip.
     while plan:
         value = sign * abs(sum(plan))
         try:
@@ -5955,7 +5955,7 @@ def snap_offset(millimetres: float) -> float:
 #: to bend, and it became a single command when the cap went to 87.
 #:
 #: "finest" is not a distance at all: it walks to the next position the
-#: transport can reach, which is not a constant -- the lattice is 2.57 units
+#: transport can reach, which is not a constant -- the lattice is 2.84 units
 #: off zero and 1.0 everywhere above it.
 ADJUST_PARAMS = {"small": 3, "medium": 8, "large": 20}
 ADJUST_STEPS = ("finest",) + tuple(
