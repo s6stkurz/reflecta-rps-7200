@@ -153,6 +153,15 @@ def picture_signature(entry: Path) -> np.ndarray | None:
     return grid if float(grid.std()) > 0 else None
 
 
+def _film_of(entry: Path) -> str | None:
+    """The film an entry's record says it holds, or None if it will not say."""
+    try:
+        record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return (record.get("scan") or {}).get("film")
+
+
 def _signature_key(entry: Path) -> str:
     """What a cached signature is filed under: the entry, and the very file
     `picture_signature` reads from it, as the disk last saw that file.
@@ -291,6 +300,11 @@ class DemoScanner:
         #: are the same picture -- which is what makes the filmstrip's
         #: "the scan replaces its prescan" behaviour visible at all.
         self.pair: Path | None = Path(entry) if entry else None
+        #: The entry `--demo-entry` named, which a pass of its own film is
+        #: drawn from. It used to be only the last fallback, so in any library
+        #: with a raw-byte entry of that film it was never shown -- while the
+        #: log said it was.
+        self._asked: Path | None = Path(entry) if entry else None
         self.speed = max(1.0, speed)
         #: Where the film sits, in millimetres from where this frame started.
         #: The demo moves it for real so the hold loop has something to
@@ -1156,6 +1170,10 @@ class DemoScanner:
         film = self._rolling or self._metering or film
         if film in self._by_film:
             return self._by_film[film]
+        if self._asked is not None and _film_of(self._asked) == film:
+            self._log(f"{film}: showing {self._asked.name}, as asked")
+            self._by_film[film] = self._asked
+            return self._asked
 
         # One entry per film, not one per resolution. Picking by resolution
         # too would be tidier in shape and wrong in substance: the library's
@@ -1192,22 +1210,33 @@ class DemoScanner:
         multiple of the resolution -- it rounds its own way. The library has
         entries at each of these, so the shape is recorded rather than derived.
         Any film will do; the frame is the same size whatever is in it.
+
+        Whole-frame passes only, not the demo's own, and the commonest shape
+        among them. The first entry at a resolution used to decide it, so one
+        probe with a narrower window, or a trimmed height, squashed every
+        demo pass at that resolution along its own axis for the session.
         """
         if dpi in self._shapes:
             return self._shapes[dpi]
-        found = None
+        seen: dict[tuple[int, int], int] = {}
         for path in self._entries:
             try:
-                scan = (json.loads((path / "scan.json").read_text(encoding="utf-8"))
-                        .get("scan") or {})
+                record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            scan = record.get("scan") or {}
             if int(scan.get("resolution_dpi") or 0) != dpi:
+                continue
+            if (record.get("extra") or {}).get("demo"):
+                continue
+            frame = scan.get("frame")
+            if frame is not None and tuple(frame) != tuple(FULL_FRAME):
                 continue
             h, w = scan.get("height"), scan.get("width")
             if h and w:
-                found = (int(h), int(w))
-                break
+                shape = (int(h), int(w))
+                seen[shape] = seen.get(shape, 0) + 1
+        found = max(seen, key=lambda shape: seen[shape]) if seen else None
         self._shapes[dpi] = found
         return found
 

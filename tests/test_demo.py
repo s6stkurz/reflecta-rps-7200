@@ -21,7 +21,7 @@ from rps7200.library import FilmNotes
 
 
 def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
-          prescan=None, skipped=None):
+          prescan=None, skipped=None, frame=None):
     """A library entry with raw bytes, its TIFF, and nothing corrected.
 
     `prescan` stores a framing pass beside the scan, which is what makes an
@@ -45,6 +45,8 @@ def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
     }
     if skipped:
         meta["shading_skipped"] = skipped
+    if frame is not None:
+        meta["frame"] = list(frame)
     return library.save(
         image, meta, root=root, film=FilmNotes(frame="demo"),
         prescan=prescan,
@@ -375,6 +377,36 @@ def test_the_shape_comes_from_the_library_not_from_a_ratio(tmp_path):
     assert image.shape[:2] == (9, 14), (
         f"a ratio would have given {(10, 15)}, the device gives (9, 14)"
     )
+
+
+def test_a_probe_with_a_narrower_window_does_not_set_the_shape(tmp_path):
+    """The first entry at a resolution decided the device's shape, whatever
+    window it was scanned through: one half-width probe, filed first, made
+    every demo pass at that resolution half as wide."""
+    from rps7200.framing import FULL_FRAME
+
+    x0, y0, x1, y1 = FULL_FRAME
+    entry(tmp_path, dpi=900, lines=9, width=7,
+          frame=(x0, y0, (x0 + x1) // 2, y1))
+    for _ in range(2):
+        entry(tmp_path, dpi=900, lines=9, width=14, frame=FULL_FRAME)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    assert s._shape_for(900) == (9, 14)
+    s.close()
+
+
+def test_the_entry_asked_for_is_the_one_shown(tmp_path):
+    """--demo-entry was only the last fallback: in any library holding a
+    raw-byte entry of that film, the one nearest 1800 dpi was shown instead,
+    while the log said 'showing' the one asked for."""
+    entry(tmp_path, dpi=1800, lines=12, width=16)
+    asked, _ = entry(tmp_path, dpi=900, lines=6, width=8)
+    s = DemoScanner(tmp_path, entry=asked, speed=1e9)
+    s.open()
+    _image, meta = s.scan(resolution=900, infrared=False)
+    s.close()
+    assert meta["demo_source"]["entry"] == asked.name
 
 
 # -- the stand-in must not drift from what it stands in for -----------------

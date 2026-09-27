@@ -8900,6 +8900,12 @@ def main() -> int:
                          "none of it can land among real scans. Leave it "
                          f"out, or name a folder under {DEMO_ROOT}/.")
 
+    # A mistyped entry was accepted, logged as "showing" it, and the pictures
+    # came from somewhere else.
+    if args.demo_entry and not (Path(args.demo_entry) / "scan.json").is_file():
+        ap.error(f"--demo-entry {args.demo_entry!r}: no library entry there "
+                 "(a folder holding a scan.json)")
+
     home = DEMO_ROOT if args.demo else Path(".")
 
     # A demo keeps its own remembered geometry and sheet state. It used to

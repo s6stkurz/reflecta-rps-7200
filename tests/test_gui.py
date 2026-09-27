@@ -4220,6 +4220,21 @@ def test_the_demo_is_refused_a_real_library_or_rolls_folder(
     assert f"{flag} " in capsys.readouterr().err
 
 
+def test_a_mistyped_demo_entry_is_refused_at_launch(monkeypatch, tmp_path,
+                                                    capsys):
+    """It was accepted, logged as 'demo mode: showing <name>', and every
+    picture came from some other entry."""
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo", "--demo-entry",
+                                      str(tmp_path / "no-such-entry")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    assert "--demo-entry" in capsys.readouterr().err
+
+
 def test_no_film_is_told_to_the_backend(monkeypatch, tmp_path):
     """Which is the only place that could honestly know it."""
     import rps7200.demo
