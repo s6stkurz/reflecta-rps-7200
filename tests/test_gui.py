@@ -3555,6 +3555,8 @@ def test_a_saved_pass_is_one_channel_or_all_as_its_own_film_asks(window,
     monkeypatch.setattr(app, "_deliver_one",
                         lambda r, p, q, mono, ch: delivered.append(mono) or "")
     app.on_save_as(colour)
+    for thread in app._writing:
+        thread.join(5)
     assert delivered == [False]
 
 
@@ -3578,6 +3580,32 @@ def test_a_delivered_file_says_the_resolution_it_was_scanned_at(window,
                                    meta={}, image=None)
     app._deliver_one(result, tmp_path / "out.tif", 95, False, "G")
     assert written == [3600]
+
+
+def test_save_as_says_when_it_could_not_write(window, monkeypatch):
+    """It ran on the UI thread with nothing around it: a full or pulled disk
+    raised into Tk's stderr handler, nothing was said, and the operator took
+    it as saved. It runs where Save all does now, and says so as Save all
+    does."""
+    import threading
+
+    app, root = window
+    where = []
+
+    def full(*_a):
+        where.append(threading.current_thread())
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: "/media/stick/out.tif")
+    monkeypatch.setattr(app, "_deliver_one", full)
+    app.on_save_as(types.SimpleNamespace(meta={}, label="scan 1"))
+    for thread in app._writing:
+        thread.join(5)
+    app._drain()
+    assert where and where[0] is not threading.main_thread()
+    assert "could not save out.tif" in app.log.get("1.0", "end")
+    assert "No space left" in app.log.get("1.0", "end")
 
 
 def test_approvals_are_read_without_loading_a_survey(tmp_path):

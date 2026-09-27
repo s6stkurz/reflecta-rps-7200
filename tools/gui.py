@@ -4474,10 +4474,26 @@ class ScannerGui:
             filetypes=save_as_types(self.session.out_format))
         if not path:
             return
-        said = self._deliver_one(result, path, jpeg_quality(self.v_jpegq.get()),
-                                 *self._mono_for(result))
-        if said:
-            self._say(f"saved {said}")
+        # On a writer thread, as Save all is, and for both of its reasons.
+        # Here on the UI thread, re-correcting a 3600 dpi frame froze the
+        # window for seconds; and a failure -- a full or pulled disk, an entry
+        # that would not load -- went to Tk's stderr handler, so nothing was
+        # written, nothing was said, and the operator took it as saved.
+        quality = jpeg_quality(self.v_jpegq.get())
+        mono, channel = self._mono_for(result)
+        name = Path(path).name
+
+        def run() -> None:
+            try:
+                said = self._deliver_one(result, path, quality, mono, channel)
+            except Exception as exc:                     # noqa: BLE001
+                self._saves.put(("line", f"could not save {name}: {exc}"))
+                return
+            if said:
+                self._saves.put(("line", f"saved {said}"))
+
+        self._say(f"saving {name} ...")
+        self._start_writing(run, "save-as")
 
     def _mono_for(self, result) -> tuple[bool, str]:
         """One channel or all for a delivered copy of this pass, and which.
