@@ -481,17 +481,38 @@ def test_every_pass_it_files_is_claimed_from_debug_filing(tmp_path, monkeypatch)
         "claimed the corrected pixels, which debug filing never spooled"
 
 
-def test_both_capture_tools_file_the_raw_pixels(tmp_path):
+def test_both_capture_tools_file_the_raw_pixels(tmp_path, monkeypatch):
     """`tools/uniformity.py capture` files the same way and had the same bug.
-    It cannot be driven from here -- it wants a scanner and a target -- so it
-    is held to naming the attribute at all."""
-    import inspect
+    It was held to naming the attribute, by grep, on the grounds that it wants
+    a scanner and a target; it wants neither on a device double. One pass of
+    its own `one_pass`, the operator's answers typed in, and the entry must be
+    the pass's raw pixels, labelled raw, re-decoding from its own bytes."""
+    from types import SimpleNamespace
 
-    from conftest import load_tool as _load
+    from conftest import DeviceAtCommands, load_tool as _load, scanner_at_commands
+    from rps7200 import library
+
     uniformity = _load("uniformity")
-    source = inspect.getsource(uniformity.one_pass)
-    assert "last_pixels_raw" in source
-    assert "image if raw_pixels is None else raw_pixels" in source
+    calibrating, _ = scanner_at_commands(monkeypatch)
+    calibrating.calibrate_shading()
+    reference = calibrating.save_shading(tmp_path / "shading.npz")
+    device = DeviceAtCommands(seed=7)
+    answers = iter(["", "accept"])            # Enter at the prompt, accept
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    entry, outcome = uniformity.one_pass(
+        lambda: DirectScanner(transport=device, verbose=False, debug=False),
+        ("empty", None, "flat", "leave the transport empty", "a flat field"),
+        SimpleNamespace(dpi=300, ir=False, library=tmp_path / "lib",
+                        tag="uniformity-test"),
+        1.0, reference, "session-1", 1)
+
+    assert outcome == "ok"
+    stored, record = library.load(entry)
+    assert np.array_equal(stored, device.passes[-1]["pixels"])
+    assert record["image"]["corrections_applied"] == []
+    assert library.reconstruct(entry)[1].startswith("identical")
+    assert not np.array_equal(library.corrected(entry)[0], stored)
 
 
 # --- refused before the scanner is opened ------------------------------------
