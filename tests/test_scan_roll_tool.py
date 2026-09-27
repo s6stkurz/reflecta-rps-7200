@@ -1222,6 +1222,24 @@ def test_a_roll_whose_filing_fails_stops_at_once(tmp_path, monkeypatch, capsys):
     assert "could not be filed" in manifest.get("stopped", "")
 
 
+def test_a_frame_the_library_refused_names_the_copy_it_wrote(tmp_path,
+                                                            monkeypatch):
+    """Its frameNN.tif is written whatever the library says, and its record
+    named no file: the writer's answer for a refused frame said nothing had
+    been written, so a resume, a carry or anything else reading the record
+    could not find the copy that was kept."""
+    _created, code = _refusing_library(tmp_path, monkeypatch, _Patient,
+                                       frames=1)
+    assert code != 0
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    (record,) = manifest["frames"]
+    assert record["done"] is False
+    assert "could not be filed" in record["filing_error"]
+    assert record["file"] == "frame01.tif"
+    assert (tmp_path / "roll" / record["file"]).exists()
+
+
 class _Claiming(FakeRollScanner):
     """Records what the tool tells debug filing, and when the scanner exits."""
 

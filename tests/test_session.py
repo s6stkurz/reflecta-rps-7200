@@ -1606,6 +1606,29 @@ def test_a_picture_the_library_refused_keeps_its_raw_data(tmp_path, monkeypatch)
     assert session.UNFILED in library.entries(folder.parent)[0]["tags"]
 
 
+def test_a_picture_the_library_refused_names_the_copy_it_wrote(tmp_path):
+    """The job's own answer -- what a roll's record is written from -- said
+    nothing was written: the frameNN.tif the writer had just finished was
+    named only in the text of the error, where nothing reading records looks."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    told = []
+    writer = session.FrameWriter()
+    raw = picture(seed=5)
+    path = tmp_path / "out" / "frame04.tif"
+    writer.submit(number=4, paths=[path], image=raw, raw_image=raw,
+                  meta={"resolution_dpi": 600, "channel_order": list("RGBI")},
+                  dpi=600, library=str(blocker / "library"), film=FilmNotes(),
+                  tags=["roll"], prescan=None, inquiry=None,
+                  capture={"reference": None, "ccd_mask": None, "raw": RAW,
+                           "raw_layout": LAYOUT},
+                  on_filed=lambda *answer: told.append(answer))
+    writer.finish()
+    ((entry, error, written),) = told
+    assert entry is None and error, "still a failure, said as one"
+    assert written == [path]
+
+
 def test_a_picture_nowhere_will_take_says_so(tmp_path, monkeypatch):
     writer, (_seq, _number, _entry, err), _raw = _refused_by_the_library(
         tmp_path, monkeypatch, everywhere=True)

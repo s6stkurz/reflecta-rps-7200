@@ -1187,8 +1187,10 @@ class RollManifest:
               **extra: Any) -> None:
         """The writer's answer for one frame: its entry, or why there is none.
 
-        ``extra`` is written into the record only when it was filed -- the
-        roll tool's `file`, which named a TIFF before anything had written it.
+        ``extra`` is what the caller's answer adds -- the roll tool's `file`,
+        given only once the writer has written that TIFF: it named one
+        before anything had. Written whether or not the frame was filed,
+        since a frame the library refused still has its delivered copy.
         """
         number = int(number)
         with self._lock:
@@ -1210,10 +1212,10 @@ class RollManifest:
 
     @staticmethod
     def _apply(record: dict, entry, error, extra=None) -> None:
+        record.update(extra or {})
         if error is None:
             record["done"] = True
             record["entry"] = str(entry) if entry else None
-            record.update(extra or {})
         else:
             record["done"] = False
             record["filing_error"] = str(error)
@@ -1747,6 +1749,24 @@ def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
     return None, refused
 
 
+class NotFiled(OSError):
+    """A picture the library would not take, and what was kept of it.
+
+    ``written`` is the delivered copies that were written all the same, and
+    ``kept`` the entry `keep_unfiled` made of its raw data, or None. Carried
+    on the failure so the job's own answer (`FrameWriter._tell`) can name
+    them: reported as a bare OSError, its record was told nothing was
+    written, and the frameNN.tif the writer had just finished was named only
+    in the text of `filing_error`, where nothing reading records looks.
+    """
+
+    def __init__(self, message: str, written: list[Path],
+                 kept: Path | None = None):
+        super().__init__(message)
+        self.written = list(written)
+        self.kept = kept
+
+
 class FrameWriter:
     """Writes finished frames to disk on a thread, off the scanning loop.
 
@@ -1812,7 +1832,9 @@ class FrameWriter:
                     except Exception as said:            # noqa: BLE001
                         self.errors.append(f"picture {job['number']}: its "
                                            f"failure could not be said ({said})")
-                self._tell(job, None, str(exc), [])
+                # What was written of it all the same: see `NotFiled`.
+                self._tell(job, None, str(exc),
+                           list(getattr(exc, "written", ())))
             finally:
                 self.queue.task_done()
 
@@ -1960,7 +1982,7 @@ class FrameWriter:
                 said.append("written to " + ", ".join(str(p) for p in written))
             # Still a failure, and reported as one by `_run`: the picture is
             # not in the library, and a roll stops on it (`_filed`).
-            raise OSError("; ".join(said + problems))
+            raise NotFiled("; ".join(said + problems), written, kept)
         if problems and entry is None:
             # Nothing of this picture was kept anywhere: a failure, reported
             # as one by `_run`.
