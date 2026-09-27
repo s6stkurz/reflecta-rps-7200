@@ -799,10 +799,11 @@ def test_a_save_cut_short_is_reported_and_never_listed(tmp_path, monkeypatch,
     test of that marker built the half-written directory by hand; this one
     makes `library.save` itself fail at each of its writes in turn."""
     make_entry(tmp_path)
-    _fails_at(monkeypatch, step)
-    with pytest.raises(OSError):
-        make_entry(tmp_path, prescan=np.zeros((4, 6, 3), np.uint8))
-    monkeypatch.undo()
+    # A context of its own: `undo()` would also lift conftest's isolation.
+    with monkeypatch.context() as failing:
+        _fails_at(failing, step)
+        with pytest.raises(OSError):
+            make_entry(tmp_path, prescan=np.zeros((4, 6, 3), np.uint8))
 
     cut = [p for p in tmp_path.iterdir()
            if p.is_dir() and (p / library.INCOMPLETE).exists()]
@@ -830,10 +831,10 @@ def _compact_cut_short_after_the_swaps(path, monkeypatch):
     def killed(*a, **k):
         raise OSError("killed before the record was written")
 
-    monkeypatch.setattr(library, "_write_atomic", killed)
-    with pytest.raises(OSError):
-        library.compact(path)
-    monkeypatch.undo()
+    with monkeypatch.context() as dying:
+        dying.setattr(library, "_write_atomic", killed)
+        with pytest.raises(OSError):
+            library.compact(path)
 
 
 def _real_problems(root):

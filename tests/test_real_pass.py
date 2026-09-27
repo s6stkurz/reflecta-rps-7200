@@ -253,9 +253,9 @@ def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
     def full(*a, **k):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(ShadingReference, "save", full)
-    scanner.ensure_shading(tmp_path / "calibration" / "shading.npz")
-    monkeypatch.undo()
+    with monkeypatch.context() as disk:
+        disk.setattr(ShadingReference, "save", full)
+        scanner.ensure_shading(tmp_path / "calibration" / "shading.npz")
 
     folders = [p for p in (tmp_path / "calibration").iterdir() if p.is_dir()]
     assert folders, "nothing was archived at all"
