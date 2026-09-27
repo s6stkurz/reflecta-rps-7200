@@ -1,0 +1,24 @@
+{
+ "type": "result",
+ "key": "v2:fc65935d9d576f98696cd189fd38ac632ea41d4c4e95f1b7895a146808b5bbbd",
+ "agentId": "a36748656bd0800ad",
+ "result": {
+  "verdict": "good",
+  "issues": [
+   {
+    "severity": "minor",
+    "file": "tests/test_real_pass.py",
+    "line": 119,
+    "problem": "The opcode check lists \"12\" as the scan frame, then skips it with `continue` and a comment calling it INQUIRY. SET SCAN FRAME is WRITE 0x0a (subcode 0x12), so the one command the comment says is the frame is never asserted to be in the pass's `extra.commands`, and that loop entry does nothing.",
+    "fix": "Replace \"12\" with \"0a\" and delete the `if opcode == \"12\": continue` branch, so the frame write is actually required: `for opcode in (\"0a\", \"15\", \"1b\", \"0f\", \"18\"): assert opcode in sent, ...`."
+   },
+   {
+    "severity": "minor",
+    "file": "tests/test_real_pass.py",
+    "line": 608,
+    "problem": "The T-11 claim says every delivered file is read back, must equal library.corrected(entry) and must differ from the raw pixels. The session-roll test (and test_scan_roll_tool.py::test_a_walks_prescans_reconstruct_and_its_prescan_files_are_corrected, around line 1227) checks only equality with corrected(). If library.corrected ever returned the raw decode (for example an entry filed without shading.npz), a FrameWriter delivering raw would still pass, which the other delivery tests guard against explicitly.",
+    "fix": "Add `assert not np.array_equal(delivered, library.load(entry)[0]), number` after the equality assert in both tests, as test_scan_tool.py and test_scan_roll_tool.py's frame test already do."
+   }
+  ]
+ }
+}
