@@ -69,10 +69,12 @@ from .export import to_8bit
 from .protocol import say_units, units
 from .framing import APERTURE_MM, FULL_FRAME
 from .protocol import (
+    BACKLASH_UNITS,
     CHANNEL_ORDER,
     DEPTH_8,
     DEPTH_16,
     INDEX_HEADER,
+    MM_PER_UNIT,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     SLIDE_INIT,
@@ -81,8 +83,6 @@ from .protocol import (
 )
 from .session import (
     _LINES_PER_DPI,
-    BACKLASH_COMMANDS,
-    FINE_MIN_MM,
     _replace,
     estimate_seconds,
 )
@@ -888,13 +888,13 @@ class DemoScanner:
     _rejudge_for = DirectScanner._rejudge_for
     #: The sub-frame move, whole: this class has only the `slide` it sends.
     nudge = DirectScanner.nudge
-    #: The slack a reversal takes up before the film follows: the smallest
-    #: move, `BACKLASH_COMMANDS` times. The ladder in docs/protocol.md section
-    #: 11 lost its first two small steps after a reversal and then went at
-    #: full length, and a rewind after a roll has had its first command
-    #: swallowed. A property of the pretend film, so it is the demo's -- but
-    #: in the transport's own terms, never a retyped unit.
-    BACKLASH_MM = BACKLASH_COMMANDS * FINE_MIN_MM
+    #: The slack a reversal takes up before the film follows: the measured
+    #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
+    #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is
+    #: how many whole-frame commands a rewind may spend before giving up, a
+    #: retry budget and not a slack, and raising it would have tripled this
+    #: without a word. Before that it was a retyped `2.2 * 0.1057`.
+    BACKLASH_MM = BACKLASH_UNITS * MM_PER_UNIT
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
     #: The transport's law, taken and not retyped. `_aim_frame`'s dry run
     #: reaches for all three and raised `AttributeError` without them -- so the

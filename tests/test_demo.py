@@ -845,14 +845,17 @@ def test_a_frame_is_entered_loaded_forward_so_going_back_costs_backlash(
     assert ahead["moves"] == 1, ahead
 
 
-def test_the_demo_backlash_is_counted_in_the_transports_moves():
-    """Retyped as `2.2 * 0.1057` -- the unit, by hand, and less than one
-    smallest move where the driver and the demo's own comment said two to
-    three commands were lost."""
+def test_the_demo_backlash_is_the_measured_slack():
+    """Retyped as `2.2 * 0.1057` once, then taken as `BACKLASH_COMMANDS`
+    smallest moves -- 8.5 units, from a rewind's retry budget rather than a
+    slack, so raising the rewind's patience would have tripled it. It is the
+    slack measured in docs/protocol.md section 11, held in protocol.py."""
+    from rps7200 import protocol
     from rps7200.direct import DirectScanner
-    from rps7200.session import BACKLASH_COMMANDS, FINE_MIN_MM
 
-    assert DemoScanner.BACKLASH_MM == BACKLASH_COMMANDS * FINE_MIN_MM
+    assert DemoScanner.BACKLASH_MM == pytest.approx(
+        protocol.BACKLASH_UNITS * protocol.MM_PER_UNIT)
+    assert protocol.units(DemoScanner.BACKLASH_MM) == pytest.approx(3.9)
     # And the move itself is the driver's, arithmetic, cap and answer.
     assert DemoScanner.nudge is DirectScanner.nudge
 

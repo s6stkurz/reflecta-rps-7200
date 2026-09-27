@@ -287,6 +287,19 @@ COMMAND_UNITS = 1.84
 #: The ramp in millimetres, for the mover, which works in them.
 MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
 
+#: The slack a change of direction takes up before the film follows, in
+#: units. `docs/protocol.md` section 11, the fine forward series: straight
+#: after a command that had moved the film the other way, `00 01 00 04`
+#: delivered 0.4 and 1.8 units on its first two sends where the next three
+#: settled at 3.0 -- 3.9 units gone into the gear train (the section keeps
+#: the millimetres it was measured in, 0.040, 0.186 and 0.317). The same
+#: section's ladder lost more, about 9 units over its first rungs after
+#: three throwaway steps, but not as one clean take-up; this is the reversal
+#: that was. The driver pays nothing for it in advance -- its hold loop
+#: measures where each move landed -- so the demo's pretend transport is
+#: what reads it, and has it from here rather than from a figure of its own.
+BACKLASH_UNITS = 3.9
+
 
 def units(millimetres: float) -> float:
     """A distance in the transport's own unit."""
