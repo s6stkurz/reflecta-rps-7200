@@ -271,6 +271,11 @@ class StripScanner(FilmOnFrame):
             index += 1
             if finished(index):
                 return
+            # The driver's own last check before the film moves (its
+            # `keep_going`): taken and then ignored here, this double let a
+            # Stop that reached only the driver pass unnoticed.
+            if should_stop is not None and should_stop():
+                return
             if self.advance() is None:
                 return
 
@@ -589,7 +594,8 @@ class DeviceAtCommands:
 
     Closed, it refuses every command as `Transport` does once its handle is
     gone. ``on_read(device, n)`` is called before the ``n``th image READ of
-    the whole session, so a test can act mid-pass -- a force abort, say.
+    the whole session, so a test can act mid-pass -- a force abort, say --
+    and ``on_command(device, opcode, data)`` as each command arrives.
 
     The film is a strip of ``last + 1`` frames, as `StripTransport` has it:
     SLIDE NEXT and PREV move ``position``, READ STATE byte 2 says where it is,
@@ -600,7 +606,8 @@ class DeviceAtCommands:
     EXPOSURE = (9604, 6506, 6506, 7745)
 
     def __init__(self, *, upward=(), seed=0, position=0, last=16,
-                 on_read=None):
+                 on_read=None, on_command=None):
+        self.on_command = on_command
         self.last = last
         self._moved = False
         self.upward = set(upward)
@@ -642,6 +649,8 @@ class DeviceAtCommands:
         opcode = command[0]
         data = bytes(data) if data else b""
         self.sent.append((opcode, data))
+        if self.on_command is not None:
+            self.on_command(self, opcode, data)
         if opcode == p.SCSI_REQUEST_SENSE:
             sense, self._sense = self._sense, bytes(14)
             return sense

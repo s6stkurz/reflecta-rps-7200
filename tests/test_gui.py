@@ -119,18 +119,6 @@ def test_the_window_never_writes_the_comparison_files():
         assert name not in source
 
 
-def test_the_window_files_its_own_entries_and_claims_them_from_the_driver():
-    """Both filing would write every frame twice. The window used to switch
-    the driver's filing off outright, which also left every pass the window
-    does not keep -- metering probes, hold prescans -- unfiled whatever
-    RPS7200_DEBUG said. Now the environment decides, and what the session
-    files it claims (`test_session.py` checks the claim is made)."""
-    from rps7200.session import ScanSession
-    import inspect
-    assert "debug=None" in inspect.getsource(ScanSession._default_scanner)
-    assert "debug_claim" in inspect.getsource(ScanSession._file)
-
-
 # -- aiming the film at a point on the prescan ------------------------------
 
 

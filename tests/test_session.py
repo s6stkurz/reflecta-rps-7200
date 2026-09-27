@@ -989,11 +989,23 @@ def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path):
     blocker.write_text("", encoding="utf-8")
     s = ScanSession(root=str(blocker / "library"), rolls=str(tmp_path / "rolls"),
                     open_scanner=lambda: scanner, verbose=False)
-    # Slow the roll a little, so the first failed filing lands before the end.
+    # Each frame after the first waits until the first one's failed filing
+    # has been handled. This used to sleep 50 ms a frame and hope the writer
+    # thread won the race, which on a loaded runner it need not.
+    handled = threading.Event()
+    real_filed = s._filed
+
+    def filed(seq, number, entry, err):
+        real_filed(seq, number, entry, err)
+        if err is not None:
+            handled.set()
+
+    s._filed = filed
     real = scanner.scan
 
     def scan(**kw):
-        time.sleep(0.05)
+        if scanner.produced > 1:
+            assert handled.wait(10), "the first frame's filing never failed"
         return real(**kw)
 
     scanner.scan = scan
@@ -1008,7 +1020,7 @@ def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path):
             break
         time.sleep(0.01)
     s.join(timeout=2.0)
-    assert scanner.produced < 6, "the roll scanned on into a library it could not write"
+    assert scanner.produced <= 2, "the roll scanned on into a library it could not write"
     assert any("stopping the roll" in e.text for e in kinds(events, "log"))
 
 
@@ -1082,12 +1094,26 @@ def test_progress_arrives_as_numbers_not_as_text(tmp_path):
 
 
 def test_a_result_carries_a_working_copy_the_ui_can_keep(tmp_path):
-    _, _, events = run(Scan(resolution=600), tmp_path)
+    """A pass wider than the window's working size comes back reduced to it.
+    Asked of the fake's own 24 x 36 picture, as this used to be, any limit
+    at all held."""
+    from rps7200 import preview
+
+    scanner = FakeScanner()
+    real = scanner.scan
+
+    def wide(**kw):
+        image, meta = real(**kw)
+        image = np.tile(image, (1, 81, 1))           # 24 x 2916
+        return image, dict(meta, width=image.shape[1])
+
+    scanner.scan = wide
+    _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner)
     results = kinds(events, "result")
     assert len(results) == 1
     image = results[0].result.image
     assert image is not None
-    assert max(image.shape[:2]) <= 512 or max(image.shape[:2]) <= 1400
+    assert max(image.shape[:2]) <= preview.PREVIEW_MAX_SIDE < 2916
     assert image.shape[2] == 4                       # every channel still there
 
 
@@ -1353,15 +1379,6 @@ def test_matching_raw_bytes_are_still_filed(tmp_path):
     run(Scan(resolution=600), tmp_path, scanner=scanner)
     entry = tmp_path / library.entries(tmp_path)[0]["id"]
     assert (entry / "raw.bin.gz").exists()
-
-
-def test_a_stop_reaches_the_driver_not_only_the_consumer_loop(tmp_path):
-    """The session has to hand `scan_roll` a way to check before it advances;
-    checking only between yields lets one more frame happen."""
-    import inspect
-    from rps7200.session import ScanSession
-    source = inspect.getsource(ScanSession._roll)
-    assert "should_stop=self._stop.is_set" in source
 
 
 # -- moving the film without scanning ---------------------------------------

@@ -762,7 +762,10 @@ def test_nothing_is_written_while_the_device_is_open(tmp_path, monkeypatch):
     assert s._debug_pending == []
     entries = [p for p in tmp_path.iterdir() if p.is_dir()]
     assert len(entries) == 2, sorted(p.name for p in tmp_path.iterdir())
-    assert (entries[0] / "raw.bin.gz").exists() or True   # raw only when kept
+    # This double keeps no bytes, so none may appear: bytes in an entry whose
+    # pass kept none are another pass's. That a pass which did keep them is
+    # filed with them, and reconstructs, is test_real_pass.py's.
+    assert not any((e / "raw.bin.gz").exists() for e in entries)
 
 
 def test_a_filing_failure_never_breaks_the_session(tmp_path, monkeypatch):

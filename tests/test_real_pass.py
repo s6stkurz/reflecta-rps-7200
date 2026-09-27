@@ -532,6 +532,50 @@ def test_a_force_abort_mid_read_leaves_the_scanner_suspect(monkeypatch,
         "a pass abandoned mid-read was filed as if whole"
 
 
+def test_a_stop_while_the_driver_passes_unchosen_frames_moves_nothing_more(
+        monkeypatch, tmp_path):
+    """Frames 1 and 4 chosen: after frame 1 the driver advances past 2 and 3
+    on its own, yielding nothing, so the session's check between frames
+    never runs there. Stop pressed during that walk has to reach the driver
+    itself -- `should_stop`, checked before each advance -- or the film goes
+    on to frame 4 and scans it. The hand-off was held to it by a grep for
+    ``should_stop=self._stop.is_set``, which a call moved into a branch not
+    taken would still have passed."""
+    from rps7200.protocol import SCSI_SCAN, SCSI_SLIDE, SLIDE_NEXT
+    from rps7200.session import Roll
+
+    holder = {}
+
+    def stop_on_the_first_skip(device, opcode, data):
+        scanned = [p for p in device.passes if p["channels"] == 4]
+        if (opcode == SCSI_SLIDE and data[:1] == bytes([SLIDE_NEXT])
+                and scanned and "at" not in holder):
+            holder["at"] = len(device.sent)
+            holder["session"].request_stop()
+
+    scanner, device = scanner_at_commands(monkeypatch,
+                                          on_command=stop_on_the_first_skip)
+    session = _session(scanner, tmp_path)
+    holder["session"] = session
+    session.start()
+    session.submit(_calibration(tmp_path))
+    session.submit(Roll(frames=4, resolution=300, infrared=True, name="r",
+                        only=(1, 4)))
+    session.shutdown()
+    _events_until(session, _closed)
+    session.join(timeout=5)
+
+    assert "at" in holder, "the roll never advanced after frame 1"
+    frames = [r for r in library.entries(tmp_path / "library")
+              if r["extra"]["roll_membership"]["kind"] == "frame"]
+    assert len(frames) == 1
+    after = device.sent[holder["at"]:]
+    assert not [d for op, d in after if op == SCSI_SLIDE and d[:1] == bytes(
+        [SLIDE_NEXT])], "the film went on advancing after Stop"
+    assert not [op for op, _ in after if op == SCSI_SCAN], \
+        "another pass was started after Stop"
+
+
 def test_a_real_roll_through_the_session_files_frames_that_reconstruct(
         monkeypatch, tmp_path):
     """The window's roll on the driver's own loop -- metering, prescans,
