@@ -119,6 +119,38 @@ def test_calibrating_through_a_session_follows_the_drivers_decision(
     assert [e.done for e in empty if e.kind == "calibrated"] == [0]
 
 
+def test_progress_counts_every_planes_lines_as_the_device_does(tmp_path):
+    """The driver reports `channels * lines` as they arrive, and the window
+    prints it as 'N/M lines'. The demo reported one plane's height, from a
+    retyped 0.957 -- '1722 lines' for an RGBI pass the scanner calls 6888."""
+    from rps7200.session import _LINES_PER_DPI
+
+    entry(tmp_path, channels=4)
+    totals = []
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.progress_hook = lambda done, total: totals.append(total)
+    s.scan(resolution=1800, infrared=True)
+    assert set(totals) == {4 * int(1800 * _LINES_PER_DPI)} == {6888}
+    totals.clear()
+    s.prescan(resolution=300)
+    assert set(totals) == {3 * 287}
+
+
+def test_a_display_that_raises_does_not_take_down_the_pass(tmp_path):
+    """The driver swallows its hooks' failures, 'least of all mid-read'; the
+    demo let one abort a pass the scanner would have finished."""
+    entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+
+    def broken(*a):
+        raise RuntimeError("the log pane went away")
+
+    s.log_hook = broken
+    s.progress_hook = broken
+    image, _ = s.scan(resolution=900, infrared=False)
+    assert image is not None
+
+
 def test_it_decodes_the_raw_bytes_not_the_tiff(tmp_path):
     """Proved by corrupting the TIFF: the pixels must still come back right."""
     path, truth = entry(tmp_path)

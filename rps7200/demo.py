@@ -75,7 +75,13 @@ from .protocol import (
     ScanParameters,
     Settings,
 )
-from .session import BACKLASH_COMMANDS, FINE_MIN_MM, _replace, estimate_seconds
+from .session import (
+    _LINES_PER_DPI,
+    BACKLASH_COMMANDS,
+    FINE_MIN_MM,
+    _replace,
+    estimate_seconds,
+)
 from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
 
@@ -628,7 +634,8 @@ class DemoScanner:
         self._forget_last_pass()
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
-        self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
+        self._work(estimate_seconds(resolution, False),
+                   lines=self._lines_read(resolution, channels=3))
         # A framing pass is RGB, always: the real one sets passes=0x80 and
         # 8-bit, so a four-channel prescan is a shape the window would never
         # see from the device.
@@ -730,7 +737,7 @@ class DemoScanner:
         fast = bool(fast_infrared and infrared)
         self._work(
             estimate_seconds(resolution, infrared, fast),
-            lines=int(resolution * 0.957),
+            lines=self._lines_read(resolution, channels=4 if infrared else 3),
         )
         # Four planes whenever infrared was asked for, as the device sends:
         # an RGBI request used to come back three wide from an RGB entry.
@@ -1092,8 +1099,24 @@ class DemoScanner:
                 "earlier; the positions and the ticks are real.")
 
     def _log(self, message: str) -> None:
+        # The driver's rule: a broken display must not take down the pass it
+        # is displaying. Here a raising hook aborted a demo pass the scanner
+        # would have finished.
         if self.log_hook is not None:
-            self.log_hook(message)
+            try:
+                self.log_hook(message)
+            except Exception:                            # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _lines_read(resolution: int, channels: int) -> int:
+        """What the device's progress counts a pass in: every plane's lines.
+
+        The driver reports ``channels * lines`` as they arrive. This reported
+        one plane's height, from a retyped 0.957, so an 1800 dpi RGBI pass
+        read "1722 lines" in the demo against 6888 on the scanner.
+        """
+        return channels * int(resolution * _LINES_PER_DPI)
 
     def _work(self, seconds: float, lines: int = 0) -> None:
         """Spend `seconds` of pretend scanning, reporting progress as it goes."""
@@ -1105,7 +1128,10 @@ class DemoScanner:
                 raise UsbError("transport is not open")
             time.sleep(seconds / self.speed / steps)
             if lines and self.progress_hook is not None:
-                self.progress_hook(round(total * (i + 1) / steps), total)
+                try:
+                    self.progress_hook(round(total * (i + 1) / steps), total)
+                except Exception:                        # noqa: BLE001
+                    pass
 
     def _source_for(self, film: str) -> Path | None:
         """The entry to show for this film.
