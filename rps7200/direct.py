@@ -1203,6 +1203,7 @@ class DirectScanner:
             optional_devices=d[50],
             frame=(short(108), short(110), short(112), short(114)),
             preview_resolution=short(54),
+            raw_hex=bytes(d).hex(),
         )
         self._inquiry = result
         return result

@@ -492,6 +492,12 @@ class Inquiry:
     optional_devices: int
     frame: tuple[int, int, int, int]
     preview_resolution: int
+    #: The whole reply, as hex. The fields above are read at the offsets
+    #: `pieusb` assumes, and most of the ~120 bytes are read by nothing; an
+    #: entry recorded only these could not be re-read if an offset turned
+    #: out wrong, or a skipped byte turned out to matter -- a firmware
+    #: sub-revision, say. Every entry's `device` record carries it.
+    raw_hex: str = ""
 
     @property
     def has_infrared(self) -> bool:
