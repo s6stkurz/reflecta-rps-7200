@@ -1,0 +1,256 @@
+{
+ "type": "result",
+ "key": "v2:efb4aeb69c07c151bb555576f08380a79164dc99b86ad88cfc3db20ebdedb22a",
+ "agentId": "aa668362371012436",
+ "result": {
+  "branch": "fix3/filing",
+  "commits": [
+   "13be379",
+   "cab6b13",
+   "290c8f0",
+   "142aaae",
+   "70faff3",
+   "69039d7",
+   "7b257c7",
+   "060e869",
+   "68635fc",
+   "3f0f2e2",
+   "0b2f71e",
+   "c67699d",
+   "b7a9e42",
+   "0a1a748",
+   "cc68372",
+   "abbf7ce",
+   "6d199a1",
+   "14bb185",
+   "49498b1",
+   "37e83cd",
+   "671a5c9",
+   "31fb1ce",
+   "fc5d1b4",
+   "9316baf",
+   "b53b18f",
+   "0a2184d"
+  ],
+  "done": [
+   {
+    "item": "P04 new problem / SR-05 (library.save failure lost the frame and its delivered copies)",
+    "change": "13be379: FrameWriter._write catches library.save's failure, still writes every delivered copy, then keeps the raw data as a whole plain entry via new session.keep_unfiled (in an `unfiled/` folder beside a copy that was just written, else <tempdir>/rps7200-unfiled), adds it to the compact-at-close list, and still raises so the job is a failure: the roll stops and roll.json's filing_error says where the raw data went. Tests in tests/test_session.py (writer-level and end-to-end roll)."
+   },
+   {
+    "item": "SR-01 / CSA-02 (debug claim at hand-off, spool flushed before the writer finished) and SR-10 / CSA-12 (force_abort never flushed the spool)",
+    "change": "cab6b13: the session no longer claims in _file; it passes `claim=` in the job and FrameWriter._claim calls it only after library.save returned, never when the capture's bytes were dropped. ScanSession._run's finally closes only the transport first (new session.close_device), finishes the writer, then calls scanner.close() (the debug flush) -- also after force_abort, since close() sends no command. Two old tests that pinned the old order were updated (the order test now checks device closed -> writer finished -> debug filed)."
+   },
+   {
+    "item": "SR-02 / P13 (1) (a roll's last frames gzipped with the device open and idle)",
+    "change": "290c8f0: _roll marks the frame nothing will be scanned after (DirectScanner.roll_ends, or a Stop) as plain=True; FrameWriter gains idle= (session passes `not self._rolling`) so any roll job it starts after the roll ended is written plain too. Both are compacted at close. Residual stated in the commit: a compression already under way when a roll ends unannounced still finishes idle."
+   },
+   {
+    "item": "CLI-01, CLI-07 (scan_roll), CLI-A3, CLI-23 / SR-A2",
+    "change": "142aaae: scan_roll's FrameWriter gets an on_done that prints each failure and writer note at once and sets a filing_failed event that is part of should_stop, so the roll stops after the frame in flight; manifest records why. Claims go through claim= (after filing). New session.HeldOpen: the with-block closes only the device, release() (the scanner's own exit = debug flush) runs in a real finally after writer.finish(), so early returns no longer skip it. Walk prescanNN.tif / -before.tif go through the writer instead of tiff.write on the scanning thread."
+   },
+   {
+    "item": "CLI-06, CLI-07 (scan.py), CLI-17, CLI-28",
+    "change": "70faff3: scan.py files each pass in its own try; a refused pass is kept via keep_unfiled beside --out (or temp), said at once and at the end, the merge and --out are still written, exit 1. Claims only after library.save, scanner held with HeldOpen so debug filing runs after the tool's filing. `--library ''` now means do not file. Docstring's first line no longer says the scanner applies its own shading."
+   },
+   {
+    "item": "SR-06 (walk frame filed with a later verification prescan's bytes)",
+    "change": "69039d7: new session.bytes_are_another_pass (identity of scanner.last_pixels_raw vs the raw pixels being filed); _file and scan_roll's walk branch drop the bytes when it is true (and, with claim-on-success, leave the pass to debug filing, which spooled its own bytes). Carrying each prescan's own bytes on RollFrame is left to the capture group."
+   },
+   {
+    "item": "SR-07 (re-walk overwrote renumbered legacy prescan files)",
+    "change": "7b257c7: RollManifest.named_by_others; each walk prescan (and -before picture) takes the first name no other frame's record names (_free_name), and the record names the file it really got."
+   },
+   {
+    "item": "CLI-14 (roll ending short of --frames exits 0)",
+    "change": "060e869: scan_roll counts places covered; short of --frames with nobody stopping it -> stderr message naming the last frame reached, manifest 'stopped', exit 1."
+   },
+   {
+    "item": "CLI-10 (resume re-scans every frame)",
+    "change": "68635fc: scan_roll gains --only N[,N...] (passed to the driver's `only`, recorded in settings, refused before opening when behind --start-at); the failure advice now names --start-at <first> --only <all unfinished>; docstring corrected. Two advice tests updated to the new text."
+   },
+   {
+    "item": "CLI-12 (--approved scanned on --film default negative)",
+    "change": "3f0f2e2: --film defaults to None; with --approved it adopts the walk's film (said, recorded, and the infrared refusal is judged on it); an explicit different --film wins with a warning. One existing test typed --film negative where it relied on the old silent default."
+   },
+   {
+    "item": "CLI-11 (resume ignores earlier settings)",
+    "change": "0b2f71e: before the device opens, a run into a roll.json with frames is compared (manifest_settings, either tool's shape) on resolution, infrared, film, metering, and tied infrared between two IR runs; a difference is refused naming what the roll was taken with. The manifest now records fast_infrared, shading, correct, correct_dry_run, max_failures."
+   },
+   {
+    "item": "CLI-03, CLI-08 (no roll estimate; scan.py warned on an optimistic figure)",
+    "change": "c67699d: shared session.say_estimate with FOREGROUND_S, SLOW_PASS (=162/85 from CLAUDE.md's 1800 dpi span), CALIBRATION_S, METERING_S, WARM_UP_S; the background warning is judged on the slow end. scan.py uses it; scan_roll prints a pre-open estimate (prescan+move+scan+metering per frame, calibration; to the end of the strip without --frames). Stale --dry-run help and docstring fixed."
+   },
+   {
+    "item": "CLI-15 (argument part)",
+    "change": "b7a9e42: filing_load_test refuses --rounds < MIN_ROUNDS, --mb <= 0, --limit <= 0 before the device opens."
+   },
+   {
+    "item": "SR-12, SR-13, SR-20",
+    "change": "0a1a748: no 'could not be filed: None' for deliberately entry-less writes; each picture remembers the job that queued it (_owners by seq) and _current is cleared between jobs, so a late failure stops only its own still-running roll; on_done in the writer's failure branch is guarded."
+   },
+   {
+    "item": "SR-11",
+    "change": "cc68372: a scanner that opened but failed INQUIRY is closed again."
+   },
+   {
+    "item": "SR-09",
+    "change": "abbf7ce: _file/_out_name take a suffix; the walk's before-picture is named `...-before` in out_dir/prescans instead of overwriting the corrected prescan."
+   },
+   {
+    "item": "SR-15",
+    "change": "6d199a1: an unknown (None) position is never 'the same place'; Move and Roll drop _last_prescan."
+   },
+   {
+    "item": "SR-14",
+    "change": "14bb185: _roll refuses before the seek what the driver refuses for certain: uncorrectable resolution on a real roll (DirectScanner.correctable_at/uncorrectable), unknown meter mode, unknown film (locks_white_balance), infrared on IR-blind film. No demo branch; the refusal takes the failed-job path."
+   },
+   {
+    "item": "CLI-24 (and scan_roll's share of CSA-A1)",
+    "change": "49498b1: --nudge takes units (converted via protocol.MM_PER_UNIT), and every distance the walk prints goes through say_units; stale 1.0118 mm comment fixed; README line saying this tool was still in mm corrected."
+   },
+   {
+    "item": "SR-16 (doc part)",
+    "change": "37e83cd: fine-move constants, plan_nudges docstring and _move comment now describe param 87 / 88.8 units; MAX_FINE_STEPS's comment says eight commands are now ~710 units. Comments only; behaviour left (see left)."
+   },
+   {
+    "item": "CLI-22",
+    "change": "671a5c9: scan_roll gains --mono/--no-mono/--mono-channel (default follows the film via wants_mono), passed to each frame's writer job and recorded in the manifest."
+   },
+   {
+    "item": "SR-18 (+ the prescan_before naming part of SR-04)",
+    "change": "31fb1ce, b53b18f: the window's roll.json/survey.json record `started`, and via RollManifest.ended `finished` and `stopped` (the Stop, the exception, or 'ended after N of the M frames asked for', which is also the job's finished note); walk records name prescan_before so carry_walk takes it. ended() runs last in _roll's finally."
+   },
+   {
+    "item": "SR-08 (write part)",
+    "change": "fc5d1b4: FrameWriter writes TIFF deliveries (frameNN.tif, prescanNN.tif, TIFF output copies) beside and renames over with session._replace's Windows retries (_write_whole); JPEG unchanged (DNG companion naming). keep_first_numbering's .legacy copy likewise."
+   },
+   {
+    "item": "SR-03 / CSA-07 / P13 (2) (doc part)",
+    "change": "9316baf: the _file comment now says only the library entry is plain with the device open; the output-folder copy is still deflated/JPEG-encoded. Behaviour left for Stefan (see left)."
+   },
+   {
+    "item": "CLI-A2, CLI-19",
+    "change": "0a2184d: new session.debug_filing_into: both tools point debug filing at their --library while release() flushes (an operator-set RPS7200_DEBUG_ROOT wins; env restored). session.say_reused prints a reused reference's age; session.reference_refused makes both tools refuse, before opening, a --reference inside a library entry when a calibration would write it."
+   }
+  ],
+  "left": [
+   {
+    "item": "P04 left: a failed delivered copy reaches the operator only as a log line",
+    "why": "The fix is in tools/gui.py (it routes the session's 'log' events to _say); GUI subsystem.",
+    "proposal": "In the window, treat the writer's 'picture N: could not write ... the library entry is safe' note as a warning: set the status line and mark the result row, once per roll rather than per frame; the session could emit it as a distinct event kind if the GUI group prefers not to parse text."
+   },
+   {
+    "item": "P13 (2) / SR-03 / CSA-07: a single pass's output-folder copy is deflated or JPEG-encoded with the device open and idle",
+    "why": "Decision for Stefan: every remedy changes what the operator gets (file size, a file rewritten under him, or a delayed file). Comment corrected in 9316baf.",
+    "proposal": "Write single-pass TIFF deliveries uncompressed while the device is open and recompress them at close alongside library.compact (with the Windows retry), and defer JPEG/DNG encoding of single passes to close; or accept deflate for the delivered copy and say so in CLAUDE.md."
+   },
+   {
+    "item": "P13 (3): sha256 of every file, a full-library reindex per save, and the window's Save all/Export run with the session open",
+    "why": "Needs a measurement and touches library.py (library group) and gui.py (GUI group).",
+    "proposal": "Make reindex incremental (add/replace one entry in index.json) in library.py, and block Save all/Export while the session holds the device, or measure first with the idle arm below."
+   },
+   {
+    "item": "P13 (4): no measurement of the open-and-idle case; residual of SR-02 (a compression already running when a roll ends unannounced, or a full writer queue)",
+    "why": "Only Stefan can run the hardware measurement.",
+    "proposal": "Add an 'idle' arm to tools/filing_load_test.py (gzip a payload while no pass runs, then take a pass and check READ STATE/timing) and run it before trusting either the roll path or the residual."
+   },
+   {
+    "item": "P13 new problem: compact runs only on a clean close, no tools/library.py compact, compact does not check the plain file's digest before rewriting TIFFs, tools/collect_vignette_study.py needs raw.bin.gz",
+    "why": "library.py/tools/library.py are the library group's; collect_vignette_study is the probe/analysis tools group's. Note that 290c8f0 now files a roll's last frame plain until close too, so a killed window leaves more plain entries and a compact action is worth more.",
+    "proposal": "Add `tools/library.py compact [--write]` that compacts every entry holding raw.bin after checking it against its recorded sha256, and have collect_vignette_study read raw bytes through library.read_raw."
+   },
+   {
+    "item": "P15 (1): the window sets calibrated=True on submitting Calibrate",
+    "why": "tools/gui.py (GUI subsystem).",
+    "proposal": "Set self.calibrated only from the session's 'calibrated' event (already emitted with done=0/1)."
+   },
+   {
+    "item": "P15 (2): a refused READ mid-calibration is taken as the end and a partial reference is built",
+    "why": "direct.py calibrate_shading (device/capture group).",
+    "proposal": "Compare the lines collected with the count GET PARAMETERS declared; short -> mark suspect and raise rather than calculate_shading on partial data."
+   },
+   {
+    "item": "P15 new problem: probe tools call prescan()/auto_exposure() with shading=True and never calibrate",
+    "why": "tools/*_probe.py, transport_truth, roll_registration_walk, uniformity: probe/analysis tools group.",
+    "proposal": "Call ensure_shading (or pass shading=False deliberately) before the first pass in each, and drop hold_probe's stale 'a calibration runs first' message."
+   },
+   {
+    "item": "SR-04 / CLI-09 / CSA-14: a real roll's prescans keep no raw data outside debug mode, prescan.tif is corrected and unlabelled, a failed frame's prescan is not filed",
+    "why": "Needs RollFrame to carry each prescan's own capture (bytes, layout, CCD mask) taken when the pass is taken (direct.py scan_roll, capture group) and library.save to label prescan.tif (library group); capture_record() at yield time describes the frame scan, so the session cannot file it correctly alone. Done here: walk records name prescan_before (31fb1ce).",
+    "proposal": "Add prescan_capture to RollFrame; then the session's _roll and scan_roll.py file each real-roll prescan (and a failed frame's) as its own entry with roll_membership kind 'prescan', as walks do, and library.save records prescan.corrections_applied."
+   },
+   {
+    "item": "SR-19, CLI-02, CLI-04, CSA-03, CSA-04, CLI-A1, CLI-16, CLI-15 (Ctrl-C part)",
+    "why": "Ctrl-C and signal handling belong to the device group.",
+    "proposal": "For whoever takes them: scan.py's filing loop and HeldOpen.release(), and scan_roll.py's writer.finish()/release() in its finally, now run after the DeferredInterrupt block; CSA-04/CLI-A1 want the deferral extended over them. The comment in scan_roll about a 'SIGTERM-turned-SystemExit' is still untrue until a handler exists."
+   },
+   {
+    "item": "CSA-01: the debug spool keeps claimed passes on disk until close",
+    "why": "direct.py _debug_capture/debug_claim (capture group).",
+    "proposal": "Now that every caller claims only after filing (cab6b13, 142aaae, 70faff3), debug_claim can unlink the claimed item's files at once; or let callers claim before capture so a filed pass is never spooled."
+   },
+   {
+    "item": "CSA-05 (suspect guard only at SLIDE/START SCAN/calibration)",
+    "why": "direct.py, device group.",
+    "proposal": "_refuse_if_suspect at the top of scan(), scan_bracket, scan_roll and auto_exposure."
+   },
+   {
+    "item": "CSA-06, CSA-10, CSA-11, CSA-17, CLI-05, CLI-25, CLI-26, CLI-29",
+    "why": "library.py / tools/library.py, library group.",
+    "proposal": "session._replace (bounded PermissionError retries) could move to a shared helper for library._write_atomic/_replace_tiff/compact; a reindex failure after a complete entry should not fail library.save (keep_unfiled would otherwise keep a duplicate)."
+   },
+   {
+    "item": "CSA-09 / CLI-18: calibration archive unlinked from entries corrected with a reused reference",
+    "why": "direct.py ensure_shading/load_shading (capture/device group).",
+    "proposal": "Store the archive id and data.bin sha256 inside the cached shading.npz and carry them into shading_origin on --reuse; make verify cover calibration archives."
+   },
+   {
+    "item": "CLI-13: scan.py does not meter by default",
+    "why": "Decision for Stefan: changes the headline tool's default exposure.",
+    "proposal": "Default scan.py to metering like scan_roll and the window, with --exposure-scale or a --no-auto-exposure to opt out; failing that, warn when neither was given, and update the README example."
+   },
+   {
+    "item": "CLI-20: --dpi/--prescan-dpi validated only for positivity and correctability",
+    "why": "Decision for Stefan: which resolutions count as measured, and whether an override flag is wanted; there is no max-resolution constant in the driver to take it from.",
+    "proposal": "A DirectScanner constant of the resolutions the device offers/that were measured, refuse others before opening (at least above 7200, which also avoids the OverflowError after commands were sent), with an explicit --unmeasured-dpi override."
+   },
+   {
+    "item": "CLI-21: a bracket holds every pass in RAM with no memory estimate",
+    "why": "Design choice with a trade-off (spooling adds disk writes with the device open).",
+    "proposal": "Print an estimated peak memory beside the time estimate and refuse past available RAM, or spool bracket passes to disk as the debug spool does."
+   },
+   {
+    "item": "SR-16 behaviour: MAX_FINE_STEPS=8 now allows ~710 units (two frames) of chained sub-frame travel",
+    "why": "tools/gui.py keeps its own copy of 8 for its messages (GUI group); changing one without the other makes them disagree. Comments fixed in 37e83cd.",
+    "proposal": "Redefine the limit as travel in units -- one frame width, framing.FRAME_WIDTH_UNITS (350.6), i.e. 4 commands of param 87 -- in session.py, and have gui.py import it instead of its copy."
+   },
+   {
+    "item": "SR-17 / SR-A1: SLIDE params of holds, aims and window nudges are not persisted; a hold that raises part-way loses the moves it sent",
+    "why": "The hold/aim history is built in direct.py (_hold_to_approved, _aim_frame, scan_roll's except) -- capture/device group.",
+    "proposal": "Record each nudge's param (and units) in the hold/aim history, attach the partial history to the exception and record it in the frame's marks; log the window's Move nudges into the next pass's record."
+   },
+   {
+    "item": "SR-08 remainder: roll.json forgets an earlier take's entry when a frame is taken again",
+    "why": "Changes the manifest's shape that the window, the tool and resume logic read.",
+    "proposal": "Keep a per-record `takes: [{entry, filed, ...}]` list and have RollManifest.record append rather than replace."
+   },
+   {
+    "item": "CLI-15: filing_load_test exits 0 whatever its verdict",
+    "why": "Minor, and a change to what a caller relies on.",
+    "proposal": "Exit 1 on 'unsafe' and 2 on 'inconclusive'."
+   },
+   {
+    "item": "SR-15 residual: a strip swapped for one whose counter reads the same value is still taken as the same picture",
+    "why": "Nothing reads a strip change; detecting it needs a signal the driver does not have.",
+    "proposal": "Drop _last_prescan whenever READ_STATE's media flag toggles, once that flag is trusted (only Stefan can confirm it)."
+   },
+   {
+    "item": "TODO.md's millimetre bullet still names scan_roll's --nudge and registration lines",
+    "why": "TODO.md is recorded by the orchestrator; 49498b1 resolves that part.",
+    "proposal": "Drop scan_roll from that bullet; the rest (approved.json offset_mm, Approved.offset_mm, param_for_mm, plan_nudges) stands."
+   }
+  ],
+  "tests": "All five commands pass at 0a2184d. (1) /home/user/reflecta-rps-7200/.venv/bin/python -m pytest -q -p no:cacheprovider --no-cov tests/ -> 1409 passed, 32 skipped, 9 deselected. (2) xvfb-run ... guienv ... -n 2 tests/test_gui.py -> 390 passed. (3) RPS7200_NO_TIFFFILE=1 ... tests/ -> 1343 passed, 98 skipped, 9 deselected. (4) ruff check . -> All checks passed. (5) ty check --exclude tests/ --exclude tools/ -> All checks passed when given --python /home/user/reflecta-rps-7200/.venv; run exactly as written from the worktree (which has no .venv of its own) it reports 51 diagnostics, every one unresolved-import of numpy/PIL/tifffile/libusb_package, i.e. the environment, not the code. Every behaviour change's new test was checked to fail against the file(s) as they were before that commit (git show HEAD:<file> swapped in, run, restored). No hardware test was run and no device opened. Nothing sent to the device changed, so PROTOCOL_REVISION is untouched; close_device only releases the libusb handle earlier than close() did, sending no command."
+ }
+}
