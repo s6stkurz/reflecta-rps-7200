@@ -8819,7 +8819,8 @@ def main() -> int:
                          "no scanner on the bus; writes under demo/")
     ap.add_argument("--library", default=None,
                     help="where scans are filed (default: library, or "
-                         "demo/library with --demo)")
+                         "demo/library with --demo, which refuses a folder "
+                         "outside demo/)")
     ap.add_argument("--demo-source", default="library",
                     help="which library --demo shows pictures from; a roll "
                          "after the first also draws on every library beside "
@@ -8829,7 +8830,10 @@ def main() -> int:
                          "default the highest-resolution one that has both a "
                          "prescan and a scan of the same picture")
     ap.add_argument("--reference", default=None)
-    ap.add_argument("--rolls", default=None)
+    ap.add_argument("--rolls", default=None,
+                    help="where rolls and walks are kept (default: rolls, or "
+                         "demo/rolls with --demo, which refuses a folder "
+                         "outside demo/)")
     ap.add_argument("--out", default=None,
                     help="also write a TIFF of every scan here")
     ap.add_argument("--settings", default=None,
@@ -8856,6 +8860,20 @@ def main() -> int:
                  "there is no film, and the real one cannot be told that -- "
                  "it would be driven as usual while the window said scanning "
                  "would refuse")
+    # What the demo writes is synthetic -- resampled pixels, bytes it encoded
+    # itself, a made-up infrared plane, metering on pictures that ignore the
+    # exposure -- and it is filed under ordinary ids that `make verify` excuses.
+    # Pointed at the real library or rolls, it filed that in among the scans,
+    # and a roll commissioned from a real walk wrote its approved.json and
+    # frames back into that walk. So it writes under DEMO_ROOT or not at all.
+    if args.demo:
+        for flag, value in (("--library", args.library),
+                            ("--rolls", args.rolls)):
+            if value is not None and not _within(value, DEMO_ROOT):
+                ap.error(f"{flag} {value!r} with --demo: the demo files what "
+                         f"it invents, and writes only under {DEMO_ROOT}/ so "
+                         "none of it can land among real scans. Leave it "
+                         f"out, or name a folder under {DEMO_ROOT}/.")
 
     home = DEMO_ROOT if args.demo else Path(".")
 

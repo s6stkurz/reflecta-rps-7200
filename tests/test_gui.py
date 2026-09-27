@@ -4114,6 +4114,8 @@ def _launch(monkeypatch, tmp_path, *argv):
     monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
     monkeypatch.setattr(gui, "ScannerGui", Window)
     monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    # The folders below are the demo's own, as --demo requires of them.
+    monkeypatch.setattr(gui, "DEMO_ROOT", tmp_path)
     monkeypatch.setattr(sys, "argv", [
         "gui.py", "--library", str(tmp_path / "library"),
         "--reference", str(tmp_path / "shading.npz"),
@@ -4148,6 +4150,25 @@ def test_look_only_without_the_demo_is_refused_before_anything_opens(
         gui.main()
     assert refused.value.code == 2
     assert "--look-only needs --demo" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--library", "--rolls"])
+def test_the_demo_is_refused_a_real_library_or_rolls_folder(
+        monkeypatch, tmp_path, capsys, flag):
+    """Accepted without a word, `--demo --library library` filed synthetic
+    entries -- resampled pixels, bytes the demo encoded, a made-up infrared
+    plane -- among the real scans under ordinary ids, and `--rolls rolls`
+    let a roll from the sheet write back into the walk it was showing."""
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "DEMO_ROOT", tmp_path / "demo")
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo",
+                                      flag, str(tmp_path / "real")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    assert f"{flag} " in capsys.readouterr().err
 
 
 def test_no_film_is_told_to_the_backend(monkeypatch, tmp_path):
