@@ -52,7 +52,7 @@ from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
-from .protocol import say_units
+from .protocol import DeviceSuspect, say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
@@ -2022,6 +2022,16 @@ class ScanSession:
     def _dispatch(self, job: Job) -> str | None:
         """Run one job. Returns a note when the outcome needs explaining."""
         self._check_stop()
+        # Every job here drives the device. One an earlier pass was abandoned
+        # in is refused before the job starts, rather than part way in by the
+        # driver: a roll had already made its folder and manifest, and the
+        # window went on queueing Scans that each got that far. `getattr`,
+        # because a stand-in need not carry the flag.
+        suspect = getattr(self._scanner, "suspect", None)
+        if suspect is not None:
+            raise DeviceSuspect(
+                f"not {_describe(job)}: {suspect}. The scanner may "
+                "still be mid-scan; power-cycle it and open a new session.")
         if isinstance(job, Calibrate):
             self._calibrate(job)
         elif isinstance(job, Prescan):

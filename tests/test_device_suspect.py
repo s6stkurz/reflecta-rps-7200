@@ -266,3 +266,49 @@ def test_a_start_the_device_refused_does_not():
     with pytest.raises(CalibrationRequired):
         s.start_scan(retries=1)
     assert s.suspect is None
+
+
+# -- nothing reaches a suspect device --------------------------------------
+
+
+def _suspect():
+    from conftest import FakeTransport, settings
+
+    s = DirectScanner(transport=FakeTransport(), debug=False)
+    s._own_transport = False
+    s.suspect = "UsbError during a 1800 dpi pass"
+    return s, settings(9604, 6506, 6506, 7745)
+
+
+@pytest.mark.parametrize("attempt", [
+    lambda s, g: s.scan(resolution=300, infrared=False, shading=False),
+    lambda s, g: s.prescan(shading=False),
+    lambda s, g: s.auto_exposure(shading=False),
+    lambda s, g: s.set_gain_offset(g),
+], ids=["scan", "prescan", "metering", "gain write"])
+def test_a_suspect_device_is_sent_nothing_that_configures_a_pass(attempt):
+    """A pass used to send READ STATE, the lamp wait, the exposure and
+    highlight ladders, the frame, gain and offset and MODE SELECT to a
+    device still in an abandoned one, and only then be refused at SLIDE
+    INIT."""
+    s, g = _suspect()
+    with pytest.raises(DeviceSuspect, match="power-cycle"):
+        attempt(s, g)
+    assert s.t.sent == [], [hex(op) for op, _ in s.t.sent]
+
+
+def test_a_session_does_not_start_a_job_on_a_suspect_scanner(tmp_path):
+    """The window kept queueing Scans after a lost read, and each started --
+    a roll made its folder and manifest first -- before the driver refused."""
+    from test_session import FakeScanner, kinds, run
+
+    from rps7200.session import Roll, Scan
+
+    for job in (Scan(resolution=1800, infrared=False), Roll(frames=2)):
+        scanner = FakeScanner()
+        scanner.suspect = "UsbError during a 1800 dpi pass"
+        _, _, events = run(job, tmp_path, scanner=scanner)
+        failed = kinds(events, "failed")
+        assert failed and "DeviceSuspect" in failed[0].text
+        assert "power-cycle" in failed[0].text
+        assert scanner.calls == []

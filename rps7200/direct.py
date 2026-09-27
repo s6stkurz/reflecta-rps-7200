@@ -1759,6 +1759,9 @@ class DirectScanner:
         data[22] = int(s.gain[3]) & 0xFF
 
         self._log(f"gain/offset {s.describe()}")
+        # Not a status query: a write, which probes and the roll also make
+        # outside a pass -- a probe's restore after a read it abandoned.
+        self._refuse_if_suspect("a gain and offset write")
         self.t.command(_cmd(SCSI_WRITE_GAIN_OFFSET, 29), data=bytes(data))
 
     def get_ccd_mask(self, size: int) -> bytes:
@@ -2525,6 +2528,9 @@ class DirectScanner:
         saturates while red sits near a fifth of scale -- so a negative is
         metered per channel rather than with one global factor.
         """
+        # Before the gain read and write below, which went to a suspect device
+        # ahead of the first probe's refusal.
+        self._refuse_if_suspect("metering")
         locked = locks_white_balance(film)
         # None means "whatever this film needs" -- the ratio differs by roughly
         # a factor of two between colour negative and black and white, and a
@@ -3033,6 +3039,12 @@ class DirectScanner:
                 # without anyone choosing it: `--no-shading` on a roll, a scan
                 # queued behind a calibration that failed, a metering probe.
                 raise self.uncalibrated(reason)
+
+        # Here, before the first command, and not left to SLIDE INIT: a pass
+        # on a device an earlier one was abandoned in used to send READ STATE,
+        # the lamp wait, both sub-command ladders, the frame, gain and offset
+        # and MODE SELECT -- metering's probes too -- before that refused it.
+        self._refuse_if_suspect("a scan")
 
         if auto_exposure:
             # Probe in RGB whatever the scan will be, in at most two rounds --
