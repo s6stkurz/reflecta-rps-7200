@@ -1560,6 +1560,18 @@ class DirectScanner:
         failed read rather than treat it as the end.
         """
         before = self.position()
+        # Where the film was has to be known before the move, or the first
+        # poll to answer counts as the move whatever it says: the counter
+        # lags the command by 1.6-6.2 s, so an unknown `before` took the old
+        # position, read a second later, for the new one. Asked again, and
+        # failing that the last reading there was.
+        for _ in range(3):
+            if before is not None:
+                break
+            time.sleep(poll)
+            before = self.position()
+        if before is None and self.last_state is not None:
+            before = self.last_state.position
         self.slide(action, param=0x01, value=steps)
 
         deadline = time.monotonic() + timeout

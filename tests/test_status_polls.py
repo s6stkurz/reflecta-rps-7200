@@ -69,3 +69,16 @@ def test_an_empty_read_state_does_not_cost_a_calibration(monkeypatch):
     s = DirectScanner(transport=Empty(DARK + LIT), debug=False)
     s._own_transport = False
     assert s.calibrate_shading()["reference"] is not None
+
+
+def test_a_move_counts_only_once_the_counter_leaves_where_it_was(monkeypatch):
+    """With the READ STATE before the move unanswered, the first poll to
+    answer counted as the move whatever it said: the counter lags the command
+    by 1.6-6.2 s, so the old position read a second later came back as the
+    new one, and a roll prescanned a transport still moving."""
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    # Before the move: unanswered, then 4. After it: still 4, then 5.
+    t = FakeTransport(positions=[None, 4, 4, 5])
+    s = DirectScanner(transport=t, debug=False)
+    s._own_transport = False
+    assert s.advance() == 5
