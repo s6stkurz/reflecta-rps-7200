@@ -39,7 +39,7 @@ import queue
 import shutil
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -2990,7 +2990,7 @@ def _safe(name: str, fallback: str = "roll") -> str:
     return cleaned
 
 
-def _unclaimed(wanted: Path) -> Path:
+def _unclaimed(wanted: Path, sidecars: Sequence[str] = ()) -> Path:
     """`wanted`, or the next free name beside it.
 
     A frame rescanned after a failure would otherwise land on the file the
@@ -2998,13 +2998,17 @@ def _unclaimed(wanted: Path) -> Path:
 
     Free means free for every file `export.write` may leave under the name
     -- a JPEG's companion DNG, its TIFF fallback -- not only the one asked
-    for; any other name is only its own.
+    for; any other name is only its own. ``sidecars`` are suffixes a caller
+    writes beside the picture itself, `tools/scan.py`'s ``.json``: those
+    have to be free as well, or ``scan.tif`` after ``scan.jpg`` found its
+    own name free and wrote over the first scan's record.
     """
     def taken(candidate: Path) -> bool:
         try:
-            names = export.outputs(candidate)
+            names = list(export.outputs(candidate))
         except ValueError:
-            names = (candidate,)
+            names = [candidate]
+        names += [candidate.with_suffix(end) for end in sidecars]
         return any(p.exists() for p in names)
 
     if not taken(wanted):

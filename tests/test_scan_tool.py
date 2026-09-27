@@ -135,6 +135,21 @@ def test_a_second_run_never_writes_over_the_first(tmp_path, monkeypatch):
     assert (tmp_path / "out-2.json").exists()
 
 
+def test_a_second_run_under_another_format_keeps_the_first_record(
+        tmp_path, monkeypatch):
+    """The record is `<name>.json` whatever the picture's format, so
+    `--out out.jpg` then `--out out.tif` found out.tif free and wrote the
+    second scan's record over the first's -- with --no-library, the only
+    one there was."""
+    run(tmp_path, monkeypatch, "--no-library", "--out",
+        str(tmp_path / "out.jpg"))
+    first = (tmp_path / "out.json").read_bytes()
+    run(tmp_path, monkeypatch, "--no-library")
+    assert (tmp_path / "out.json").read_bytes() == first
+    assert (tmp_path / "out-2.tif").exists()
+    assert (tmp_path / "out-2.json").exists()
+
+
 def test_a_plain_scan_is_filed_once(tmp_path, monkeypatch):
     run(tmp_path, monkeypatch)
     assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 1

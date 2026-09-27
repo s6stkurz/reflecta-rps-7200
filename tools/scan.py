@@ -453,8 +453,10 @@ def main() -> int:
 
     # Never over an earlier scan: two runs in one directory replaced
     # scan.tif and scan.json, and with --no-library that was the only copy
-    # of the first. The next free name, as the window's output folder does.
-    out = _unclaimed(Path(args.out))
+    # of the first. The next free name, as the window's output folder does,
+    # and free for the record written beside it too: `--out scan.jpg` then
+    # `--out scan.tif` wrote the second scan's scan.json over the first's.
+    out = _unclaimed(Path(args.out), sidecars=(".json",))
     if out != Path(args.out):
         print(f"{args.out} is already there; writing {out.name} instead")
     out.parent.mkdir(parents=True, exist_ok=True)
