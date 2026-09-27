@@ -5537,6 +5537,23 @@ def test_a_roll_from_elsewhere_is_not_added_to_another_of_its_name(
     assert app._roll_folder() == ours
 
 
+def test_a_turn_while_a_roll_runs_says_it_does_not_reach_that_roll(
+        window, tmp_path, monkeypatch):
+    """The sheet can be reopened while its roll runs, and a turn there
+    showed the arriving frame upright while the roll wrote it as it was
+    commissioned. Said, rather than left to be found in the files."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    app.sheet._one(2, 90)
+    assert "not for a roll running now" not in app.log.get("1.0", "end")
+    app.busy = True
+    app.sheet._one(3, 90)
+    assert "not for a roll running now" in app.log.get("1.0", "end")
+    app.busy = False
+    app.sheet.top.destroy()
+
+
 def test_the_sheet_stays_open_until_its_roll_is_handed_over(window, tmp_path,
                                                              monkeypatch):
     """It closed before the question, so a Cancel -- or a busy scanner, or a

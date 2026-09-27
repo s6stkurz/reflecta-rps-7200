@@ -9169,7 +9169,21 @@ class _ContactSheet:
         # loses track of how it will be scanned.
         self.gui._reshow(result)
         self.gui._say(f"frame {number}: {said} -- scanned this way; "
-                      "the other frames are unchanged")
+                      "the other frames are unchanged" + self._too_late())
+
+    def _too_late(self) -> str:
+        """What a turn made while the scanner works does not reach, said.
+
+        The sheet can be opened while a roll it commissioned is running. A
+        turn there changes how the arriving frame is shown, but the roll files
+        each frame with the turn it was commissioned with -- so the filmstrip
+        showed frame 9 upright and frame09.tif was written sideways.
+        """
+        if not self.gui._working():
+            return ""
+        return (" -- but not for a roll running now: it writes each frame the "
+                "way it was commissioned, and this reaches the next "
+                "commission")
 
     def _rotate_all(self, degrees: int) -> None:
         """Turn every frame, and make it the session's default too."""
@@ -9204,7 +9218,7 @@ class _ContactSheet:
             self.gui.session.flip = last.flipped
         self.gui._reshow(*self.frames)
         self.gui._say(f"every frame: {said} -- and new scans follow this "
-                      "until something says otherwise")
+                      "until something says otherwise" + self._too_late())
 
     # -- adjusting ---------------------------------------------------------
 
