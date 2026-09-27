@@ -1516,11 +1516,10 @@ class DirectScanner:
 
         For a caller that claims passes (`debug_claim`) and files them after
         close(), as the window and the tools do: call this after that
-        filing, with the device closed. close() files what nobody claimed,
-        unless a claimed pass is still waiting for its caller's answer -- then
-        it files nothing, so the two never write into one library at once, and
-        leaves it all to this. Here a claim that was never answered is taken
-        as a pass nobody filed, and filed.
+        filing, with the device closed. close() files what nobody claimed and
+        leaves a claimed pass still waiting for its caller's answer to this,
+        with the spool it sits in. Here a claim that was never answered is
+        taken as a pass nobody filed, and filed.
         """
         self._debug_flush(settle=True)
 
@@ -1586,21 +1585,41 @@ class DirectScanner:
         Failures are logged and swallowed. Filing is a record-keeping duty, and
         losing the record is better than losing the session that produced it.
 
-        While a pass is claimed and its caller has not answered for it, this
-        files nothing and leaves everything for `debug_settle` (``settle``),
-        which the caller runs once its own filing is done. See `debug_claim`.
+        A pass that is claimed, its caller not yet having answered for it, is
+        left for `debug_settle` (``settle``), which the caller runs once its
+        own filing is done; everything else is filed here. See `debug_claim`.
         """
         with self._debug_lock:
             # `getattr`: stand-ins subclass this without running `__init__`.
-            if not getattr(self, "_debug_pending", None):
-                return
-            waiting = sum(1 for i in self._debug_pending if i.get("claimed"))
-            if waiting and not settle:
-                self._log(f"debug: {waiting} claimed scan(s) still to be filed "
-                          "by their caller; the spool is filed once it has "
-                          f"been ({self._debug_spool})")
-                return
-            pending, self._debug_pending = self._debug_pending, []
+            queued: list[dict[str, Any]] = list(
+                getattr(self, "_debug_pending", None) or ())
+            # Only the claimed ones wait. close() used to file nothing at all
+            # while any claim was open, and the tools file and settle after
+            # their `with` block: a second Ctrl-C, or anything else that
+            # escaped before that, left every metering probe and hold prescan
+            # nobody had claimed unfiled in the spool, where before the claim
+            # existed close() had filed them. Filing beside a claimant still
+            # writing is safe -- `library._reserve` hands each writer a
+            # directory of its own -- and it is what close() always did.
+            waiting: list[dict[str, Any]] = (
+                [] if settle else [i for i in queued if i.get("claimed")])
+            pending = (queued if settle else
+                       [i for i in queued if not i.get("claimed")])
+            if queued:
+                self._debug_pending = waiting
+        if waiting:
+            self._log(f"debug: {len(waiting)} claimed scan(s) still to be filed "
+                      "by their caller; they stay in the spool until it has "
+                      f"answered ({self._debug_spool})")
+        if not pending:
+            # Nothing to file, and perhaps still a spool: every pass in it
+            # claimed and answered for leaves the reference they shared,
+            # which is removed with the spool and never per pass. Returning
+            # here left that directory behind in the library's `.spool`, one
+            # per session, on any session whose every pass was claimed.
+            if not waiting:
+                self._debug_remove_spool()
+            return
         self._log(f"debug: filing {len(pending)} scan(s) in the library ...")
         try:
             from . import library  # noqa: F401  (fails here, not per pass)
@@ -1657,14 +1676,22 @@ class DirectScanner:
             self._debug_spool = None
             self._debug_reference_saved = None
             return
+        if not waiting:
+            # Not while a claimed pass is still in it: its files are the only
+            # copy until its caller answers.
+            self._debug_remove_spool()
+
+    def _debug_remove_spool(self) -> None:
+        """Remove this session's spool, once nothing in it is waiting."""
+        spool = getattr(self, "_debug_spool", None)
         try:
-            if self._debug_spool is not None:
-                shutil.rmtree(self._debug_spool, ignore_errors=True)
+            if spool is not None:
+                shutil.rmtree(spool, ignore_errors=True)
                 # Only forget it once it is actually gone: this is the one
                 # handle to the directory, and dropping it on a failed clean
                 # loses the chance to say where the leftovers are.
-                if not self._debug_spool.exists():
-                    parent = self._debug_spool.parent
+                if not spool.exists():
+                    parent = spool.parent
                     self._debug_spool = None
                     self._debug_reference_saved = None
                     # The library's `.spool` too, once nothing is in it --

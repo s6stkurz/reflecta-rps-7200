@@ -1171,7 +1171,7 @@ def test_a_claimed_pass_is_let_go_as_soon_as_it_is_filed(tmp_path, monkeypatch):
 def test_a_claim_nobody_answers_for_is_filed_when_the_claimant_is_done(
         tmp_path, monkeypatch):
     """close() waits for an unanswered claim; `debug_settle` does not."""
-    from rps7200 import library
+    from rps7200 import library, tiff
 
     monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
     s = _debug_scanner(debug=True)
@@ -1180,10 +1180,38 @@ def test_a_claim_nobody_answers_for_is_filed_when_the_claimant_is_done(
     s._debug_capture(kept, dict(_META))
     s.debug_claim(kept)
     s.close()
-    assert library.entries(tmp_path / "lib") == [], \
-        "filed beside a claimant that may still be writing into the library"
+    # The probe nobody claimed is filed at close(), as it was before claims:
+    # left to `debug_settle`, a second Ctrl-C in a tool -- which files and
+    # settles after its `with` block -- left it unfiled in the spool.
+    [probe] = library.entries(tmp_path / "lib")
+    assert np.array_equal(
+        tiff.read(tmp_path / "lib" / probe["id"] / "scan.tif"),
+        np.ones((8, 16, 3), np.uint8))
     s.debug_settle()
     assert len(library.entries(tmp_path / "lib")) == 2
+
+
+def test_a_session_whose_every_pass_was_claimed_leaves_no_spool(
+        tmp_path, monkeypatch):
+    """The reference is written once per calibration and removed with the
+    spool, never per pass -- and with every pass claimed and answered for,
+    nothing was left to file, so the flush returned before removing it: one
+    directory per session in the library's `.spool`."""
+    from rps7200.shading import ShadingReference
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s._shading = ShadingReference(ref={0: np.full(16, 3.0)}, mean={0: 3.0},
+                                  pixels_per_line=16)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(kept, dict(_META))
+    shading = s._debug_pending[0]["reference_path"]
+    s.debug_claim(kept)(tmp_path / "the-callers-own-entry")
+    assert shading.exists(), "the passes after this one still point at it"
+    s.close()
+    s.debug_settle()
+    assert not shading.exists()
+    assert not (tmp_path / "lib" / ".spool").exists(), "the spool outlived it"
 
 
 def test_what_the_caller_adds_to_a_pass_reaches_its_debug_entry(

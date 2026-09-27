@@ -1983,11 +1983,11 @@ class ScanSession:
                 for manifest in self._manifests.values():
                     if manifest.unsaved is not None:
                         manifest.save()
-                # What debug filing still holds: the passes nobody here
-                # claimed when close() found a claim still unanswered, a pass
-                # the writer could not file, and everything after a force
-                # abort, which never reached close() at all and so left every
-                # probe and hold of the session unfiled in the spool.
+                # What debug filing still holds: a claimed pass whose answer
+                # had not come back when close() ran, a pass the writer could
+                # not file, and everything after a force abort, which never
+                # reached close() at all and so left every probe and hold of
+                # the session unfiled in the spool.
                 settle = getattr(self._scanner, "debug_settle", None)
                 if callable(settle):
                     try:
