@@ -1,0 +1,432 @@
+{
+ "type": "result",
+ "key": "v2:5bac9ea6ba15fcf3b773fa5248be739ad6aae844375ac21a40ac9fa35d502164",
+ "agentId": "a0b349352df2ed59b",
+ "result": {
+  "area_summary": "This area covers every writer that puts something on disk, checked for atomicity, fsync, what a kill or a full disk leaves behind, and what the next launch does about it. Judged from the code at 03aacba and later.\n\n**How the writers behave today**\n- Three things are written as temp file plus os.replace: a library entry's scan.json (`_write_atomic`, with fsync), the roll manifests survey.json, roll.json and approved.json (`write_manifest`, with fsync, and it deletes its temp file when it fails), and the calibration cache (`save_shading`).\n- gui-settings.json is also temp plus replace, but without fsync.\n- `compact`, `_replace_tiff` and migrate-raw swap files in with os.replace.\n- Everything else is written in place:\n  - each entry's scan.tif, prescan.tif, shading.npz, ccd_mask.bin and raw.bin(.gz). These sit inside a freshly reserved directory behind an INCOMPLETE marker.\n  - index.json\n  - the whole calibration archive (data.bin, ccd_mask.bin, shading.npz, calibration.json), with no marker\n  - the debug spool\n  - every roll-folder TIFF (prescanNN.tif, prescanNN-before.tif, frameNN.tif)\n  - every delivered copy and DNG\n  - the demo signature cache\n  - uniformity's REJECTED marker and its scan.json rewrite\n  - the .bak and .legacy manifest copies (copyfile)\n- No directory is ever fsynced.\n- `_write_atomic`, `_replace_tiff`, `compact`, `save_shading` and `settings.save` all leave their `.part` file behind when they fail. Only `write_manifest` deletes its own.\n\n**What happens on the next launch**\n- Neither the window nor any tool checks anything at startup.\n- `tools/library.py verify` (= `make verify`) reports only INCOMPLETE directories, directories with no scan.json, and checksum problems.\n- Nothing on disk reports or repairs any of these:\n  - `.part` leftovers inside entries (a failed compact can leave a `.raw.bin.gz.part` of hundreds of MB)\n  - orphan `rps7200-debug-*` spools in the OS temp directory\n  - calibration/<UTC>/ folders without calibration.json\n  - plain entries that were never compacted\n- No free-space check exists anywhere in rps7200/ or tools/: no shutil.disk_usage, no statvfs.\n\n**New in this area**\n- A roll or walk runs into a full disk with no warning beforehand, and each failure leaves more partial files behind.\n- A window walk writes survey.json naming prescanNN.tif before the writer has written that file. After a failed filing or a kill, a reopened sheet shows the previous walk's picture under that name.\n- Contact-sheet decisions reach disk only when the sheet closes, so a crash while it is open loses them. A settings save that fails at quit is reported into the window that is being destroyed.\n- Duplicate roll is a copytree on the UI thread. A failure or a force-quit leaves a partial copy that is listed as a roll.\n- A delivered copy that fails part-way stays under its final name, and the next export or rescan puts the good file at `-2`.\n- An INCOMPLETE entry cannot be completed, because nothing describing the pass reaches disk before the last step.\n- `compact()` never compresses a plain entry that has no raw.bin.\n- The `.legacy` numbering copy is non-atomic and is never redone once a truncated copy exists.\n- `mkdir(parents=True)` on every output root can recreate an unmounted drive's path on the system disk. The README says a gone folder stops the roll; in that case it does not.\n\nMany related atomicity defects were already reported by other areas and are not repeated here: CSA-06, CSA-10, CSA-11, CSA-12, CSA-16, CSA-17, LIB-04, LIB-11, LIB-15, DBG-2, DBG-8, DOC-07, DEMO-09, SR-08, OUT-09, OUT-16, GUI2-23, CLI-29, T-07.",
+  "findings": [
+   {
+    "id": "CRA-01",
+    "title": "No free-space check anywhere: a roll, bracket, single scan, compaction or debug spool runs into a full disk after the scanner time is spent, and every failure leaves more partial files",
+    "severity": "high",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/session.py:2003-2014",
+     "tools/gui.py:3147-3160",
+     "tools/gui.py:3327-3336",
+     "rps7200/library.py:259-264",
+     "rps7200/library.py:428-438",
+     "rps7200/direct.py:997-998",
+     "rps7200/session.py:1989-1995",
+     "rps7200/session.py:2880-2887",
+     "tools/scan_roll.py:459-476",
+     "tools/scan.py:366-375"
+    ],
+    "evidence": "No free-space query exists: a search of rps7200/ and tools/ for disk_usage|statvfs|GetDiskFree finds nothing. The only disk-full handling is reactive, after a frame has failed. session.py:2005-2014 `if err is not None and isinstance(self._current, Roll): # A disk that is full, or an output folder that has gone, fails every frame after this one the same way. ... self.request_stop()`. The roll confirmation gives time only: gui.py:3155 `f\"roughly {_duration(per * len(numbers) + move_s)}. The frames nobody ticked cost their advance only.\"`. A refused approved.json starts the roll anyway: gui.py:3335-3336 `self._say(f\"could not write approved.json in {folder} ({exc}); \" \"scanning anyway\")`. Each failed save keeps its partial directory: library.py:263 `(path / INCOMPLETE).write_text(...)`, with no cleanup path. The spool swallows ENOSPC: direct.py:997 `except Exception as exc:  # never break a scan`. Compaction needs extra space beside the plain files and only logs when it fails: library.py:428-438 writes `.raw.bin.gz.part` beside raw.bin; session.py:1994 `\"it stays uncompressed and complete\"`.",
+    "description": "Rolls routinely need tens of GB spread over up to four volumes: the library, the roll folder, the output folder and the OS temp dir for the debug spool. At 3600 dpi RGBI a frame is about 142 MB of pixels plus about as much raw data (gui.py:5553). That is roughly 220 MB of library entry, a deflated frameNN.tif, an output-folder copy, and with RPS7200_DEBUG=1 another ~284 MB of spool per frame kept until close. Nothing estimates this or compares it with free space before the device opens, before a roll is commissioned, before a bracket is held in RAM (scan.py files only after close), or before compaction at quit. The window's single scans are filed plain, about 2x size, until quit. The first sign of trouble is a failed library.save on the writer thread. The roll then stops after the frame in flight, and that frame is lost too (LIB-02/SR-05). Every later save attempt on the full disk, including every item of the debug flush at close, creates another INCOMPLETE directory. A failed compact leaves a `.raw.bin.gz.part` of hundreds of MB that nothing removes (CRA-02), so the disk stays full. The consequences are covered by LIB-02, SR-05, CLI-01, DBG-1 and DBG-2. The missing guard is the root cause, and it is not reported elsewhere.",
+    "failure_scenario": "The operator commissions 30 frames at 3600 dpi RGBI from the contact sheet with an output folder set and RPS7200_DEBUG=1. The library and temp dir share a 200 GB disk with 15 GB free. Around frame 18 the disk fills. approved.json was written, the seek and calibration ran, and 17 frames were filed. Frame 18's library.save raises ENOSPC mid scan.tif, the roll stops after frame 19, and 19 is lost the same way. At quit the debug flush tries every metering probe and hold prescan, leaving about 40 empty INCOMPLETE directories. Compaction of the day's single scans fails and leaves a `.raw.bin.gz.part` in each. About 25 minutes of scanner time gives two frames nothing, and the disk stays full until someone cleans it by hand.",
+    "recommendation": "Add one preflight helper, e.g. `library.space_needed(dpi, channels, frames, debug, out_dir)`, from the per-dpi sizes the code already knows. Check it with shutil.disk_usage on each distinct volume (library root, roll folder, out_dir, tempfile.gettempdir() when debug is on) before the device opens in tools/scan.py and tools/scan_roll.py, and in the window before a Roll or commission is submitted. Refuse, or ask, with the numbers. Re-check between roll frames on the scanning thread (cheap), and stop before scanning a frame that cannot be filed. Before compaction at close, check free space against the entry size and skip with a message rather than leaving `.part` files.",
+    "doc_reference": "README.md:414-416 says 'A roll that cannot file a frame — a full disk, a folder gone — stops after the frame in flight instead of scanning on and discarding the rest'. True, but the frame in flight is discarded, and nothing prevents starting a roll the disk cannot hold."
+   },
+   {
+    "id": "CRA-02",
+    "title": "Nothing on the next launch, and nothing in `verify`, finds what a crash or full disk leaves: `.part` temps (up to hundreds of MB), orphan spools, half calibration archives and plain entries are invisible",
+    "severity": "medium",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/library.py:1076-1087",
+     "rps7200/library.py:484-491",
+     "rps7200/library.py:503-511",
+     "rps7200/library.py:428-438",
+     "rps7200/direct.py:736-747",
+     "rps7200/direct.py:771-803",
+     "rps7200/direct.py:925-928",
+     "rps7200/settings.py:110-119",
+     "rps7200/session.py:906-916",
+     "tools/library.py:74-77",
+     "tools/gui.py:8809-8911",
+     "rps7200/session.py:1989-1995"
+    ],
+    "evidence": "verify skips dot-folders and never lists the files inside an entry: library.py:1076-1078 `for folder in sorted(p for p in root.iterdir() if p.is_dir()) ...: if folder.name.startswith(\".\"): continue`. The temp-writing helpers do not remove their temp file when they fail. _write_atomic, library.py:486-491: `temp = path.with_name(f\".{path.name}.part\")` / `with open(temp, \"w\", ...) as fh: fh.write(text) ...` / `os.replace(temp, path)`, with no try. _replace_tiff, 509-511: `tiff.write(str(temp), image, **kw)` / `os.replace(temp, path)`. compact, 428-433 `temp = path / f\".{RAW_FILE}.part\"` ... `gzip.open(temp, \"wb\", ...)`, where temp is removed only on a checksum mismatch (435). save_shading, direct.py:744-746 `temp = path.with_name(f\".{path.stem}.part.npz\")` / `self._shading.save(temp)` / `os.replace(temp, path)`. settings.py:113-116. Compare write_manifest, session.py:912-916 `except BaseException: ... temp.unlink(missing_ok=True); raise`. The spool location is random and is logged only at flush: direct.py:926-927 `tempfile.mkdtemp(prefix=\"rps7200-debug-\")`. The calibration archive is written in place with no marker (direct.py:781-803). tools/library.py:74-77 offers `[\"list\", \"verify\", \"reconstruct\", \"reindex\", \"duplicates\", \"migrate-raw\", \"migrate-direction\", \"tag\"]`, with no compact, sweep or clean. gui.py main (8809-8911) builds the session and opens the window with no check of the library, the reference dir or the temp dir.",
+    "description": "These leftovers are created by design or by ordinary failures, and none is ever looked for:\n- **INCOMPLETE directories.** `verify` names them; nothing repairs or removes them.\n- **`.scan.json.part`.** On a Windows rename refusal (CSA-06) it holds the complete fsynced record of an entry verify only calls unfinished.\n- **`.raw.bin.gz.part`, `.scan.tif.part`, `.prescan.tif.part`** from a compact or migrate that failed. For a 3600 dpi pass the first is ~100 MB and is invisible to verify.\n- **`.shading.part.npz`** in calibration/ and **`gui-settings.json.part`**.\n- **calibration/<UTC>/ folders** holding data.bin but no calibration.json, so the bytes have no width or stride.\n- **Orphaned `$TMPDIR/rps7200-debug-*` spools** from a kill, a force abort or a failed flush. These can be tens of GB, and their only pointer was a log line.\n- **Plain entries** that a killed window never compacted.\n\nThe window starts cleanly over all of it. `make verify` says 'library is intact' when the only damage is `.part` files, a half archive or a spool. The individual producers are reported elsewhere (CSA-06, CSA-10, CSA-12, DBG-8, LIB-11, CLI-29, T-07). What is new here is the recovery side: no detection at launch, verify's blind spots, and the helpers that fail without removing their temp.",
+    "failure_scenario": "The window is closed on a nearly full disk. Compaction of three single 3600 dpi scans fails with ENOSPC half-way through gzip, leaving three `.raw.bin.gz.part` files of 60-100 MB each (`could not compress ...; it stays uncompressed and complete`). Earlier that week a force abort left a 9 GB `rps7200-debug-k3j2` in /tmp. Next morning the window opens with no word, `make verify` reports 'library is intact', and the 9 GB spool and 250 MB of `.part` files keep the disk full. The next roll fails at frame 3 (CRA-01).",
+    "recommendation": "(1) Make `_write_atomic`, `_replace_tiff`, `compact` and `save_shading` remove their temp file in an except/finally, as `write_manifest` does. (2) Extend `library.verify` to report `.part` files inside entries (with sizes), plain entries (raw.bin without raw.bin.gz), and, when given the reference dir, calibration/<stamp>/ folders without calibration.json or whose data.bin does not match its recorded sha256. (3) Add `tools/library.py sweep`: compact plain entries, delete `.part` leftovers, list INCOMPLETE entries (and complete them where a `.scan.json.part` parses), and list `rps7200-debug-*` spools in tempfile.gettempdir() with their sizes and sidecars. (4) Run a cheap version of that check at window start and at CLI tool start, and say what it found in the log before the first job.",
+    "doc_reference": "CLAUDE.md: 'A directory still holding `INCOMPLETE` was cut short while being written, and `make verify` names it.' README.md:601-603: 'A spool that could not be filed — a full disk, a crash before the session closed — is kept ... and the log says where.' After a crash the log never said where, and nothing on the next launch looks."
+   },
+   {
+    "id": "CRA-03",
+    "title": "A window walk writes survey.json naming prescanNN.tif before the writer has written it; a failed filing or kill leaves the survey pointing at a missing file or at the previous walk's picture",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:2549-2566",
+     "rps7200/session.py:2667-2686",
+     "rps7200/session.py:1637-1673",
+     "rps7200/session.py:641-669",
+     "tools/gui.py:5183",
+     "tools/scan_roll.py:274",
+     "tools/gui.py:3715-3730",
+     "tools/scan_roll.py:658-661",
+     "tools/scan_roll.py:717-721"
+    ],
+    "evidence": "The window only queues the file: session.py:2549-2566 `surveyed = out / f\"prescan{number:02d}.tif\"` / `walked_as = self._file(seq, number, rf.prescan, ..., path=surveyed, roll=name)`. The writer thread writes it later, and only after library.save succeeds (session.py:1656-1673: `entry = library.save(...)`, then `for path in job.get(\"paths\") or ():`). The scanning thread writes the survey at once: session.py:2667-2668 `if job.dry_run and rf.prescan is not None: record[\"prescan\"] = f\"prescan{number:02d}.tif\"` and 2686 `record_of.record(record, awaiting=scanned is not None)`. On a walk `scanned` is None, so the record is written at once and never corrected; walk prescans have no `on_filed`. The reader trusts any file of that name: session.py:666 `if not name or not (folder / name).exists(): continue`. The CLI does it in the other order and documents why: scan_roll.py:660-661 `tiff.write(str(pre), frame.prescan)` / `record[\"prescan\"] = pre.name`; scan_roll.py:718-721 \"It used to be set here, naming a TIFF nothing had written yet -- and after a crash or a full disk, one nothing ever would.\"",
+    "description": "In the window, a walk frame's survey record names `prescanNN.tif` as soon as it is queued. The file appears only if the writer's library.save succeeds and the in-place export.write completes. That fails with a full disk, with a reindex failure on a complete entry (LIB-04), with a Windows rename refusal (CSA-06), or when the process is killed while the writer is behind. The survey is then never corrected. If the folder had no such file, the frame silently drops out of the reopened sheet. If the folder was walked before, which the window supports ('walked frames N again: their new prescans replace the old', gui.py:3727-3730) and warns about for a typed name (folder_note), the old prescanNN.tif is still there. Reopening the roll (Rolls browser, --open-roll, make run-sheet) or `scan_roll --approved` pairs the new record (transport position, registration, prescan_rotation) with the old picture. Edges and positions are then proposed from, and holds referenced to, a picture of a different pass. The CLI's roll tool fixed exactly this; the window path did not.",
+    "failure_scenario": "On Windows with the library in a OneDrive folder, the operator re-walks frames 4-6 of an existing walk because frame 5 looked off. For frame 5, library.save writes the complete entry but the reindex write of index.json is refused (LIB-04). The writer raises before writing rolls/<roll>/prescan05.tif, and the walk stops. survey.json already says frame 5 is prescan05.tif, with the new transport position. The next day the sheet is reopened from the Rolls browser. Frame 5 shows the old, badly placed prescan, the edge reader proposes a position from it, and the commissioned roll holds frame 5 against the wrong reference.",
+    "recommendation": "Record a walk frame's `prescan` only once the file exists. Pass an `on_filed` for walk prescans that adds `prescan`, `prescan_rotation` and `prescan_flipped` to the record (as `file` is added for roll frames in scan_roll.py:771-775). Or write the file first, as tools/scan_roll.py does. Before re-walking a frame, move or delete its old prescanNN.tif so a failed replacement cannot leave the old picture under the new record. Write roll-folder TIFFs beside the target and rename them over it."
+   },
+   {
+    "id": "CRA-04",
+    "title": "Contact-sheet decisions reach disk only when the sheet closes; a crash or kill while it is open loses them, and a save that fails at quit is reported into the window being destroyed",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "tools/gui.py:8600-8617",
+     "tools/gui.py:2666-2676",
+     "tools/gui.py:692-727",
+     "tools/gui.py:3430-3455",
+     "tools/gui.py:3874-3878",
+     "tools/gui.py:3416-3428",
+     "rps7200/settings.py:104-119"
+    ],
+    "evidence": "The sheet's state is serialised in exactly one place: gui.py:8610 `self.gui._store_sheet_state(self.state())`, inside `_dismiss`. A search for `self.state()` finds only this call, which runs when the sheet window closes. `_store_sheet_state` (2666-2676) then calls `self._remember()` → `settings.save(...)`. A failed save is reported only into the log widget: gui.py:720-725 `if saved is None: self._say(\"could not save the window's settings -- the contact sheet's decisions and the setup were not kept\")`, and `_say` (3874-3878) only inserts into `self.log`. At quit, on_close runs `self._close_sheet(); self._remember(); self.session.shutdown(); self._wait_to_quit()` (3452-3455), and `_quit` destroys the root as soon as the worker has stopped. settings.save leaves `gui-settings.json.part` on failure (113-119, no unlink). The Force-abort dialog warns: 'It can also take this window down with it.' (3421-3422).",
+    "description": "Until a walk is commissioned, the sheet's ticks, hand-set positions and turns exist only in memory. They reach gui-settings.json when the sheet is closed or the window quits cleanly (the comments at 8603-8607 and settings.py:39-46 call this file their only record). A sheet can stay open for a long session, and during a running walk or roll. Any end that skips `_dismiss` loses everything decided since it opened: Force abort taking the process down (the dialog warns of this), a Ctrl-C or closed terminal (SR-19), a crash, a logoff, a power cut. On a clean quit with a full or read-only settings location, the failure is written into a log widget that is destroyed within ~150 ms, so the operator never sees it. A `.part` file is left beside the settings file. The approved.json on disk is written only at commission.",
+    "failure_scenario": "The operator walks a 36-frame strip. While the next strip walks, he spends 40 minutes in the sheet un-ticking blanks, turning a dozen frames and hand-setting eight positions. The walk hangs, he types ABORT, and the libusb teardown takes the Python process down. On relaunch the sheet opens with the detector's proposals and none of his decisions. In a variant, the disk is full at quit: the window closes normally, and the only record of the failure was a log line he never saw.",
+    "recommendation": "Persist sheet state as decisions are made, debounced to about one write per second after a tick, turn or position change. Use `settings.save`, or better the roll folder's own atomic `sheet.json` via write_manifest, so the decisions live beside the walk. When the save at quit fails, show a blocking messagebox before destroying the root, or refuse to quit. Remove the `.part` in settings.save on failure.",
+    "doc_reference": "tools/gui.py:8603-8607 (`_dismiss` docstring) says the decisions 'used to die with' the window and are now kept. They are kept only on an orderly close. settings.py:39-46 calls the `sheet` section the record for 'the gap before a walk has been commissioned'."
+   },
+   {
+    "id": "CRA-05",
+    "title": "Duplicate roll is a copytree on the UI thread; a failure or force-quit leaves a partial copy that lists as a roll, and Delete's rmtree can half-delete one",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "tools/gui.py:2779-2808",
+     "tools/gui.py:2837-2842",
+     "tools/gui.py:5549-5563",
+     "tools/gui.py:5379-5391"
+    ],
+    "evidence": "gui.py:2795-2807: `messagebox.askokcancel(\"Duplicate\", f\"Copy {source.name} to {target.name} -- {human_size(summary['size'])}.\\n\\nThe copy keeps the walk, the approvals and the frames already scanned, so the original is safe to rescan over.\\n\\nCopy?\")` then `try: shutil.copytree(source, target) except OSError as exc: messagebox.showerror(\"Duplicate\", f\"Could not copy: {exc}\"); return`. The partial target is not removed, and the copy runs on the Tk callback thread. roll_summary lists any folder holding either manifest: 5562 `if not survey_path.exists() and not roll_path.exists(): return None`. Delete: 2838-2842 `shutil.rmtree(summary[\"folder\"])` / `except OSError as exc: self._say(f\"could not delete {summary['roll']}: {exc}\")`.",
+    "description": "Duplicate exists to protect a roll's walk, approvals and frames before it is rescanned. A roll folder holds up to 38 frames at 142 MB (gui.py:5553), so the copy can be several GB. It runs synchronously on the UI thread, so the window stops responding for the whole copy. It writes each file in place, with no marker and no cleanup:\n- **Disk full:** an error dialog appears, but the partial `<roll>-2` stays. It holds whichever files copytree reached (scandir order, so possibly survey.json without its prescans, or roll.json without approved.json) and is listed in the browser like any roll.\n- **Force-quit:** the operator ends the window that is 'Not Responding' during the copy. No message appears, and the partial copy looks like a finished duplicate.\n- **Retry:** a second Duplicate gets `-3` (duplicate_name) and leaves the partial `-2` beside it.\n\nDelete roll's rmtree is equally non-atomic. On Windows a file held by another reader can stop it part-way, leaving a roll with some manifests or prescans gone and others present.",
+    "failure_scenario": "The operator duplicates a 5 GB roll before rescanning it at 3600 dpi. The window freezes, and after a minute he force-quits it. `rolls/Portra-2` holds roll.json, survey.json and 20 of 38 frames, but no approved.json. Trusting the dialog's 'the original is safe to rescan over', he rescans the original. approved.json is merged by `_write_approved`, but the frame files are overwritten. The duplicate he relied on is missing half the frames and all the hand-set positions of the first commission.",
+    "recommendation": "Copy on a writer thread (tracked by `_start_writing`) into a hidden temp name beside the target, e.g. `.<roll>-2.part`, then rename it to the final name when done. Delete the temp on failure. Have roll_summary ignore dot-prefixed folders. Do the same for Delete: rename the folder to `.<roll>.deleting`, then rmtree, so a failed delete cannot leave a half roll under its real name. Show progress and size in the log."
+   },
+   {
+    "id": "CRA-06",
+    "title": "A delivered copy that fails or is interrupted part-way stays under its final name; the next export or rescan routes the good copy to `-2`",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1673-1699",
+     "rps7200/export.py:181-193",
+     "rps7200/export.py:146-153",
+     "rps7200/tiff.py:164-168",
+     "rps7200/session.py:2827-2831",
+     "rps7200/session.py:2961-2973",
+     "tools/gui.py:2757-2771",
+     "tools/gui.py:4289-4301"
+    ],
+    "evidence": "FrameWriter keeps the failure but leaves the file: session.py:1676-1687 `try: Path(path).parent.mkdir(...)` / `note = export.write(str(path), delivered, ...)` / `except Exception as exc: problems.append(f\"could not write {path} ({exc})\"); continue`, with no unlink. export.write writes in place: 192 `tiff.write(str(path), image, resolution=resolution)`, which is tifffile.imwrite or `open(path, \"wb\")` (tiff.py:164, 167); the DNG likewise (export.py:149). Names are chosen by existence: session.py:2967-2972 `if not wanted.exists(): return wanted` / `candidate = wanted.with_name(f\"{wanted.stem}-{n}{wanted.suffix}\")`, used for out_dir copies (2831) and for Save all and Export (gui.py:2762, 4293). The log line says only: session.py:1696-1697 `\"...; the library entry is safe and can be exported again\"`.",
+    "description": "A copy that runs out of space, loses its drive, or is killed mid-write stays as a truncated or garbled TIFF, JPEG or DNG under the canonical name, e.g. `<roll>_frame07_3600dpi.tif`. Because `_unclaimed` sees that name as taken, the recovery the log suggests puts the good file at `-2`: exporting again, re-running Save all, or rescanning the frame. The broken file keeps the name that a folder-watching consumer such as NegPy or a sync job picks up first. Nothing removes it, and nothing says it is there beyond the one 'could not write' line. The library is unaffected, so this is delivery-only. OUT-09 notes the in-place writes; the `-2` recovery trap is not reported.",
+    "failure_scenario": "The output folder is on a USB stick that fills during frame 7 of a roll. The log says 'could not write .../strip_frame07_3600dpi.tif ...; the library entry is safe and can be exported again'. The operator frees space and uses Export. The good file lands as `strip_frame07_3600dpi-2.tif`, and NegPy, pointed at the folder, still opens the truncated `strip_frame07_3600dpi.tif` as frame 7.",
+    "recommendation": "Write every delivered file (and the DNG companion) to a `.part` name beside it and rename on success. On failure, unlink the partial file so the canonical name stays free for the retry. The window's Save all, Export, Save As and FrameWriter copies all go through export.write, so one change there covers them."
+   },
+   {
+    "id": "CRA-07",
+    "title": "An INCOMPLETE entry cannot be completed: nothing describing the pass (layout, meta, commands) reaches disk before the last step, and the marker says nothing about which pass it was",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:259-305",
+     "rps7200/library.py:306-399",
+     "rps7200/session.py:1587-1598",
+     "rps7200/direct.py:969-977"
+    ],
+    "evidence": "library.py:263-264 writes the marker with fixed text, `\"this entry was being written and did not finish\\n\"`. Then scan.tif, prescan.tif, shading.npz, ccd_mask.bin and the raw bytes are written (267-304). Only then is the record, with `\"raw\": {..., \"layout\": raw_layout}`, `\"scan\"`, `\"extra\"` (commands, roll_membership, started_utc), metering and registration, built from memory and written (306-397). On an exception the caller drops the job: session.py:1594-1598 `except Exception as exc: self.errors.append(...)`, and the meta and raw bytes go with it. By contrast the debug spool writes a record beside each pass: direct.py:972-976 `side = self._debug_spool / f\"{n:03d}-meta.json\"; side.write_text(json.dumps({\"meta\": item[\"meta\"], \"raw_layout\": ...}))`.",
+    "description": "scan.json is the only place an entry's raw layout (width, lines, bytes_per_line, channels) and its whole pass record are kept. save() writes it last. A save cut short after the data files leaves an INCOMPLETE directory with a complete decode, the reference and mask, and often complete raw bytes, but no description. That happens with ENOSPC on the record itself, a rename refusal (CSA-06), a kill, or the writer thread dying at interpreter exit (CSA-04). In the rename-refusal case the fsynced `.scan.json.part` does hold the record, but nothing knows to look there. Otherwise the resolution, exposure, gain and offset, film, roll frame, command log, shading origin and registration of that pass are gone. The marker does not say which roll, frame or time it was either. `verify` can only say 'was being written and did not finish', and no tool can finish it.",
+    "failure_scenario": "Frame 12 of a roll: raw.bin.gz finishes as the disk fills, and `_write_atomic` raises ENOSPC. library/20260927T101500Z_unknown-film_3600dpi_ir/ holds 300 MB of complete bytes and a correct scan.tif. Months later, `make verify` lists it as unfinished. No record says it was frame 12 of which roll, at what exposure, or which command sequence produced it, and roll.json has the frame as not done with a filing_error.",
+    "recommendation": "Write a draft record first, e.g. the full record minus checksums into `scan.json.part` or into the INCOMPLETE marker as JSON, right after `_reserve`. Update it as each file lands, then finalise. Teach verify to show the draft's roll, frame and started_utc, and add a `tools/library.py complete ENTRY` that checksums the present files and promotes the draft."
+   },
+   {
+    "id": "CRA-08",
+    "title": "compact() never compresses a plain entry that has no raw.bin, so its TIFFs stay uncompressed for good",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "rps7200/library.py:422-426",
+     "rps7200/session.py:1669-1670",
+     "rps7200/session.py:2833-2847",
+     "rps7200/session.py:2887",
+     "rps7200/demo.py:870-880"
+    ],
+    "evidence": "library.py:424-426: `record = json.loads((path / \"scan.json\").read_text(...))` / `if not plain.exists(): return False`. The TIFF rewrite below (440-450) is never reached. FrameWriter queues every plain entry for compaction whether or not it has bytes: session.py:1669-1670 `if not job.get(\"compress\", True): self.uncompressed.append(entry)`. Single scans and prescans are filed plain (`compress=bool(roll)`, 2887). Entries without raw arise when the guard drops mismatched bytes (2843-2847 `capture = dict(capture, raw=None, raw_path=None, raw_layout=None)`), and in the demo for every 'finished' source (demo.py:876-880: no `last_pixels_raw` and no bytes).",
+    "description": "The window files single passes with `compress=False` and relies on `library.compact` at close to deflate the TIFFs and gzip the bytes. compact returns early when raw.bin is absent, so an entry filed plain without raw bytes keeps its uncompressed scan.tif and prescan.tif permanently. No other tool compacts (CLI-29). This hits the real window when raw_bytes_disagree drops the capture. In the demo it hits every scan and prescan drawn from a stored prescan or a legacy corrected scan, so `make run-demo` never exercises TIFF compaction for those. The cost is disk only; the pixels are exact.",
+    "failure_scenario": "A window prescan's bytes are refused by the shape guard ('raw bytes do not describe this image ...'). The entry is filed with an uncompressed prescan-sized scan.tif. At quit compact() returns False without a word, and the entry stays uncompressed while every other entry of the session is deflated. In the demo, every demo prescan entry under demo/library stays uncompressed.",
+    "recommendation": "In compact(), gzip the raw bytes only when raw.bin exists, but always rewrite any TIFF that is not already compressed. Or return early only when neither step has anything to do. Add a test with a `compress=False` entry that has no raw bytes."
+   },
+   {
+    "id": "CRA-09",
+    "title": "The `.legacy` numbering copy and the per-run `.bak` are plain copyfiles; an interrupted `.legacy` is never redone, so the original numbering can be lost",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:999-1013",
+     "rps7200/session.py:917-921",
+     "rps7200/session.py:2352-2370",
+     "tools/scan_roll.py:582-585",
+     "rps7200/session.py:944-954"
+    ],
+    "evidence": "session.py:1011-1013: `legacy = path.with_name(path.name + \".legacy\")` / `if not legacy.exists(): shutil.copyfile(path, legacy)`. The existence test alone decides that the copy is done. write_manifest's backup, 917-921: `if keep_previous and path.exists(): try: shutil.copyfile(path, path.with_name(path.name + PREVIOUS)) except OSError: pass`. copyfile writes the destination in place, so an error or kill leaves a truncated file. read_manifest falls back to `.bak` when the main file cannot be read (944-953).",
+    "description": "keep_first_numbering promises that 'the numbering it was written with is never lost'. It is the one-time guard before a resume rewrites a legacy manifest's frame numbers for good. If copyfile fails part-way (ENOSPC) or the process dies during it, the `.legacy` file is truncated. Every later run sees `legacy.exists()` and skips the copy, then writes the renumbered manifest over roll.json. The original survives only in `.bak`, until the next run's first write copies the renumbered file over `.bak` too. The `.bak` copy itself fails silently on OSError and can be left truncated. It is only the undo copy, but it is also what read_manifest reads when the main file is damaged.",
+    "failure_scenario": "A legacy roll.json from before NUMBERING is resumed on a nearly full disk. copyfile writes 2 KB of a 9 KB `.legacy` and raises. The job fails, and the next run skips the copy because `.legacy` exists and writes the renumbered file. A week later a second resume replaces `.bak`. The numbering the roll was scanned under now exists only as an unreadable fragment in roll.json.legacy.",
+    "recommendation": "Copy to a temp name and os.replace it (or reuse write_manifest with the parsed data). Treat a `.legacy` that does not parse as absent. Do the same for `.bak`, and remove a partial `.bak` on failure rather than passing."
+   },
+   {
+    "id": "CRA-10",
+    "title": "Every writer creates missing roots with mkdir(parents=True), so a folder on an unmounted drive can be recreated on the system disk and filled there",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "rps7200/library.py:469",
+     "rps7200/session.py:1677",
+     "rps7200/session.py:2312",
+     "rps7200/direct.py:741",
+     "rps7200/direct.py:771",
+     "tools/gui.py:3281",
+     "tools/gui.py:668-669",
+     "tools/gui.py:8885-8890"
+    ],
+    "evidence": "library.py:469 `root.mkdir(parents=True, exist_ok=True)`; session.py:1677 `Path(path).parent.mkdir(parents=True, exist_ok=True)` for every delivered copy; session.py:2312 `out.mkdir(parents=True, exist_ok=True)` for roll folders; direct.py:741 and 771 for the reference cache and calibration archive; gui.py:3281 for approved.json. The remembered output folder is applied at launch without checking it exists: gui.py:668-669 `if self.remembered[\"output\"] and self.session.out_dir is None: self._set_outdir(str(self.remembered[\"output\"]))`.",
+    "description": "None of the roots (library, rolls, reference dir, output folder) is checked to exist at launch or before a roll. Missing ones are created along with every missing parent. Where the parent is writable while its drive is unmounted, the whole path is quietly recreated on the system disk. Examples: a user-owned mount point such as /mnt/scans, or a tool run with sudo against /Volumes/X. Frames, entries and approved.json then land there instead of on the drive. The roll does not stop, because nothing failed. The files are hidden once the drive is mounted over them, and the system disk can fill (CRA-01). On Windows a missing drive letter or share fails instead, which is the behaviour the README describes. POSIX-only and dependent on permissions, hence low.",
+    "failure_scenario": "On Linux the operator's library lives on an external disk at /mnt/scans (mount point owned by him), and the window remembers /mnt/scans/out as the output folder. He starts the window before plugging the disk in. A 20-frame roll runs normally, and every entry and copy is written to /mnt/scans/... on the root filesystem. When the disk is mounted afterwards those directories vanish under it, and the root filesystem is 6 GB fuller.",
+    "recommendation": "At launch, and before a roll, verify that each configured root, or its nearest existing ancestor, is on the expected device. Create only the leaf (`mkdir(parents=False)`) for roots the operator configured, and refuse with a message when the parent is missing. At minimum, warn when the remembered output folder does not exist at launch instead of recreating it on first use.",
+    "doc_reference": "README.md:414-416: 'A roll that cannot file a frame — a full disk, a folder gone — stops after the frame in flight'. session.py:2006-2007 says the same. A folder that is gone is recreated on such a mount point, so nothing fails and the roll does not stop."
+   },
+   {
+    "id": "CRA-11",
+    "title": "Inventory: temp+rename covers the record, manifests, cache and settings; every pixel and byte file, the archive, index.json and delivered copies are written in place; only scan.json and manifests are fsynced, and no directory ever is",
+    "severity": "info",
+    "category": "design",
+    "locations": [
+     "rps7200/library.py:259-305",
+     "rps7200/library.py:484-491",
+     "rps7200/library.py:1062-1064",
+     "rps7200/session.py:886-922",
+     "rps7200/direct.py:736-747",
+     "rps7200/direct.py:749-804",
+     "rps7200/direct.py:922-998",
+     "rps7200/settings.py:104-119",
+     "rps7200/export.py:181-193",
+     "rps7200/demo.py:1275-1281",
+     "tools/uniformity.py:639-647",
+     "tools/library.py:265-285"
+    ],
+    "evidence": "fsync appears only in library.py:490 (`os.fsync(fh.fileno())` in `_write_atomic`) and session.py:911 (write_manifest). os.replace is used in library.py:438/491/511, session.py:877/965, direct.py:746, settings.py:116 (`temporary.replace(target)`) and tools/library.py:275-276. Everything else writes the final name directly: `tiff.write`, `gzip.open(path / raw_name)`, `reference.save`, `write_bytes`, `write_text`, `np.save`, `np.savez`, `shutil.copyfile`, `shutil.copytree`.",
+    "description": "The per-writer answers are in persisted_state. In summary:\n- **Library entries** are protected by a fresh directory reserved with an atomic mkdir, an INCOMPLETE marker, and a record written last with fsync. The data files inside are not fsynced, so a power cut can leave the record durable while scan.tif or raw.bin.gz blocks are not (LIB-15).\n- **Manifests** are atomic and clean up after themselves. The cache and settings are atomic, but leave their `.part` on failure and are not fsynced.\n- **In place, with no marker:** the calibration archive, index.json, the debug spool, roll-folder TIFFs, delivered copies and the demo cache.\n- **Recovery:** the INCOMPLETE marker plus `make verify` is the only mechanism. A kill mid-write leaves a truncated file under the final name for the in-place writers, and a `.part` for the atomic ones.",
+    "failure_scenario": "Not a defect on its own; the concrete failures are CRA-01 to CRA-10 and the cross-referenced findings.",
+    "recommendation": "Use one helper for 'write beside, fsync, rename, fsync the directory, remove the temp on failure' for every file that is final (library, calibration archive, roll folder, delivered copies). Use one marker convention for multi-file units (entry, calibration archive, duplicate roll) that verify understands."
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Library entry image: the raw decode, with the 7200 dpi column-stagger realignment where it ran",
+    "path_pattern": "<library>/<UTC>_<film>[_f<frame>]_<dpi>dpi[_ir][-N]/scan.tif",
+    "format": "TIFF uint8/uint16 (H,W,C). With tifffile: deflate plus predictor unless compress=False; the built-in writer is always uncompressed",
+    "raw_or_corrected": "raw (corrections_applied names anything baked in; legacy entries are corrected)",
+    "written_by": "library.save (library.py:267) in place inside the reserved directory under INCOMPLETE; replaced atomically by compact/_replace_tiff (511), migrate_direction (832) and migrate-raw (tools/library.py:273-276, two renames)",
+    "read_by": "library.load/corrected/reconstruct/decode_raw/verify, gui full view and exports, demo sources, tools/make_comparison.py",
+    "exact": "Lossless pixels. The sha256 in scan.json is recomputed by compact without checking the old one (OUT-17). A kill mid-save leaves it truncated behind INCOMPLETE. Not fsynced."
+   },
+   {
+    "what": "Scanner bytes exactly as received",
+    "path_pattern": "<library>/<entry>/raw.bin.gz (or raw.bin before compaction; .raw.bin.gz.part during compact)",
+    "format": "gzip level 6 of the concatenated READ payloads; or the plain bytes",
+    "raw_or_corrected": "raw",
+    "written_by": "library.save (library.py:281-304), last of the data files, in place, streamed from the spool when raw_path is given; compact() (428-452) gzips to .part, checks the sha256, replaces, then unlinks raw.bin after the record",
+    "read_by": "library.read_raw (plain preferred only when no .gz), reconstruct, decode_raw, verify, migrate_direction",
+    "exact": "Byte-exact, sha256 recorded. Not fsynced. A failed compact leaves .raw.bin.gz.part, which verify never reports. Both files can coexist after a kill between replace and unlink."
+   },
+   {
+    "what": "Shading reference the pass is corrected with (a reduction of the calibration lines)",
+    "path_pattern": "<library>/<entry>/shading.npz",
+    "format": "np.savez_compressed: ref<c>/dark<c> float64 arrays, mean<c>/darkmean<c>, pixels_per_line, channels, dark_channels",
+    "raw_or_corrected": "derived (reduction by calculate_shading), not raw",
+    "written_by": "library.save via ShadingReference.save (library.py:272), in place",
+    "read_by": "library.load/corrected/reconstruct, _one_shading_explains",
+    "exact": "Exact float64 of the reduction, sha256 in `files`. The calibration bytes behind it live outside the library (DBG-6)."
+   },
+   {
+    "what": "CCD mask for the pass",
+    "path_pattern": "<library>/<entry>/ccd_mask.bin",
+    "format": "raw bytes from COPY",
+    "raw_or_corrected": "raw",
+    "written_by": "library.save (library.py:274) write_bytes, in place",
+    "read_by": "library.load/corrected/reconstruct",
+    "exact": "Byte-exact, sha256 in `files`."
+   },
+   {
+    "what": "Framing prescan kept with a frame entry",
+    "path_pattern": "<library>/<entry>/prescan.tif",
+    "format": "TIFF uint8",
+    "raw_or_corrected": "corrected on real-roll frames and not labelled (LIB-01); rewritten upright by migrate_direction",
+    "written_by": "library.save (270), in place; compact/_replace_tiff; migrate_direction (881)",
+    "read_by": "migrate_direction, demo, gui",
+    "exact": "No raw bytes of its own; sha256 in `files`. A missing file is not flagged by verify (LIB-14)."
+   },
+   {
+    "what": "Entry record: layout, scan fields, extra (commands, roll_membership, started_utc, shading_origin), device, metering, registration, calibration, provenance, checksums",
+    "path_pattern": "<library>/<entry>/scan.json (temp .scan.json.part)",
+    "format": "JSON indent 2, default=str",
+    "raw_or_corrected": "metadata",
+    "written_by": "library.save via _write_atomic (397: temp, fsync, os.replace, written last); compact (451); add_tags (499); migrate_direction (895); migrate-raw (tools/library.py:283); NON-atomic in-place rewrite by tools/uniformity.py:645 on 'redo'",
+    "read_by": "library.entries/load/verify/reconstruct/decode_raw/compact, gui roll_entry_index, demo signing",
+    "exact": "The only copy of the raw layout and the pass record. The temp file is not removed on failure. No directory fsync."
+   },
+   {
+    "what": "Unfinished-entry marker",
+    "path_pattern": "<library>/<entry>/INCOMPLETE",
+    "format": "one line of text",
+    "raw_or_corrected": "n/a",
+    "written_by": "library.save (263) before any data; removed at 398 after the record",
+    "read_by": "library.verify only (1079)",
+    "exact": "It says only 'did not finish' (CRA-07). Never cleaned or repaired."
+   },
+   {
+    "what": "Rejected uniformity pass marker",
+    "path_pattern": "<library>/<entry>/REJECTED",
+    "format": "text",
+    "raw_or_corrected": "n/a",
+    "written_by": "tools/uniformity.py:640, in place (scan.json is rewritten in place right after)",
+    "read_by": "nothing in code",
+    "exact": "n/a"
+   },
+   {
+    "what": "Corrected rendition kept by migrate-raw",
+    "path_pattern": "<library>/<entry>/scan.before-migrate-raw.tif",
+    "format": "TIFF",
+    "raw_or_corrected": "corrected (legacy)",
+    "written_by": "tools/library.py:275 os.replace of the old scan.tif",
+    "read_by": "nothing",
+    "exact": "Not checksummed; overwritten by a rerun (LIB-06)."
+   },
+   {
+    "what": "Derived library index",
+    "path_pattern": "<library>/index.json",
+    "format": "JSON list of summaries",
+    "raw_or_corrected": "derived",
+    "written_by": "library.reindex (1064) plain write_text, called by every save and by tools",
+    "read_by": "nothing in code",
+    "exact": "Non-atomic and written from two threads; rebuildable."
+   },
+   {
+    "what": "Session shading cache (--reference)",
+    "path_pattern": "calibration/shading.npz (cwd-relative; demo/calibration under --demo), temp .shading.part.npz",
+    "format": "np.savez_compressed",
+    "raw_or_corrected": "derived",
+    "written_by": "DirectScanner.save_shading (direct.py:744-746): temp then os.replace, no fsync; tools/uniformity.py:743 in place",
+    "read_by": "load_shading / ensure_shading(reuse=True), tools/uniformity.py --reuse",
+    "exact": "Exact reduction. The temp file is left on failure. It carries no link to its archive beyond mtime."
+   },
+   {
+    "what": "Calibration archive: every calibration line as read, plus its record",
+    "path_pattern": "calibration/<UTC>[-N]/data.bin, ccd_mask.bin, shading.npz, calibration.json",
+    "format": "raw bytes; npz; JSON (width, stride, commands, data sha256)",
+    "raw_or_corrected": "raw (data.bin)",
+    "written_by": "DirectScanner.archive_calibration (direct.py:771-803), in place in the order data, mask, npz, json, no marker; only via ensure_shading",
+    "read_by": "nothing",
+    "exact": "data.bin is byte-exact with a sha256 in calibration.json. The mask and npz are not checksummed. A kill before the json leaves undescribed bytes that nothing detects."
+   },
+   {
+    "what": "Debug spool (RPS7200_DEBUG=1)",
+    "path_pattern": "$TMPDIR/rps7200-debug-XXXXXX/NNN-image.npy, NNN-raw.bin, NNN-meta.json, NNN-shading.npz, NNN-ccd_mask.bin",
+    "format": "np.save raw pixels; raw bytes; JSON sidecar; npz; mask",
+    "raw_or_corrected": "raw",
+    "written_by": "DirectScanner._debug_capture (direct.py:922-998) on the scanning thread, in place, errors swallowed; an item is queued only after all of its files are written",
+    "read_by": "DirectScanner._debug_flush at close() (mmap, then library.save); nothing after a crash",
+    "exact": "Exact. Claimed items are unlinked at close; filed ones after their save; the directory is removed with rmtree(ignore_errors) only when nothing failed. Orphans are never found (CRA-02)."
+   },
+   {
+    "what": "Roll and walk manifests",
+    "path_pattern": "rolls/<roll>/survey.json, roll.json, approved.json (+ .bak, .legacy, .unreadable[-N], temps .<name>.part)",
+    "format": "JSON",
+    "raw_or_corrected": "metadata",
+    "written_by": "session.write_manifest (886-922: temp, fsync, _replace with Windows retry, temp unlinked on failure) via RollManifest (scanning and writer threads) and gui._write_approved; .bak and .legacy via shutil.copyfile in place (919, 1013); set_aside os.replace",
+    "read_by": "read_manifest (falls back to .bak), earlier_manifest, gui roll_summary/read_survey/read_approved, scan_roll --approved, carry_walk",
+    "exact": "Atomic. survey.json can name a prescan not yet or never written (CRA-03). A partial .legacy is never redone (CRA-09)."
+   },
+   {
+    "what": "Roll-folder pictures",
+    "path_pattern": "rolls/<roll>/prescanNN.tif, prescanNN-before.tif, frameNN.tif",
+    "format": "TIFF (deflate), oriented",
+    "raw_or_corrected": "corrected",
+    "written_by": "FrameWriter._write -> export.write (session.py:1673-1687) after library.save (window); tiff.write on the scanning thread before the record (tools/scan_roll.py:660, 693)",
+    "read_by": "gui read_survey, EdgeWatch, scan_roll --approved, registration studies",
+    "exact": "In place and overwritten on a retake (SR-08). A failed write leaves a truncated file."
+   },
+   {
+    "what": "Delivered copies",
+    "path_pattern": "<out_dir>/<roll>_frameNN_<dpi>dpi[_ir].tif|.jpg (+ .dng), <out_dir>/prescans/..., Save As, Save all and Export targets, tools/scan.py --out (+ .json)",
+    "format": "TIFF 8/16-bit or JPEG (+ 4-sample DNG)",
+    "raw_or_corrected": "corrected",
+    "written_by": "export.write (181-193) from FrameWriter, gui._deliver_one, tools/scan.py:413-416; names from _unclaimed at submit time",
+    "read_by": "operator and NegPy",
+    "exact": "JPEG is lossy by design. In place: a failed copy stays under its name and a retry goes to -2 (CRA-06)."
+   },
+   {
+    "what": "Window settings, including uncommissioned contact-sheet decisions",
+    "path_pattern": "gui-settings.json (cwd or RPS7200_SETTINGS; demo/gui-settings.json), .part, .unreadable-<stamp>",
+    "format": "JSON",
+    "raw_or_corrected": "n/a",
+    "written_by": "settings.save (104-119): temp then replace, no fsync, temp not removed on failure; gui._remember on sheet dismiss, quit, presets, shortcuts, roll opened",
+    "read_by": "settings.load at launch (moves unreadable aside)",
+    "exact": "Sheet decisions are persisted only on dismiss (CRA-04)."
+   },
+   {
+    "what": "Demo picture-signature cache",
+    "path_pattern": "demo/pictures.npz",
+    "format": "np.savez (paths, signatures)",
+    "raw_or_corrected": "derived",
+    "written_by": "DemoScanner._sign_pictures (demo.py:1275-1281) in place on a daemon thread",
+    "read_by": "the same function at the next launch",
+    "exact": "Non-atomic (DEMO-09)."
+   },
+   {
+    "what": "Uniformity orientation crops",
+    "path_pattern": "previews/orientation_<entry>.png",
+    "format": "PNG",
+    "raw_or_corrected": "display only",
+    "written_by": "tools/uniformity.py write_crop (652-665)",
+    "read_by": "operator",
+    "exact": "n/a"
+   }
+  ],
+  "user_actions": {
+   "can_do": [
+    "Kill the window or a CLI tool at any moment (Force Quit, closing the terminal, logoff, or a Force Abort that takes the process down); whatever was mid-write stays on disk as INCOMPLETE entries, truncated roll or delivered files, `.part` temps and orphan spool directories.",
+    "Run `make verify` (tools/library.py verify) to list INCOMPLETE directories, directories without scan.json and checksum mismatches.",
+    "Run `tools/library.py reindex` to rebuild index.json.",
+    "Duplicate, Rename or Delete a roll folder from the Rolls browser while the window holds the device open.",
+    "Set the library, rolls, reference and output folders to removable or network paths, including one the window remembers from a previous launch.",
+    "Re-walk frames into an existing walk's folder, or type an existing roll name for a new walk.",
+    "Start a roll, bracket or long series of single scans on a nearly full disk; nothing checks free space first."
+   ],
+   "should_not_do": [
+    "Start a long roll without checking free space on the library, roll folder, output folder and (with RPS7200_DEBUG=1) the OS temp volume; nothing checks, and the first failure costs the frame in flight too.",
+    "Kill the window while it says 'closing ...': the debug flush, the writer's last frames and the compaction of single scans are running then.",
+    "Force-quit the window while Duplicate is copying (it looks hung because the copy runs on the UI thread).",
+    "Leave hours of contact-sheet decisions in an open sheet during a walk or roll; they reach disk only when the sheet closes.",
+    "Rely on 'can be exported again' after a delivered copy failed: the truncated file keeps its name and the retry lands at -2.",
+    "Delete library entries or roll folders by hand to free space mid-session without running verify afterwards."
+   ],
+   "unguarded_mistakes": [
+    "Starting a roll the disk cannot hold: no estimate of space, no check, and approved.json failing on the full disk only logs 'scanning anyway'.",
+    "Using a remembered output folder, or a --library or --rolls path, on a drive that is not mounted: on POSIX mount points owned by the user it is silently recreated on the system disk.",
+    "Quitting on a full settings disk: the 'could not save the window's settings' line goes into a log that is destroyed at once, and the sheet decisions are lost.",
+    "A walk whose prescan filing failed, reopened later, shows the previous walk's prescanNN.tif under the new record and proposes positions from it.",
+    "A failed or interrupted Duplicate leaves `<roll>-N` listed as a roll with only part of its files.",
+    "Relying on `make verify` after a crash: it does not see `.part` leftovers (a failed compact's `.raw.bin.gz.part` can be hundreds of MB), orphan rps7200-debug-* spools, calibration archives without calibration.json, or uncompacted plain entries.",
+    "A roll.json.legacy truncated by a failed copy is taken as done for good, and the original numbering is later lost."
+   ]
+  },
+  "dataflow_notes": "**Scan path (window and tools)**\n1. `DirectScanner.scan()` reads the pass into memory (`_read_pass`), then decodes and corrects it.\n2. `_debug_capture` (direct.py:922-998) then spools raw pixels, raw bytes, a meta sidecar, the reference and the mask to `$TMPDIR/rps7200-debug-*` on the scanning thread. This happens only with debug on; errors are swallowed, and an item is queued only when all of its files were written.\n3. `ScanSession._file` (session.py:2781-2905) takes `capture_record()`, drops mismatched bytes, claims the pass for debug filing and submits a job to `FrameWriter`. Output-folder names are fixed by `_unclaimed` at submit time.\n4. `FrameWriter._write` (1618-1703) runs `library.save` first:\n   - `_reserve` makes the directory with an atomic mkdir (460-481); the INCOMPLETE marker is written.\n   - scan.tif, prescan.tif, shading.npz and ccd_mask.bin are written, then raw.bin(.gz) last. All in place, none fsynced.\n   - The record is built from memory and written with `_write_atomic` (temp, fsync, replace).\n   - The marker is unlinked, then `reindex` rewrites index.json in place.\n5. Only then are the delivered copies written, each with `export.write` in place. A failed copy is logged and left on disk.\n6. `on_filed` → `RollManifest.filed` → `write_manifest` (temp, fsync, replace with retry, `.bak` once per run by copyfile).\n7. The scanning thread writes the frame's record before the writer has finished: `done=False` for frames, and immediately for walk prescans (CRA-03).\n\n**At close** (session.py:1968-1996, direct.py:1134-1145)\n- `DirectScanner.close()` closes the transport, then `_debug_flush` files each unclaimed spooled pass with `library.save(raw_path=...)` and unlinks it. Claimed passes are unlinked unfiled; the spool is removed only when nothing failed.\n- Then `FrameWriter.finish()` drains the queue.\n- Then manifests whose last write failed are saved again.\n- Then `library.compact()` runs on each plain entry the window filed. It gzips to `.raw.bin.gz.part`, verifies the sha256 and replaces; rewrites the TIFFs through `.part` and replace; writes the record atomically; unlinks raw.bin. It skips entries with no raw.bin (CRA-08).\n- The window waits for all of this (`_wait_to_quit`), with no timeout and no progress beyond log lines.\n\n**CLI tools**\n- tools/scan.py holds passes in memory and files them after close in a bare loop.\n- tools/scan_roll.py uses the same FrameWriter and RollManifest. Dry-run prescans are written with `tiff.write` in place before the record names them.\n\n**Calibration**\n- `ensure_shading` → `calibrate_shading` → `archive_calibration`, which writes calibration/<UTC>/ in place with no marker (failures are logged).\n- Then `save_shading` writes the cache as temp plus replace (failures are logged).\n\n**GUI-only writers**\n- `settings.save`: temp plus replace, no fsync. The sheet's state is written only on `_dismiss` or quit.\n- `_write_approved`: `write_manifest`, merged into the existing file.\n- Roll folder operations: copytree, rmtree and rename on the UI thread.\n- Delete pass: rmtree plus reindex.\n\n**Next launch**\n- tools/gui.py main (8809-8911) and the CLI tools check nothing.\n- `tools/library.py verify` sees only INCOMPLETE directories, directories without scan.json, and checksum mismatches.\n\n**Free space**\nNothing anywhere measures it."
+ }
+}
