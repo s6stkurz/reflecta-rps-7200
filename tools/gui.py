@@ -4295,8 +4295,13 @@ class ScannerGui:
             self._session_closed = True
             self._set_busy(False)
             self.v_state.set("scanner closed")
+            # Through the wait, not straight to `_quit`: an idle session
+            # closes a second or two after Quit, and going from here to the
+            # destroy killed a Save all or an Export mid-file -- a truncated
+            # TIFF under its final name, and the rest of the batch never
+            # written. The wait quits at once when nothing is being written.
             if self.closing:
-                self._quit()
+                self._wait_to_quit()
 
     def _walk_ended(self) -> None:
         """A walk is over, finished or failed: settle what the sheet holds."""

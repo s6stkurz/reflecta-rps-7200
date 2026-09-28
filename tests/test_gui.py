@@ -6312,6 +6312,34 @@ def test_quitting_mid_pass_asks_and_never_abandons_the_read(window, monkeypatch,
     assert calls[-1] == "quit"
 
 
+def test_the_session_closing_waits_for_files_still_being_written(
+        window, monkeypatch):
+    """An idle session closes a second or two after Quit, and its "closed"
+    went straight to `_quit`: the window went, the interpreter exited under
+    the daemon Save all / Export thread, and the file it was writing was
+    left truncated under its final name."""
+    import threading
+
+    from rps7200.session import Event
+
+    app, root = window
+    quits = []
+    monkeypatch.setattr(app, "_quit", lambda: quits.append(1))
+    release = threading.Event()
+    app._start_writing(lambda: release.wait(10), "export-test")
+    app.closing = True
+    try:
+        app._handle(Event(kind="closed"))
+        assert quits == [], "quit with an export still writing"
+        assert "finishing the files" in app.v_state.get()
+    finally:
+        release.set()
+    for thread in app._writing:
+        thread.join(10)
+    app._wait_to_quit()
+    assert quits, "and quits once the writing is done"
+
+
 @pytest.mark.parametrize("typed,aborted", [
     (None, False), ("", False), ("yes", False), ("abort it", False),
     ("ABORT", True), ("  abort ", True)])
