@@ -461,8 +461,11 @@ def main() -> int:
         # good, at about twice their size, with nothing that would ever
         # finish the job -- or finish one a kill had stopped part way, whose
         # swapped TIFF then failed its checksum in verify on every run.
-        plain = sorted(p.parent for p in root.glob(f"*/{library.RAW_PLAIN}")
-                       if (p.parent / "scan.json").exists())
+        # By what compact can do, not by raw.bin alone: an entry filed plain
+        # with no raw bytes, or one whose swapped TIFFs a stop left ahead of
+        # its record, holds no raw.bin and was never offered.
+        plain = sorted(p.parent for p in root.glob("*/scan.json")
+                       if library.wants_compacting(p.parent))
         done = failed = 0
         for path in plain:
             if not args.write:
@@ -476,7 +479,7 @@ def main() -> int:
                 failed += 1
                 print(f"! {path.name}: {exc}")
         print(f"\n{len(plain)} entr{'y' if len(plain) == 1 else 'ies'} held "
-              f"plain raw bytes"
+              f"plain raw bytes or uncompressed pictures"
               + (f"; {done} compacted" if args.write else " -- pass --write"))
         if args.write and done:
             library.reindex(root)

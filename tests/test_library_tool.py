@@ -17,7 +17,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+import pytest
+
+REPO =Path(__file__).resolve().parent.parent
 TOOL = REPO / "tools" / "library.py"
 
 
@@ -356,6 +358,30 @@ def test_compact_finishes_what_a_killed_window_left_plain(tmp_path):
     assert not (path / library.RAW_PLAIN).exists()
     assert (path / library.RAW_FILE).exists()
     assert [p for p in library.verify(root) if "never be corrected" not in p] == []
+
+
+def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path):
+    """The tool chose entries by `raw.bin` alone, so one the window filed
+    plain without bytes and was killed before compacting was never offered
+    to the compact that now deflates it."""
+    import numpy as np
+
+    from rps7200 import library, tiff
+
+    if not tiff._has_tifffile():
+        pytest.skip("only tifffile compresses; there is nothing to deflate")
+    root = tmp_path / "library"
+    path = library.save(np.full((8, 16, 3), 900, np.uint16),
+                        {"resolution_dpi": 300, "channels": 3},
+                        root=root, compress=False)
+    assert library._uncompressed_tiffs(path)
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"compacted: {path.name}" in done.stdout
+    assert not library._uncompressed_tiffs(path)
+    assert not library.wants_compacting(path)
 
 
 def test_migrate_direction_carries_on_past_bytes_it_cannot_decode(tmp_path):

@@ -642,6 +642,26 @@ def _discard(temp: Path) -> None:
         pass
 
 
+def wants_compacting(path: Path | str) -> bool:
+    """Whether :func:`compact` has anything to do in this entry.
+
+    Plain raw bytes, a compaction a stop left unfinished, or TIFFs still
+    uncompressed -- the same test `compact` makes. The last is an entry the
+    window filed plain without bytes and was killed before compacting, which
+    looking for `raw.bin` alone never found. An entry with no record is not
+    one: it is still being written, or was cut short, and `verify` names it.
+    """
+    path = Path(path)
+    try:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if (path / RAW_PLAIN).exists() or (
+            isinstance(record, dict) and record.get(COMPACTING)):
+        return True
+    return _uncompressed_tiffs(path)
+
+
 def _uncompressed_tiffs(path: Path) -> bool:
     """Whether a stored TIFF here is plain and could be deflated.
 
