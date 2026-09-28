@@ -72,7 +72,6 @@ from rps7200.mono import (                                 # noqa: E402
 )
 from rps7200.protocol import (                             # noqa: E402
     COORD_PER_INCH,
-    FILM_NEGATIVE,
     MM_PER_INCH,
     MM_PER_COMMAND,
     MM_PER_UNIT,
@@ -3457,7 +3456,7 @@ class ScannerGui:
             "ticks": {}, "offsets": dict(out["offsets"]),
             "rotations": dict(out["rotations"]), "flips": dict(out["flips"]),
             # Carried, or the next sheet built from this state stamps every
-            # one of them `operator`: `_propose_positions` reads a kept offset
+            # one of them `operator`: `_merge_kept` reads a kept offset
             # with no recorded source as one he set by hand. That turns the
             # ensemble's numbers into his, in the count the confirm dialog
             # shows him before the film moves.
@@ -6856,26 +6855,6 @@ def when(stamp: float | None) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(stamp))
 
 
-def roll_line(summary: dict) -> str:
-    """One row of the browser: what this roll is and how far it got."""
-    wanted, done = len(summary["wanted"]), len(summary["done"])
-    if not summary["scanned"]:
-        state = f"walked, {wanted} frames, none scanned"
-    elif wanted and done >= wanted:
-        state = f"finished, {done} frames"
-    elif wanted:
-        state = f"{done} of {wanted} scanned -- {wanted - done} left"
-    else:
-        state = f"{done} scanned"
-    parts = [summary["roll"], state]
-    if summary["resolution"]:
-        parts.append(f"{summary['resolution']} dpi"
-                     + (" RGBI" if summary["infrared"] else " RGB"))
-    if summary["film"]:
-        parts.append(str(summary["film"]))
-    return "  ·  ".join(parts)
-
-
 def carry_walk(source, target) -> list[str]:
     """Copy the walk in ``source`` into ``target``, when ``target`` has none.
 
@@ -7197,54 +7176,6 @@ def picture_of(result) -> tuple | None:
     return None
 
 
-def _propose_positions(results, kept: dict, remembered=None, *, film=None,
-                       progress=None) -> tuple[dict, dict]:
-    """Where the walked strip says each frame should go, his numbers winning.
-
-    The positions centre each frame between its two edges, as the frame-edge
-    detector reads them (`tools/frame_edges`, a copy of the study's
-    `ensemble_v2`): every frame against the other frames of its walk, and the
-    frame taken to be `framing.FRAME_WIDTH_UNITS` wide -- measured, and wider
-    than the aperture, so a centred frame shows no base at either edge.
-    ``film`` is the film the walk was on; the detector reads negatives only.
-
-    The whole survey in one call. The window no longer calls this: it reads a
-    walk in the background as the prescans arrive (`frame_edges.EdgeWatch`)
-    and puts the answer through `_snap_proposals` and `_merge_kept`, which is
-    this function after its first step -- so both reach the same positions.
-    Every frame is read against the whole walk, not only the frames behind it:
-    a finished walk can speak for a frame from both sides.
-
-    A frame the operator has already positioned is left exactly as he left it
-    and is not re-proposed. His number is the authority here and stays it --
-    the sheet is where he corrects this, so overwriting what he typed would
-    undo the correction it exists to collect. A position remembered from the
-    *machine* is different: it is read again, so every number on the sheet
-    that is not his is today's detector's. Every frame carries the detector's
-    reading of its edges either way.
-
-    `remembered` says who decided each kept position, from the sheet's own
-    stored state. Without it every kept offset was stamped `operator`, which
-    was true when the only way to have one was to type it and false from the
-    moment the sheet began proposing them: reopening a sheet relabelled the
-    whole strip as his.
-    """
-    frames = [(int(getattr(r, "number", 0)), r.image)
-              for r in results
-              if getattr(r, "image", None) is not None
-              and getattr(r, "number", None)]
-    if not frames:
-        return dict(kept), {}
-    try:
-        offsets, notes = frame_edges.propose_centred(
-            frames, film=film or FILM_NEGATIVE, progress=progress)
-    except Exception as exc:                                  # noqa: BLE001
-        # A sheet that will not open is worse than one with no proposals: the
-        # walk has already been paid for and the frames are still choosable.
-        return dict(kept), {0: {"source": "none", "reason": str(exc)}}
-    return _merge_kept(*_snap_proposals(offsets, notes), kept, remembered)
-
-
 def _snap_proposals(offsets: dict, notes: dict) -> tuple[dict, dict]:
     """The detector's positions, each on a place the film can actually reach.
 
@@ -7274,7 +7205,12 @@ def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[di
     """His positions over the detector's: ``out`` and ``notes`` changed in place.
 
     A kept position whose recorded source is the machine's is dropped rather
-    than kept, so today's reading replaces it; see `_propose_positions`.
+    than kept, so today's reading replaces it: every number on the sheet that
+    is not his is today's detector's. His is left exactly as he left it -- the
+    sheet is where he corrects the detector, so overwriting what he set would
+    undo the correction it exists to collect. `remembered` says who decided
+    each kept position; a kept offset it says nothing about is his, which is
+    what an offset meant before the sheet proposed any.
     """
     known = remembered or {}
     # His "as surveyed" as well, which a sheet saved before zeros were kept
@@ -9795,7 +9731,7 @@ class _ContactSheet:
             "rotations": {int(n): int(t) for n, t in self.rotations.items()},
             "flips": {int(n): bool(f) for n, f in self.flips.items()},
             # Who decided each position. Without it a reopened sheet handed
-            # every offset back as `kept`, and `_propose_positions` stamps
+            # every offset back as `kept`, and `_merge_kept` stamps
             # `operator` over anything kept -- so closing the window and
             # opening it again relabelled every machine proposal as his, and
             # the confirm dialog then counted them as positions he had set.

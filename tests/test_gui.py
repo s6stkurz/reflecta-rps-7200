@@ -3531,7 +3531,8 @@ def test_a_roll_summary_needs_no_pixels(tmp_path):
     summary = gui.roll_summary(folder)
     assert summary["remaining"] == [3, 4]
     assert summary["resolution"] == 1800
-    assert "2 of 4 scanned" in gui.roll_line(summary)
+    # what the browser's row says of it
+    assert gui.roll_cells(summary)[1] == "2 of 4"
     assert gui.roll_summary(tmp_path) is None, "not a roll directory"
 
 
@@ -4287,7 +4288,8 @@ def test_each_kind_keeps_its_own_type():
     assert out["ticks"][1] is True
 
 
-def test_a_walked_roll_reopened_comes_back_with_its_positions():
+def test_a_walked_roll_reopened_comes_back_with_its_positions(
+        window, tmp_path, monkeypatch):
     """Closing the window must not throw the walk's proposals away.
 
     `open_roll` restored `approved.json` -- positions already *committed* --
@@ -4296,21 +4298,22 @@ def test_a_walked_roll_reopened_comes_back_with_its_positions():
     died with the window, and the roll then scanned uncorrected with no sign
     anything was missing. That cost a real 23-minute roll on 2026-09-22.
     """
-    walked = _strip()
-    proposed, _notes = gui._propose_positions(walked, {})
-    assert proposed, "the fixture has to propose something for this to mean anything"
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path))
+    _settle(app, root)
+    reopened, notes = dict(app.sheet.offsets), app.sheet.proposals
+    app.sheet.top.destroy()
+    assert reopened, "the fixture has to propose something for this to mean anything"
+    assert all((notes[n] or {}).get("source") in gui.MACHINE_SOURCES
+               for n in reopened)
 
-    # what open_roll does now: stored positions in as `kept`, re-proposed round
-    reopened, notes = gui._propose_positions(walked, {}, {})
-    assert reopened == proposed
-    assert all((notes[n] or {}).get("source") for n in reopened)
 
-
-def test_a_committed_position_still_wins_on_reopen():
+def test_a_committed_position_still_wins_on_reopen(window, tmp_path):
     """His number is the authority and re-proposing must not overwrite it."""
-    walked = _strip()
-    kept = {2: 0.5116}
-    reopened, notes = gui._propose_positions(walked, kept, {2: "operator"})
+    app, _root = window
+    reopened, notes, _edges = _sheet_reads(app, _walked(tmp_path),
+                                           {2: 0.5116}, {2: "operator"})
     assert reopened[2] == 0.5116
     assert notes[2]["source"] == "operator"
 
@@ -4724,7 +4727,37 @@ def _walked_folder(tmp_path, count=8):
     return folder
 
 
-def test_a_walk_reopened_is_measured_again_not_remembered(tmp_path):
+def _walked(tmp_path, count=8):
+    """`_strip()`'s frames as a stored walk reads back: what the sheet shows."""
+    return gui.read_survey(_walked_folder(tmp_path, count=count))["results"]
+
+
+def _read_sheet(app, results, kept=None, remembered=None, film="negative"):
+    """The window's sheet on ``results``, once the reader is done with them.
+
+    The window's own path, not a function beside it: the walk handed to
+    `EdgeWatch`, the sheet opened on what was kept (`_open_sheet`), and the
+    reading taken in as the sheet takes it (`take_readings`).
+    """
+    app.survey = list(results)
+    app.edge_watch.load([(int(r.number), r.image) for r in results], film)
+    assert app.edge_watch.wait(120), "the frame-edge reader never finished"
+    app._open_sheet(dict(kept or {}), remembered)
+    progress = app.edge_watch.progress()
+    app.sheet.take_readings(progress.offsets, progress.notes)
+    return app.sheet
+
+
+def _sheet_reads(app, results, kept=None, remembered=None, film="negative"):
+    """`_read_sheet`'s offsets, per-frame notes and edge lines; closed after."""
+    sheet = _read_sheet(app, results, kept, remembered, film)
+    out = (dict(sheet.offsets),
+           {n: dict(v) for n, v in sheet.proposals.items()}, dict(sheet.edges))
+    sheet.top.destroy()
+    return out
+
+
+def test_a_walk_reopened_is_measured_again_not_remembered(window, tmp_path):
     """The whole point of the demo: the numbers come from the pixels.
 
     A walk closed without being commissioned has no `approved.json`, so
@@ -4734,63 +4767,57 @@ def test_a_walk_reopened_is_measured_again_not_remembered(tmp_path):
     folder = _walked_folder(tmp_path)
     out = gui.read_survey(folder)
     assert out["offsets"] == {}, "nothing was committed, so nothing is restored"
-    proposed, notes = gui._propose_positions(
-        out["results"], out["offsets"], out.get("sources"))
+    app, _root = window
+    proposed, notes, _edges = _sheet_reads(app, out["results"], out["offsets"],
+                                           out.get("sources"))
     assert proposed
     assert all((notes[n] or {}).get("source") in gui.MACHINE_SOURCES
                for n in proposed)
 
 
-def test_a_stale_remembered_sheet_cannot_reach_a_reopened_walk(tmp_path):
+def test_a_stale_remembered_sheet_cannot_reach_a_reopened_walk(
+        window, tmp_path, monkeypatch):
     """The detector's positions are measured again on every launch.
 
     The sheet cache is real and it is a feature -- reopening the sheet gives
     back the frames that were dragged, and a walk not yet commissioned comes
     back as it was left. What it must not carry into a fresh launch is the
     machine's answer, or the demo would replay last time's and call it a
-    measurement.
+    measurement. `open_roll` is the launch path, and the one the demo takes.
     """
-    from rps7200 import settings as settings_mod
-
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
     folder = _walked_folder(tmp_path)
-    out = gui.read_survey(folder)
-    first, _notes = gui._propose_positions(
-        out["results"], out["offsets"], out.get("sources"))
+    first, _notes, _edges = _sheet_reads(
+        app, gui.read_survey(folder)["results"])
 
-    # a previous run's decisions, deliberately wrong
-    path = tmp_path / "gui-settings.json"
-    settings_mod.save({"sheet": {folder.name: {
-        "offsets": {"1": 9.9, "2": -9.9}, "sources": {"1": "operator"},
-        "ticks": {}, "rotations": {}, "flips": {}, "options": {}}}}, path)
-    assert path.exists()
+    # a previous run's sheet, where the window keeps it and stamped for this
+    # very walk: one position his, one the machine's, both deliberately wrong
+    app.remembered["sheet"] = {folder.name: {
+        "walk": gui.walk_stamp(folder),
+        "offsets": {"1": 9.9, "2": -9.9},
+        "sources": {"1": "operator", "2": "measured"},
+        "ticks": {}, "rotations": {}, "flips": {}, "options": {}}}
 
-    again = gui.read_survey(folder)
-    second, _notes = gui._propose_positions(
-        again["results"], again["offsets"], again.get("sources"))
-    assert second == first
-    assert 9.9 not in second.values()
+    app.open_roll(folder)
+    _settle(app, root)
+    second = dict(app.sheet.offsets)
+    app.sheet.top.destroy()
+    assert second[1] == 9.9, "his comes back as he left it"
+    assert second[2] == first[2], "the machine's is read again, not replayed"
+    assert {n: v for n, v in second.items() if n != 1} == {
+        n: v for n, v in first.items() if n != 1}
 
 
-def test_the_same_walk_measures_the_same_way_twice():
+def test_the_same_walk_measures_the_same_way_twice(window, tmp_path):
     """"Re-measured every launch" is only legible if it is also "the same
     answer every launch". Nothing in the proposal path is random, and this is
     what says so."""
-    walked = _strip()
-    first, _ = gui._propose_positions(walked, {})
-    second, _ = gui._propose_positions(walked, {})
+    app, _root = window
+    walked = _walked(tmp_path)
+    first, _n, _e = _sheet_reads(app, walked)
+    second, _n, _e = _sheet_reads(app, walked)
     assert first == second
-
-
-def test_the_launch_path_does_not_consult_the_sheet_cache():
-    """`open_roll` re-proposes; `on_contact_sheet` replays. The demo opens a
-    roll, so it gets the measurement. If `open_roll` ever started reading
-    `_recall_sheet_state` the demo would quietly stop measuring."""
-    import inspect
-
-    body = inspect.getsource(gui.ScannerGui.open_roll)
-    # the whole walk goes to the background reader, which measures it
-    assert "edge_watch.load(" in body
-    assert "_recall_sheet_state" not in body
 
 
 def test_no_film_does_not_become_a_branch_in_the_window():
@@ -4958,73 +4985,81 @@ def test_an_empty_transport_refuses_where_the_transport_would():
     assert loaded.nudge(0.5)["param"] > 0
 
 
-def test_every_proposal_is_somewhere_the_film_can_actually_go():
+def test_every_proposal_is_somewhere_the_film_can_actually_go(window, tmp_path):
     """The caption showed the raw proposal; the commission delivered a snapped
     one. So a frame captioned as moving could be delivered as no move at all,
     and five other readers of `offsets` carried numbers that do not exist.
     Snapping at the seam makes every one of them agree."""
-    offsets, _notes = gui._propose_positions(_strip(), {})
+    app, _root = window
+    offsets, _notes, _edges = _sheet_reads(app, _walked(tmp_path))
     assert offsets
     for value in offsets.values():
         assert value == gui.snap_offset(value)
         assert value != 0.0
 
 
-def test_a_position_kept_from_a_machine_stays_a_machine_position():
+def test_a_position_kept_from_a_machine_stays_a_machine_position(window,
+                                                                 tmp_path):
     """Closing the sheet and opening it again used to relabel the whole strip.
 
     Every offset comes back as `kept`, and anything kept was stamped
     `operator` -- true when typing was the only way to have one, false from the
     moment the sheet began proposing them.
     """
-    walked, kept = _strip(), {2: 0.5116}
-    _o, notes = gui._propose_positions(walked, kept, {2: "measured"})
-    assert notes[2]["source"] == "measured"
-    _o, notes = gui._propose_positions(walked, kept, {2: "operator"})
+    app, _root = window
+    walked, kept = _walked(tmp_path), {2: 0.5116}
+    _o, notes, _e = _sheet_reads(app, walked, kept, {2: "measured"})
+    assert notes[2]["source"] in gui.MACHINE_SOURCES
+    _o, notes, _e = _sheet_reads(app, walked, kept, {2: "operator"})
     assert notes[2]["source"] == "operator"
     # nothing remembered means his, which is what an offset used to mean
-    _o, notes = gui._propose_positions(walked, kept, None)
+    _o, notes, _e = _sheet_reads(app, walked, kept, None)
     assert notes[2]["source"] == "operator"
 
 
-def test_the_sheet_opens_holding_a_proposal_for_every_frame():
-    from tools.gui import _propose_positions
-
-    offsets, notes = _propose_positions(_strip(), {})
+def test_the_sheet_opens_holding_a_proposal_for_every_frame(window, tmp_path):
+    app, _root = window
+    offsets, notes, _edges = _sheet_reads(app, _walked(tmp_path))
     assert len(offsets) == 8
     assert all(notes[n]["source"] in
                ("measured", "unconfirmed", "neighbours") for n in offsets)
 
 
-def test_a_position_the_operator_set_is_never_re_proposed():
+def test_a_position_the_operator_set_is_never_re_proposed(window, tmp_path):
     """The sheet is where he corrects this, so overwriting what he typed would
     undo the correction it exists to collect."""
-    from tools.gui import _propose_positions
-
-    offsets, notes = _propose_positions(_strip(), {3: 1.234})
+    app, _root = window
+    offsets, notes, _edges = _sheet_reads(app, _walked(tmp_path), {3: 1.234})
     assert offsets[3] == 1.234
     assert notes[3]["source"] == "operator"
 
 
-def test_a_single_frame_is_read_on_its_own():
+def test_a_single_frame_is_read_on_its_own(window, tmp_path):
     """The detector reads a frame's own edges, so one prescan is enough -- the
     old strip-level detector needed two to calibrate a base level at all."""
-    from tools.gui import _propose_positions
-
-    offsets, notes = _propose_positions(_strip(1), {})
+    app, _root = window
+    offsets, notes, _edges = _sheet_reads(app, _walked(tmp_path, count=1))
     assert set(offsets) == {1}
     assert notes[1]["source"] == "measured"
     assert offsets[1] < 0, "base at the left: the picture goes left, toward it"
 
 
-def test_a_detector_that_raises_does_not_stop_the_sheet_opening():
+def test_a_detector_that_raises_does_not_stop_the_sheet_opening(
+        window, tmp_path, monkeypatch):
     """The walk has already been paid for and the frames are still choosable;
     a sheet that will not open is worse than one with no proposals."""
-    from tools.gui import _propose_positions
+    from tools.frame_edges import watch
 
-    broken = [_Walked(1, "not an image"), _Walked(2, "nor this")]
-    offsets, notes = _propose_positions(broken, {2: 0.5})
+    def broken(*_a, **_k):
+        raise RuntimeError("the detector fell over")
+
+    monkeypatch.setattr(watch, "read_frame", broken)
+    app, _root = window
+    offsets, notes, _edges = _sheet_reads(app, _walked(tmp_path, count=2),
+                                          {2: 0.5})
     assert offsets == {2: 0.5}
+    assert notes[1]["source"] == "none"
+    assert "fell over" in notes[1]["reason"]
 
 
 def test_the_big_frame_shows_the_detectors_edge_dotted_red(window, tmp_path):
@@ -5033,9 +5068,7 @@ def test_the_big_frame_shows_the_detectors_edge_dotted_red(window, tmp_path):
     film so it moves with the picture -- with the proposed move applied it sits
     just outside the guide, since the frame is wider than the aperture."""
     app, root = window
-    out = gui.read_survey(_walked_folder(tmp_path))
-    offsets, notes = gui._propose_positions(out["results"], {}, film="negative")
-    sheet = gui._ContactSheet(app, out["results"], offsets=offsets, proposals=notes)
+    sheet = _read_sheet(app, _walked(tmp_path))
     root.update()
     sheet.adjust(0)
     adj = sheet._adjuster
@@ -5054,20 +5087,23 @@ def test_the_big_frame_shows_the_detectors_edge_dotted_red(window, tmp_path):
     sheet.top.destroy()
 
 
-def test_every_frame_keeps_the_detectors_edges_whoever_set_its_position():
+def test_every_frame_keeps_the_detectors_edges_whoever_set_its_position(
+        window, tmp_path):
     """A remembered position -- in the settings or `approved.json` -- used to
     replace the frame's note and throw the detector's reading away, so a sheet
     reopened with remembered positions drew no edge line on any frame."""
-    walked = _strip()
-    fresh, fresh_notes = gui._propose_positions(walked, {})
+    app, _root = window
+    walked = _walked(tmp_path)
+    fresh, fresh_notes, _e = _sheet_reads(app, walked)
     kept = {1: 0.1234, 2: 0.5116}
-    offsets, notes = gui._propose_positions(walked, kept, {1: "operator", 2: "measured"})
+    offsets, notes, edges = _sheet_reads(app, walked, kept,
+                                         {1: "operator", 2: "measured"})
     # his stays his, and still shows where the detector read the edge
     assert offsets[1] == 0.1234 and notes[1]["source"] == "operator"
-    assert notes[1]["edges"] == fresh_notes[1]["edges"]
+    assert edges[1]["edges"] == fresh_notes[1]["edges"]
     # the machine's is read again: today's detector, not a remembered number
     assert offsets[2] == fresh[2] and notes[2]["source"] == "measured"
-    assert all(notes[n].get("edges") for n in notes)
+    assert set(edges) == set(notes)
 
 
 @pytest.mark.parametrize("degrees", [0, 90, 180, 270])
@@ -5106,11 +5142,9 @@ def test_a_border_side_paints_nothing():
 def test_the_big_frame_shows_the_edge_on_a_frame_he_positioned(window, tmp_path):
     """The case that hid the line: a sheet opened with remembered positions."""
     app, root = window
-    out = gui.read_survey(_walked_folder(tmp_path))
     kept = {n: 0.3 for n in range(1, 9)}
-    offsets, notes = gui._propose_positions(out["results"], kept,
-                                            {n: "operator" for n in kept}, film="negative")
-    sheet = gui._ContactSheet(app, out["results"], offsets=offsets, proposals=notes)
+    sheet = _read_sheet(app, _walked(tmp_path), kept,
+                        {n: "operator" for n in kept})
     root.update()
     sheet.adjust(0)
     adj = sheet._adjuster
@@ -5184,8 +5218,11 @@ def test_opening_a_roll_opens_its_sheet_before_the_edges_are_read(
     assert app.edge_light.itemcget(app._edge_bulb, "fill") == gui.EDGE_LIGHT[
         frame_edges.DONE]
     assert app.sheet.v_edges.get() == "frame edges 8/8"
-    want, want_notes = gui._propose_positions(
-        gui.read_survey(folder)["results"], {}, film="negative")
+    # the whole strip read in one call, as `propose_centred` reads it, and
+    # snapped as the sheet snaps it: the answer the reader has to reach
+    want, want_notes = gui._snap_proposals(*frame_edges.propose_centred(
+        [(r.number, r.image) for r in gui.read_survey(folder)["results"]],
+        film="negative"))
     assert app.sheet.offsets == want
     assert {n: v["source"] for n, v in app.sheet.proposals.items()} == {
         n: v["source"] for n, v in want_notes.items()}
@@ -6574,14 +6611,16 @@ def test_one_read_edge_puts_the_other_end_a_frame_width_away():
     assert gui.frame_ends({"width": 428, "edges": {}}) is None
 
 
-def test_a_centred_frame_overhangs_both_guides_by_about_three_units():
+def test_a_centred_frame_overhangs_both_guides_by_about_three_units(window,
+                                                                   tmp_path):
     """What Stefan saw as the orange line being off: the frame is 350.6 units
     and the aperture 344.5, so centred, the red line sits about 3 units
     outside the orange one on each side -- by design, and both sides alike."""
     from rps7200.framing import FRAME_WIDTH_UNITS, units_per_column
 
-    walked = _strip()
-    offsets, notes = gui._propose_positions(walked, {}, film="negative")
+    app, _root = window
+    offsets, notes, _edges = _sheet_reads(app, _walked(tmp_path))
+    assert notes
     spare = FRAME_WIDTH_UNITS - 428 * units_per_column(428)       # ~6.1 units
     for n, note in notes.items():
         left, right = gui.frame_overhang(note, offsets.get(n, 0.0))
@@ -6599,9 +6638,7 @@ def test_the_overhang_is_said_in_words():
 
 def test_the_big_view_draws_the_frames_other_end_lighter(window, tmp_path):
     app, root = window
-    out = gui.read_survey(_walked_folder(tmp_path))
-    offsets, notes = gui._propose_positions(out["results"], {}, film="negative")
-    sheet = gui._ContactSheet(app, out["results"], offsets=offsets, proposals=notes)
+    sheet = _read_sheet(app, _walked(tmp_path))
     root.update()
     sheet.adjust(0)
     adj = sheet._adjuster
