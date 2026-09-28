@@ -67,6 +67,10 @@ def test_the_label_does_not_depend_on_the_progress_readout():
     from rps7200.session import Roll, _describe
     running = _describe(Roll(frames=6, resolution=1800))
     assert gui.stop_label(running) == "Stop after this frame"
+    # A roll given its frames by number, as the sheet's commission is, is
+    # "scanning 2 chosen frames" -- and it too stops after the frame.
+    chosen = _describe(Roll(frames=3, start_at=1, only=(1, 3), resolution=1800))
+    assert gui.stop_label(chosen) == "Stop after this frame"
 
 
 # -- what the form asks the scanner for -------------------------------------
@@ -513,8 +517,42 @@ def test_the_loader_thread_never_touches_tk():
     source = inspect.getsource(gui.ScannerGui._load_full)
     assert "self._reads.put" in source
     assert "self.root" not in source, "the reading thread must not call Tk"
-    assert "_reads" in inspect.getsource(gui.ScannerGui._pump), (
+    assert "_reads" in inspect.getsource(gui.ScannerGui._drain), (
         "and the main loop has to collect it")
+
+
+def test_one_full_resolution_read_at_a_time(window, monkeypatch):
+    """Each read is a correction of the whole scan -- 1.5-2 GB on the way at
+    7200 dpi RGBI -- and clicking through the filmstrip started one for every
+    pass passed over, all at once, beside a scanner held open. The pass on
+    screen when the read in flight comes back is the one read next; those
+    clicked past on the way are not read at all."""
+    import threading
+
+    app, root = window
+    started, release = [], threading.Event()
+
+    def corrected(entry):
+        started.append(entry)
+        release.wait(10)
+        return np.zeros((4, 4, 3), np.uint16), {"corrected": "applied"}
+
+    monkeypatch.setattr(gui.library, "corrected", corrected)
+    passes = [types.SimpleNamespace(seq=n, entry=f"e{n}", label=f"pass {n}",
+                                    image=np.zeros((2, 2, 3), np.uint8))
+              for n in (1, 2, 3)]
+    for shown in passes:
+        app.current = shown
+        app._load_full(shown)
+    time.sleep(0.2)
+    assert started == ["e1"]
+    release.set()
+    deadline = time.monotonic() + 10
+    while started != ["e1", "e3"] and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    assert started == ["e1", "e3"]
+    app.current = None
 
 
 def test_a_moving_frame_is_drawn_coarse_and_a_still_one_sharp():
@@ -669,7 +707,7 @@ def test_the_histogram_is_measured_off_the_ui_thread():
     source = inspect.getsource(gui.ScannerGui._measure_histogram)
     assert "threading.Thread" in source
     assert "self._measured.put" in source
-    assert "self._measured" in inspect.getsource(gui.ScannerGui._pump), (
+    assert "self._measured" in inspect.getsource(gui.ScannerGui._drain), (
         "and the main loop collects it")
 
 
@@ -694,7 +732,7 @@ def test_a_measurement_overtaken_by_a_later_one_is_dropped():
     replace the fine one, and clicking quickly along the filmstrip leaves the
     wrong frame's numbers on screen."""
     import inspect
-    pump = inspect.getsource(gui.ScannerGui._pump)
+    pump = inspect.getsource(gui.ScannerGui._drain)
     assert "if token != self._histogram_token:" in pump
     assert "continue" in pump
     # A counter, not the result's seq, which cannot tell the two apart.
@@ -834,6 +872,11 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _tags=lambda: (), _say=lambda *a: None,
         session=types.SimpleNamespace(submit=submitted.append,
                                       rolls=str(tmp_path / "rolls")),
+        _working=lambda: False, _hand_over=submitted.append,
+        _no_scanner=lambda *a, **k: False,
+        _scanned_in=lambda folder: set(),
+        _refused_up_front=lambda *a, **k: False,
+        _sheet_roll=None, root=None,
     )
 
 
@@ -1121,7 +1164,10 @@ def window(tmp_path):
     session = ScanSession(root=str(tmp_path / "library"),
                           rolls=str(tmp_path / "rolls"), verbose=False)
     session._open_scanner = lambda: DemoScanner("library", speed=1e9)
-    app = gui_mod.ScannerGui(root, session, demo=True)
+    # Its own settings file: the default is gui-settings.json where the tests
+    # run, which in a checkout is the operator's own.
+    app = gui_mod.ScannerGui(root, session, demo=True,
+                             settings_path=tmp_path / "gui-settings.json")
     root.update()
     try:
         yield app, root
@@ -1129,6 +1175,28 @@ def window(tmp_path):
         session.shutdown()
         session.join(timeout=10)
         root.destroy()
+
+
+def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
+    """They were moved aside and the window opened on its defaults with
+    nothing on screen to say so."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    broken = tmp_path / "broken-settings.json"
+    broken.write_text('{"controls": {"dpi": ', encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True, settings_path=broken)
+    try:
+        assert "could not be read" in other.log.get("1.0", "end")
+    finally:
+        other._alive = False
+        top.destroy()
 
 
 def test_the_monochrome_controls_follow_the_film(window):
@@ -1158,6 +1226,35 @@ def test_the_monochrome_controls_follow_the_film(window):
     # reduction is the average, whose view is MONO -- "avg" is not a plane.
     assert app.v_mono_channel.get() == MONO_AVERAGE
     assert app.v_channel.get() == "MONO"
+
+
+def test_the_infrared_tie_follows_the_infrared_box(window):
+    """The box only redid the estimate, so the tie under it stayed live after
+    infrared was unticked, and greyed when it was ticked after a black and
+    white film had greyed it."""
+    app, root = window
+    app.v_film.set("bw")
+    app._sync_film()
+    app.v_film.set("negative")
+    app._sync_film()
+    assert app.v_ir.get() is False
+    app.c_ir.invoke()                                  # ticked
+    assert str(app.c_fast_ir.cget("state")) == "normal"
+    app.c_ir.invoke()                                  # and unticked
+    assert str(app.c_fast_ir.cget("state")) == "disabled"
+
+
+def test_a_folder_typed_into_save_scans_to_is_used(window, tmp_path):
+    """Only Choose ... and Clear reached the session: a path typed or pasted
+    into the box was ignored for the rest of the session -- and saved, and
+    used from the next launch on."""
+    app, root = window
+    app.v_outdir.set(f"  {tmp_path / 'typed'}  ")
+    _press(app.e_outdir, "<Return>")
+    assert app.session.out_dir == tmp_path / "typed"
+    app.v_outdir.set("")
+    _press(app.e_outdir, "<FocusOut>")
+    assert app.session.out_dir is None, "and emptied by hand, it stops"
 
 
 def test_changing_the_monochrome_channel_changes_the_view(window):
@@ -1425,6 +1522,32 @@ def test_the_cached_reference_loads_without_the_question(window, monkeypatch,
     assert not _toplevels(root)
 
 
+def test_reuse_of_a_reference_from_before_this_window_shows_its_age_first(
+        window, monkeypatch, tmp_path):
+    """"Reuse" is remembered across launches, and the button then loaded the
+    cached file whatever its age -- another power-on's, a lamp change ago --
+    past the one prompt that says how old it is."""
+    import os
+
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    _a_cache(app, tmp_path)
+    old = time.time() - 14 * 24 * 3600
+    os.utime(app.session.reference, (old, old))
+    app.v_shading.set("reuse")
+    app.b_calibrate.invoke()
+    root.update()
+    assert jobs == []
+    assert app._calibrate_prompt is not None
+    notes = [str(w.cget("text")) for w in gui._descendants(app._calibrate_prompt)
+             if w.winfo_class() == "TLabel"]
+    assert any("from a different power-on" in n for n in notes), notes
+    _prompt_button(app, "Use the cached one").invoke()
+    root.update()
+    assert [j.mode for j in jobs] == ["reuse"], "still his to choose"
+
+
 def test_reuse_with_nothing_cached_is_a_calibration_and_asks(
         window, monkeypatch, tmp_path):
     """`ensure_shading` measures when there is no file to reuse, so "reuse"
@@ -1669,6 +1792,28 @@ def test_a_results_counter_no_strip_has_is_not_a_forecast(window):
         image=np.zeros((8, 8, 3), np.uint8),
         meta={"resolution_dpi": 300}, position=72, number=3)))
     assert app._transport == 10
+
+
+def test_turning_an_old_frame_does_not_move_the_forecast(window):
+    """Turning a frame -- in the sheet or on the filmstrip -- set the window's
+    "where is the film" to that frame's walk position, and the Roll dialog
+    then forecast from there: the film on frame 17, the dialog saying frame
+    3 and nothing to wind. A pass arriving still says where it was taken."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    app._handle(Event(kind="transport", done=16))
+    old = Result(seq=-5, kind="prescan", label="frame 3 (reopened)",
+                 image=np.zeros((8, 8, 3), np.uint8), meta={}, position=2,
+                 number=3)
+    old.rotation, old.flipped, old.hidden, old.supersedes = 90, False, False, None
+    app.results.append(old)
+    app.remember_arrangement(old)
+    assert app._transport == 16
+    app._handle(Event(kind="result", result=Result(
+        seq=7, kind="prescan", label="prescan", meta={}, position=4,
+        image=np.zeros((8, 8, 3), np.uint8))))
+    assert app._transport == 4
 
 
 def test_the_window_leaves_refusing_a_far_frame_to_the_seek(window,
@@ -3194,9 +3339,9 @@ def test_entries_are_joined_to_rolls_by_the_frame_they_name(tmp_path):
     (broken / "scan.json").write_text("{not json", encoding="utf-8")
 
     index = gui.roll_entry_index(tmp_path / "library")
-    assert sorted(index["strip"]) == [1, 2]
-    assert sorted(index["other"]) == [1]
-    assert "" not in index
+    assert sorted(index["names"]["strip"]) == [1, 2]
+    assert sorted(index["names"]["other"]) == [1]
+    assert "" not in index["names"]
 
 
 def _member(tmp_path, roll, number, kind, name):
@@ -3218,7 +3363,7 @@ def test_a_walks_prescan_is_never_joined_as_the_frame(tmp_path):
     frame = _member(tmp_path, "strip", 3, "frame", "a-frame")
     _member(tmp_path, "strip", 3, "prescan", "z-prescan")
     index = gui.roll_entry_index(tmp_path / "library")
-    assert index["strip"][3] == frame
+    assert index["names"]["strip"][3] == frame
 
 
 def test_entries_filed_by_the_roll_tool_are_found_too(tmp_path):
@@ -3228,7 +3373,7 @@ def test_entries_filed_by_the_roll_tool_are_found_too(tmp_path):
     entry.mkdir(parents=True)
     (entry / "scan.json").write_text(json.dumps(
         {"film": {"frame": "cli-roll/04"}}), encoding="utf-8")
-    assert gui.roll_entry_index(tmp_path / "library")["cli-roll"][4] == entry
+    assert gui.roll_entry_index(tmp_path / "library")["names"]["cli-roll"][4] == entry
 
 
 def test_an_old_walk_prescan_without_a_membership_is_left_out(tmp_path):
@@ -3237,7 +3382,8 @@ def test_an_old_walk_prescan_without_a_membership_is_left_out(tmp_path):
     (old / "scan.json").write_text(json.dumps(
         {"film": {"frame": "strip-02"}, "tags": ["gui", "roll", "prescan"]}),
         encoding="utf-8")
-    assert gui.roll_entry_index(tmp_path / "library") == {}
+    index = gui.roll_entry_index(tmp_path / "library")
+    assert index["names"] == {} and index["folders"] == {}
 
 
 def test_a_rolls_own_date_beats_the_filesystems(tmp_path):
@@ -3388,6 +3534,211 @@ def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):
     summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
     assert [item.number for item in gui.roll_exports(summary)] == [1]
     assert len(summary["done"]) == 2, "both were scanned; only one survives"
+
+
+def _filed(tmp_path, roll, number, name, folder, *, dpi=1800, channels=3):
+    """A frame's entry as the session files one: it records its folder."""
+    entry = tmp_path / "library" / name
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text(json.dumps({
+        "scan": {"resolution_dpi": dpi, "channels": channels},
+        "film": {"frame": f"{roll}-{number:02d}"},
+        "extra": {"roll_membership": {"roll": roll, "number": number,
+                                      "kind": "frame", "folder": str(folder)}},
+    }), encoding="utf-8")
+    return entry
+
+
+def _names_its_entries(folder, entries):
+    """roll.json naming the entry filed for each frame, as `RollManifest` does."""
+    progress = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    for record in progress["frames"]:
+        if record["number"] in entries:
+            record.update(done=True, entry=str(entries[record["number"]]))
+    (folder / "roll.json").write_text(json.dumps(progress), encoding="utf-8")
+
+
+def test_a_duplicate_and_its_original_each_export_their_own_frames(tmp_path):
+    """A duplicate keeps its original's roll name, and Export joined entries
+    to rolls on that name alone: after the original was rescanned -- what the
+    Duplicate dialog says the copy is for -- both exported the rescans, and
+    the scans the copy was made to keep were delivered from neither."""
+    import shutil
+
+    original = _shelf(tmp_path, name="R", done=(1, 2))
+    first = {n: _filed(tmp_path, "R", n, f"2026a-{n}", original) for n in (1, 2)}
+    _names_its_entries(original, first)
+    shutil.copytree(original, original.with_name("R-2"))     # Duplicate
+    again = {n: _filed(tmp_path, "R", n, f"2026b-{n}", original, dpi=3600)
+             for n in (1, 2)}
+    _names_its_entries(original, again)
+
+    listed = {s["folder"].name: s for s in
+              gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")}
+    assert listed["R-2"]["entries"] == first
+    assert listed["R"]["entries"] == again
+    assert [i.entry for i in gui.roll_exports(listed["R-2"])] == [first[1], first[2]]
+    # A frame whose own entry has gone has none: not the older take the
+    # folder also holds, which a name typed again after a Delete would make
+    # another strip's.
+    shutil.rmtree(again[2])
+    listed = {s["folder"].name: s for s in
+              gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")}
+    assert listed["R"]["entries"] == {1: again[1]}
+
+
+def test_an_entry_recorded_on_windows_is_found_elsewhere(tmp_path):
+    """roll.json records `str(entry)`, which on Windows has backslashes, and
+    a POSIX path reads the whole string as one name. A library and its rolls
+    on a shared disk, scanned on Windows and opened on a Mac, then called
+    every frame's entry deleted and exported nothing."""
+    folder = _shelf(tmp_path, name="R", done=(1, 2))
+    entries = {n: _filed(tmp_path, "R", n, f"2026a-{n}", folder) for n in (1, 2)}
+    _names_its_entries(folder, {1: rf"library\{entries[1].name}",
+                                2: rf"D:\scans\library\{entries[2].name}"})
+    listed = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")
+    assert listed[0]["entries"] == entries
+
+
+def test_a_name_typed_again_after_a_delete_is_a_new_roll(tmp_path):
+    """The folder comes back under the same name and the same path, so
+    neither the name nor the folder tells the two strips apart. Frames 7-12 of
+    the deleted roll are not frames of a new one that scanned 1-6."""
+    import shutil
+
+    old = _shelf(tmp_path, name="Portra", wanted=range(1, 13), done=range(1, 13))
+    _names_its_entries(old, {n: _filed(tmp_path, "Portra", n, f"2026a-{n:02d}", old)
+                             for n in range(1, 13)})
+    shutil.rmtree(old)                                       # Delete
+    new = _shelf(tmp_path, name="Portra", wanted=range(1, 7), done=range(1, 7))
+    ours = {n: _filed(tmp_path, "Portra", n, f"2026b-{n:02d}", new)
+            for n in range(1, 7)}
+    _names_its_entries(new, ours)
+    summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
+    assert summary["entries"] == ours
+
+
+def test_an_exported_frame_is_named_by_its_own_entry(tmp_path):
+    """The roll's settings are its last run's: twelve frames at 1800 dpi RGB
+    resumed at 3600 dpi RGBI said "3600dpi_ir" of all of them. And a roll the
+    command-line tool made records `dpi`, which read as `resolution` alone was
+    "0dpi"."""
+    folder = _shelf(tmp_path, name="R", done=(1, 2), dpi=3600, ir=True)
+    entries = {1: _filed(tmp_path, "R", 1, "2026a-1", folder, dpi=1800),
+               2: _filed(tmp_path, "R", 2, "2026a-2", folder, dpi=3600,
+                         channels=4)}
+    _names_its_entries(folder, entries)
+    summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
+    named = [gui.batch_name(i, "tiff") for i in gui.roll_exports(summary)]
+    assert named == ["frame01_1800dpi.tif", "frame02_3600dpi_ir.tif"]
+
+    cli = {"folder": tmp_path / "nowhere", "entries": {4: tmp_path / "gone"},
+           "settings": {"dpi": 1800}}
+    assert gui.roll_exports(cli)[0].meta["resolution_dpi"] == 1800
+
+
+def test_an_export_is_one_channel_or_all_as_the_rolls_own_frames_were(tmp_path):
+    """The roll's own film and its own choice, not the window's: a colour
+    roll exported with the window on black and white came out as one grey
+    plane, and a black and white roll with it on negative as three."""
+    def plan(film, mono=None):
+        summary = {"folder": tmp_path / "nowhere", "entries": {1: "e1"},
+                   "film": film, "settings": {"film": film, "mono": mono,
+                                              "mono_channel": "R"}}
+        return gui.roll_exports(summary)[0]
+
+    assert (plan("bw").mono, plan("bw").mono_channel) == (True, "R")
+    assert plan("negative").mono is False
+    assert plan("bw", mono=False).mono is False, "his choice for that roll"
+    assert plan(None).mono is None, "a roll that does not say: the window's"
+
+
+def test_a_saved_pass_is_one_channel_or_all_as_its_own_film_asks(window,
+                                                                 monkeypatch):
+    app, root = window
+    app.v_film.set("negative")
+    app._sync_film()
+    bw = types.SimpleNamespace(meta={"film": "bw"}, label="scan 1")
+    colour = types.SimpleNamespace(meta={"film": "negative"}, label="scan 2")
+    assert app._mono_for(bw)[0] is True
+    assert app._mono_for(colour)[0] is False
+    item = types.SimpleNamespace(meta={}, mono=False, mono_channel="G")
+    app.v_film.set("bw")
+    app._sync_film()
+    assert app._mono_for(item) == (False, "G"), "a roll's own answer wins"
+    assert app._mono_for(colour)[0] is False
+    # And Save As asks it rather than the window.
+    delivered = []
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: "/nowhere/out.tif")
+    monkeypatch.setattr(app, "_deliver_one",
+                        lambda r, p, q, mono, ch: delivered.append(mono) or "")
+    app.on_save_as(colour)
+    for thread in app._writing:
+        thread.join(5)
+    assert delivered == [False]
+
+
+def test_a_delivered_file_says_the_resolution_it_was_scanned_at(window,
+                                                                monkeypatch,
+                                                                tmp_path):
+    """Save As, Save all and Export wrote no resolution, so a 3600 dpi frame
+    said 72 dpi or nothing -- while the output folder's copy of the same pass
+    said 3600."""
+    app, root = window
+    entry = tmp_path / "entry"
+    entry.mkdir()
+    (entry / "scan.tif").write_bytes(b"raw")
+    monkeypatch.setattr(gui.library, "corrected", lambda e: (
+        np.zeros((4, 6, 3), np.uint16),
+        {"scan": {"resolution_dpi": 3600}, "corrected": "applied"}))
+    written = []
+    monkeypatch.setattr(gui.export, "write", lambda path, image, **kw:
+                        written.append(kw.get("resolution")) or "")
+    result = types.SimpleNamespace(entry=entry, rotation=0, flipped=False,
+                                   meta={}, image=None)
+    app._deliver_one(result, tmp_path / "out.tif", 95, False, "G")
+    assert written == [3600]
+
+
+def test_save_as_says_when_it_could_not_write(window, monkeypatch):
+    """It ran on the UI thread with nothing around it: a full or pulled disk
+    raised into Tk's stderr handler, nothing was said, and the operator took
+    it as saved. It runs where Save all does now, and says so as Save all
+    does."""
+    import threading
+
+    app, root = window
+    where = []
+
+    def full(*_a):
+        where.append(threading.current_thread())
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: "/media/stick/out.tif")
+    monkeypatch.setattr(app, "_deliver_one", full)
+    app.on_save_as(types.SimpleNamespace(meta={}, label="scan 1"))
+    for thread in app._writing:
+        thread.join(5)
+    app._drain()
+    assert where and where[0] is not threading.main_thread()
+    assert "could not save out.tif" in app.log.get("1.0", "end")
+    assert "No space left" in app.log.get("1.0", "end")
+
+
+def test_a_delivered_name_is_free_of_the_files_it_may_bring(tmp_path):
+    """"Nothing already there is overwritten" checked only the name asked
+    for: a JPEG's infrared DNG beside it, or the TIFF it becomes without
+    Pillow, replaced whatever had that stem."""
+    wanted = tmp_path / "frame01_1800dpi.jpg"
+    assert gui.unclaimed_delivery(wanted) == wanted
+    (tmp_path / "frame01_1800dpi.dng").write_bytes(b"an earlier infrared")
+    assert gui.unclaimed_delivery(wanted).name == "frame01_1800dpi-2.jpg"
+    (tmp_path / "frame01_1800dpi-2.tif").write_bytes(b"an earlier tiff")
+    assert gui.unclaimed_delivery(wanted).name == "frame01_1800dpi-3.jpg"
+    tif = tmp_path / "frame02_1800dpi.tif"
+    assert gui.unclaimed_delivery(tif) == tif
 
 
 def test_approvals_are_read_without_loading_a_survey(tmp_path):
@@ -3976,11 +4327,12 @@ def test_a_walk_reopened_is_measured_again_not_remembered(tmp_path):
 
 
 def test_a_stale_remembered_sheet_cannot_reach_a_reopened_walk(tmp_path):
-    """`open_roll` reads disk and nothing else.
+    """The detector's positions are measured again on every launch.
 
-    The sheet cache is real and it is a feature -- within one run, reopening
-    the sheet gives back the frames that were dragged. It must not survive into
-    a fresh launch, or the demo would replay last time's answer and call it a
+    The sheet cache is real and it is a feature -- reopening the sheet gives
+    back the frames that were dragged, and a walk not yet commissioned comes
+    back as it was left. What it must not carry into a fresh launch is the
+    machine's answer, or the demo would replay last time's and call it a
     measurement.
     """
     from rps7200 import settings as settings_mod
@@ -4505,6 +4857,131 @@ def test_opening_another_roll_keeps_what_the_open_sheet_held(window, tmp_path,
     app.open_roll(second)
     assert app.remembered["sheet"]["first"]["rotations"][2] == 90
     app.sheet.top.destroy()
+
+
+def _leave_a_sheet(app, folder):
+    """What a sheet closed on this walk files in the settings: frame 1
+    unticked, frame 2 put where he wanted it, frame 3 turned."""
+    app._sheet_roll = folder
+    app._store_sheet_state({
+        "ticks": {1: False, 2: True, 3: True},
+        "offsets": {2: gui.snap_offset(1.5)}, "sources": {2: "operator"},
+        "rotations": {3: 90}, "flips": {}, "options": {}})
+    app.sheet_state, app._sheet_roll = {}, None
+
+
+def test_a_new_walk_in_a_folder_of_that_name_starts_a_clean_sheet(window,
+                                                                  tmp_path):
+    """The decisions were filed by folder name alone, so a fresh walk into a
+    folder of that name -- the film stock typed again for the next strip, or
+    a name reused after a Delete -- opened on the last strip's ticks, turns
+    and positions, the positions measured against prescans since replaced."""
+    import os
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app._sheet_roll = folder
+    assert app._recall_sheet_state()["rotations"] == {3: 90}, "the same walk"
+    # The next strip walked into the same folder writes its own survey.
+    later = (folder / "survey.json").stat().st_mtime_ns + 10**9
+    os.utime(folder / "survey.json", ns=(later, later))
+    recalled = app._recall_sheet_state()
+    assert recalled["rotations"] == {} and recalled["offsets"] == {}
+    assert recalled["ticks"] == {}
+
+
+def test_a_walk_not_yet_commissioned_reopens_as_it_was_left(window, tmp_path,
+                                                           monkeypatch):
+    """Quit said it was keeping the sheet of a walk not yet commissioned,
+    and no reopen ever read it back: after a restart every tick, turn and
+    hand-set position was gone. A commissioned roll still comes back from
+    its approved.json."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.open_roll(folder)
+    sheet = app.sheet
+    assert sheet.ticks[1].get() is False
+    assert sheet.rotations.get(3) == 90
+    assert sheet.offsets.get(2) == gui.snap_offset(1.5)
+    sheet.top.destroy()
+
+    (folder / "approved.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": []}), encoding="utf-8")
+    _leave_a_sheet(app, folder)
+    app.open_roll(folder)
+    assert app.sheet.ticks[1].get() is True, "approved.json is the record"
+    assert app.sheet.rotations.get(3) is None
+    app.sheet.top.destroy()
+
+
+def test_a_decision_on_the_sheet_is_on_disk_before_the_sheet_closes(
+        window, tmp_path, monkeypatch):
+    """Filed only when the sheet closed, so a crash or a kill with it open
+    lost everything decided since it opened -- for a walk not yet
+    commissioned, the only record of it."""
+    app, root = window
+    monkeypatch.setattr(gui, "SHEET_KEEP_MS", 10, raising=False)
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    app.sheet._rotate(2, 90)
+    app.sheet._toggle(3)
+    deadline = time.monotonic() + 5
+    stored = {}
+    while time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+        on_disk = json.loads((tmp_path / "gui-settings.json").read_text(
+            encoding="utf-8"))
+        stored = (on_disk.get("sheet") or {}).get("walk") or {}
+        if (stored.get("rotations") or {}).get("2") == 90:
+            break
+    assert app.sheet.alive(), "and without closing it"
+    assert stored["rotations"]["2"] == 90 and stored["ticks"]["3"] is False
+    app.sheet.top.destroy()
+
+
+def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    monkeypatch.setattr(gui.simpledialog, "askstring", lambda *a, **k: "holiday")
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_rename_roll({"folder": folder, "roll": "walk"})
+    moved = folder.with_name("holiday")
+    assert "walk" not in app.remembered["sheet"]
+    app._sheet_roll = moved
+    assert app._recall_sheet_state()["rotations"] == {3: 90}
+    app._sheet_roll = None
+    app.on_delete_rolls([{"folder": moved, "roll": "walk", "size": 0}])
+    assert not moved.exists() and "holiday" not in app.remembered["sheet"]
+
+
+def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
+                                                       monkeypatch):
+    """The question called everything but approved.json re-derivable, and
+    counted that only where it held a turn. No tool rebuilds a walk, and a
+    prescan kept from before an in-walk correction has no entry at all."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    (folder / "prescan02-before.tif").write_bytes(b"only here")
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip",
+        "frames": [{"number": 1, "offset_mm": 0.5, "source": "operator"}]}),
+        encoding="utf-8")
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or False)
+    app.on_delete_rolls([gui.roll_summary(folder)])
+    assert "survey.json), which nothing rebuilds" in asked[0]
+    assert "set by hand in 1 of them (approved.json)" in asked[0]
+    assert "1 prescan taken before an in-walk correction" in asked[0]
+    assert "can be rebuilt from them" not in asked[0]
+    assert folder.exists()
 
 
 def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
@@ -5044,6 +5521,100 @@ def test_a_walk_added_to_a_roll_opened_from_elsewhere_takes_that_walk_along(
         == before, "the walk it was opened from is left as it was"
 
 
+def _commission(app, monkeypatch, numbers=(1, 2)):
+    """Press "Scan chosen frames" and say yes, with nothing reaching a device."""
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.calibrated = True
+    app.on_scan_chosen(numbers)
+    return jobs
+
+
+def test_a_roll_opened_from_elsewhere_is_commissioned_with_its_walk(
+        window, tmp_path, monkeypatch):
+    """Only a walk added to it carried the walk across; a commission wrote
+    approved.json and the frames into the folder here with no survey, and it
+    reopened as a roll "scanned without walking the strip first"."""
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)
+    app.sheet.top.destroy()
+    jobs = _commission(app, monkeypatch)
+    here = pathlib.Path(app.session.rolls) / folder.name
+    assert jobs[0].out == str(here)
+    assert gui.same_walk(folder, here)
+    assert sorted(p.name for p in here.glob("prescan*.tif")) == [
+        "prescan01.tif", "prescan02.tif", "prescan03.tif"]
+
+
+def test_a_roll_from_elsewhere_is_not_added_to_another_of_its_name(
+        window, tmp_path, monkeypatch):
+    """Two rolls from different roots can share a name -- date-named folders
+    do -- and the folder of that name here was taken whatever it held: this
+    strip's approvals were merged into that one's and its frames written over
+    that one's frameNN.tif."""
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    other = pathlib.Path(app.session.rolls) / folder.name
+    other.mkdir(parents=True)
+    (other / "survey.json").write_text(json.dumps(
+        {"roll": "another strip", "frames": [{"number": 9}]}), encoding="utf-8")
+    app.open_roll(folder)
+    app.sheet.top.destroy()
+    jobs = _commission(app, monkeypatch)
+    ours = other.with_name(f"{folder.name}-2")
+    assert jobs[0].out == str(ours)
+    assert not (other / "approved.json").exists()
+    assert gui.same_walk(folder, ours)
+    # The same folder for the rest of the session, however its survey grows.
+    (ours / "survey.json").write_text('{"frames": [1]}', encoding="utf-8")
+    assert app._roll_folder() == ours
+
+
+def test_a_turn_while_a_roll_runs_says_it_does_not_reach_that_roll(
+        window, tmp_path, monkeypatch):
+    """The sheet can be reopened while its roll runs, and a turn there
+    showed the arriving frame upright while the roll wrote it as it was
+    commissioned. Said, rather than left to be found in the files."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    app.sheet._one(2, 90)
+    assert "not for a roll running now" not in app.log.get("1.0", "end")
+    app.busy = True
+    app.sheet._one(3, 90)
+    assert "not for a roll running now" in app.log.get("1.0", "end")
+    app.busy = False
+    app.sheet.top.destroy()
+
+
+def test_the_sheet_stays_open_until_its_roll_is_handed_over(window, tmp_path,
+                                                             monkeypatch):
+    """It closed before the question, so a Cancel -- or a busy scanner, or a
+    calibration still to make -- left it gone, under a message saying to
+    press its button again."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    sheet = app.sheet
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: False)
+    sheet._scan()
+    assert sheet.alive() and jobs == []
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    sheet._scan()
+    assert not sheet.alive() and len(jobs) == 1
+
+
 def test_carrying_a_walk_never_writes_over_one_or_follows_a_path(tmp_path):
     source = _walked_folder(tmp_path, count=2)
     survey = json.loads((source / "survey.json").read_text(encoding="utf-8"))
@@ -5107,6 +5678,28 @@ def _reopened_with_entry(app, entry):
     return result
 
 
+def test_the_full_view_says_when_the_scan_could_not_be_corrected(
+        window, monkeypatch, tmp_path):
+    """`library.corrected` hands an entry it cannot correct back raw and says
+    so; the 1:1 view threw that away and showed the striped frame as "the
+    scan's own pixels" -- the one thing the library contract says a person is
+    never shown without a word."""
+    app, root = window
+    entry = tmp_path / "old-entry"
+    entry.mkdir()
+    monkeypatch.setattr(gui.library, "corrected", lambda e: (
+        np.zeros((8, 12, 3), np.uint16), {"corrected": "no reference"}))
+    result = _reopened_with_entry(app, entry)
+    app._show(result)
+    deadline = time.monotonic() + 10
+    while "own 12x8 pixels" not in app.log.get("1.0", "end") \
+            and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    shown = app.log.get("1.0", "end")
+    assert "own 12x8 pixels -- UNCORRECTED (no reference)" in shown
+
+
 @pytest.mark.parametrize("demo", [True, False])
 def test_a_demo_never_deletes_an_entry_that_is_not_its_own(window, tmp_path,
                                                            monkeypatch, demo):
@@ -5148,6 +5741,48 @@ def test_deleting_a_reopened_frames_entry_says_what_it_is_first(window,
     app.on_delete(result)
     assert "the one its walk filed" in asked[0]
     assert entry.exists() and result in app.results, "Cancel is cancel"
+
+
+def test_deleting_a_pass_keeps_its_entry_unless_asked_twice(window,
+                                                            monkeypatch):
+    """"Keep the library entry?" under a title of "Delete": read by the
+    title, No was the natural answer, and it rmtree'd the only raw copy in
+    one click. No keeps it now, and deleting it takes a second, separately
+    worded yes."""
+    import pathlib
+
+    app, root = window
+    entry = pathlib.Path(app.session.root) / "an-entry"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    (entry / "raw.bin.gz").write_bytes(b"raw")
+    answers, said = {"also": False, "sure": False}, []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: answers["also"])
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: answers["sure"])
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+
+    result = _reopened_with_entry(app, entry)
+    app.on_delete(result)                        # No
+    assert entry.exists() and result not in app.results
+
+    answers["also"] = True                       # Yes, then not sure
+    result = _reopened_with_entry(app, entry)
+    app.on_delete(result)
+    assert entry.exists() and result in app.results
+
+    app.busy = True                              # sure, but mid-roll
+    answers["sure"] = True
+    app.on_delete(result)
+    assert entry.exists() and result in app.results
+    assert "The scanner is working" in said[-1]
+    app.busy = False
+
+    app.on_delete(result)                        # Yes, and sure
+    assert not entry.exists() and result not in app.results
+    assert list(entry.parent.glob("an-entry*")) == [], "nothing half-deleted"
 
 
 def test_a_plain_roll_is_not_shown_with_the_sheets_turns(window, monkeypatch):
@@ -5286,6 +5921,305 @@ def test_the_big_view_draws_the_frames_other_end_lighter(window, tmp_path):
     sheet.top.destroy()
 
 
+def test_a_double_click_on_a_frame_leaves_its_tick_alone(window, tmp_path):
+    """Double-click is how the sheet says to set a position, and its first
+    press is a click, which ticks. So every frame double-clicked was also
+    unticked, the position window loaded that, and Done left it out of the
+    roll."""
+    app, root = window
+    out = gui.read_survey(_walked_folder(tmp_path, count=3))
+    sheet = gui._ContactSheet(app, out["results"])
+    root.update()
+    picture = sheet._pictures[2]
+    assert sheet.ticks[2].get() is True
+    _press(picture, "<Button-1>")                   # the first press ...
+    _press(picture, "<Double-Button-1>")            # ... and the second
+    root.update()
+    assert sheet.ticks[2].get() is True
+    assert sheet._adjuster is not None and sheet._adjuster.v_tick.get() is True
+    _press(picture, "<Button-1>")                   # a click still ticks
+    assert sheet.ticks[2].get() is False
+    sheet.top.destroy()
+
+
+def test_return_through_the_strip_does_not_tick_a_scanned_frame(window, tmp_path):
+    """A resumed roll opens its scanned frames unticked so they are not
+    scanned twice. Return in the position window -- "keep this one, next" --
+    ticked every frame it passed, scanned or not."""
+    app, root = window
+    out = gui.read_survey(_walked_folder(tmp_path, count=3))
+    sheet = gui._ContactSheet(app, out["results"], done={2})
+    root.update()
+    assert sheet.ticks[2].get() is False
+    sheet.ticks[1].set(False)
+    sheet.adjust(0)
+    for _ in range(2):
+        sheet._adjuster._accept()
+    assert sheet.ticks[1].get() is True, "a frame not yet scanned is ticked"
+    assert sheet.ticks[2].get() is False, "a scanned one is left as it was"
+    sheet.top.destroy()
+
+
+def test_the_commission_names_frames_it_would_scan_again(window, monkeypatch,
+                                                        tmp_path):
+    """"All" ticks a scanned frame as readily as any other, and the question
+    before the film moves gave only a count. It names them now -- the ones
+    the reopened roll said were done, and those its roll.json says since."""
+    app, root = window
+    app.calibrated = True
+    folder = tmp_path / "rolls" / "resumed"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [{"number": 3, "done": True}]}),
+        encoding="utf-8")
+    app._sheet_roll = folder
+    app._sheet_done = {1}
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or False)
+    app.on_scan_chosen((1, 2, 3))
+    assert "scanned again if you go on: 1, 3." in asked[0]
+    asked.clear()
+    app._sheet_done = set()
+    app._sheet_roll = tmp_path / "rolls" / "fresh"
+    app.on_scan_chosen((1, 2))
+    assert "scanned again" not in asked[0]
+
+
+def test_a_sheet_opened_mid_walk_holds_the_whole_walk_at_its_end(window,
+                                                                 tmp_path):
+    """Opened while the walk was still going, it held the frames walked by
+    then, and the walk's end only raised it: the rest had no cell and no tick,
+    and a commission from it left them unscanned without a word."""
+    from rps7200.session import Event
+
+    app, root = window
+    results = gui.read_survey(_walked_folder(tmp_path, count=3))["results"]
+    app._surveying = True
+    app.survey = results[:2]
+    app.on_contact_sheet()
+    root.update()
+    assert sorted(app.sheet.ticks) == [1, 2]
+    app.sheet.ticks[1].set(False)                    # decided while it walked
+    app.survey.append(results[2])
+    app._handle(Event(kind="finished", text="walked 3 frames"))
+    root.update()
+    assert sorted(app.sheet.ticks) == [1, 2, 3]
+    assert app.sheet.ticks[1].get() is False, "what was decided is kept"
+    assert app.sheet.ticks[3].get() is True
+    app.sheet.top.destroy()
+
+
+def test_a_sheet_open_through_a_kept_walk_drops_what_it_walked_again(
+        window, tmp_path):
+    """The walk's end dropped a re-walked frame's position from the window's
+    copy and said so -- and then closed the open sheet, which filed its own
+    copy, the position still in it, over the top. The sheet came back holding
+    a position measured on a prescan the walk had just replaced."""
+    import copy
+
+    from rps7200.session import Event
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    results = gui.read_survey(folder)["results"]
+    app._sheet_roll = folder
+    app.survey = list(results)
+    app.sheet_state = {"offsets": {2: 0.5116}, "sources": {2: "operator"},
+                       "rotations": {2: 90}}
+    app._kept_walk, app._rewalked = {1, 2, 3}, set()
+    app._surveying = True
+    app.on_contact_sheet()
+    root.update()
+    assert app.sheet.offsets[2] == 0.5116, "his position, before the walk"
+    app._into_survey(copy.copy(results[1]))             # frame 2, again
+    app._handle(Event(kind="finished", text="walked 1 frame"))
+    root.update()
+    assert app.sheet.proposals.get(2, {}).get("source") != "operator"
+    assert app.sheet.offsets.get(2) != 0.5116
+    assert app.sheet.rotations[2] == 90, "a turn is about the picture: kept"
+    for kept in (app.sheet_state, app.remembered["sheet"][folder.name]):
+        assert 2 not in (kept.get("offsets") or {})
+        assert "2" not in (kept.get("offsets") or {})
+    app.sheet.top.destroy()
+
+
+@pytest.mark.parametrize("options,refused", [
+    ({"dpi": "7200", "predpi": "300", "ir": False, "film": "negative"},
+     "7200 dpi pass cannot be shading-corrected"),
+    ({"dpi": "1800", "predpi": "7200", "ir": False, "film": "negative"},
+     "7200 dpi pass cannot be shading-corrected"),
+    ({"dpi": "1800", "predpi": "300", "ir": True, "film": "bw"},
+     "Infrared is blind to bw"),
+])
+def test_a_commission_the_driver_would_refuse_is_refused_before_it_moves(
+        window, monkeypatch, tmp_path, options, refused):
+    """The roll winds to its first frame before the driver reads what it was
+    asked for. At 7200 dpi it then prescanned, held and metered three frames
+    before giving up; infrared on B&W, which the sheet's panel let through,
+    was refused with the film already moved."""
+    app, root = window
+    app.calibrated = True
+    app._sheet_roll = tmp_path / "rolls" / "sheet"
+    jobs, said = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: pytest.fail("asked to start it"))
+    app.on_scan_chosen((1, 2), options=dict(options, fast_ir=True,
+                                            meter="none", correct=False))
+    assert jobs == [] and refused in said[0] and "Nothing has moved" in said[0]
+    assert not (app._sheet_roll / "approved.json").exists()
+
+
+def test_a_roll_at_a_resolution_nothing_can_correct_is_refused(window,
+                                                               monkeypatch):
+    app, root = window
+    app.calibrated = True
+    jobs, said, asked = [], [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(1) or False)
+    app.v_dpi.set("7200")
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs == [] and asked == [] and "7200 dpi" in said[0]
+    # A walk scans only its prescans, so it is asked about as usual.
+    app.v_dryrun.set(True)
+    app.on_roll()
+    assert len(said) == 1 and asked == [1]
+
+
+def test_aim_measures_only_from_a_prescan_of_the_film_where_it_is(window,
+                                                                  monkeypatch):
+    """Any prescan on screen was aimed from: an older frame's, a reopened
+    roll's from another day, or the one just aimed from -- a second click on
+    it applied the same correction twice."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    aimed, said, jobs = [], [], []
+    monkeypatch.setattr(app, "_aim", lambda event: aimed.append(event))
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.v_aim.set(True)
+
+    def prescan(seq, number=0):
+        return Result(seq=seq, kind="prescan", label=f"prescan {seq}",
+                      image=np.zeros((20, 30, 3), np.uint8), meta={},
+                      number=number)
+
+    older, fresh = prescan(1), prescan(2)
+    for result in (older, fresh):
+        app._handle(Event(kind="result", result=result))
+    click = types.SimpleNamespace(x=5, y=5)
+    app._show(fresh)
+    app.on_press(click)
+    assert len(aimed) == 1
+    app._show(older)
+    app.on_press(click)
+    assert len(aimed) == 1 and "no longer shows where the film is" in said[-1]
+    app._show(fresh)
+    app.on_nudge(1, 0.5)                          # what an aim ends in
+    app.on_press(click)
+    assert len(aimed) == 1, "the film has moved since"
+    walked = prescan(3, number=4)                 # a walk's, the film moved on
+    app._handle(Event(kind="result", result=walked))
+    app._show(walked)
+    app.on_press(click)
+    assert len(aimed) == 1
+
+
+def _unwalked_roll(tmp_path, done, settings=True):
+    """A roll scanned without a walk, six frames asked for, `done` done and
+    the rest failed -- as the session writes one: a roll that named no frames
+    records no `wanted`, and is read as wanting every frame it recorded."""
+    folder = tmp_path / "rolls" / "resume"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "resume", "numbering": "strip", "wanted": None,
+        **({"settings": {"resolution": 1800, "prescan_resolution": 300,
+                         "film": "negative", "start_at": 1, "frames": 6,
+                         "only": None}}
+           if settings else {}),
+        "frames": [{"number": n, "done": n in done} for n in range(1, 7)]}),
+        encoding="utf-8")
+    return folder
+
+
+def test_finishing_a_reopened_roll_skips_the_frames_it_has(window, monkeypatch,
+                                                           tmp_path):
+    """The Roll button carried a first frame and a count, so with 1, 2, 4
+    and 5 of six done, "first frame 3" scanned 3 to 6: 4 and 5 again, their
+    frameNN.tif replaced, at up to minutes a frame."""
+    app, root = window
+    app.calibrated = True
+    said, asked, jobs = [], [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.open_roll(_unwalked_roll(tmp_path, done=(1, 2, 4, 5)))
+    assert "the frames already done are skipped" in said[-1]
+    assert (app.v_startat.get(), app.v_last.get()) == ("3", "6")
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs[0].only == (3, 6) and jobs[0].start_at == 3
+    assert "Already scanned, and skipped: 4-5." in asked[0]
+
+
+def test_a_reopened_roll_finished_in_part_still_wants_what_is_left(
+        window, monkeypatch, tmp_path):
+    """Resumed with just the frames left, a roll that had named none came
+    back wanting only those: stopped after frame 3 with 6 still to do, the
+    browser called it finished and a reopen found nothing left to scan."""
+    from conftest import StripScanner
+    from rps7200.session import ScanSession
+
+    app, root = window
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    folder = _unwalked_roll(tmp_path, done=(1, 2, 4, 5))
+    app.open_roll(folder)
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs[0].only == (3, 6)
+    # The job the window handed over, run by a session on a strip that ends
+    # at frame 4: frame 3 is scanned, and 6 is never reached.
+    resumed = ScanSession(root=str(tmp_path / "library"),
+                          rolls=app.session.rolls, verbose=False,
+                          open_scanner=lambda: StripScanner(at=0, last=3))
+    resumed.start()
+    resumed.submit(jobs[0])
+    resumed.shutdown()
+    resumed.join(timeout=10)
+    summary = gui.roll_summary(folder)
+    assert summary["done"] == [1, 2, 3, 4, 5]
+    assert summary["remaining"] == [6]
+    assert gui.roll_cells(summary)[1] == "5 of 6"
+
+
+def test_a_reopened_roll_with_no_settings_does_not_say_they_are_back(
+        window, monkeypatch, tmp_path):
+    app, root = window
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.v_startat.set("1")
+    app.open_roll(_unwalked_roll(tmp_path, done=(1, 2), settings=False))
+    assert "Its settings are back" not in said[-1]
+    assert "records no settings" in said[-1]
+    assert app.v_startat.get() == "1", "and it did not set the box"
+
+
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     """Only the buttons grey while the scanner works. The roll key queued a
     second roll behind the first, and an aim-click or a fine move queued a
@@ -5299,3 +6233,239 @@ def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     app.on_nudge(1, 0.5)
     app.on_move_frames(1)
     assert submitted == []
+
+
+# -- the event pump survives a handler that fails -----------------------------
+
+
+def test_one_failing_event_neither_stops_the_pump_nor_drops_the_rest(
+        window, monkeypatch):
+    """The pump booked its next tick on its last line, so one exception in any
+    handler stopped it for good -- and `session.poll` had already drained the
+    events behind the failing one, which were lost with it. The worker went on
+    scanning and filing; the window showed nothing more, not even the end of
+    the job, and an operator who took that for a hang and killed it abandoned
+    the read in flight."""
+    from rps7200.session import Event
+
+    app, root = window
+    real, handled = app._handle, []
+
+    def handle(event):
+        if event.text == "boom":
+            raise RuntimeError("a handler that fails")
+        handled.append(event.text)
+        real(event)
+
+    monkeypatch.setattr(app, "_handle", handle)
+    for text in ("boom", "after it"):
+        app.session._events.put(Event(kind="log", text=text))
+    app._pump()
+    assert "after it" in handled, "the rest of the batch was dropped"
+    assert "could not handle" in app.log.get("1.0", "end")
+    app.session._events.put(Event(kind="log", text="next tick"))
+    deadline = time.monotonic() + 10
+    while "next tick" not in handled and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    assert "next tick" in handled, "the pump stopped"
+
+
+# -- a job handed over is a job running, for every way in ---------------------
+
+
+def test_a_double_pressed_scan_queues_one_pass(window, monkeypatch):
+    """The buttons grey when the worker reports the job it took, a tick or so
+    after it was handed over; a double press inside that tick queued two
+    passes -- minutes of scanner time and a second entry nobody asked for."""
+    from rps7200.session import Event
+
+    app, root = window
+    app.calibrated = True
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.on_scan()
+    app.on_scan()
+    app.on_prescan()
+    assert len(jobs) == 1
+    # Taken and finished: the next press is a new pass.
+    app._handle(Event(kind="state", text="scanning", busy=True))
+    app._handle(Event(kind="state", text="idle", busy=False))
+    app.on_prescan()
+    assert len(jobs) == 2
+    # And a Stop drops a pass that has not begun, which then never reports.
+    app.on_stop()
+    app.on_scan()
+    assert len(jobs) == 3
+
+
+def test_a_roll_is_not_opened_while_the_scanner_works(window, monkeypatch,
+                                                      tmp_path):
+    """The busy check sat on the button that opens the browser, and the
+    browser stays open: its Open replaced the survey mid-walk, the walk's
+    later prescans joined the other roll's under the same numbers, and the
+    walk's end pointed that sheet at the new folder."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    for working in ("busy", "_surveying"):
+        setattr(app, working, True)
+        app.open_roll(folder)
+        setattr(app, working, False)
+        assert app.survey == [] and app._sheet_roll is None, working
+        assert app._loaded_roll is None, working
+        assert "The scanner is working" in said[-1]
+
+
+def test_a_folder_that_would_not_open_is_not_the_open_roll(window, monkeypatch,
+                                                          tmp_path):
+    """It was marked open before it was read, and so kept from Rename and
+    Delete until the window restarted."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: None)
+    broken = tmp_path / "rolls" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "survey.json").write_text("{not json", encoding="utf-8")
+    app.open_roll(broken)
+    assert app._loaded_roll is None
+
+
+def test_the_sheets_own_roll_and_one_still_filing_are_not_moved(window,
+                                                               monkeypatch,
+                                                               tmp_path):
+    """Only a roll reopened from the browser was protected. The walk the open
+    sheet belongs to could be renamed or deleted, and its commission then
+    recreated the old folder empty and scanned into it; and a roll whose last
+    frames were still with the writer could be moved under them."""
+    app, root = window
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    walked = tmp_path / "rolls" / "walked"
+    filing = tmp_path / "rolls" / "filing"
+    other = tmp_path / "rolls" / "other"
+    app._sheet_roll = walked
+
+    class Behind:
+        unsaved = None
+
+        def ahead_of_disk(self):
+            return True
+
+    monkeypatch.setitem(app.session._manifests,
+                        (filing / "roll.json").resolve(), Behind())
+    for folder, refused in ((walked, "open in this window"),
+                            (filing, "still being filed")):
+        assert app._roll_is_busy([{"folder": folder, "roll": folder.name}],
+                                 "Delete")
+        assert refused in said[-1]
+    assert not app._roll_is_busy([{"folder": other, "roll": "other"}], "Delete")
+
+
+def test_a_calibration_is_not_queued_behind_a_running_job(window, monkeypatch):
+    app, root = window
+    jobs, said = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.busy = True
+    app.on_calibrate("measure")
+    assert jobs == [] and app.calibrated is False
+    assert "The scanner is working" in said[-1]
+
+
+def test_a_calibration_that_never_ran_does_not_leave_the_window_calibrated(
+        window, monkeypatch):
+    """The window calls itself calibrated as the job is queued, and only the
+    "calibrated" event corrected it -- which a calibration a stop kept from
+    running never sends. Every scan after it was then refused by the driver
+    instead of being asked about here."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    app.on_calibrate("measure")
+    assert app.calibrated is True
+    app._handle(Event(kind="state", text="calibrating", busy=True))
+    app._handle(Event(kind="finished", text="stopped"))
+    app._handle(Event(kind="state", text="idle", busy=False))
+    assert app.calibrated is False
+    assert app.b_calibrate.cget("text") == "Calibrate"
+
+
+def test_a_move_and_a_pass_are_never_queued_one_behind_the_other(
+        window, monkeypatch):
+    """`busy` follows the worker's event, a tick after the job was taken. A
+    move key or an aim-click in that tick after a Scan was queued behind it
+    and moved the film once the pass had ended; and a Move's own start
+    cleared the note that a Scan was waiting behind it, so once the Move had
+    ended a second press queued a second pass. A pass queued behind a
+    calibration, as it is meant to be, is still waiting while that runs."""
+    from rps7200.session import Event
+
+    app, root = window
+    app.calibrated = True
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+
+    def taken(text, *between):
+        app._handle(Event(kind="state", text=text, busy=True))
+        for event in between:
+            app._handle(event)
+        app._handle(Event(kind="state", text="idle", busy=False))
+
+    app.on_scan()
+    app.on_move_frames(1)
+    app.on_nudge(1, 0.5)
+    assert [type(j).__name__ for j in jobs] == ["Scan"]
+    taken("scanning")
+    app.on_move_frames(1)
+    app.on_scan()
+    assert [type(j).__name__ for j in jobs] == ["Scan", "Move"]
+    taken("moving")
+    app.on_calibrate("measure")
+    app.on_prescan()
+    taken("calibrating", Event(kind="calibrated", done=1))
+    app.on_scan()
+    assert [type(j).__name__ for j in jobs] == [
+        "Scan", "Move", "Calibrate", "Prescan"]
+    taken("prescanning")
+    app.on_scan()
+    assert [type(j).__name__ for j in jobs] == [
+        "Scan", "Move", "Calibrate", "Prescan", "Scan"]
+
+
+def test_a_pass_pressed_with_no_scanner_leaves_the_window_usable(
+        window, monkeypatch, tmp_path):
+    """With no scanner on the bus the session closes at launch and nothing
+    reads its queue. A pass pressed then was never taken, so it never said
+    it had started, and the window counted it as about to for good: Open,
+    Rename, Delete and Calibrate all answered that the scanner was working,
+    where browsing and exporting rolls with the scanner off is ordinary use."""
+    from rps7200.session import Event
+
+    app, root = window
+    app.calibrated = True
+    jobs, said = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: False)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: None)
+    app._handle(Event(kind="closed"))
+    app.on_prescan()
+    assert jobs == [] and not app._working(), "nothing would ever take it"
+    for press in (app.on_prescan, app.on_scan, app.on_roll,
+                  lambda: app.on_calibrate("measure")):
+        press()
+        assert "There is no scanner" in said[-1]
+    app.on_move_frames(1)
+    assert "no scanner" in app.log.get("1.0", "end")
+    assert jobs == [] and not app._working()
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    assert app._loaded_roll == folder
+    app.sheet.top.destroy()

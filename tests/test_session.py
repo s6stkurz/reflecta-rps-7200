@@ -787,6 +787,28 @@ def test_finishing_a_roll_keeps_what_the_first_attempt_did(tmp_path):
     assert all(f["done"] for f in recorded["frames"])
 
 
+def test_a_resume_told_what_is_left_keeps_the_frames_before_it(tmp_path):
+    """A roll that named no frames writes no `wanted`, and a reader takes
+    every frame it recorded as the roll's. Resumed with only what was left --
+    the window's reopened roll, 1, 2, 4 and 5 done -- the union started from
+    nothing and `wanted` became the resumed few: the roll read as finished
+    with a frame still to do, and a frame that failed outside the range left
+    the list of what remained."""
+    path = tmp_path / "rolls" / "open" / "roll.json"
+    run(Roll(frames=2, resolution=600, name="open"), tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["wanted"] is None
+    run(Roll(frames=4, only=(3, 4), resolution=600, name="open"), tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["wanted"] == [
+        1, 2, 3, 4]
+    # A run told no frames still names none: the reader's own fallback,
+    # every frame recorded, then counts this run's frames as well.
+    run(Roll(frames=2, resolution=600, name="open2"), tmp_path)
+    run(Roll(frames=2, start_at=3, resolution=600, name="open2"), tmp_path)
+    recorded = json.loads((tmp_path / "rolls" / "open2" / "roll.json")
+                          .read_text(encoding="utf-8"))
+    assert recorded["wanted"] is None
+
+
 def test_a_frame_scanned_twice_appears_once(tmp_path):
     """A frame rescanned after a failure must not be in the file twice saying
     two different things about itself."""
