@@ -155,6 +155,24 @@ def test_a_save_waits_out_a_file_briefly_held_open(tmp_path, monkeypatch):
     assert len(refused) == 2 and settings.load(target)["output"] == "x"
 
 
+def test_a_save_that_fails_leaves_nothing_beside_the_file(tmp_path,
+                                                          monkeypatch):
+    """A replace refused for good -- a second window or an editor holding
+    the file -- left `gui-settings.json.part` there for ever."""
+    from pathlib import Path
+
+    from rps7200 import session
+
+    def refused(self, target):
+        raise PermissionError(13, "held open")
+
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", ())
+    monkeypatch.setattr(Path, "replace", refused)
+    target = tmp_path / "gui-settings.json"
+    assert settings.save({"output": "x"}, target) is None
+    assert os.listdir(tmp_path) == []
+
+
 def test_setting_an_unreadable_file_aside_is_said(tmp_path):
     """Kept aside, and then nothing said it: the window opened on its
     defaults, its presets and any sheet not yet commissioned gone from view,

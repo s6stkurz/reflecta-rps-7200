@@ -1682,28 +1682,6 @@ KINDS = ("state", "log", "progress", "result", "filed", "transport",
 # ---------------------------------------------------------------------------
 
 
-def _write_whole(path: Path, image: np.ndarray, **kw: Any) -> str:
-    """`export.write`, with a TIFF written beside and renamed over.
-
-    A roll's frameNN.tif and a walk's prescanNN.tif are written again when a
-    frame is scanned or walked again, and were written in place: a crash or a
-    full disk part-way left a truncated file where a good one had been. A
-    TIFF is now the old file or the new one, never half of either. A JPEG is
-    written as before -- its infrared goes to a DNG named after it, and a
-    temporary name would carry into that.
-    """
-    if export.format_of(path) != "tiff":
-        return export.write(str(path), image, **kw)
-    temp = path.with_name(f".{path.stem}.part{path.suffix}")
-    try:
-        note = export.write(str(temp), image, **kw)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
-    _replace(temp, path)
-    return note
-
-
 #: The folder a picture the library refused is kept in instead, beside the
 #: delivered copies it was written with; see :func:`keep_unfiled`.
 UNFILED = "unfiled"
@@ -1987,7 +1965,10 @@ class FrameWriter:
                 # of a full-resolution copy is the work that must not happen
                 # then. Its library entry is compacted after close; a
                 # delivered copy stays as written, larger and lossless.
-                note = _write_whole(Path(path), delivered, resolution=job["dpi"],
+                # Written beside and renamed over, whatever the format, so a
+                # frame retaken or walked again is the old file or the new
+                # one, never a truncated one (`export._whole`).
+                note = export.write(str(path), delivered, resolution=job["dpi"],
                                     quality=job.get("quality")
                                     or export.DEFAULT_QUALITY,
                                     compress=compress)

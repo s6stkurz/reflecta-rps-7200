@@ -65,7 +65,7 @@ from rps7200.protocol import ScanReadError
 
 
 #: What `migrate-raw --write` keeps of the file it replaces.
-KEPT = "scan.before-migrate-raw.tif"
+KEPT = library.MIGRATE_KEPT
 
 
 def _one_shading_explains(path: Path, plain, stored) -> bool:
@@ -311,16 +311,27 @@ def main() -> int:
                 failed.append((path.name,
                                f"decode is {plain.shape}, stored {stored.shape}"))
                 continue
-            if np.array_equal(plain, stored) and not applied:
-                continue                       # already raw and says so
             kept = path / KEPT
-            if (applied and kept.exists()
+            # A run stopped between the swap and the record: the kept file is
+            # there, the record does not name it, and scan.tif is not the file
+            # the record checksums. On a mislabelled entry that looked exactly
+            # like one already raw and saying so, and was passed over for good
+            # while `verify` called its scan.tif damaged.
+            said = (r.get("image") or {}).get("sha256")
+            stopped = bool(kept.exists()
+                           and KEPT not in (r.get("files") or {})
+                           and said and library._sha256(path / "scan.tif") != said)
+            if np.array_equal(plain, stored) and not applied and not stopped:
+                continue                       # already raw and says so
+            if ((applied or stopped) and kept.exists()
                     and np.array_equal(plain, stored) and plain.dtype == stored.dtype):
                 # A run stopped after the fresh decode was swapped in and
-                # before the record said so: raw pixels labelled corrected,
-                # which `corrected()` hands out as "already" corrected. The
-                # corrected original is the kept file; if one shading of this
-                # decode is exactly it, only the record is left to write.
+                # before the record said so: raw pixels under a record that
+                # still describes the corrected file -- labelled corrected,
+                # which `corrected()` hands out as "already" corrected, or
+                # checksummed as the file it replaced. The corrected original
+                # is the kept file; if one shading of this decode is exactly
+                # it, only the record is left to write.
                 try:
                     before = tiff.read(str(kept))
                 except (OSError, ValueError) as exc:
@@ -386,13 +397,21 @@ def main() -> int:
                     # when a run stopped between it and the swap -- and only
                     # where there is no kept file yet, which a re-run found
                     # and overwrote with the raw decode.
+                    #
+                    # And neither temporary outlives a failure: a full disk
+                    # left them in the entry, and verify then called each a
+                    # partial write on every run, with nothing to remove it.
                     fresh = path / ".scan.tif.part"
-                    tiff.write(str(fresh), plain, resolution=resolution)
-                    if not kept.exists():
-                        copy = path / f".{KEPT}.part"
-                        shutil.copyfile(path / "scan.tif", copy)
-                        library._replace(copy, kept)
-                    library._replace(fresh, path / "scan.tif")
+                    copy = path / f".{KEPT}.part"
+                    try:
+                        tiff.write(str(fresh), plain, resolution=resolution)
+                        if not kept.exists():
+                            shutil.copyfile(path / "scan.tif", copy)
+                            library._replace(copy, kept)
+                        library._replace(fresh, path / "scan.tif")
+                    finally:
+                        library._discard(fresh)
+                        library._discard(copy)
                 image = record.setdefault("image", {})
                 image["corrections_applied"] = []
                 image["shape"] = list(plain.shape)
@@ -450,8 +469,11 @@ def main() -> int:
         # good, at about twice their size, with nothing that would ever
         # finish the job -- or finish one a kill had stopped part way, whose
         # swapped TIFF then failed its checksum in verify on every run.
-        plain = sorted(p.parent for p in root.glob(f"*/{library.RAW_PLAIN}")
-                       if (p.parent / "scan.json").exists())
+        # By what compact can do, not by raw.bin alone: an entry filed plain
+        # with no raw bytes, or one whose swapped TIFFs a stop left ahead of
+        # its record, holds no raw.bin and was never offered.
+        plain = sorted(p.parent for p in root.glob("*/scan.json")
+                       if library.wants_compacting(p.parent))
         done = failed = 0
         for path in plain:
             if not args.write:
@@ -465,7 +487,7 @@ def main() -> int:
                 failed += 1
                 print(f"! {path.name}: {exc}")
         print(f"\n{len(plain)} entr{'y' if len(plain) == 1 else 'ies'} held "
-              f"plain raw bytes"
+              f"plain raw bytes or uncompressed pictures"
               + (f"; {done} compacted" if args.write else " -- pass --write"))
         if args.write and done:
             library.reindex(root)

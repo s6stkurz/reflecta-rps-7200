@@ -553,6 +553,17 @@ def test_a_pass_rejected_at_capture_is_not_analysed(tmp_path, capsys, monkeypatc
     assert tool.cmd_analyse(args) == 0, capsys.readouterr().err
 
 
+def test_a_record_that_is_not_an_object_is_passed_over(tmp_path, monkeypatch):
+    """It raised on `.get`, and the study ended before it began."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    odd = tmp_path / "odd"
+    odd.mkdir()
+    (odd / "scan.json").write_text("[]", encoding="utf-8")
+    assert tool.select(tmp_path, "vignette-study") == []
+
+
 def test_analyse_says_which_code_it_ran(tmp_path, capsys, monkeypatch):
     """It read a provenance key that does not exist, and printed "unknown"."""
     import importlib
