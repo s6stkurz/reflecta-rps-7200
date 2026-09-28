@@ -194,8 +194,13 @@ class FakeScanner:
             )
 
 
-def run(job, tmp_path, scanner=None, extra=None, timeout=10.0):
-    """Submit `job` (and any `extra`), wait for the session to close, return events."""
+def run(job, tmp_path, scanner=None, extra=None, timeout=60.0):
+    """Submit `job` (and any `extra`), wait for the session to close, return events.
+
+    The wait ends as soon as the session closes; the limit only decides how
+    long a real hang takes to fail. Ten seconds failed two roll tests on a
+    loaded Windows runner whose whole suite ran half again as long as usual.
+    """
     scanner = scanner or FakeScanner()
     s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
                     open_scanner=lambda: scanner, verbose=False)
@@ -1241,7 +1246,7 @@ def test_a_roll_after_one_whose_last_write_was_refused_carries_it_on(
     def roll(self, job):
         started.append(job)
         if len(started) == 2:                    # after the refused filing
-            assert refused.wait(timeout=5.0)
+            assert refused.wait(timeout=30.0)
         return real_roll(self, job)
 
     monkeypatch.setattr(session.ScanSession, "_roll", roll)
