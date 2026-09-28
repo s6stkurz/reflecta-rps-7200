@@ -76,12 +76,22 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
 
     So each test starts with filing off and both paths in a folder of its own.
     A folder apart from ``tmp_path``, because some tests list theirs.
+
+    The debug root is moved by moving the default it falls back on
+    (`library.DEFAULT_ROOT`, read when a pass is filed), not by exporting
+    RPS7200_DEBUG_ROOT: an exported one is the operator's, and it wins over
+    the library a session or a tool points debug filing at
+    (`session.debug_filing_into`) -- which the tests of that would then
+    never see.
     """
+    from rps7200 import library
+
     isolated = tmp_path_factory.mktemp("operator")
     monkeypatch.setenv(window_settings.PATH_ENV,
                        str(isolated / "gui-settings.json"))
     monkeypatch.delenv(DirectScanner.DEBUG_ENV, raising=False)
-    monkeypatch.setenv(DirectScanner.DEBUG_ROOT_ENV, str(isolated / "library"))
+    monkeypatch.delenv(DirectScanner.DEBUG_ROOT_ENV, raising=False)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", isolated / "library")
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two

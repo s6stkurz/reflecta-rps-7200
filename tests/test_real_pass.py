@@ -244,10 +244,6 @@ def test_a_kept_calibration_reduces_again_to_the_reference_it_archived(
     assert meta["shading_origin"]["archive"] == str(archive)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-07: archive_calibration writes data.bin, the mask and the reference "
-    "and only then calibration.json, with no INCOMPLETE marker, so an "
-    "archive cut short is bytes with nothing to say what they are"))
 def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
     """Killed or out of space part way, `calibration/<UTC>/` held data.bin
     and no record of its width or line stride, so the bytes the archive
@@ -418,9 +414,6 @@ def _surviving(blob, root):
     return False
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-03: FrameWriter._write runs library.save before the copy loop, so a "
-    "library that refuses the entry skips every delivered copy as well"))
 def test_a_scan_the_library_refused_is_still_delivered(monkeypatch, tmp_path):
     """The library on a drive that has filled, the output folder on another
     that has not: the operator's copy is the one thing that could still be
@@ -438,10 +431,6 @@ def test_a_scan_the_library_refused_is_still_delivered(monkeypatch, tmp_path):
     assert list(out.glob("*.tif")), "the scan exists nowhere"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-03: the session claims a pass from debug filing before its own "
-    "filing has succeeded, and close() deletes a claimed spool whether or "
-    "not the claimer's filing then worked"))
 def test_a_pass_the_library_refused_keeps_its_raw_bytes(monkeypatch, tmp_path):
     """With RPS7200_DEBUG=1 the spool is an independent copy of every pass,
     and it was deleted at close for the one pass whose filing then failed."""
@@ -459,10 +448,6 @@ def test_a_pass_the_library_refused_keeps_its_raw_bytes(monkeypatch, tmp_path):
         "the pass's raw bytes are gone from every place they were")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-A1: a session marked dead by force_abort skips close(), the only "
-    "caller of the debug flush, so passes spooled earlier are neither filed "
-    "nor named"))
 def test_what_debug_filing_spooled_before_a_force_abort_is_not_lost(
         monkeypatch, tmp_path):
     """The metering probes of a session that later had to be aborted are the
