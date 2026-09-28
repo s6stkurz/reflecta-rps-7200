@@ -4023,10 +4023,7 @@ class DirectScanner:
         # Between the probes and the pass, where stopping abandons nothing:
         # the probes are read to their last line, and nothing of this pass
         # has been sent.
-        if should_stop is not None and should_stop():
-            raise StoppedBeforePass(
-                "stopped before the pass" + (", after metering"
-                                             if auto_exposure else ""))
+        self._stop_before_pass(should_stop, metered=auto_exposure)
 
         # From here to the last line read is this pass: recorded, so the entry
         # can say exactly what it was sent. After metering on purpose -- the
@@ -4849,6 +4846,20 @@ class DirectScanner:
         """The moves since the last pass, handed to this one and forgotten."""
         moves, self._moves_since_pass = self._moves_since_pass, None
         return moves or None
+
+    @staticmethod
+    def _stop_before_pass(should_stop: Callable[[], bool] | None,
+                          metered: bool) -> None:
+        """Raise `StoppedBeforePass` if a stop has been asked for.
+
+        Asked between metering and a pass's first command, where stopping
+        abandons nothing. Here rather than in `scan` so the demo's `scan`
+        stops where this one does, with the same words.
+        """
+        if should_stop is not None and should_stop():
+            raise StoppedBeforePass(
+                "stopped before the pass" + (", after metering"
+                                             if metered else ""))
 
     def _moves_left_behind(self) -> None:
         """Forget the sub-frame moves no pass saw, before a whole-frame move.

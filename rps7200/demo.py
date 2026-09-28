@@ -56,7 +56,7 @@ import random
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -800,6 +800,7 @@ class DemoScanner:
         fast_infrared: bool = True,
         depth: int = DEPTH_16,
         metering: dict[str, Any] | None = None,
+        should_stop: Callable[[], bool] | None = None,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """A pass, as the driver's `scan` takes one, from the stored film.
@@ -830,6 +831,9 @@ class DemoScanner:
                 **({"target": target} if target is not None else {}),
                 infrared=infrared, film=film, shading=shading)
             self._log(f"auto-exposure: {[round(v, 3) for v in exposure_scale]}")
+        # Where the driver asks, and in its words: swallowed with the rest
+        # of ``**kw``, a stop asked during metering ran the pass anyway.
+        self._stop_before_pass(should_stop, metered=auto_exposure)
         self._forget_last_pass()
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
@@ -961,6 +965,7 @@ class DemoScanner:
     _take_moves = DirectScanner._take_moves
     #: A whole-frame move leaves them behind, as the driver's does.
     _moves_left_behind = DirectScanner._moves_left_behind
+    _stop_before_pass = staticmethod(DirectScanner._stop_before_pass)
     #: The slack a reversal takes up before the film follows: the measured
     #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
     #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is

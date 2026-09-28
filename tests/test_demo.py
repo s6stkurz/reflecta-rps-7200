@@ -936,6 +936,37 @@ def test_the_demo_leaves_a_move_behind_with_its_frame_as_the_driver_does(
         assert scanner.last_scan_meta["moves_before"] is None, move.__name__
 
 
+def test_a_stop_asked_during_the_demos_metering_is_taken_before_the_pass(
+        monkeypatch):
+    """The driver's `scan` asks `should_stop` after metering and raises
+    before the pass; the demo's swallowed it in ``**kw`` and ran the pass."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+    from rps7200.direct import StoppedBeforePass
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    passes = []
+    take = scanner._take
+
+    def taken(kind, *a, **kw):
+        passes.append(kind)
+        return take(kind, *a, **kw)
+
+    monkeypatch.setattr(scanner, "_take", taken)
+    with pytest.raises(StoppedBeforePass, match="after metering"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: True)
+    # The probes are passes of their own, and nothing beyond them ran.
+    probes = len(passes)
+    assert probes and probes == len(scanner.last_metering["rounds"]), \
+        "a pass beyond the probes was started"
+    # And a pass not stopped runs as before.
+    scanner.scan(resolution=300, infrared=False, should_stop=lambda: False)
+    assert len(passes) == probes + 1
+
+
 def test_a_demo_roll_frame_is_filed_as_metered_as_the_drivers_is(monkeypatch):
     """The driver's roll hands each frame the metering that decided it; the
     demo's `scan` must take it the same way, marked simulated as its own
