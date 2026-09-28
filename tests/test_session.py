@@ -1732,14 +1732,14 @@ def test_a_walk_names_no_prescan_its_writer_did_not_write(tmp_path,
     folder = tmp_path / "rolls" / "unwritten"
     folder.mkdir(parents=True)
     tiff.write(str(folder / "prescan01.tif"), np.zeros((3, 3, 3), np.uint8))
-    real = session._write_whole
+    real = session.export.write
 
     def refuses(path, image, **kw):
         if Path(path).parent == folder:
             raise OSError("the disk is full")
         return real(path, image, **kw)
 
-    monkeypatch.setattr(session, "_write_whole", refuses)
+    monkeypatch.setattr(session.export, "write", refuses)
     run(Roll(frames=1, dry_run=True, name="unwritten"), tmp_path)
     survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
     record = survey["frames"][0]

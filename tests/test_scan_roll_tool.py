@@ -272,14 +272,14 @@ def test_a_walk_names_a_prescan_and_its_entry_once_the_writer_has_them(
 
     from rps7200 import session
 
-    real = session._write_whole
+    real = session.export.write
 
     def refuses(path, image, **kw):
         if Path(path).name == "prescan02.tif":
             raise OSError("the disk is full")
         return real(path, image, **kw)
 
-    monkeypatch.setattr(session, "_write_whole", refuses)
+    monkeypatch.setattr(session.export, "write", refuses)
     run(tmp_path, monkeypatch, "--dry-run", "--frames", "2")
     survey = json.loads((tmp_path / "roll" / "survey.json")
                         .read_text(encoding="utf-8"))
