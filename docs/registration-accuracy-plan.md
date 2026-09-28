@@ -154,9 +154,9 @@ base" columns labelled by something other than the detector under test.
 Offline, against the stored walks, before any scanner time: replay
 `propose_offsets` (now `frame_edges.propose_centred`, which the window and
 `tools/scan_roll.py` use) over `rolls/registration-{A,D,E,G,I,J,K}` with and without
-each change, and score the result against `docs/stefan-judgement.json`. A
-change that does not move frames toward his verdicts is not an improvement
-whatever the metric says.
+each change, and score the result against `docs/stefan-judgement.json` --
+by hand, since no tool reads that file yet. A change that does not move
+frames toward his verdicts is not an improvement whatever the metric says.
 
 Then one roll, and his eye on it. That is the acceptance test and there is no
 other.

@@ -145,7 +145,9 @@ may well resolve less than red and green; if so, that is worth knowing.
 Two tools, both driven from the existing API — no changes to `rps7200/`
 expected:
 
-- **`tools/dpi_series.py`** — runs Parts 1 and 2. Probes candidates, meters once
+- **`tools/dpi_series.py`** — runs Parts 1 and 2. *(Never built:
+  `tools/dpi_analysis.py` selects the series from the library by time window or
+  `--entries` instead.)* Probes candidates, meters once
   at 1800 dpi, then scans each accepted resolution in both modes with
   `exposure_scale=1.0`, filing every pass through `rps7200/library.py` with
   `tags=["dpi-series"]` and the frame's details. The library keeps the raw bytes

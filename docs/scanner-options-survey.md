@@ -288,9 +288,11 @@ state the vendor never creates and doing it once preceded a wedge.
 
 Colour correction, inversion, dust removal and sharpening. They are out of
 scope by Stefan's framing of the question, and they are **NegPy's job** by this
-project's design: this driver hands over linear raw pixels, the per-session
-shading reference, the per-pass CCD mask and the infrared plane untouched, and
-a consumer that has all four can do better than a scanner driver guessing.
+project's design: this driver hands over linear pixels, flat-fielded with the
+per-session shading reference and the per-pass CCD mask and otherwise untouched,
+and the infrared plane untouched; the raw pixels, the reference and the mask stay
+in the library beside them. A consumer with that can do better than a scanner
+driver guessing.
 
 `sharpen` appears in the table above for completeness because the reference
 backend exposes it -- MODE SELECT quality bit `0x02`, reachable through

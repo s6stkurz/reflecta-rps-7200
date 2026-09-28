@@ -139,7 +139,10 @@ line is 2 + 10344 = **10346 bytes = 5172 columns**. Confirmed directly in the st
 tags sit at 0, 10346, 20692, 31038 with exactly 10346 spacing.
 
 **Line format:** doubled ASCII channel tag then 5172 × uint16 LE, channels
-interleaved `B R G I`. IR is included in the reference.
+interleaved `B R G I`. IR is included in the reference. *(2026-09-28: README and
+CLAUDE.md say the calibration pass is RGB and the infrared plane is never
+corrected; `apply_shading` divides whatever channels the reference carries, the
+fourth included. Which is true of the references on disk is open -- TODO.md.)*
 
 **It is a two-point calibration.** The declared 4 × 20 = 80 lines account for half the
 stream; ~160 lines arrive, in two phases:

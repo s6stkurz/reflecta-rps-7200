@@ -166,7 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--approved", type=Path, default=None,
                     help="a roll folder from an earlier --dry-run walk. Its "
                          "prescans are re-read, positions proposed for the "
-                         "whole strip, and each frame held to its own -- the "
+                         "whole strip, and every walked frame held to its own "
+                         "-- one the detector left unplaced where the walk saw "
+                         "it, and none further than one command moves -- the "
                          "same path the window's contact sheet drives, "
                          "runnable without it. With --dry-run this moves the "
                          "film and costs prescans rather than scans.")

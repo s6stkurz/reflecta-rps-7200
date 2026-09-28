@@ -324,7 +324,11 @@ short exposure, and the N-bracket PR leaves that alone. Here it matters far
 more: an infrared pass costs its own ~212 s floor regardless of resolution, so
 bracketing it would dominate everything. Our infrared exposure is a device
 constant (7745 across all 36 captured gain/offset responses; the vendor never
-meters it), so it is unaffected by the visible ladder anyway.
+meters it), so it is unaffected by the visible ladder anyway. *(2026-09-28: the
+floor is the untied pass's; tied, the default, an RGBI pass costs what its lines
+cost. `scan_bracket` now refuses infrared before it sends anything. And a single
+`--exposure-scale` value does scale the infrared exposure too -- the list form
+leaves it at 1.0 -- which is open in TODO.md, "Decisions for Stefan".)*
 
 Our modes are RGB (`0x80`) or RGBI (`0x90`) with no infrared-only mode, so
 **one pass of the bracket is taken as RGBI and the rest as RGB** — that pass
@@ -392,7 +396,9 @@ Each stage has a number that stops it. **Phase 2 does not begin until 1–6 pass
 
 **On the scanner, RGB only:**
 
-5. **The ladder is real.** With **no film loaded**, where the level is uniform,
+5. **The ladder is real.** With **no film loaded**, where the level is uniform
+   *(2026-09-28: but calibrate with film in first -- CLAUDE.md, "Calibrate with the
+   film loaded"; `tools/scan.py` asks before it calibrates)*,
    check each pass's median tracks its requested ratio. A timer wrap shows up at
    once as a pass coming back darker than the one below it. Report requested
    versus achieved for all N, and assert no two passes landed on the same

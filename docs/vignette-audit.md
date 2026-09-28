@@ -226,6 +226,10 @@ Both produce a confident wrong answer with no exception:
 
 ## 7. Separate finding: two tools file corrected pixels as raw
 
+*(Fixed since, checked 2026-09-28: `tools/scan.py` and `tools/uniformity.py` both
+file `last_pixels_raw`, and `tests/test_real_pass.py` and `tests/test_scan_tool.py`
+hold each entry to its own raw bytes. What follows is the finding as it was made.)*
+
 Found while checking whether an independent decode could be gated against
 `scan.tif`. **This is independent of the vignette question and matters more.**
 
@@ -330,4 +334,6 @@ this audit disputes. Changing a load-bearing convention file is Stefan's call,
 so this records the wording (§1) and stops.
 
 The `trailing` bug (§5) and the mislabelling call sites (§7) are ordinary fixes
-needing no decision.
+needing no decision. *(2026-09-28: §7 is fixed; the `trailing` bug is not --
+`tools/uniformity.py` still trims after `apply_orientation`, and only the
+un-mirrored case is tested.)*

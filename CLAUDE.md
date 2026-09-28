@@ -75,7 +75,12 @@ agreement each time. They skip rather than fail where there is no scanner, so
 running them on a bare machine is harmless.
 
 Fakes shared between test modules live in `tests/conftest.py`; `pythonpath` is
-set so `from conftest import ...` works.
+set so `from conftest import ...` works. Among them `DeviceAtCommands`, the
+scanner at the level `Transport.command` speaks, which runs the driver's own
+`scan()` and `calibrate_shading()` to their last line, and `FakeUsb`, libusb
+under a real `Transport`. conftest also gives every test its own settings file
+and library root and unsets `RPS7200_DEBUG`, so an exported debug switch never
+files a test's pass into the checkout's `library/`.
 
 ## Branches
 
@@ -138,17 +143,28 @@ alarms in the one check that exists to catch a real regression. Pass the meta
 the scan returns, never a substitute. `tools/library.py migrate-raw` converts
 legacy entries and is a dry run unless given `--write`.
 
-What an entry holds, as of 2026-09-24: `scan.tif`, the raw bytes --
+What an entry holds, as of 2026-09-28: `scan.tif`, the raw bytes --
 `raw.bin.gz`, or `raw.bin` in an entry the window filed with the device open
 and has not compacted yet (below) -- `shading.npz`, `ccd_mask.bin`, a
 `prescan.tif` where there was one, and `scan.json`. The record carries a
 checksum for every file, every command the pass sent with what came back
-(`extra.commands`), where its reference came from (`extra.shading_origin`),
-and for a roll entry its `roll_membership` (roll, frame number, frame or
-prescan). A directory still holding `INCOMPLETE` was cut short while being
-written, and `make verify` names it. Each calibration's own bytes are kept too,
-because `shading.npz` is a reduction of them: `data.bin` and `calibration.json`
-in `calibration/<UTC time>/`, beside the cached reference.
+(`extra.commands`; waits on image data are counted in `image_reads`, and a
+refused command keeps its message), where its reference came from
+(`extra.shading_origin`, whenever a reference was in force), the whole INQUIRY
+reply, a hash of the driver's source, and for a roll entry its
+`roll_membership` (roll, frame number, frame or prescan). A frame entry's
+`prescan.tif` is the corrected prescan and says so
+(`prescan.corrections_applied`); every prescan a roll or a walk takes, and the
+picture a hold or an aim replaced (tagged `before`), is also filed raw in an
+entry of its own. A pass read in full that then failed, or a read given up
+part way, is filed tagged `failed`, with `extra.failed` saying where. A
+directory still holding `INCOMPLETE` was cut short while being written, and
+`make verify` names it. Each calibration's own bytes are kept too, because
+`shading.npz` is a reduction of them: `data.bin` and `calibration.json` in
+`calibration/<UTC time>/`, beside the cached reference, a failed calibration's
+lines included; the cache's `shading.npz.json` names the archive it came from,
+so a reused reference names it too. `tools/library.py calibrations` reduces
+every archive again with today's code.
 
 ### Claude: always scan with debug filing on. Always.
 
@@ -167,8 +183,11 @@ is where the value silently would not reach the script.
 The window, `tools/scan.py` and `tools/scan_roll.py` honour it too. They file
 their own frames and prescans whatever it says, and claim each of those passes
 (`DirectScanner.debug_claim`), so with it on, debug filing adds only the passes
-they do not keep -- metering probes, hold and aim prescans -- and files nothing
-twice.
+they do not keep -- metering probes, hold and aim prescans, tagged `probe` and
+`hold` -- and files nothing twice. A claim hands back a receipt that the caller
+answers once its own filing is over; the spooled copy is deleted only then, so
+a pass whose filing failed is still filed by debug filing. Debug filing files
+into the caller's own library, unless `RPS7200_DEBUG_ROOT` is set.
 
 Why this rule exists, in one sentence: a week of probe scans left no library entries
 at all, because filing lived only in `tools/scan.py` and `tools/scan_roll.py` and
@@ -183,19 +202,27 @@ use**. You write throwaway scripts that turn out to matter, and you cannot tell 
 advance which scan will be the one somebody asks for later.
 
 **A single scan compresses nothing while the device is open.** Each is spooled to a
-temporary file as it is taken -- a plain sequential write, a second or two -- and the
-entries are assembled and gzipped after `close()`, because gzipping one with the
-scanner open and idle preceded a wedge once. The window holds its device open
-for its whole life, so it files a single scan or prescan plain -- `raw.bin`
-and uncompressed TIFFs, `library.save(compress=False)` -- and `library.compact`
-gzips each once the device has closed. An entry the window was killed before
-compacting stays plain, complete and verifiable.
+file as it is taken -- a plain sequential write, a second or two, into
+`.spool` beside the library it will be filed in (the system's temporary
+directory only where that library cannot be written) -- and the entries are
+assembled and gzipped after `close()`, because gzipping one with the scanner
+open and idle preceded a wedge once. A spool left behind by a failed filing or
+a process that died is filed by `tools/library.py file-spool`. The window holds
+its device open for its whole life, so it files a single scan or prescan plain
+-- `raw.bin`, uncompressed TIFFs and an uncompressed `shading.npz`,
+`library.save(compress=False)` -- writes its TIFF copy in the output folder
+plain too, and `library.compact` gzips the entry once the device has closed.
+A JPEG delivery, and the DNG beside it, is still encoded with the device open.
+An entry the window was killed before compacting stays plain, complete and
+verifiable, and `tools/library.py compact --write` finishes it.
 
 **A roll is the exception, deliberately, and it is unmeasured.** `FrameWriter` in
 `rps7200/session.py` gzips each frame on its own thread *while the next one scans*,
 which is what keeps a 38-frame roll from ending in an eleven-minute wait. The
 argument is that the hazard above was open and **idle**, and here the device is
-busy -- plausible, and still an argument rather than a measurement.
+busy -- plausible, and still an argument rather than a measurement. The last
+frame has no next one, so it -- and anything the writer starts once no roll is
+running -- is filed plain and compacted after close, as a single scan is.
 `tools/filing_load_test.py` is the measurement: identical passes on a quiet host
 and on one gzipping in the background, paired round by round so drift between
 rounds cannot masquerade as an effect, and called safe, unsafe or inconclusive
@@ -403,9 +430,12 @@ It needs a power cycle afterwards, so avoid these:
   resolution**, which is the default, costs `7.5 s + 59.9 ms/line` in all -- not
   on top of the RGB figure: about 25 s at 300 dpi, 110 s at 1800, 214 s at 3600.
   Untied -- `--no-fast-ir` -- it costs a flat ~220 s whatever was asked for, so
-  a low-resolution IR pass is the one that surprises you. `tools/scan.py`
-  prints its own estimate from these before it opens the device, and says when
-  a run should be backgrounded.
+  a low-resolution IR pass is the one that surprises you. `tools/scan.py`,
+  `tools/scan_roll.py` and the probes print their own estimate before they
+  open the device, calibration included, and say when a run should be
+  backgrounded. The estimate is `session.estimate_seconds`, a fit that sits at
+  or below these medians, so the warning is judged on its slow end -- a pass at
+  162/85 of it and the lamp from cold (`session.say_estimate`).
 
   Budget above the median, not at it. Scan time tracks `sum(exposure)` as well as
   line count, so a dense frame runs longer than a thin one at the same dpi: the
@@ -424,10 +454,17 @@ It needs a power cycle afterwards, so avoid these:
   refused read, Ctrl-C -- sets `DirectScanner.suspect`, and from then on the
   session refuses everything that would drive the device (`DeviceSuspect`);
   status queries still go through. The recovery is a power cycle and a new
-  session. Ctrl-C in `tools/scan.py` and `tools/scan_roll.py` finishes the pass
-  in flight and stops there; a second one aborts. SIGTERM is taken the same
-  way, and in the window too (`DeferredInterrupt`). The terminal closing only
-  ever asks, and under `nohup` is not taken at all.
+  session. A SCAN whose answer never came marks it too. Ctrl-C in
+  `tools/scan.py` finishes the pass in flight -- or the calibration, or a
+  metering probe -- and starts no other; in `tools/scan_roll.py` it finishes
+  the frame in flight, prescan, metering and scan, and stops there; a second
+  one aborts. The probes, `tools/uniformity.py capture` and
+  `tools/filing_load_test.py` defer it the same way, and
+  `tools/verify_protocol.py` between stages. The filing after a stop runs
+  under a deferral of its own. SIGTERM (and SIGBREAK on Windows) is taken the
+  same way, and in the window too (`DeferredInterrupt`), where it means Quit's
+  "stop after the frame in flight". The terminal closing only ever asks, and
+  under `nohup` is not taken at all.
 - **Do not hold the session open through heavy local work.** Gzipping a 140 MB
   library entry with the device open and idle preceded one wedge.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both
@@ -513,7 +550,12 @@ It needs a power cycle afterwards, so avoid these:
   scan RGBI, where blue is ~5× more sensitive. See `docs/analog-gain-plan.md`.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
   only re-exports it -- when the commands sent to the device change — not for
-  host-side work, which is re-runnable from raw bytes.
+  host-side work, which is re-runnable from raw bytes. It is 7 as of
+  2026-09-27: no payload changed, but which sub-frame SLIDEs a roll sends did
+  (a hold no longer mirrors its target under "reverse the direction", a walk
+  moves nothing on one edge-reader member's reading, and
+  `scan_roll --approved` holds every walked frame, clamped to one command).
+  The comment above it keeps every revision's reason.
 - **There is no vignette, and no vignette correction should be added.** Measured
   2026-08-30 by rotating an IT8 through all four insertions plus an empty-transport
   flat; see `docs/vignette-plan.md`. The ~39% falloff across the frame is real but
@@ -551,9 +593,14 @@ It needs a power cycle afterwards, so avoid these:
   `tests/test_frame_edges.py` checks that it does. It reads 300 dpi prescans
   only (`frame_edges.READ_AT_DPI`): at 600 and 900 dpi the device returns 860
   or 862 and 1292 columns, and no edge is read -- the window says so before a
-  walk, and `tools/scan_roll.py` refuses `--correct` there. A member that
-  raises abstains rather than failing the frame (`vote._member`) -- a
-  departure from the study's code that changes no answer the study stored.
+  walk and refuses a roll that would aim each frame there, and
+  `tools/scan_roll.py` refuses `--correct`. A member that raises abstains rather than failing the frame
+  (`vote._member`), and is named in the note (`abstained`) -- a departure from
+  the study's code that changes no answer the study stored. So is what
+  `centring` does with the vote: a frame every member calls blank, or one
+  `stepline` calls "not a negative", is left unplaced (`none`), and a walk that
+  aims each frame moves nothing on an `unconfirmed` reading, one member's
+  alone (`WalkReader.judge`).
 
 ## Never commit
 
@@ -566,9 +613,11 @@ They are readable without tshark now -- `rps7200/usbpcap.py`, used by
 Windows even where Wireshark is installed, so these were unreadable on the
 machine that recorded them. That reader only ever returns **control setup
 packets** and payloads for a device the caller named; it never returns an
-interrupt payload, which is where a keystroke is. Keep it that way too:
-`tests/test_usbpcap.py` puts a keystroke on a synthetic bus and asserts it
-does not come back.
+interrupt payload, which is where a keystroke is, nor a control payload
+whose setup was a class request (a keyboard's GET_REPORT carries keys too),
+and a device's reply is never read as a setup. Keep it that way too:
+`tests/test_usbpcap.py` puts keystrokes on a synthetic bus, on the interrupt
+endpoint and on endpoint 0, and asserts they do not come back.
 
 What they are worth: across all six, every vendor control transfer CyberView
 makes is one of the three shapes `usb_transport.py` makes and there are no

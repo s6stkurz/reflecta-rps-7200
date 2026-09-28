@@ -370,6 +370,10 @@ has no command behind it.
 `SLIDE_PREV` appears in **no other capture**; this driver had already verified it on hardware
 before the vendor was ever seen using it. Its role is end-of-roll rewind, not correction.
 Action `0x03` is new, seen once, and is the last command of the session.
+*(2026-09-25, `docs/protocol.md` §5: a recount with `tools/parse_capture.py` finds
+neither `05 01 00 01` nor `03 f6 dd 00` in any capture. The evidence that `SLIDE_PREV`
+works is this driver's own measurement, not the vendor's; the two readings disagree
+until the captures are read again.)*
 
 ### Smaller findings
 
@@ -420,6 +424,8 @@ independent measurements now say the transport holds registration:
   negligible
 - `SLIDE_NEXT` value 1 vs value 2 differ by **less than 0.05 mm**, so the byte the
   vendor alternates is not a vernier and this driver hardcoding 1 costs nothing
+  *(2026-09-28: and it always sends 1 -- a move of several frames is one
+  `04 01 00 01` or `05 01 00 01` a frame, each waited for on the counter)*
 - seven slides stay inside **0.49 mm** with no trend
 
 CyberView running 17 frames unattended, sending no correction command of any kind,

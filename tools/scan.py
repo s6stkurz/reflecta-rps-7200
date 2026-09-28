@@ -86,7 +86,9 @@ def main() -> int:
     ap.add_argument("--out", default="scan.tif",
                     help="the delivered file. Its extension picks the format: "
                          ".tif or .jpg. A JPEG is the same picture at 8 bits, "
-                         "still a negative, and cannot carry infrared")
+                         "still a negative, and cannot carry infrared. A file "
+                         "already there is never replaced: the next free name "
+                         "is taken, and said")
     ap.add_argument("--quality", type=int, default=export.DEFAULT_QUALITY,
                     metavar="N", help="JPEG quality 60-100 (default "
                                       f"{export.DEFAULT_QUALITY}); ignored for TIFF")
@@ -134,9 +136,11 @@ def main() -> int:
                          "measurement")
     ap.add_argument("--film", default="negative",
                     choices=["negative", "positive", "kodachrome", "bw"],
-                    help="metering only: a negative is metered per channel to "
-                         "take the orange mask off before the ADC; everything "
-                         "else keeps its cast")
+                    help="what is in the transport: a negative is metered per "
+                         "channel to take the orange mask off before the ADC; "
+                         "everything else keeps its cast. It also decides "
+                         "whether --ir is refused (bw, kodachrome) and whether "
+                         "one channel is delivered (bw)")
     ap.add_argument("--mono", dest="mono", action="store_true", default=None,
                     help="deliver one channel instead of three. On by default "
                          "for --film bw: a black and white scan is an RGB scan "
