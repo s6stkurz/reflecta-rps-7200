@@ -180,6 +180,20 @@ def test_a_probe_gets_its_reference_before_its_first_pass(monkeypatch, tmp_path,
     assert "scan" in calls, "no pass was ever taken"
 
 
+@pytest.mark.parametrize("mode", [[], ["--resolutions", "300,600"]])
+@pytest.mark.parametrize("film", ["bw", "kodachrome"])
+def test_fast_ir_refuses_blind_film_before_the_device(monkeypatch, film, mode):
+    """Its help promised infrared is refused outright for the stocks blind to
+    it; the refusal came from `scan`, after the device had been opened,
+    calibrated and metered -- in the ladder and the sweep alike."""
+    calls: list[str] = []
+    with pytest.raises(SystemExit) as stop:
+        run(monkeypatch, "fast_ir_probe", ProbeScanner(calls),
+            "--film", film, *mode)
+    assert stop.value.code == 2
+    assert calls == [], "the device was driven for a pass it will refuse"
+
+
 def test_ctrl_c_finishes_the_pass_in_flight_and_starts_no_other(monkeypatch):
     """No probe deferred it: one press abandoned the read, which wedges."""
     calls: list[str] = []

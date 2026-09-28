@@ -91,12 +91,17 @@ from rps7200.direct import (                                        # noqa: E402
     FULL_FRAME,
     CheckCondition,
     DirectScanner,
+    supports_infrared,
 )
 from rps7200.framing import reversal_against                        # noqa: E402
 from rps7200.uniformity import register                             # noqa: E402
 from tools import probing                                           # noqa: E402
 
 from metrics import _highpass, agreement_z, dark_mask              # noqa: E402
+
+#: The driver's refusal, in its words, bound here so it is asked of the
+#: driver itself before any `DirectScanner` is made.
+infrared_blind = DirectScanner.infrared_blind
 
 #: `off on off on on off`. Three of each so both sides have a same-setting pair,
 #: interleaved so drift does not line up with the variable, and `off` at both
@@ -169,6 +174,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
+    # Here, before either mode opens the device: `scan` refuses such a pass
+    # too, but only after the calibration and the metering were spent.
+    if not supports_infrared(args.film):
+        ap.error(str(infrared_blind(args.film)))
 
     if args.resolutions:
         return sweep(args)
