@@ -23,9 +23,10 @@ def _on(monkeypatch):
 
 
 class FakeProcess:
-    def __init__(self, argv, exits=None):
+    def __init__(self, argv, exits=None, **kw):
         self.argv = argv
         self.exits = exits
+        self.kw = kw
         self.terminated = False
 
     def wait(self, timeout=None):
@@ -46,7 +47,7 @@ def spawner(monkeypatch, exits=None):
     started = []
 
     def popen(argv, **kw):
-        started.append(FakeProcess(argv, exits))
+        started.append(FakeProcess(argv, exits, **kw))
         return started[-1]
 
     monkeypatch.setattr(awake.subprocess, "Popen", popen)
@@ -73,6 +74,17 @@ def test_macos_holds_caffeinate_tied_to_this_process(monkeypatch):
     with KeepAwake(platform="darwin"):
         assert started[0].argv == ["caffeinate", "-i", "-w", str(os.getpid())]
     assert started[0].terminated
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_the_inhibitor_outlives_a_first_ctrl_c(monkeypatch, platform):
+    """Spawned in the terminal's process group, it took the first Ctrl-C
+    and ended there, while `DeferredInterrupt` kept the tool reading the pass
+    in flight to its end -- minutes with nothing keeping the machine up."""
+    monkeypatch.setattr(awake.shutil, "which", lambda name: "/usr/bin/" + name)
+    started = spawner(monkeypatch)
+    with KeepAwake(platform=platform):
+        assert started[0].kw.get("start_new_session") is True
 
 
 def test_windows_sets_and_clears_the_execution_state(monkeypatch):

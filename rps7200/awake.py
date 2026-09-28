@@ -97,9 +97,15 @@ class KeepAwake:
                     f"--why={self.why}", "--mode=block",
                     "tail", f"--pid={os.getpid()}", "-f", os.devnull]
         try:
+            # In a session of its own, out of the terminal's process group. In
+            # it, the first Ctrl-C reached the inhibitor too and ended it at
+            # once, while `DeferredInterrupt` kept the tool reading to finish
+            # the pass in flight -- minutes at 7200 dpi -- with nothing
+            # holding the machine up. Only `release` ends it now.
             proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
                                     stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
+                                    stderr=subprocess.DEVNULL,
+                                    start_new_session=True)
         except OSError as exc:
             return f"{argv[0]}: {exc}"
         try:
