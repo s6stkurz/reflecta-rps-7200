@@ -5285,6 +5285,56 @@ def test_his_as_surveyed_goes_into_approved_json_as_his(tmp_path):
     assert offsets == {} and sources == {}, "an untouched frame, as it was"
 
 
+def test_a_machine_position_is_filed_with_what_the_detector_read(tmp_path):
+    """approved.json kept the snapped offset alone: whether a frame that came
+    out off centre was read wrong or moved wrong could not be told, nor which
+    detector had read it."""
+    from rps7200 import library
+
+    stub = _approving()
+    stub.edge_watch = types.SimpleNamespace(frame_units=350.6)
+    note = {"source": "measured", "width": np.int64(428), "units": 12.5,
+            "columns": 15.6, "reason": "both sides",
+            "edges": {"left": {"state": "edge", "x": np.float64(18.0)}}}
+    approved = (Approved(1, offset_mm=0.5116, source="measured"),
+                Approved(2, offset_mm=0.2, source="operator"))
+    folder = tmp_path / "roll"
+    gui.ScannerGui._write_approved(stub, approved, folder,
+                                   {1: note, 2: {"source": "operator"}})
+    frames = {f["number"]: f for f in json.loads(
+        (folder / "approved.json").read_text(encoding="utf-8"))["frames"]}
+    reading = frames[1]["reading"]
+    assert reading["width"] == 428 and reading["units"] == 12.5
+    assert reading["edges"]["left"]["x"] == 18.0
+    assert reading["frame_units"] == 350.6
+    assert frames[1]["read_by"]["driver_commit"] == (
+        library.provenance()["driver_commit_at_import"])
+    assert "reading" not in frames[2] and "read_by" not in frames[2], (
+        "his position is his, not a reading")
+    offsets, _r, _f, _e, sources = gui.read_approved(folder)
+    assert sources == {1: "measured", 2: "operator"}
+
+
+def test_the_sheets_commission_files_the_readings_behind_its_positions(
+        window, tmp_path, monkeypatch):
+    """The same, through the sheet's own button: its notes reach the file."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    app.calibrated = True
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    _settle(app, root)
+    app.sheet._scan()
+    written, = [p for p in tmp_path.rglob("approved.json")]
+    frames = json.loads(written.read_text(encoding="utf-8"))["frames"]
+    machine = [f for f in frames if f["source"] in gui.MACHINE_SOURCES]
+    assert machine, "the fixture's frames are read by the detector"
+    for record in machine:
+        assert record["reading"]["edges"] and record["reading"]["width"] == 428
+        assert "driver_commit" in record["read_by"]
+
+
 def test_the_frame_position_window_closes_with_its_sheet(window, tmp_path):
     """It was the main window's child, outlived the sheet, and every position
     set in it afterwards went into a sheet that no longer existed."""

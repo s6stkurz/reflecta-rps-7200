@@ -3573,7 +3573,7 @@ class ScannerGui:
         return moved
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=(),
-                       options=None) -> bool:
+                       options=None, readings=None) -> bool:
         """Go to the first frame ticked, then scan only what was ticked.
 
         The frame numbers are places on the strip, so the roll goes to the
@@ -3603,6 +3603,10 @@ class ScannerGui:
         The window's controls are left alone, because they go on describing
         the next single scan. Absent -- a caller that has no sheet -- every
         value falls back to the window, which is what used to happen always.
+
+        `readings` is the sheet's note per frame (`_ContactSheet.proposals`):
+        for a position the detector decided, what it read. It goes into
+        `approved.json` beside that position; see `_write_approved`.
 
         True once the roll is handed over, and only then: the sheet closes on
         that, so a refusal or a Cancel leaves it open as it was.
@@ -3725,7 +3729,7 @@ class ScannerGui:
         self._show_roll_name(
             folder.name,
             ours=folder.name != self.fields["roll"].get().strip())
-        self._write_approved(approved, folder)
+        self._write_approved(approved, folder, readings)
         # Counted like a roll from the Roll button, so the header says which
         # of the chosen frames it is on and the line under the picture times
         # it. A sheet's roll used to run with neither.
@@ -3835,7 +3839,7 @@ class ScannerGui:
         # happens. See TODO.md: the tick itself should go.
         return note
 
-    def _write_approved(self, approved, folder) -> None:
+    def _write_approved(self, approved, folder, readings=None) -> None:
         """Record the positions beside the roll before anything is scanned.
 
         Written from here rather than by the scan thread because it is the
@@ -3845,9 +3849,18 @@ class ScannerGui:
 
         ``folder`` is the one the roll is scanned into (`_roll_folder`), so
         the decisions and the frames they are about cannot part.
+
+        A position the detector decided carries what it read (``reading``:
+        the edges, the prescan's width, the move in units and columns, the
+        frame width it centred on) and which code read it (``read_by``).
+        The snapped offset alone could not say whether a frame that came out
+        off centre was read wrong or moved wrong, and a detector changed
+        since could not be told from the one that ran.
         """
         if not approved:
             return
+        readings = readings or {}
+        read_by = None
         try:
             folder = Path(folder)
             name = recorded_roll_name(folder) or folder.name
@@ -3869,6 +3882,19 @@ class ScannerGui:
                     read_manifest(folder / "survey.json", say=self._say),
                     read_manifest(folder / "roll.json", say=self._say))
             now = {int(a.number) for a in approved}
+            read = {}
+            for a in approved:
+                note = readings.get(a.number)
+                if a.source == "operator" or not note:
+                    continue
+                if read_by is None:
+                    code = library.provenance()
+                    read_by = {"driver_commit": code.get("driver_commit_at_import"),
+                               "driver_dirty": code.get("driver_dirty_at_import")}
+                read[a.number] = {
+                    "reading": json_ready(dict(
+                        note, frame_units=self.edge_watch.frame_units)),
+                    "read_by": read_by}
             kept = []
             for record in earlier.get("frames") or ():
                 try:
@@ -3894,7 +3920,8 @@ class ScannerGui:
                          # older files called those his too.
                          **({"as_walked": True}
                             if a.source == "operator" and not a.offset_mm
-                            else {}))
+                            else {}),
+                         **read.get(a.number, {}))
                     for a in approved], key=lambda r: int(r["number"])),
             }, keep_previous=True)
         except Exception as exc:                          # noqa: BLE001
@@ -6150,6 +6177,17 @@ def read_survey(folder, say=None) -> dict:
         "settings": progress.get("settings") or manifest.get("settings") or {},
         "wanted": wanted_frames(manifest, progress),
     }
+
+
+def json_ready(value):
+    """``value`` as plain JSON types: a numpy number as its Python one.
+
+    A detector's note is built from numpy arithmetic, and `json.dumps` takes
+    a numpy float but refuses a numpy int -- which, inside `_write_approved`,
+    would cost the whole file rather than the one field.
+    """
+    return json.loads(json.dumps(value, default=lambda o: (
+        o.item() if hasattr(o, "item") else str(o))))
 
 
 def _mono_choice(value) -> str:
@@ -9873,7 +9911,8 @@ class _ContactSheet:
         # used to go first, so a Cancel, a busy scanner, a calibration still
         # to make or a refused setting left the sheet closed behind a message
         # telling him to "press this again".
-        if not self.gui.on_scan_chosen(picked, approved, options):
+        if not self.gui.on_scan_chosen(picked, approved, options,
+                                       readings=self.proposals):
             return
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.top.destroy()
