@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from conftest import scanner_at_commands
 from rps7200 import library
@@ -348,6 +349,27 @@ def test_a_metered_bracket_carries_the_metering_its_ladder_came_from(
     _, _, metas = scanner.scan_bracket(passes=3, resolution=300)
     assert [m["exposure_metered"] for m in metas] == [False] * 3
     assert all(m["metering"] == _json(scanner.last_metering) for m in metas)
+
+
+def test_a_stop_asked_during_metering_is_taken_before_the_pass(monkeypatch):
+    """Metering's probes run inside `scan`, and the pass followed them with
+    no check between: a Ctrl-C through the probes cost the whole pass. Now
+    the pass asks once more and raises before its first command -- nothing
+    abandoned, the device not suspect."""
+    from rps7200.direct import StoppedBeforePass
+
+    scanner, device = _calibrated(monkeypatch)
+    before = len(device.passes)
+    with pytest.raises(StoppedBeforePass, match="after metering"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: len(device.passes) > before)
+    probes = len(device.passes) - before
+    assert probes == len(scanner.last_metering["rounds"]), \
+        "a pass beyond the probes was started"
+    assert scanner.suspect is None
+    # And a pass not stopped runs as before.
+    scanner.scan(resolution=300, infrared=False, should_stop=lambda: False)
+    assert len(device.passes) == before + probes + 1
 
 
 # -- through the session ------------------------------------------------------

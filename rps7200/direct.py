@@ -133,6 +133,7 @@ from .protocol import (
     ScanReadError,
     ShadingUnavailable,
     Sense,
+    StoppedBeforePass,
     Settings,
     State,
     _cmd,
@@ -234,6 +235,7 @@ __all__ = [
     "ScanReadError",
     "ShadingUnavailable",
     "Sense",
+    "StoppedBeforePass",
     "Settings",
     "ShadingReference",
     "State",
@@ -3703,6 +3705,7 @@ class DirectScanner:
         fast_infrared: bool = True,
         on_pass: Callable[[int, np.ndarray, dict[str, Any], dict[str, Any]], None]
         | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> tuple[list[np.ndarray], list[float], list[dict[str, Any]]]:
         """Scan one frame several times at different exposures.
 
@@ -3732,6 +3735,10 @@ class DirectScanner:
         the pass after it, so a caller that waits for the return value can file
         the last pass and no other. Do no heavy work in it -- the session is
         open and the next pass is about to start.
+
+        ``should_stop`` reaches every pass (`scan`), so a stop asked for during
+        metering or a pass is taken before the next pass starts, and raises
+        `StoppedBeforePass`.
         """
         if not self.MIN_BRACKET_PASSES <= passes <= self.MAX_BRACKET_PASSES:
             raise ValueError(
@@ -3776,6 +3783,7 @@ class DirectScanner:
                 shading=shading,
                 film=film,
                 fast_infrared=fast_infrared,
+                should_stop=should_stop,
             )
             # The metering the ladder was built on. Each rung's exposure is
             # still the one asked for -- it is what tells the rungs apart --
@@ -3824,6 +3832,7 @@ class DirectScanner:
         fast_infrared: bool = True,
         slide_init_param: int = 0x16,
         metering: dict[str, Any] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -3883,6 +3892,11 @@ class DirectScanner:
         itself and hands over its ``exposure_scale`` -- a roll meters each
         frame before scanning it. The pass is then recorded as metered, with
         that record, exactly as one that set ``auto_exposure``.
+
+        ``should_stop`` is asked once, after metering and before the pass's
+        first command, and a yes raises `StoppedBeforePass`: a Ctrl-C through
+        metering's probes was otherwise followed by the whole pass it was
+        pressed to prevent.
         """
         # What the caller took this pass for (`_pass_role`), taken now so that
         # a pass refused below cannot leave it to describe the next one.
@@ -3959,6 +3973,14 @@ class DirectScanner:
             self._log(
                 f"auto-exposure: {[round(v, 3) for v in exposure_scale]}"
             )
+
+        # Between the probes and the pass, where stopping abandons nothing:
+        # the probes are read to their last line, and nothing of this pass
+        # has been sent.
+        if should_stop is not None and should_stop():
+            raise StoppedBeforePass(
+                "stopped before the pass" + (", after metering"
+                                             if auto_exposure else ""))
 
         # From here to the last line read is this pass: recorded, so the entry
         # can say exactly what it was sent. After metering on purpose -- the
