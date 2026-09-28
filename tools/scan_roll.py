@@ -638,6 +638,29 @@ def main() -> int:
                      + "; ".join(differs)
                      + ". Give the flags its earlier frames were taken with, "
                      "or scan into a new --roll.")
+    # And the disks, before anything opens: a roll that cannot be filed
+    # showed itself as a failed filing hours in. As the window's roll does
+    # (`ScanSession._roll`): one to the end of the strip is refused only when
+    # not even its first frame fits, and stops before a frame that does not.
+    if not args.dry_run and args.frames != 0:
+        asked = session.frames_asked(args.start_at, args.frames, args.only)
+        places = max(1, session.LAST_PLAUSIBLE_POSITION + 2 - args.start_at)
+
+        def space(frames: int) -> list:
+            return session.roll_space(frames, args.dpi, args.ir,
+                                      library_root=args.library or None,
+                                      roll_folder=out)
+
+        short = session.short_of_space(
+            space(len(asked) if asked is not None else 1))
+        if short:
+            ap.error("not starting the roll: " + "; ".join(short))
+        tight = session.short_of_space(
+            space(len(asked) if asked is not None else places),
+            session.SPACE_WARN)
+        if tight:
+            print("warning: the roll may fill the disk: " + "; ".join(tight),
+                  file=sys.stderr)
     # Each frame's delivered file in one channel or three. This tool wrote
     # three always, so the same B&W strip came out RGB from here and mono
     # from the window and tools/scan.py -- and was then taken for colour
@@ -737,6 +760,32 @@ def main() -> int:
             filing_failed.set()
             print("stopping after the frame in flight: the frames after it "
                   "would be lost the same way", file=sys.stderr, flush=True)
+
+    #: Why there is no room for the next frame, once a check finds none.
+    no_room: list[str] = []
+    #: How many frames the roll had reached at the last check.
+    room_checked = [-1]
+
+    def room_for_next() -> bool:
+        """Whether the disks hold the next frame, asked as the driver asks
+        whether to go on: before each frame, once per frame reached. The
+        disk can fill while a roll runs, and one to the end of the strip was
+        let start with room for its first frame only. The frames still being
+        filed are not on it yet, so they count."""
+        if args.dry_run or no_room:
+            return not no_room
+        if room_checked[0] == covered:
+            return True
+        room_checked[0] = covered
+        waiting = record_of.waiting() if record_of is not None else 0
+        short = session.short_of_space(session.roll_space(
+            1 + waiting, args.dpi, args.ir,
+            library_root=args.library or None, roll_folder=out))
+        if short:
+            no_room.append("; ".join(short))
+            print("stopping: no room for the next frame: " + no_room[0],
+                  file=sys.stderr, flush=True)
+        return not no_room
 
     writer = FrameWriter(on_done=filed)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
@@ -988,7 +1037,8 @@ def main() -> int:
                 # the window's detector, so --correct reads edges as it does
                 edge_reader=frame_edges.walk_reader,
                 should_stop=lambda: (interrupt.requested()
-                                     or filing_failed.is_set()),
+                                     or filing_failed.is_set()
+                                     or not room_for_next()),
                 # Every pass of the roll, prescans and metering probes
                 # included. `--no-shading` used to skip only the calibration
                 # above, so the first prescan -- still asking for a correction
@@ -1255,6 +1305,9 @@ def main() -> int:
     elif filing_failed.is_set():
         manifest["stopped"] = ("stopped after the frame in flight: a frame "
                                "could not be filed")
+    elif no_room:
+        manifest["stopped"] = ("stopped after the frame in flight: no room "
+                               "for the next frame: " + no_room[0])
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
     #: The frames this run was asked for, where the driver ends the roll:
@@ -1302,7 +1355,7 @@ def main() -> int:
     rest: int | None = None
     if asked is not None:
         left |= {n for n in asked if n not in seen and n not in done}
-    elif (trouble is not None or filing_failed.is_set()
+    elif (trouble is not None or filing_failed.is_set() or no_room
           or interrupt.requested()
           or (in_a_row and in_a_row >= args.max_failures)):
         rest = args.start_at if reached is None else reached + 1
@@ -1332,7 +1385,7 @@ def main() -> int:
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    if trouble is not None or failed or short or not saved:
+    if trouble is not None or failed or short or not saved or no_room:
         return 1
     # Stopped at Ctrl-C with nothing lost is still not a finished roll: 130,
     # as `tools/scan.py` says. It returned 0 -- the manifest's `stopped`

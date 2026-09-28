@@ -59,7 +59,7 @@ from .direct import (
     supports_infrared,
 )
 from .direction import FORWARD, REVERSED
-from .framing import reversal_against
+from .framing import FULL_FRAME, reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
 from .protocol import DeviceSuspect, say_units
@@ -1182,6 +1182,11 @@ class RollManifest:
                     for key in ("prescan", "prescan_before")
                     if record.get(key)}
 
+    def waiting(self) -> int:
+        """How many frame filings recorded here have not come back yet."""
+        with self._lock:
+            return sum(self._awaiting.values())
+
     def pending(self) -> bool:
         """Whether any frame recorded here still waits for its filing."""
         with self._lock:
@@ -1530,6 +1535,77 @@ CALIBRATION_S = 210.0
 METERING_S = 3 * 22.0
 #: The lamp from cold, which `DirectScanner.wait_warm` waits out.
 WARM_UP_S = 80.0
+
+
+#: A roll is refused where a volume it files to has less free space than this
+#: many times what the roll can put there, and warned about below
+#: `SPACE_WARN`. Chosen, not measured: the need is an upper bound already.
+SPACE_REFUSE = 1.0
+SPACE_WARN = 2.0
+
+
+def frame_bytes(resolution: int, infrared: bool) -> int:
+    """At most how many bytes one pass's pixels take, uncompressed.
+
+    The transport's whole window (`FULL_FRAME`, in 7200 dpi units) at
+    ``resolution``, 16 bits a sample: 570 MB for a 7200 dpi RGBI pass, as
+    CLAUDE.md has it. A frame's window is smaller and gzip and deflate take
+    more off, so this is the ceiling a disk has to have room for.
+    """
+    x0, y0, x1, y1 = FULL_FRAME
+    width = -(-(x1 - x0 + 1) * resolution // 7200)       # rounded up
+    lines = -(-(y1 - y0 + 1) * resolution // 7200)
+    return width * lines * (4 if infrared else 3) * 2
+
+
+def roll_space(frames: int, resolution: int, infrared: bool,
+               library_root: Any = None, roll_folder: Any = None,
+               out_dir: Any = None) -> list[tuple[Path, int]]:
+    """Where ``frames`` frames of a roll go, and at most how much each place
+    takes: the library an entry's decode and raw bytes -- about as much
+    again, CLAUDE.md -- and the roll folder and the output folder one copy
+    each. A place that is None takes nothing."""
+    one = frame_bytes(resolution, infrared)
+    places = ((library_root, 2), (roll_folder, 1), (out_dir, 1))
+    return [(Path(place), copies * one * frames)
+            for place, copies in places if place is not None]
+
+
+def _volume(path: Path) -> Path:
+    """The nearest folder of ``path`` that exists: a roll's folder is made
+    only once the roll starts, and the disk it will be on is its parent's."""
+    path = Path(path).absolute()
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path
+
+
+def short_of_space(needs: Iterable[tuple[Path, int]],
+                   factor: float = SPACE_REFUSE) -> list[str]:
+    """Each disk whose free space is under ``factor`` times what ``needs``
+    puts on it, said. Places on one disk are added together: the library
+    and the rolls folder side by side share its space."""
+    disks: dict[Any, list] = {}
+    for path, need in needs:
+        where = _volume(path)
+        try:
+            device = os.stat(where).st_dev
+        except OSError:
+            continue
+        disk = disks.setdefault(device, [where, 0, []])
+        disk[1] += need
+        disk[2].append(str(path))
+    said = []
+    for where, need, paths in disks.values():
+        try:
+            free = shutil.disk_usage(where).free
+        except OSError:
+            continue
+        if free < factor * need:
+            said.append(f"{free / 1e9:.1f} GB free on the disk holding "
+                        f"{' and '.join(paths)}, where this can need up to "
+                        f"{need / 1e9:.1f} GB")
+    return said
 
 
 def say_estimate(passes_s: float, other_s: float, say=print,
@@ -2988,6 +3064,25 @@ class ScanSession:
                 f"infrared is blind to {job.film}: every frame would spend "
                 "its infrared pass and hand back the picture rather than the "
                 "dust. Scan it RGB.")
+        # And a disk that cannot hold what the roll will file, before hours
+        # of film and scanner time are spent on it: the first sign used to be
+        # a failed filing, and the frame in flight lost the same way.
+        if not job.dry_run:
+            asked = frames_asked(first + 1, job.frames, job.only)
+            # A roll to the end of the strip is refused only when not even
+            # its first frame fits; each frame is checked again before the
+            # next is scanned (`_room_for`).
+            count = (len(asked) if asked is not None
+                     else max(1, LAST_PLAUSIBLE_POSITION + 1 - first))
+            short = self._room_for(job, len(asked) if asked is not None
+                                   else 1)
+            if short:
+                raise OSError("not starting the roll: " + "; ".join(short))
+            tight = short_of_space(self._roll_places(job, count), SPACE_WARN)
+            if tight:
+                self._emit("log", text=(
+                    "the roll may fill the disk: " + "; ".join(tight)
+                    + " -- it stops before a frame there is no room for"))
         try:
             seek(self._scanner, first, say=lambda m: self._emit("log", text=m))
         except FilmNotPlaced:
@@ -3503,6 +3598,17 @@ class ScanSession:
                 # crash should cost the frame it was on, not the roll.
                 record_of.record(record, awaiting=scanned is not None)
 
+                # Room for the next frame, asked before it is scanned: the
+                # disk can fill while a roll runs -- anything else writing
+                # there, or an open-ended roll longer than it holds. The
+                # frames still being filed are not on it yet, so they count.
+                if not (job.dry_run or last or self._stop.is_set()):
+                    short = self._room_for(job, 1 + record_of.waiting())
+                    if short:
+                        self._stop_reason = ("no room for the next frame: "
+                                             + "; ".join(short))
+                        self.request_stop()
+
                 if self._stop.is_set():
                     stopped = self._stopped_how(number)
                     self._emit("log", text=stopped)
@@ -3552,6 +3658,20 @@ class ScanSession:
             # Last, once the device is left alone: when and how it ended.
             record_of.ended(stopped)
         return stopped
+
+    def _roll_places(self, job: Roll, frames: int) -> list[tuple[Path, int]]:
+        """Where ``frames`` of this roll's frames go, and how much each takes
+        at most (`roll_space`). The rolls folder stands for the roll's own,
+        which may not exist yet; it is on the same disk."""
+        return roll_space(frames, job.resolution, job.infrared,
+                          library_root=self.root,
+                          roll_folder=job.out or self.rolls,
+                          out_dir=self.out_dir)
+
+    def _room_for(self, job: Roll, frames: int) -> list[str]:
+        """What stops ``frames`` more of this roll's frames being filed: each
+        disk with less free space than they can take (`short_of_space`)."""
+        return short_of_space(self._roll_places(job, frames), SPACE_REFUSE)
 
     def _stopped_how(self, reached: int | None) -> str:
         """How a roll that stopped says so: "as asked" for an operator's

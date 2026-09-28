@@ -2243,3 +2243,62 @@ def test_a_roll_stopped_by_ctrl_c_exits_130(tmp_path, monkeypatch):
     code = scan_roll.main()
     assert len(filed(tmp_path / "lib", "frame")) == 1
     assert code == 130
+
+
+def _free(monkeypatch, free):
+    """Every disk reports ``free()`` bytes free."""
+    import collections
+    import shutil
+
+    usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda path: usage(10 ** 13, 0, free()))
+
+
+def test_a_roll_the_disk_cannot_hold_is_refused_before_the_device_opens(
+        tmp_path, monkeypatch):
+    """Nothing asked how much room there was: a full disk showed itself as a
+    failed filing hours in, after the scanner time was spent."""
+    from rps7200 import session
+
+    one = session.frame_bytes(1800, False)
+    _free(monkeypatch, lambda: 2 * one)          # three frames need nine
+    opened = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--frames", "3", opened=opened)
+    assert refused.value.code == 2
+    assert opened == [], "the device was opened for a roll with no room"
+
+
+def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
+                                                          monkeypatch):
+    from rps7200 import session
+
+    one = session.frame_bytes(1800, False)
+    room = {"free": 100 * one}
+    _free(monkeypatch, lambda: room["free"])
+
+    class Fills(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                yield frame
+                room["free"] = one             # not three copies' worth
+                if kw["should_stop"]():
+                    return
+
+    class Patched(Fills):
+        def __init__(self, **kw):
+            super().__init__(frames=3)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "filling", "--frames", "3"])
+    code = scan_roll.main()
+    assert code == 1
+    assert len(filed(tmp_path / "lib", "frame")) == 1
+    manifest = json.loads((tmp_path / "roll" / "roll.json")
+                          .read_text(encoding="utf-8"))
+    assert "no room for the next frame" in manifest["stopped"]

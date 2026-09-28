@@ -961,6 +961,67 @@ def test_a_roll_stopped_by_a_frame_it_could_not_file_says_so(tmp_path,
     assert all("No space left" in e.text for e in unfiled)
 
 
+def _free(monkeypatch, free):
+    """Every disk reports ``free()`` bytes free."""
+    import collections
+    import shutil
+
+    usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda path: usage(10 ** 13, 0, free()))
+
+
+def test_a_roll_the_disk_cannot_hold_is_refused_before_anything_moves(
+        tmp_path, monkeypatch):
+    """Nothing asked how much room there was: a full disk showed itself as a
+    failed filing, after the seek, the calibration and the frame's scan."""
+    one = session.frame_bytes(600, True)
+    _free(monkeypatch, lambda: 3 * one)        # three frames need nine
+    _, scanner, events = run(Roll(frames=3, resolution=600, name="full"),
+                             tmp_path)
+    failed = kinds(events, "failed")
+    assert failed and "not starting the roll" in failed[0].text, events
+    assert "GB free" in failed[0].text
+    assert not [c for c in scanner.calls if c[0] == "roll"]
+    assert not (tmp_path / "rolls" / "full").exists()
+    assert library.entries(tmp_path) == []
+
+
+def test_a_roll_that_may_fill_the_disk_is_warned_about(tmp_path, monkeypatch):
+    one = session.frame_bytes(600, True)
+    # Room for the three frames (nine copies), not for twice that.
+    _free(monkeypatch, lambda: 12 * one)
+    _, _, events = run(Roll(frames=3, resolution=600, name="tight"),
+                       tmp_path)
+    assert any("may fill the disk" in e.text for e in kinds(events, "log"))
+    assert len(frame_entries(tmp_path)) == 3
+
+
+def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
+                                                          monkeypatch):
+    """The disk can fill while the roll runs, and an open-ended roll is
+    let start with room for its first frame only."""
+    one = session.frame_bytes(600, True)
+    room = {"free": 100 * one}
+    _free(monkeypatch, lambda: room["free"])
+
+    def fills(index):
+        if index == 0:
+            room["free"] = one                 # not three copies' worth
+
+    run(Roll(frames=3, resolution=600, name="filling"), tmp_path,
+        scanner=FakeScanner(frames=3, on_yield=fills))
+    stopped = _manifest_of(tmp_path, "filling")["stopped"]
+    assert stopped.startswith("stopped after frame 1: no room for the next "
+                              "frame"), stopped
+    assert len(frame_entries(tmp_path)) == 1
+
+
+def test_frame_bytes_is_claude_mds_figure_for_a_7200_dpi_rgbi_pass():
+    """570 MB of pixels, CLAUDE.md's figure, from the transport's window."""
+    assert session.frame_bytes(7200, True) == pytest.approx(570e6, rel=0.01)
+
+
 def test_a_frame_waiting_to_be_filed_is_not_yet_done(tmp_path):
     """The two threads, in either order: the record first and the filing
     after, or a small frame filed before its record was written."""
