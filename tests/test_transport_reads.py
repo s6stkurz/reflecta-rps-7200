@@ -500,3 +500,30 @@ def test_a_libusb_that_will_not_load_does_not_hide_one_that_will(monkeypatch):
     monkeypatch.setattr(usb_transport, "_bundled", lambda: None)
     with pytest.raises(OSError, match="incompatible architecture"):
         usb_transport._load_libusb()
+
+
+def test_a_libusb_path_that_will_not_load_is_refused_not_passed_over(
+        monkeypatch):
+    """Falling through from every refusal took LIBUSB_PATH with it: a build
+    named there to be tried was skipped without a word and another copy
+    loaded in its place. The override is the one chosen, so its refusal is
+    the answer."""
+    from rps7200 import usb_transport
+
+    chosen, working = "/home/me/libusb-test/libusb-1.0.so", "/usr/lib/x"
+    monkeypatch.setenv("LIBUSB_PATH", chosen)
+    monkeypatch.setattr(usb_transport, "_LIBUSB_PATHS", (working,))
+    monkeypatch.setattr(usb_transport.os.path, "exists",
+                        lambda p: p in (chosen, working))
+    tried = []
+
+    def dll(path):
+        tried.append(path)
+        if path == chosen:
+            raise OSError("wrong ELF class: ELFCLASS32")
+        return "loaded " + path
+
+    monkeypatch.setattr(usb_transport, "_dll", dll)
+    with pytest.raises(OSError, match="LIBUSB_PATH=.*ELFCLASS32"):
+        usb_transport._load_libusb()
+    assert tried == [chosen]

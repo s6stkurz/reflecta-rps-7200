@@ -206,9 +206,20 @@ def _load_libusb() -> ctypes.CDLL:
     # one -- ended the search and hid a working one further down. Each
     # refusal is kept for the message, should none load.
     refused: list[str] = []
+    # Except the override. Whoever sets LIBUSB_PATH has chosen a copy -- a
+    # particular build, under test -- and falling through from it loaded a
+    # different one without a word; its refusal was heard only if every
+    # other copy refused as well. So it is the only one tried, as it was.
+    if override and os.path.exists(override):
+        try:
+            return _dll(override)
+        except OSError as exc:
+            raise OSError(f"LIBUSB_PATH={override} would not load: {exc}. "
+                          "Unset it to use the libusb this machine has."
+                          ) from exc
 
     def candidates():
-        for path in ([override] if override else []) + list(_LIBUSB_PATHS):
+        for path in _LIBUSB_PATHS:
             if path and os.path.exists(path):
                 yield path
         for name in _LIBUSB_NAMES:
