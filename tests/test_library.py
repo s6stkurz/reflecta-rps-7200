@@ -905,6 +905,33 @@ def test_an_index_that_cannot_be_rewritten_does_not_fail_a_filed_entry(
     assert library.verify(tmp_path) == []
 
 
+@pytest.mark.parametrize("stored", [[], "a string", 3])
+def test_a_record_that_is_not_an_object_breaks_nothing_else(tmp_path, stored):
+    """Valid JSON that is not an object raised in entries(), and with it in
+    reindex, verify and every later save -- which then called a complete
+    entry failed, and its caller kept a second copy of the picture."""
+    odd = tmp_path / "20260101T000000Z_odd_300dpi"
+    odd.mkdir()
+    (odd / "scan.json").write_text(json.dumps(stored), encoding="utf-8")
+    path, _, _ = make_entry(tmp_path)
+    assert [r["_dir"] for r in library.entries(tmp_path)] == [path.name]
+    problems = library.verify(tmp_path)
+    assert any(odd.name in p and "not a record" in p for p in problems)
+
+
+def test_an_index_that_raises_anything_does_not_fail_a_filed_entry(
+        tmp_path, monkeypatch):
+    """Not only OSError: whatever the summary trips on is said, and the
+    entry stands."""
+    def broken(root):
+        raise TypeError("a record the summary cannot read")
+
+    monkeypatch.setattr(library, "reindex", broken)
+    with pytest.warns(RuntimeWarning, match="reindex"):
+        path, _, _ = make_entry(tmp_path)
+    assert not (path / library.INCOMPLETE).exists()
+
+
 def test_the_raw_bytes_are_written_before_anything_that_can_refuse(tmp_path):
     """They are the ground truth, and they were written last: a pass whose
     image the TIFF writer refused lost the only record of what went wrong."""
@@ -1031,8 +1058,16 @@ def _plain_entry_with_bytes(tmp_path):
 
 
 def _compact_cut_short_after_the_swaps(path, monkeypatch):
-    """`compact` killed between swapping the TIFFs in and writing the record."""
-    def killed(*a, **k):
+    """`compact` killed between swapping the TIFFs in and writing the record.
+
+    The record it writes before the swaps, naming the checksums they will
+    bring, goes through; the one after them is where the kill lands."""
+    real = library._write_atomic
+
+    def killed(target, text, *a, **k):
+        if Path(target).name == "scan.json" \
+                and json.loads(text).get(library.COMPACTING):
+            return real(target, text, *a, **k)
         raise OSError("killed before the record was written")
 
     with monkeypatch.context() as dying:
@@ -1061,14 +1096,12 @@ def test_a_compact_cut_short_leaves_pixels_and_bytes_intact_and_can_finish(
     assert library.reconstruct(path)[1] == "identical to the stored image"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-07: compact swaps the recompressed TIFFs in before it writes the "
-    "record, so an interruption between them leaves scan.json holding the "
-    "old checksums and verify calls intact pixels damaged"))
 def test_a_compact_cut_short_is_not_reported_as_damage(tmp_path, monkeypatch):
-    """A false alarm in the one check that exists to catch real damage, on
-    an entry nothing will ever compact again: the session compacts only what
-    it filed itself, and no tool re-runs it."""
+    """A false alarm in the one check that exists to catch real damage.
+    compact swaps the recompressed TIFFs in before it writes the record, so
+    a kill between them left scan.json holding the old checksums and verify
+    calling intact pixels damaged. It is unfinished, and said so -- with the
+    command that finishes it -- but it is not damage."""
     path, _, _ = _plain_entry_with_bytes(tmp_path)
     before = (path / "scan.tif").read_bytes()
     _compact_cut_short_after_the_swaps(path, monkeypatch)
@@ -1076,7 +1109,70 @@ def test_a_compact_cut_short_is_not_reported_as_damage(tmp_path, monkeypatch):
         # The bare-install writer (no tifffile) has no compression to apply,
         # so the swap changes no byte and there is no checksum to go stale.
         pytest.skip("this TIFF writer compresses nothing")
+    problems = _real_problems(tmp_path)
+    assert not any("checksum" in p for p in problems), problems
+    assert len(problems) == 1 and "compaction stopped part way" in problems[0]
+    assert library.compact(path) is True
     assert _real_problems(tmp_path) == []
+
+
+def test_a_damaged_tiff_beside_plain_bytes_is_still_damage(tmp_path):
+    """The proof is the decode, not the plain bytes being there: a scan.tif
+    that no longer holds the decode, or a prescan changed while scan.tif was
+    not, is damage whatever else the entry holds."""
+    path, image, _ = _plain_entry_with_bytes(tmp_path)
+    tiff.write(str(path / "scan.tif"), image + 1)
+    tiff.write(str(path / "prescan.tif"), np.full((4, 6, 3), 9, np.uint8))
+    problems = _real_problems(tmp_path)
+    assert any("scan.tif does not match its checksum" in p for p in problems)
+    assert any("prescan.tif does not match its checksum" in p for p in problems)
+    assert not any("stopped part way" in p for p in problems)
+
+
+@pytest.mark.parametrize("beside", [library.RAW_PLAIN, library.MIGRATE_KEPT])
+def test_a_scan_tif_that_will_not_read_is_reported_not_raised(tmp_path, beside):
+    """Asking whether a TIFF holds the decode must not be where real damage
+    raises. A compressed TIFF cut short raises zlib.error, which is neither
+    an OSError nor a ValueError, and verify -- which has no guard around
+    `damage` -- died with a traceback where it had said "does not match"."""
+    path, image, _ = _plain_entry_with_bytes(tmp_path)
+    if beside == library.MIGRATE_KEPT:
+        # A migrate-raw from before the kept file was checksummed: raw bytes
+        # gzipped, the kept file there and named by nothing.
+        assert library.compact(path) is True
+        tiff.write(str(path / beside), image)
+    tiff.write(str(path / "scan.tif"), image)
+    data = (path / "scan.tif").read_bytes()
+    (path / "scan.tif").write_bytes(data[: len(data) // 2])
+    problems = _real_problems(tmp_path)
+    assert any("scan.tif does not match its checksum" in p for p in problems)
+    if beside == library.RAW_PLAIN:
+        with pytest.raises(OSError, match="scan.tif does not match"):
+            library.compact(path)
+
+
+def test_a_plain_entry_without_bytes_cut_short_is_not_damage(tmp_path,
+                                                            monkeypatch):
+    """compact now deflates an entry with no raw bytes too, and swapped its
+    TIFFs in before writing the record. Killed between the two, both failed
+    their checksums, there were no bytes to prove them by, and a second
+    compact found nothing uncompressed and gave up: intact pixels reported
+    damaged for good."""
+    if not tiff._has_tifffile():
+        pytest.skip("only tifffile compresses; there is nothing to deflate")
+    _, image = index_stream(16, 8, 3, seed=5)
+    prescan = np.full((4, 6, 3), 7, np.uint8)
+    path = library.save(image, {"resolution_dpi": 300, "channels": 3},
+                        root=tmp_path, compress=False, prescan=prescan)
+    _compact_cut_short_after_the_swaps(path, monkeypatch)
+    assert not library._uncompressed_tiffs(path), "the swaps did not happen"
+    problems = [p for p in _real_problems(tmp_path) if "no raw bytes" not in p]
+    assert not any("checksum" in p for p in problems), problems
+    assert len(problems) == 1 and "compaction stopped part way" in problems[0]
+    assert library.compact(path) is True
+    assert [p for p in _real_problems(tmp_path) if "no raw bytes" not in p] == []
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert np.array_equal(tiff.read(str(path / "prescan.tif")), prescan)
 
 
 def test_every_file_of_an_entry_is_checksummed(tmp_path):
@@ -1099,6 +1195,20 @@ def test_a_renamed_entry_is_found_where_it_is(tmp_path):
     record = library.entries(tmp_path)[0]
     assert library.entry_path(tmp_path, record) == moved
     assert any("records itself as" in p for p in library.verify(tmp_path))
+
+
+def test_a_name_the_filesystem_decomposed_is_still_its_own(tmp_path):
+    """HFS+ returns names decomposed (NFD) where the record keeps the id as
+    typed (NFC); every entry with an umlaut in it failed the id check."""
+    import unicodedata
+
+    path, _, _ = make_entry(tmp_path)
+    composed = path.name + "-s\u00fcd"
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["id"] = composed
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    path.rename(path.with_name(unicodedata.normalize("NFD", composed)))
+    assert not any("records itself" in p for p in library.verify(tmp_path))
 
 
 def test_a_scan_taken_raw_on_purpose_is_not_a_problem(tmp_path):
@@ -1217,6 +1327,84 @@ def test_an_entry_filed_plain_reads_like_any_other_and_compacts_losslessly(tmp_p
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
     assert library.reconstruct(path)[1] == "identical to the stored image"
     assert library.compact(path) is False, "compacted twice"
+
+
+def test_an_entry_filed_plain_without_raw_bytes_is_still_compacted(tmp_path):
+    """The shape guard can refuse a pass's bytes, and the demo has none for a
+    finished source: such an entry is filed plain all the same, and compact
+    returned before its TIFFs because there was no raw.bin to gzip."""
+    if not tiff._has_tifffile():
+        pytest.skip("only tifffile compresses; there is nothing to deflate")
+    _, image = index_stream(16, 8, 3, seed=5)
+    path = library.save(image, {"resolution_dpi": 300, "channels": 3},
+                        root=tmp_path, compress=False,
+                        prescan=np.full((4, 6, 3), 7, np.uint8))
+    assert library._uncompressed_tiffs(path)
+    assert library.compact(path) is True
+    assert not library._uncompressed_tiffs(path)
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert np.array_equal(tiff.read(str(path / "prescan.tif")),
+                          np.full((4, 6, 3), 7, np.uint8))
+    assert [p for p in library.verify(tmp_path)
+            if "never be corrected" not in p and "no raw bytes" not in p] == []
+    assert library.compact(path) is False, "compacted twice"
+
+
+def test_a_compaction_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
+    """A full disk half-way through the gzip left `.raw.bin.gz.part` behind
+    -- a hundred megabytes at 3600 dpi -- and nothing ever removed it."""
+    path, _, stream = _plain_entry_with_bytes(tmp_path)
+    real = library.gzip.open
+
+    def full(target, *a, **k):
+        fh = real(target, *a, **k)
+        fh.write(b"half")
+        fh.close()
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(library.gzip, "open", full)
+    with pytest.raises(OSError):
+        library.compact(path)
+    assert not list(path.glob(".*.part"))
+    assert library.read_raw(path) == stream
+
+
+def test_a_tiff_rewrite_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
+    path, image, _ = make_entry(tmp_path)
+    before = (path / "scan.tif").read_bytes()
+
+    def full(target, *a, **k):
+        Path(target).write_bytes(b"half a tiff")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(library.tiff, "write", full)
+    with pytest.raises(OSError):
+        library._replace_tiff(path / "scan.tif", image)
+    assert not list(path.glob(".*.part"))
+    assert (path / "scan.tif").read_bytes() == before
+
+
+def test_a_cleanup_that_is_refused_never_hides_the_failure(tmp_path,
+                                                         monkeypatch):
+    """Each rewrite removes its temporary in a `finally`. Where Windows
+    refuses that unlink too, its PermissionError replaced the error that said
+    what went wrong -- a full disk became a complaint about a `.part`."""
+    path, image, _ = _plain_entry_with_bytes(tmp_path)
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    def held(self, *a, **k):
+        raise PermissionError(13, "held by another process")
+
+    monkeypatch.setattr(library, "_replace", full)
+    monkeypatch.setattr(Path, "unlink", held)
+    with pytest.raises(OSError, match="No space left"):
+        library._replace_tiff(path / "scan.tif", image)
+    with pytest.raises(OSError, match="No space left"):
+        library._write_atomic(path / "scan.json", "{}")
+    with pytest.raises(OSError, match="No space left"):
+        library.compact(path)
 
 
 def test_a_reference_without_a_mask_is_not_applied_to_a_narrower_pass(tmp_path):

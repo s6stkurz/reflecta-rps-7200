@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import inspect
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -204,6 +205,21 @@ def test_a_600_dpi_prescan_is_read_at_the_prescan_scale_and_scaled_back():
     assert odd.left.state == REFUSE and "not a multiple" in odd.left.note
 
 
+@pytest.mark.parametrize(("left", "right"), [(12.0, 0.0), (0.0, 9.5)])
+def test_a_pass_twice_the_width_is_moved_as_the_prescan_is(left, right):
+    """FE-03: the positions came back scaled up and were then decided as
+    428-column ones: at 856 columns a left base moved about 1.8x too far and
+    a right one was refused. The demo reaches it at 600 dpi (FE-A1)."""
+    img = negative_prescan(left, right, seed=13)
+    big = np.kron(img, np.ones((2, 2, 1), dtype=img.dtype))
+    mm, note = propose.read_frame(img, film="negative")
+    mm2, note2 = propose.read_frame(big, film="negative")
+    assert mm is not None and mm2 is not None, (note, note2)
+    assert note2["units"] == pytest.approx(note["units"], abs=0.3)
+    from rps7200.protocol import units
+    assert units(mm2) == pytest.approx(units(mm), abs=0.3)
+
+
 @pytest.mark.parametrize("width", [860, 862, 1292])
 def test_the_devices_own_600_and_900_dpi_widths_are_refused(width):
     """The kron test above uses 856 columns, a width the device never
@@ -298,18 +314,124 @@ def test_a_member_that_raises_abstains_and_the_others_still_vote(monkeypatch):
     assert "failed" not in failed.debug["members"]["changepoint"]
 
 
+def test_a_member_that_raises_is_named_in_the_note(monkeypatch):
+    """FE-01: the abstention lived only in the debug dict, which nothing read,
+    so a member broken on every frame made a quiet three-member vote with a
+    green light. The note the sheet shows and a roll keeps says so."""
+    import types
+
+    def raises(image, ctx):
+        raise ZeroDivisionError("float division by zero")
+
+    monkeypatch.setitem(vote.MEMBERS, "chroma", types.SimpleNamespace(detect=raises))
+    frames = _walk()
+    _, notes = frame_edges.propose_centred(frames, film="negative")
+    for note in notes.values():
+        assert "ZeroDivisionError" in note["abstained"]["chroma"]
+        assert "abstained: chroma failed" in note["reason"]
+    walk = StripWalk(reader=frame_edges.walk_reader("negative"))
+    for n, im in frames:
+        walk.observe(n, im)
+    _, detail = walk.judge(1, frames[0][1])
+    assert "chroma" in detail["abstained"]
+
+
+def test_a_frame_every_member_calls_blank_is_not_placed_from_neighbours():
+    """FE-04: the vote has no ALL_BASE branch, so a frame all four members
+    called blank came out "no agreement", refused, and was then given a
+    position from its neighbours where 'not placed' was promised."""
+    from conftest import C41_BASE
+
+    rng = np.random.default_rng(1)
+    blank = (np.array(C41_BASE)[None, None, :] * np.ones((286, 428, 1))
+             + rng.normal(0, 0.5, (286, 428, 3))).clip(0, 255).astype(np.uint8)
+    frames = [(1, negative_prescan(12.0, seed=1)),
+              (2, negative_prescan(7.0, seed=2)), (3, blank),
+              (4, negative_prescan(9.0, seed=4)),
+              (5, negative_prescan(10.0, seed=5))]
+    offsets, notes = frame_edges.propose_centred(frames, film="negative")
+    assert 3 not in offsets
+    assert notes[3]["source"] == "none"
+
+
+def test_a_number_given_twice_is_read_once_against_the_others(monkeypatch):
+    """FE-08: context was chosen by list position, so two copies of frame 2
+    were each the other's roll context -- its gap confirmed by itself --
+    where the window, keeping the last, read it against 1 and 3 only."""
+    frames = _walk((12.0, 7.0, 15.0))
+    twin = negative_prescan(7.0, seed=99)
+    rolls = []
+    real = vote.detect
+    monkeypatch.setattr(vote, "detect", lambda im, ctx: rolls.append(
+        (im.shape, len(ctx["roll"]))) or real(im, ctx))
+    offsets, notes = frame_edges.propose_centred(
+        [frames[0], frames[1], (2, twin), frames[2]], film="negative")
+    assert len(rolls) == 3 and {n for _, n in rolls} == {2}
+    alone, _ = frame_edges.propose_centred(
+        [frames[0], (2, twin), frames[2]], film="negative")
+    assert offsets == alone
+
+
+def _slide(seed, gap):
+    """A positive with the opaque gap beside it in view, as an 8-bit prescan:
+    the picture inverted from a negative's, and near black where it ends."""
+    neg = negative_prescan(0.0, 0.0, seed=seed).astype(float)
+    pos = 200 * (0.9 - 0.8 * neg / neg.max())
+    pos[:, :gap] = 2
+    return pos.clip(0, 255).astype(np.uint8)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_a_slide_read_as_a_negative_is_not_placed(seed):
+    """FE-02: only `stepline` can tell a positive, and the vote counted its
+    "not a negative" as one abstention. The rest read the black gap as
+    picture to the border, and a slide scanned with the film left at its
+    default came out "measured", sitting right, with the gap in the picture."""
+    image = _slide(seed, gap=13 + 4 * seed)
+    mm, note = propose.read_frame(image, film="negative")
+    assert mm is None
+    assert note["source"] == "none"
+    assert "not a negative" in note["reason"]
+    frames = [(1, image), *[(n, negative_prescan(b, seed=n))
+                            for n, b in ((2, 12.0), (3, 7.0))]]
+    offsets, notes = frame_edges.propose_centred(frames, film="negative")
+    assert 1 not in offsets and notes[1]["source"] == "none"
+
+
+@pytest.mark.parametrize("film", ["negative", "bw"])
+def test_no_member_fails_on_an_ordinary_walk(film):
+    """FE-01: the synthetic walk still read with a member broken, so no test
+    would notice one breaking. None may abstain on ordinary frames."""
+    frames = _walk()
+    if film == "bw":
+        frames = [(n, np.repeat(im.mean(axis=2, keepdims=True), 3, axis=2
+                                ).astype(np.uint8)) for n, im in frames]
+    _, notes = frame_edges.propose_centred(frames, film=film)
+    for n, im in frames:
+        members = frame_edges.detect(im, film=film).debug["members"]
+        assert not [k for k, v in members.items() if "failed" in v], (n, members)
+        assert "abstained" not in notes[n]
+
+
 def test_a_near_black_frame_costs_nothing_on_the_roll_path():
     """It passes the blank check, so a roll with correction on judges it --
     and `gapmodel`'s ZeroDivisionError was not in `scan_roll`'s net, so the
     roll ended there, with the film sometimes already moved. Now it is a
-    frame the detector cannot place: left as it came, and the walk goes on."""
+    frame the detector cannot place: left as it came, and the walk goes on.
+
+    Without a warning, too: `changepoint`'s sliver margin divided 0 by 0 on
+    it, a debug value only, but a warning in every roll that met one. It is
+    recorded rather than raised, because a member that raises abstains."""
     frames = _walk()
     dark = _near_black()
     walk = StripWalk(reader=frame_edges.walk_reader("negative"))
     for n, im in frames:
         walk.observe(n, im)
     walk.observe(5, dark)
-    mm, detail = walk.judge(5, dark)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        mm, detail = walk.judge(5, dark)
+    assert [str(w.message) for w in caught] == []
     assert mm is None
     assert detail["source"] in ("refused", "none")
     # the driver's second look, after a move onto leader, abstains the same way

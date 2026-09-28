@@ -50,13 +50,14 @@ stand-in: only what the film shows is the demo's.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import random
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -77,6 +78,7 @@ from .protocol import (
     MM_PER_UNIT,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
+    PROTOCOL_REVISION,
     SLIDE_INIT,
     ScanParameters,
     Settings,
@@ -88,6 +90,21 @@ from .session import (
 )
 from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
+
+
+def _scan_mode_defaults() -> dict[str, Any]:
+    """What `DirectScanner.scan` records under ``mode`` for a pass asked for
+    with its defaults: SLIDE INIT's param, whether shading analysis is
+    skipped, and no byte 14 override. Its own defaults, taken, not retyped --
+    only the SLIDE INIT param was, and `skip_shading` and `byte14` were
+    written in here beside it, so a change to either default would have left
+    every demo entry recording the old one. Read as a pass is taken, not at
+    import, so the record follows the signature it names."""
+    params = inspect.signature(DirectScanner.scan).parameters
+    return {"byte14_override": params["byte14"].default,
+            "skip_shading": bool(params["skip_shading"].default),
+            "slide_init_param": int(params["slide_init_param"].default)}
+
 
 #: Wall-clock is divided by this. Slow enough that the progress bar has
 #: something to do and a stop lands somewhere, fast enough that trying the
@@ -269,6 +286,11 @@ class DemoScanner:
         #: loop running.
         self._no_film = bool(no_film)
         self._by_film: dict[str, Path | None] = {}
+        #: And where no entry of the film is found, the stored picture (or
+        #: test card) chosen in its place, for the same reason: handed out
+        #: round-robin per call, a frame's prescan, its metering probes and its
+        #: scan were each a different photograph.
+        self._fallbacks: dict[Any, Path | int] = {}
         #: The film of the roll in progress, or None outside one. While it is
         #: set, each frame shows the strip's entry for where the film is,
         #: overriding the per-film choice above. A roll is the one place
@@ -443,6 +465,7 @@ class DemoScanner:
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("advance")
+        self._moves_left_behind()
         self._work(7.0)
         if self._position >= self.LAST_POSITION:         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -472,6 +495,7 @@ class DemoScanner:
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
+        self._moves_left_behind()
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -592,6 +616,11 @@ class DemoScanner:
                 ShadingReference.load(Path(path))
             self._work(1.0)
             self._calibrated = True
+            # Said with every pass it corrects, as the driver says it.
+            self._shading_origin = {
+                "action": "loaded", "path": str(path), "demo": True,
+                "loaded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                            time.gmtime())}
             return {"action": "loaded", "path": Path(path),
                     "summary": f"shading loaded from {path} (demo)"}
         self._need_film(
@@ -599,6 +628,9 @@ class DemoScanner:
             "in, and calibrating an empty transport once preceded a wedge")
         self._work(210.0)
         self._calibrated = True
+        self._shading_origin = {
+            "action": "calibrated", "demo": True,
+            "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         saved = self._mark(path)
         return {"action": "calibrated", "path": saved,
                 "summary": "shading calibrated (demo)"
@@ -729,7 +761,8 @@ class DemoScanner:
         meta.update(self._settings_meta(1.0, metered=False, fast=False),
                     resolution_dpi=resolution, film=film, depth=8,
                     frame=list(frame), started_utc=started_utc,
-                    duration_s=round(time.monotonic() - started, 1))
+                    duration_s=round(time.monotonic() - started, 1),
+                    moves_before=self._take_moves())
         self.last_scan_meta = dict(meta)
         return image, ScanParameters(
             width=meta["width"], lines=meta["height"],
@@ -796,6 +829,8 @@ class DemoScanner:
         keep_raw: bool = False,
         fast_infrared: bool = True,
         depth: int = DEPTH_16,
+        metering: dict[str, Any] | None = None,
+        should_stop: Callable[[], bool] | None = None,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """A pass, as the driver's `scan` takes one, from the stored film.
@@ -826,6 +861,9 @@ class DemoScanner:
                 **({"target": target} if target is not None else {}),
                 infrared=infrared, film=film, shading=shading)
             self._log(f"auto-exposure: {[round(v, 3) for v in exposure_scale]}")
+        # Where the driver asks, and in its words: swallowed with the rest
+        # of ``**kw``, a stop asked during metering ran the pass anyway.
+        self._stop_before_pass(should_stop, metered=auto_exposure)
         self._forget_last_pass()
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
@@ -840,11 +878,14 @@ class DemoScanner:
             "scan", film, resolution, channels=4 if infrared else 3,
             depth=bits, shading=shading, keep_raw=keep_raw,
             passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
-        meta.update(self._settings_meta(exposure_scale, metered=auto_exposure,
-                                        fast=fast),
+        meta.update(self._settings_meta(
+                        exposure_scale,
+                        metered=auto_exposure or metering is not None,
+                        fast=fast),
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
-                    duration_s=round(time.monotonic() - started, 1))
+                    duration_s=round(time.monotonic() - started, 1),
+                    moves_before=self._take_moves())
         # Only for a scan that did its own metering, as on the real one --
         # and marked: the stored pictures ignore the exposure asked for, so
         # every round measures the same levels, and a channel clipped in the
@@ -852,6 +893,10 @@ class DemoScanner:
         # unmarked, that read as the metering's own behaviour.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = dict(self.last_metering, simulated=True)
+        elif metering is not None:
+            # Metered by the caller -- the roll -- as the driver's `scan`
+            # takes it, and marked for the same reason.
+            meta["metering"] = dict(metering, simulated=True)
         self.last_scan_meta = dict(meta)
         return image, meta
 
@@ -931,6 +976,7 @@ class DemoScanner:
     #: check as the scanner would, instead of a hand-written imitation that
     #: cannot disagree with it.
     _hold_to_approved = DirectScanner._hold_to_approved
+    _hold_loop = DirectScanner._hold_loop
     #: The roll and the metering, taken the same way: `scan_roll` and
     #: `auto_exposure` above are these, with only the film chosen around them.
     _drivers_roll = DirectScanner.scan_roll
@@ -942,6 +988,14 @@ class DemoScanner:
     _rejudge_for = DirectScanner._rejudge_for
     #: The sub-frame move, whole: this class has only the `slide` it sends.
     nudge = DirectScanner.nudge
+    #: And what it keeps of each move for the next pass's record, which this
+    #: class's own `scan` and `prescan` then take as the driver's does.
+    move_record = staticmethod(DirectScanner.move_record)
+    _moves_since_pass = DirectScanner._moves_since_pass
+    _take_moves = DirectScanner._take_moves
+    #: A whole-frame move leaves them behind, as the driver's does.
+    _moves_left_behind = DirectScanner._moves_left_behind
+    _stop_before_pass = staticmethod(DirectScanner._stop_before_pass)
     #: The slack a reversal takes up before the film follows: the measured
     #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
     #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is
@@ -983,6 +1037,10 @@ class DemoScanner:
     #: filing keeps; this stand-in has no debug filing, so it is set and
     #: left, as a setting the demo's passes do not need.
     _pass_role: dict[str, Any] | None = DirectScanner._pass_role
+
+    #: Where the reference in force came from, as the driver keeps it; set
+    #: by `ensure_shading` and recorded with every pass it corrects.
+    _shading_origin: dict[str, Any] | None = None
 
     # -- one pass ------------------------------------------------------------
 
@@ -1078,6 +1136,21 @@ class DemoScanner:
             # resampled to these columns. None of that could be told from an
             # entry before, nor the entry re-derived from its source.
             "demo_fit": dict(self._fitted),
+            # The rest of what `DirectScanner.scan` records, so a demo entry
+            # describes itself in every key a real one does. What the stand-in
+            # has no answer for is said as such: no command reached a device
+            # (`commands` None), no filter offsets were read (the zeros its
+            # parameters carry), and every line declared arrived.
+            "protocol_revision": PROTOCOL_REVISION,
+            "filter_offsets": [0, 0],
+            "lines_declared": raw.shape[0],
+            "short_read": False,
+            "mode": {**_scan_mode_defaults(),
+                     "depth": DEPTH_8 if depth == 8 else DEPTH_16,
+                     "passes": int(passes)},
+            "commands": None,
+            "shading_origin": (dict(self._shading_origin)
+                               if shading and self._shading_origin else None),
             **read,
         }
 
@@ -1117,7 +1190,14 @@ class DemoScanner:
         # Each axis by its own ratio, in integers so the map is exact: a
         # recorded shape need not be the stored one's aspect to the pixel.
         rows = (np.arange(h) * height) // h
-        columns = np.roll((np.arange(w) * width) // w, self._shift(w))
+        # Moved, not wrapped. `np.roll` brought the columns that left one edge
+        # back in at the other, so a moved pass still held the whole picture
+        # and a hold or an aim registered against it more easily than on the
+        # transport, where what enters the aperture is film nobody has seen.
+        # The columns the film vacates repeat its edge column instead: a band
+        # that matches nothing, read -- and corrected -- as that column is.
+        shown = np.clip(np.arange(w) - self._shift(w), 0, w - 1)
+        columns = (shown * width) // w
         same_columns = w == width and bool(np.array_equal(columns, np.arange(width)))
         kept = min(planes, channels)
         if (h, w) != (height, width):
@@ -1599,7 +1679,7 @@ class DemoScanner:
         """
         source = self._source_for(film)
         if source is None:
-            return self._pixels(channels)
+            return self._pixels(channels, film)
         if kind == "prescan" and not _correctable(source):
             tif = source / "prescan.tif"
             if tif.exists():
@@ -1613,27 +1693,40 @@ class DemoScanner:
                 except Exception as exc:                 # noqa: BLE001
                     self._log(f"could not read {tif.name}: {exc}")
         got = self._decode(source)
-        return got if got is not None else self._pixels(channels)
+        return got if got is not None else self._pixels(channels, film)
 
-    def _pixels(self, channels: int) -> dict[str, Any]:
-        """Real pixels from the library where there are any, else a test card."""
-        wanted = [
-            p for p in self._entries
-            if _entry_channels(p) == channels
-        ] or self._entries
-        if wanted:
-            path = wanted[self._next % len(wanted)]
+    def _pixels(self, channels: int, film: str) -> dict[str, Any]:
+        """Real pixels from the library where there are any, else a test card.
+
+        Chosen once per film and kept (`_fallbacks`): a new choice every call
+        showed a frame's prescan, its probes and its scan as different
+        photographs. Inside a roll, once per frame of the strip, so the sheet
+        is not one picture repeated.
+        """
+        key = film if self._rolling is None else (film, self._position)
+        chosen = self._fallbacks.get(key)
+        if not isinstance(chosen, int):
+            wanted = [
+                p for p in self._entries
+                if _entry_channels(p) == channels
+            ] or self._entries
+            path = chosen
+            if path is None and wanted:
+                path = wanted[self._next % len(wanted)]
+                self._next += 1
+            if path is not None:
+                got = self._decode(path)
+                if got is not None:
+                    self._fallbacks[key] = path
+                    self._log(f"demo frame from {path.name}")
+                    return got
             self._next += 1
-            got = self._decode(path)
-            if got is not None:
-                self._log(f"demo frame from {path.name}")
-                return got
-        self._next += 1
+            chosen = self._fallbacks[key] = self._next
         # The card is drawn at 600 dpi's shape, and says so: with no dpi it
         # came back 574 x 862 at every resolution, so a 300 dpi prescan was
         # twice the device's width and every edge reading, offset and
         # estimate made from it in an empty checkout was off by that factor.
-        return {"pixels": _test_card(channels, self._next),
+        return {"pixels": _test_card(channels, chosen),
                 "dpi": TEST_CARD_DPI,
                 "reference": None, "ccd_mask": None, "entry": None,
                 "file": "test card"}

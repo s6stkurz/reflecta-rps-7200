@@ -13,6 +13,7 @@ import inspect
 import json
 import os
 import queue
+import re
 import threading
 import time
 
@@ -186,6 +187,10 @@ class FakeScanner:
                 index=index, position=self.pos, image=image, meta=meta,
                 prescan=picture(channels=3, seed=i),
                 registration={"offset_mm": 0.04, "shortfall_mm": 0.02},
+                # As the driver publishes it: a prescan with none is
+                # written and not filed (`ScanSession._unpublished`).
+                prescan_meta={"resolution_dpi": 300,
+                              "channel_order": list("RGB")},
             )
 
 
@@ -918,6 +923,105 @@ def test_a_frame_the_writer_could_not_file_is_not_done(tmp_path, monkeypatch):
     assert by_number[2].get("entry") is None
 
 
+def test_a_roll_stopped_by_a_frame_it_could_not_file_says_so(tmp_path,
+                                                             monkeypatch):
+    """`_filed` stops the roll after a frame the library refused, and the roll
+    then ended "stopped after frame N, as asked" -- in roll.json and the log,
+    the operator's Stop word for word. And the failure was a log line only."""
+    real_save = library.save
+
+    def full_disk(image, meta, **kw):
+        if "refused-01" in str((kw.get("film") or FilmNotes()).frame):
+            raise OSError(28, "No space left on device")
+        return real_save(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", full_disk)
+    holder = {}
+
+    def after_the_failure(index):
+        # The next frame waits for the writer's answer, as a real frame's
+        # minutes of scanning would.
+        deadline = time.monotonic() + 5
+        while index and not holder["s"]._stop.is_set():
+            assert time.monotonic() < deadline, "the roll was never stopped"
+            time.sleep(0.01)
+
+    _, _, events = run(
+        Roll(frames=3, resolution=600, name="refused"), tmp_path,
+        scanner=FakeScanner(frames=3, on_yield=after_the_failure),
+        extra=lambda s, _scanner: holder.update(s=s))
+    stopped = _manifest_of(tmp_path, "refused")["stopped"]
+    # After frame 1 or 2, whichever the writer's answer beat.
+    assert re.match(r"stopped after frame [12]: picture 1 could not be filed",
+                    stopped), stopped
+    assert "No space left" in stopped and "as asked" not in stopped
+    unfiled = kinds(events, "unfiled")
+    # Frame 1 and its prescan, both refused; nothing else.
+    assert unfiled and {e.total for e in unfiled} == {1}
+    assert all("No space left" in e.text for e in unfiled)
+
+
+def _free(monkeypatch, free):
+    """Every disk reports ``free()`` bytes free."""
+    import collections
+    import shutil
+
+    usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda path: usage(10 ** 13, 0, free()))
+
+
+def test_a_roll_the_disk_cannot_hold_is_refused_before_anything_moves(
+        tmp_path, monkeypatch):
+    """Nothing asked how much room there was: a full disk showed itself as a
+    failed filing, after the seek, the calibration and the frame's scan."""
+    one = session.frame_bytes(600, True)
+    _free(monkeypatch, lambda: 3 * one)        # three frames need nine
+    _, scanner, events = run(Roll(frames=3, resolution=600, name="full"),
+                             tmp_path)
+    failed = kinds(events, "failed")
+    assert failed and "not starting the roll" in failed[0].text, events
+    assert "GB free" in failed[0].text
+    assert not [c for c in scanner.calls if c[0] == "roll"]
+    assert not (tmp_path / "rolls" / "full").exists()
+    assert library.entries(tmp_path) == []
+
+
+def test_a_roll_that_may_fill_the_disk_is_warned_about(tmp_path, monkeypatch):
+    one = session.frame_bytes(600, True)
+    # Room for the three frames (nine copies), not for twice that.
+    _free(monkeypatch, lambda: 12 * one)
+    _, _, events = run(Roll(frames=3, resolution=600, name="tight"),
+                       tmp_path)
+    assert any("may fill the disk" in e.text for e in kinds(events, "log"))
+    assert len(frame_entries(tmp_path)) == 3
+
+
+def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
+                                                          monkeypatch):
+    """The disk can fill while the roll runs, and an open-ended roll is
+    let start with room for its first frame only."""
+    one = session.frame_bytes(600, True)
+    room = {"free": 100 * one}
+    _free(monkeypatch, lambda: room["free"])
+
+    def fills(index):
+        if index == 0:
+            room["free"] = one                 # not three copies' worth
+
+    run(Roll(frames=3, resolution=600, name="filling"), tmp_path,
+        scanner=FakeScanner(frames=3, on_yield=fills))
+    stopped = _manifest_of(tmp_path, "filling")["stopped"]
+    assert stopped.startswith("stopped after frame 1: no room for the next "
+                              "frame"), stopped
+    assert len(frame_entries(tmp_path)) == 1
+
+
+def test_frame_bytes_is_claude_mds_figure_for_a_7200_dpi_rgbi_pass():
+    """570 MB of pixels, CLAUDE.md's figure, from the transport's window."""
+    assert session.frame_bytes(7200, True) == pytest.approx(570e6, rel=0.01)
+
+
 def test_a_frame_waiting_to_be_filed_is_not_yet_done(tmp_path):
     """The two threads, in either order: the record first and the filing
     after, or a small frame filed before its record was written."""
@@ -1176,6 +1280,45 @@ def test_a_manifest_is_replaced_whole_and_the_last_run_kept(tmp_path):
     assert json.loads(kept.read_text(encoding="utf-8")) == {"frames": [1, 2]}
 
 
+def test_a_kept_copy_cut_short_does_not_replace_the_last_one(tmp_path,
+                                                             monkeypatch):
+    """The `.bak` was copied in place: a full disk part-way left a truncated
+    file as the version `read_manifest` falls back on."""
+    import shutil
+
+    path = tmp_path / "roll.json"
+    kept = tmp_path / "roll.json.bak"
+    session.write_manifest(path, {"frames": [1]})
+    session.write_manifest(path, {"frames": [1, 2]}, keep_previous=True)
+
+    def cut_short(src, dst):
+        Path(dst).write_text('{"fra', encoding="utf-8")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shutil, "copyfile", cut_short)
+    session.write_manifest(path, {"frames": [1, 2, 3]}, keep_previous=True)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"frames": [1, 2, 3]}
+    assert json.loads(kept.read_text(encoding="utf-8")) == {"frames": [1]}
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".part")] == []
+
+
+def test_a_first_numbering_copy_cut_short_leaves_nothing_behind(tmp_path,
+                                                                monkeypatch):
+    import shutil
+
+    path = tmp_path / "roll.json"
+    path.write_text(json.dumps({"frames": [{"number": 1}]}), encoding="utf-8")
+
+    def cut_short(src, dst):
+        Path(dst).write_text('{"fra', encoding="utf-8")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shutil, "copyfile", cut_short)
+    with pytest.raises(OSError):
+        session.keep_first_numbering(path, {"frames": [{"number": 1}]})
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["roll.json"]
+
+
 def test_a_damaged_manifest_is_read_from_the_version_kept_beside_it(tmp_path):
     path = tmp_path / "survey.json"
     (tmp_path / "survey.json.bak").write_text('{"frames": [7]}',
@@ -1412,6 +1555,242 @@ def test_a_walk_names_the_prescan_a_correction_replaced(tmp_path):
     first = [f for f in survey["frames"] if f["number"] == 1][0]
     assert first["prescan_before"] == "prescan01-before.tif"
     assert (out / "prescan01-before.tif").exists()
+
+
+def test_a_walk_records_the_entry_each_prescan_was_filed_as(tmp_path):
+    """The record named only the file, so a walk reopened in a later session
+    had no way back to its references' entries, and the approvals made from
+    it named none."""
+    run(Roll(frames=2, dry_run=True, name="linked"), tmp_path,
+        scanner=CorrectedAndFailingScanner())
+    survey = json.loads((tmp_path / "rolls" / "linked" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    by_number = {f["number"]: f for f in survey["frames"]}
+    filed = _prescan_entries(tmp_path)
+    assert by_number[1]["prescan_entry"] == filed[(1, False)].name
+    assert by_number[1]["prescan_before_entry"] == filed[(1, True)].name
+    assert by_number[2]["prescan_entry"] == filed[(2, False)].name
+    # And read back as that entry, by the id against the library -- and, for
+    # a walk from before records named it, by the entries' own membership.
+    folder = tmp_path / "rolls" / "linked"
+    pairs = [(n, r) for n, r in by_number.items()]
+    assert session.walked_prescan_entries(folder, pairs, tmp_path) == {
+        1: filed[(1, False)], 2: filed[(2, False)]}
+    older = [(n, {k: v for k, v in r.items() if k != "prescan_entry"})
+             for n, r in pairs]
+    assert session.walked_prescan_entries(folder, older, tmp_path) == {
+        1: filed[(1, False)], 2: filed[(2, False)]}
+
+
+def test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file(
+        tmp_path):
+    """Until the writer has named the prescan, the file lacks it, and a walk
+    straight after into the same folder must carry the manifest on rather
+    than read the file (`ScanSession._roll`) -- or the name never lands."""
+    path = tmp_path / "survey.json"
+    manifest = session.RollManifest(path, {"frames": []})
+    record = {"number": 1}
+    told = manifest.prescan_told(record, tmp_path / "prescan01.tif")
+    session.queued(lambda **job: None, told)
+    manifest.record(record)
+    assert manifest.ahead_of_disk()
+    told(tmp_path / "entry-1", None, [tmp_path / "prescan01.tif"])
+    assert not manifest.ahead_of_disk()
+    on_disk = json.loads(path.read_text(encoding="utf-8"))["frames"][0]
+    assert on_disk["prescan"] == "prescan01.tif"
+    assert on_disk["prescan_entry"] == "entry-1"
+
+
+def _prescan_entry(root, name, folder, number, created, before=False):
+    """A library entry as a roll files a prescan: only what the join reads."""
+    (root / name).mkdir(parents=True)
+    (root / name / "scan.json").write_text(json.dumps({
+        "id": name, "created": created,
+        "tags": ["roll", "prescan"] + (["before"] if before else []),
+        "extra": {"roll_membership": session.roll_membership(
+            "walk", number, "prescan", folder)}}), encoding="utf-8")
+    return root / name
+
+
+def test_an_old_walk_is_joined_only_to_the_entries_it_filed(tmp_path):
+    """Taken newest first and unbounded, the join gave a walk reopened
+    beside a roll the roll's own verification prescans -- same folder, same
+    kind, same numbers, filed later -- and the next approval wrote one into
+    approved.json as the walk's reference. And a re-walk's frame the writer
+    never filed got the earlier walk's entry of that place."""
+    folder = tmp_path / "rolls" / "walk"
+    folder.mkdir(parents=True)
+    lib = tmp_path / "lib"
+    _prescan_entry(lib, "a-earlier-walk", folder, 2,
+                   "2026-09-20T09:00:00+00:00")
+    own = _prescan_entry(lib, "b-walk", folder, 1,
+                         "2026-09-20T10:00:05+00:00")
+    _prescan_entry(lib, "c-roll-1", folder, 1, "2026-09-20T11:00:00+00:00")
+    _prescan_entry(lib, "c-roll-2", folder, 2, "2026-09-20T11:00:30+00:00")
+    walk = {"started": "2026-09-20T10:00:00+00:00",
+            "finished": "2026-09-20T10:01:00+00:00",
+            "frames": [{"number": 1, "prescan": "prescan01.tif"},
+                       {"number": 2, "prescan": "prescan02.tif"}]}
+    roll = {"started": "2026-09-20T10:59:00+00:00"}
+    pairs = [(r["number"], r) for r in walk["frames"]]
+    assert session.walked_prescan_entries(folder, pairs, lib, walk=walk,
+                                          roll=roll) == {1: own}
+    # Without a roll.json beside it, the walk's own end bounds it.
+    assert session.walked_prescan_entries(folder, pairs, lib,
+                                          walk=walk) == {1: own}
+
+
+def test_a_walk_that_names_its_entries_is_never_joined_by_guess(tmp_path):
+    """A record naming an entry since deleted, or saying it filed none, got
+    another pass's of that frame; so did every frame of a walk made since
+    records named them, where one that names none was not filed."""
+    folder = tmp_path / "rolls" / "walk"
+    folder.mkdir(parents=True)
+    lib = tmp_path / "lib"
+    for number in (1, 2, 3):
+        _prescan_entry(lib, f"other-{number}", folder, number,
+                       "2026-09-20T10:00:10+00:00")
+    frames = [{"number": 1, "prescan_entry": "deleted"},
+              {"number": 2, "prescan_error": "the disk is full"},
+              {"number": 3, "prescan_entry": None}]
+    walk = {"started": "2026-09-20T10:00:00+00:00", "frames": frames}
+    pairs = [(r["number"], r) for r in frames]
+    assert session.walked_prescan_entries(folder, pairs, lib,
+                                          walk=walk) == {}
+    # A frame whose answer never came, in a walk whose others did.
+    walk = {"started": "2026-09-20T10:00:00+00:00",
+            "frames": [{"number": 1, "prescan_entry": "other-1"},
+                       {"number": 2}]}
+    pairs = [(r["number"], r) for r in walk["frames"]]
+    assert session.walked_prescan_entries(folder, pairs, lib, walk=walk) == {
+        1: lib / "other-1"}
+
+
+def test_a_prescan_answer_is_promised_only_once_queued(tmp_path):
+    """Promised as it was built, an answer whose `_file` raised before
+    queuing it kept the manifest ahead of its file for the session: the
+    window refused to move or delete that roll as still being filed."""
+    manifest = session.RollManifest(tmp_path / "survey.json", {"frames": []})
+    told = manifest.prescan_told({"number": 1}, tmp_path / "prescan01.tif")
+    assert not manifest.ahead_of_disk()
+
+    def refuses(**job):
+        raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        session.queued(refuses, told)
+    assert not manifest.ahead_of_disk()
+
+
+def test_a_walk_prescan_that_could_not_be_queued_leaves_nothing_owed(
+        tmp_path):
+    """The same through the session: `_file` raising before the writer had
+    the job left the walk's manifest waiting for an answer never coming."""
+    real = ScanSession._orientation_for
+
+    def fails(self, number, kind):
+        if kind == "prescan":
+            raise RuntimeError("could not arrange it")
+        return real(self, number, kind)
+
+    s, _, events = run(Roll(frames=1, dry_run=True, name="owed"), tmp_path,
+                       extra=lambda s, _: setattr(
+                           s, "_orientation_for",
+                           fails.__get__(s, ScanSession)))
+    assert kinds(events, "failed")
+    assert s._manifests
+    assert not any(m.ahead_of_disk() for m in s._manifests.values())
+
+
+def test_a_walk_not_carried_on_is_not_rewritten_by_the_last_ones_answers(
+        tmp_path):
+    """A plain walk into a folder replaces its manifest, and the writer's
+    late answers for the last walk's prescans still went to the old one,
+    which rewrote survey.json whole with that walk over this one's."""
+    folder = tmp_path / "rolls" / "again"
+    path = folder / "survey.json"
+    old_record = {"number": 1}
+    old = session.RollManifest(path, {"roll": "the last walk",
+                                      "frames": [old_record]})
+    told = old.prescan_told(old_record, folder / "prescan01.tif")
+    session.queued(lambda **job: None, told)
+
+    def live(s, _):
+        s._manifests[path.resolve()] = old
+    folder.mkdir(parents=True)
+    run(Roll(frames=1, dry_run=True, name="again"), tmp_path, extra=live)
+    told(tmp_path / "late-entry", None, [folder / "prescan01.tif"])
+    survey = json.loads(path.read_text(encoding="utf-8"))
+    assert survey["roll"] == "again"
+    assert "late-entry" not in json.dumps(survey)
+
+
+def test_a_walk_names_no_prescan_its_writer_did_not_write(tmp_path,
+                                                          monkeypatch):
+    """Named on the scanning thread as it was queued, the record pointed at a
+    file nothing had written -- or, re-walked, at the last walk's picture of
+    that place, which the sheet then showed against the new position."""
+    folder = tmp_path / "rolls" / "unwritten"
+    folder.mkdir(parents=True)
+    tiff.write(str(folder / "prescan01.tif"), np.zeros((3, 3, 3), np.uint8))
+    real = session.export.write
+
+    def refuses(path, image, **kw):
+        if Path(path).parent == folder:
+            raise OSError("the disk is full")
+        return real(path, image, **kw)
+
+    monkeypatch.setattr(session.export, "write", refuses)
+    run(Roll(frames=1, dry_run=True, name="unwritten"), tmp_path)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    record = survey["frames"][0]
+    assert "prescan" not in record, record
+    # Filed all the same, and said so.
+    assert (tmp_path / record["prescan_entry"] / "scan.json").exists()
+    assert session.walked_prescans(folder, survey) == []
+
+
+def test_a_prescan_the_scanner_published_no_meta_for_is_not_filed(tmp_path):
+    """A meta built from the job -- a resolution and a channel order -- is
+    what filed 26 prescans describing themselves wrongly, and it stayed as
+    the fallback for a pass that came with none."""
+
+    class Unpublished(FakeScanner):
+        def scan_roll(self, frames=None, dry_run=False, first_index=0, **kw):
+            yield RollFrame(index=first_index, position=self.pos, image=None,
+                            meta={}, prescan=picture(channels=3),
+                            registration={})
+
+    _, _, events = run(Roll(frames=1, dry_run=True, name="bare"), tmp_path,
+                       scanner=Unpublished())
+    assert library.entries(tmp_path) == []
+    assert any("published no record" in e.text for e in kinds(events, "log"))
+    # Still written where a walk's prescan goes, and named there.
+    folder = tmp_path / "rolls" / "bare"
+    assert (folder / "prescan01.tif").exists()
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert survey["frames"][0]["prescan"] == "prescan01.tif"
+    # Said to have none, so no reader joins it to another pass's entry.
+    assert survey["frames"][0]["prescan_entry"] is None
+
+
+def test_the_prescan_before_an_aim_is_never_filed_with_the_later_ones_meta(
+        tmp_path):
+    """It is another pass, which can have read the other way; filed with
+    the replacing prescan's meta, its entry would describe that pass."""
+
+    class NoBeforeMeta(FakeScanner):
+        def scan_roll(self, frames=None, dry_run=False, first_index=0, **kw):
+            yield RollFrame(index=first_index, position=self.pos, image=None,
+                            meta={}, prescan=picture(channels=3),
+                            registration={},
+                            prescan_meta=dict(_PRESCAN_META),
+                            prescan_before=picture(channels=3, seed=5))
+
+    run(Roll(frames=1, dry_run=True, name="unaimed"), tmp_path,
+        scanner=NoBeforeMeta())
+    assert [k for k in _prescan_entries(tmp_path)] == [(1, False)]
+    folder = tmp_path / "rolls" / "unaimed"
+    assert (folder / "prescan01-before.tif").exists()
 
 
 def test_only_the_chosen_frames_are_scanned(tmp_path):
@@ -2051,8 +2430,11 @@ def test_a_picture_left_unfiled_on_purpose_is_not_called_a_failure(tmp_path):
     s.submit(Scan(resolution=600))
     s.shutdown()
     s.join(timeout=10.0)
-    said = [e.text for e in s.poll() if e.kind == "log"]
+    events = s.poll()
+    said = [e.text for e in events if e.kind == "log"]
     assert not any("could not be filed" in t for t in said), said
+    # Nor reported as a failure any other way.
+    assert not [e for e in events if e.kind == "unfiled"]
 
 
 def test_a_late_failure_from_a_finished_roll_does_not_stop_the_next(tmp_path,
@@ -2118,15 +2500,16 @@ def test_a_frame_written_again_is_never_left_half_written(tmp_path,
         return writer
 
     one(good)
-    real = export.write
+    real = export.tiff.write
 
+    # Below export.write, which is where the writing beside now lives.
     def cut_short(target, image, **kw):
         Path(target).write_bytes(b"II*\x00 half a tiff")
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(export, "write", cut_short)
+    monkeypatch.setattr(export.tiff, "write", cut_short)
     writer = one(picture(seed=4))
-    monkeypatch.setattr(export, "write", real)
+    monkeypatch.setattr(export.tiff, "write", real)
     assert writer.errors, "the failure was not said"
     assert np.array_equal(tiff.read(path), good), "the good frame was lost"
     assert [p.name for p in path.parent.iterdir()] == ["frame01.tif"], (
@@ -2811,6 +3194,8 @@ def test_a_roll_from_frame_one_winds_back_to_it_first(tmp_path):
     assert scanner.moves[:9] == [("retreat", 1)] * 9
     assert scanner.rolls[0]["moves_before"] == 9, "wound back first"
     assert scanner.rolls[0]["first_index"] == 0
+    # By name, for the role of every pass only debug filing keeps.
+    assert scanner.rolls[0]["roll"] == "strip"
 
 
 @pytest.mark.parametrize("at", [0, 2])

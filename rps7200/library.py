@@ -40,6 +40,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import warnings
 import zipfile
 from dataclasses import asdict, dataclass, is_dataclass
@@ -496,9 +497,12 @@ def save(
     # caller then treated a filed frame as a failed one -- the roll stopped,
     # its delivered copies were never written, and the debug spool was kept
     # to be filed a second time by hand.
+    # Anything, not only OSError: whatever the summary trips on is a reason to
+    # say so, never to make a complete entry look like a failed one -- the
+    # caller would then keep the picture elsewhere, a second copy of it.
     try:
         reindex(root)
-    except OSError as exc:
+    except Exception as exc:                              # noqa: BLE001
         warnings.warn(f"{path.name} is filed, but {root / INDEX} could not be "
                       f"rewritten ({exc}); `tools/library.py reindex` "
                       f"rebuilds it", RuntimeWarning, stacklevel=2)
@@ -524,18 +528,26 @@ def compact(path: Path | str) -> bool:
     rewritten compressed with identical pixels. Each file is swapped in whole
     and the record last, so an interruption leaves a readable entry.
 
-    And one a second call finishes. `raw.bin` goes only after the record, so
-    an entry still holding it has not finished compacting; a TIFF swapped in
-    before the stop no longer matches the checksum the record still holds.
-    That is not damage and is not passed over as none: `scan.tif` is proved
-    against the decode of its bytes, and `prescan.tif` -- which has no bytes
-    of its own -- is accepted only where `scan.tif`, swapped before it, shows
-    the compaction got that far. Anything else stops here, left as it is.
+    And one a second call finishes. Before the first TIFF is swapped in, the
+    record is told what each new one hashes to (:data:`COMPACTING`), so a
+    TIFF that disagrees with its checksum and matches that note is this
+    compaction's own. An entry stopped by code from before the note has only
+    its raw bytes to show it: `raw.bin` goes only after the record, and there
+    `scan.tif` is proved against the decode of its bytes, and `prescan.tif`
+    -- which has no bytes of its own -- is accepted only where `scan.tif`,
+    swapped before it, shows the compaction got that far. Anything else stops
+    here, left as it is.
     """
     path = Path(path)
     plain = path / RAW_PLAIN
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-    if not plain.exists():
+    pending = record.get(COMPACTING) or {}
+    # An entry filed plain with no raw bytes at all -- the shape guard refused
+    # them, or the demo had none to give -- still has TIFFs to deflate. This
+    # returned before reaching them, and they stayed uncompressed for good.
+    # One whose TIFFs were swapped before a stop has nothing plain left to
+    # show, and only its record's `compacting` says it is not finished.
+    if not plain.exists() and not _uncompressed_tiffs(path) and not pending:
         return False
     # The TIFFs are rewritten below and given fresh checksums, so a TIFF
     # damaged since it was filed would have come out *verified*: a prescan,
@@ -548,44 +560,128 @@ def compact(path: Path | str) -> bool:
         said = ((record.get("image") or {}).get("sha256") if name == "scan.tif"
                 else (record.get("files") or {}).get(name))
         if not said or not (path / name).exists() \
-                or _sha256(path / name) == said:
+                or _sha256(path / name) in (said, pending.get(name)):
             continue
         if name == "scan.tif":
-            pixels = tiff.read(str(path / name))
-            decoded = decode_raw(path)
-            swapped = bool(decoded is not None
-                           and decoded.dtype == pixels.dtype
-                           and np.array_equal(decoded, pixels))
+            swapped = _holds_the_decode(path, name)
         if not swapped:
             raise OSError(f"{path.name}: {name} does not match its checksum; "
                           "left as it is")
-    raw = record.setdefault("raw", {})
-    temp = path / f".{RAW_FILE}.part"
-    digest = hashlib.sha256()
-    with open(plain, "rb") as src, gzip.open(temp, "wb", compresslevel=6) as fh:
-        while chunk := src.read(8 << 20):
-            digest.update(chunk)
-            fh.write(chunk)
-    if raw.get("sha256") and digest.hexdigest() != raw["sha256"]:
-        temp.unlink(missing_ok=True)
-        raise OSError(f"{path.name}: {RAW_PLAIN} does not match its checksum; "
-                      "left as it is")
-    _replace(temp, path / RAW_FILE)
-    raw["file"] = RAW_FILE
-    for name in ("scan.tif", "prescan.tif"):
-        if (path / name).exists():
-            pixels = tiff.read(str(path / name))
-            resolution = ((record.get("scan") or {}).get("resolution_dpi")
-                          if name == "scan.tif" else None) or None
-            _replace_tiff(path / name, pixels, resolution=resolution)
-            digest_now = _sha256(path / name)
-            if name == "scan.tif":
-                record.setdefault("image", {})["sha256"] = digest_now
-            else:
-                record.setdefault("files", {})[name] = digest_now
+    if plain.exists():
+        raw = record.setdefault("raw", {})
+        temp = path / f".{RAW_FILE}.part"
+        digest = hashlib.sha256()
+        # Removed on any failure: a full disk half-way through a 3600 dpi
+        # pass left a hundred megabytes of it behind.
+        try:
+            with open(plain, "rb") as src, \
+                    gzip.open(temp, "wb", compresslevel=6) as fh:
+                while chunk := src.read(8 << 20):
+                    digest.update(chunk)
+                    fh.write(chunk)
+            if raw.get("sha256") and digest.hexdigest() != raw["sha256"]:
+                raise OSError(f"{path.name}: {RAW_PLAIN} does not match its "
+                              "checksum; left as it is")
+            _replace(temp, path / RAW_FILE)
+        finally:
+            _discard(temp)
+        raw["file"] = RAW_FILE
+    # Every TIFF is written beside first, and the record told what each will
+    # hash to before any is swapped in. A stop between the swaps and the final
+    # record otherwise left TIFFs failing their checksums, and in an entry
+    # with no raw bytes nothing could prove them -- there is no decode -- and
+    # a second compact found nothing uncompressed and gave up: intact pixels
+    # reported damaged for good.
+    parts: dict[str, Path] = {}
+    try:
+        for name in ("scan.tif", "prescan.tif"):
+            if (path / name).exists():
+                pixels = tiff.read(str(path / name))
+                resolution = ((record.get("scan") or {}).get("resolution_dpi")
+                              if name == "scan.tif" else None) or None
+                parts[name] = path / f".{name}.part"
+                tiff.write(str(parts[name]), pixels, resolution=resolution)
+                _sync(parts[name])
+        if parts:
+            record[COMPACTING] = {name: _sha256(temp)
+                                  for name, temp in parts.items()}
+            _write_atomic(path / "scan.json",
+                          json.dumps(record, indent=2, default=_plain))
+        for name, temp in parts.items():
+            _replace(temp, path / name)
+    finally:
+        for temp in parts.values():
+            _discard(temp)
+    for name, digest_now in (record.pop(COMPACTING, None) or {}).items():
+        if name == "scan.tif":
+            record.setdefault("image", {})["sha256"] = digest_now
+        else:
+            record.setdefault("files", {})[name] = digest_now
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
-    plain.unlink()
+    plain.unlink(missing_ok=True)
     return True
+
+
+#: The record's note, written by :func:`compact` before it swaps a TIFF in, of
+#: the checksum each will have: a TIFF matching it is the compaction's own,
+#: stopped before the record caught up, and not damage.
+COMPACTING = "compacting"
+
+
+def _discard(temp: Path) -> None:
+    """Remove what a failed write left beside, without hiding why it failed.
+
+    Called from a `finally`: on Windows a scanner for viruses still holding
+    the file makes the unlink raise PermissionError too, which would replace
+    the error that says what actually went wrong. Left there, it is a `.part`
+    `verify` names.
+    """
+    try:
+        temp.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def wants_compacting(path: Path | str) -> bool:
+    """Whether :func:`compact` has anything to do in this entry.
+
+    Plain raw bytes, a compaction a stop left unfinished, or TIFFs still
+    uncompressed -- the same test `compact` makes. The last is an entry the
+    window filed plain without bytes and was killed before compacting, which
+    looking for `raw.bin` alone never found. An entry with no record is not
+    one: it is still being written, or was cut short, and `verify` names it.
+    """
+    path = Path(path)
+    try:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if (path / RAW_PLAIN).exists() or (
+            isinstance(record, dict) and record.get(COMPACTING)):
+        return True
+    return _uncompressed_tiffs(path)
+
+
+def _uncompressed_tiffs(path: Path) -> bool:
+    """Whether a stored TIFF here is plain and could be deflated.
+
+    Only asked where there are no plain raw bytes to say the entry was filed
+    plain. False without tifffile, which is the only writer that compresses.
+    """
+    if not tiff._has_tifffile():
+        return False
+    import tifffile                                      # noqa: PLC0415
+
+    for name in ("scan.tif", "prescan.tif"):
+        if not (path / name).exists():
+            continue
+        try:
+            with tifffile.TiffFile(path / name) as stored:
+                if int(stored.pages[0].compression) == 1:    # none
+                    return True
+        except (OSError, ValueError, IndexError):
+            continue
+    return False
 
 
 #: Marks an entry still being written. See :func:`save`.
@@ -633,7 +729,7 @@ def _write_atomic(path: Path, text: str) -> None:
             os.fsync(fh.fileno())
         _replace(temp, path)
     finally:
-        temp.unlink(missing_ok=True)
+        _discard(temp)
 
 
 #: How long `_replace` waits between attempts to rename over a file someone
@@ -710,8 +806,13 @@ def _replace_tiff(path: Path, image: np.ndarray, **kw: Any) -> None:
     under its ordinary name, which only a checksum could tell from a good one.
     """
     temp = path.with_name(f".{path.name}.part")
-    tiff.write(str(temp), image, **kw)
-    _replace(temp, path)
+    try:
+        tiff.write(str(temp), image, **kw)
+        _replace(temp, path)
+    finally:
+        # Nothing of a failed rewrite stays behind: `verify` reports a `.part`
+        # as a partial write, and nothing else would ever remove it.
+        _discard(temp)
 
 
 def entry_path(root: Path | str, record: dict[str, Any]) -> Path:
@@ -922,6 +1023,27 @@ def decode_raw(path: Path | str) -> np.ndarray | None:
     except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError,
             ScanReadError):
         return None
+
+
+def _holds_the_decode(path: Path, name: str) -> bool:
+    """Whether a stored TIFF holds exactly the decode of the entry's raw bytes.
+
+    The proof that a TIFF disagreeing with its checksum was swapped in by a
+    rewrite that stopped before the record, rather than damaged: `compact`
+    uses it to finish one, and `damage` to tell one from damage.
+    """
+    # Anything, not only OSError and ValueError: it is only ever asked of a
+    # file already failing its checksum, and a compressed TIFF cut short
+    # raises zlib.error from the read. That escaped `damage`, which `verify`
+    # does not guard, and `make verify` died with a traceback on the very
+    # damage it exists to name. A file that will not read is not the decode.
+    try:
+        pixels = tiff.read(str(path / name))
+        decoded = decode_raw(path)
+        return bool(decoded is not None and decoded.dtype == pixels.dtype
+                    and np.array_equal(decoded, pixels))
+    except Exception:                                     # noqa: BLE001
+        return False
 
 
 #: What a :func:`reconstruct` verdict is, as :attr:`Verdict.kind`.
@@ -1380,6 +1502,12 @@ def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:
             record = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        # Valid JSON is not yet a record. A list or a string here raised on
+        # the line below, and took with it every caller: `reindex`, `verify`,
+        # and so every later `save`, which then reported a filed frame as a
+        # failed one. `verify` names it.
+        if not isinstance(record, dict):
+            continue
         # Which directory it came from, for `entry_path`. Never written back.
         record["_dir"] = candidate.parent.name
         out.append(record)
@@ -1428,13 +1556,23 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             problems.append(f"{folder.name}: has no scan.json, so no check sees it")
         else:
             try:
-                json.loads((folder / "scan.json").read_text(encoding="utf-8"))
+                record = json.loads(
+                    (folder / "scan.json").read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 problems.append(f"{folder.name}: scan.json cannot be read ({exc})")
+            else:
+                if not isinstance(record, dict):
+                    problems.append(f"{folder.name}: scan.json is not a record "
+                                    f"(a JSON {type(record).__name__})")
     archives: dict[str, int] = {}
     for record in entries(root):
         path = entry_path(root, record)
-        if str(record.get("id")) != path.name:
+        # Compared as the same text, not the same code points: HFS+ hands a
+        # name back decomposed where the record keeps it as typed, so every
+        # entry of a roll called "Südtirol" on such a disk -- or copied off
+        # one -- recorded itself as someone else.
+        if (unicodedata.normalize("NFC", str(record.get("id")))
+                != unicodedata.normalize("NFC", path.name)):
             problems.append(f"{path.name}: records itself as {record.get('id')}")
         problems += [f"{path.name}: {p}" for p in damage(path, record)]
         named = ((record.get("extra") or {}).get("shading_origin") or {}).get("archive")
@@ -1514,8 +1652,10 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
     scan = path / str(image.get("file", "scan.tif"))
     if not scan.exists():
         return [f"{scan.name} is missing"]
+    stopped = None
     if image.get("sha256") and _sha256(scan) != image["sha256"]:
-        found.append(f"{scan.name} does not match its checksum")
+        stopped = _stopped_rewrite(path, record, scan.name)
+        found.append(stopped or f"{scan.name} does not match its checksum")
     cal = record.get("calibration") or {}
     named = {cal.get("shading"), cal.get("ccd_mask"),
              (record.get("prescan") or {}).get("file")}
@@ -1527,7 +1667,15 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
         if not (path / name).exists():
             found.append(f"{name} is missing")
         elif name in files and _sha256(path / name) != files[name]:
-            found.append(f"{name} does not match its checksum")
+            # The prescan has no bytes of its own to prove it by. `compact`
+            # swaps it after scan.tif, so it is let through only where
+            # scan.tif has shown that compaction got that far -- or where it
+            # is what the record says compact was about to swap in.
+            if _compacted_to(path, record, name):
+                continue
+            if not (stopped and name == "prescan.tif"
+                    and (path / RAW_PLAIN).exists()):
+                found.append(f"{name} does not match its checksum")
     raw = record.get("raw") or {}
     if raw.get("file"):
         if not (path / raw["file"]).exists():
@@ -1543,6 +1691,47 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
     for part in sorted(path.glob(".*.part")):
         found.append(f"{part.name} is a partial write left behind")
     return found
+
+
+#: What `tools/library.py migrate-raw --write` keeps of the scan.tif it
+#: replaces -- named here because `damage` has to recognise a run of it that
+#: stopped part way.
+MIGRATE_KEPT = "scan.before-migrate-raw.tif"
+
+
+def _stopped_rewrite(path: Path, record: dict[str, Any], name: str) -> str | None:
+    """Why `name` may disagree with its checksum and still be sound, or None.
+
+    `compact` and `migrate-raw` both swap a TIFF in before they write the
+    record that holds its new checksum, so a kill between the two left an
+    entry whose pixels were exact and which `verify` called damaged -- a false
+    alarm in the one check that exists to find real damage, and one that only
+    a decode could tell from the real thing. That decode is made here, and
+    only where the entry still shows the rewrite unfinished: `raw.bin` beside
+    the record, which `compact` removes last, or the file `migrate-raw` keeps
+    with the record not yet naming it. The state is still reported -- it is
+    not finished -- but as what it is, with the command that finishes it.
+    """
+    if _compacted_to(path, record, name) or (
+            (path / RAW_PLAIN).exists() and _holds_the_decode(path, name)):
+        return ("compaction stopped part way; `tools/library.py compact "
+                "--write` finishes it")
+    if ((path / MIGRATE_KEPT).exists()
+            and MIGRATE_KEPT not in (record.get("files") or {})
+            and _holds_the_decode(path, name)):
+        return ("migrate-raw stopped part way; `tools/library.py migrate-raw "
+                "--write` finishes it")
+    return None
+
+
+def _compacted_to(path: Path, record: dict[str, Any], name: str) -> bool:
+    """Whether `name` is the TIFF `compact` noted it was about to swap in.
+
+    The note is a checksum taken of the file written beside, so a match is
+    that very file; an entry with no raw bytes has no other proof.
+    """
+    said = (record.get(COMPACTING) or {}).get(name)
+    return bool(said) and (path / name).exists() and _sha256(path / name) == said
 
 
 # -- the calibration behind an entry's reference -------------------------------

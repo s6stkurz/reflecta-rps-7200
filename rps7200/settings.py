@@ -130,9 +130,9 @@ def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None
     are made, not only when it closes.
     """
     target = path(where)
+    temporary = target.with_name(target.name + ".part")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(target.name + ".part")
         temporary.write_text(json.dumps(values, indent=2, sort_keys=True),
                              encoding="utf-8")
         # The manifests' waits, from their one home.
@@ -147,5 +147,11 @@ def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None
                     raise
                 time.sleep(wait)
     except (OSError, TypeError, ValueError):
+        # Nothing half-written left beside the settings: a full disk or a
+        # replace refused for good left the `.part` there for ever.
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
     return None

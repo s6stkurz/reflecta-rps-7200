@@ -14,6 +14,8 @@ where this says it is, a run that measures "no difference" measures nothing.
 See `docs/fast-infrared-plan.md`.
 """
 
+import pytest
+
 from conftest import FakeTransport
 from rps7200 import library
 from rps7200.direct import DirectScanner
@@ -240,40 +242,28 @@ def test_asking_for_the_untied_pass_is_still_honoured():
     assert not quality & QUALITY_FAST_INFRARED
 
 
-def test_the_bracket_can_be_told_which_infrared_pass_to_take():
-    """`scan_bracket` had no `fast_infrared` parameter at all, so
-    `tools/scan.py` parsed `--no-fast-ir`, set it, and then did not pass it on
-    this path -- the bracket ran tied whatever was asked for, silently.
+def test_a_bracket_with_infrared_is_refused_before_anything_is_sent():
+    """`scan_bracket(infrared=True)` took its brightest pass as RGBI and the
+    rest as RGB, and nothing can merge that: `merge_bracket` refuses frames of
+    different shapes. `tools/scan.py` refused `--bracket --ir`; the driver
+    accepted it and spent the passes (P29(b)).
 
-    It matters more than a dropped flag usually would: below 1800 dpi the tied
-    pass's quality is waived rather than measured, which makes the flag the
-    escape hatch from a waiver.
+    `fast_infrared` stays a parameter -- `tools/scan.py` passes its
+    `--no-fast-ir` through, and dropping it would refuse every bracket --
+    but it has no infrared pass left to reach.
     """
     import inspect
 
     parameter = inspect.signature(DirectScanner.scan_bracket).parameters
-    assert "fast_infrared" in parameter, "the flag cannot reach the bracket"
-    assert parameter["fast_infrared"].default is True
+    assert "fast_infrared" in parameter
 
-    seen = []
-
-    class Stop(Exception):
-        pass
-
-    s = DirectScanner(transport=metered_transport())
+    transport = metered_transport()
+    s = DirectScanner(transport=transport)
     s.verbose = False
-
-    def spy(**kw):
-        seen.append(kw.get("fast_infrared"))
-        raise Stop
-
-    s.scan = spy
-    for asked in (True, False):
-        seen.clear()
-        try:
-            s.scan_bracket(passes=3, resolution=600, infrared=True,
-                           auto_exposure=False, exposure_scale=[1.0, 1.0, 1.0],
-                           fast_infrared=asked)
-        except Stop:
-            pass
-        assert seen == [asked], f"asked {asked}, forwarded {seen}"
+    scanned = []
+    s.scan = lambda **kw: scanned.append(kw)
+    metered = []
+    s.auto_exposure = lambda **kw: metered.append(kw)
+    with pytest.raises(ValueError, match="a bracket is RGB only"):
+        s.scan_bracket(passes=3, resolution=600, infrared=True)
+    assert scanned == [] and metered == []

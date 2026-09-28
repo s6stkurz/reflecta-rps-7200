@@ -17,7 +17,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+import pytest
+
+REPO =Path(__file__).resolve().parent.parent
 TOOL = REPO / "tools" / "library.py"
 
 
@@ -145,6 +147,32 @@ def test_corrected_pixels_filed_as_raw_are_rewritten_and_the_old_file_kept(tmp_p
     kept = path / "scan.before-migrate-raw.tif"
     assert kept.exists(), "the only corrected rendition was destroyed"
     assert np.array_equal(tiff.read(str(kept)), stored)
+
+
+def test_a_migrate_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
+    """A full disk part way through left `.scan.tif.part` in the entry, and
+    verify reported it as a partial write on every run after."""
+    from conftest import load_tool
+
+    from rps7200 import library, tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, _decode, stored = _filed(
+        root, lambda d, r, m: apply_shading(d, r, m)[0])
+    tool = load_tool("library")
+
+    def full(target, *a, **k):
+        Path(target).write_bytes(b"half a tiff")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tiff, "write", full)
+    monkeypatch.setattr(sys, "argv", ["library.py", "migrate-raw", "--write",
+                                      "--root", str(root)])
+    with pytest.raises(OSError, match="No space left"):
+        tool.main()
+    assert not list(path.glob(".*.part"))
+    assert not any("partial write" in p for p in library.verify(root))
 
 
 def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
@@ -287,6 +315,38 @@ def test_a_rewrite_stopped_before_its_record_is_finished_not_undone(tmp_path):
     assert record["image"]["corrections_applied"] == []
 
 
+def test_a_mislabelled_rewrite_stopped_before_its_record_is_named_and_finished(
+        tmp_path):
+    """The unlabelled kind stopped at the same point: raw pixels under a
+    record that says raw and checksums the corrected file. verify called its
+    scan.tif damaged, and migrate-raw took it for one already done."""
+    import numpy as np
+
+    from rps7200 import library, tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, decode, stored = _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    # What a legacy entry's record holds: the checksum of the file it filed.
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["image"]["sha256"] = library._sha256(path / "scan.tif")
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    # the state a kill between the swap and the record leaves
+    tiff.write(str(path / library.MIGRATE_KEPT), stored, resolution=300)
+    tiff.write(str(path / "scan.tif"), decode, resolution=300)
+
+    problems = library.verify(root)
+    assert not any("checksum" in p for p in problems), problems
+    assert any("migrate-raw stopped part way" in p for p in problems)
+
+    done = _migrate(root)
+    assert done.returncode == 0, done.stdout
+    assert "earlier run" in done.stdout
+    assert np.array_equal(tiff.read(str(path / library.MIGRATE_KEPT)), stored)
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), decode)
+    assert library.verify(root) == []
+
+
 def test_a_kept_file_holding_another_picture_is_never_overwritten(tmp_path):
     import numpy as np
 
@@ -324,6 +384,30 @@ def test_compact_finishes_what_a_killed_window_left_plain(tmp_path):
     assert not (path / library.RAW_PLAIN).exists()
     assert (path / library.RAW_FILE).exists()
     assert [p for p in library.verify(root) if "never be corrected" not in p] == []
+
+
+def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path):
+    """The tool chose entries by `raw.bin` alone, so one the window filed
+    plain without bytes and was killed before compacting was never offered
+    to the compact that now deflates it."""
+    import numpy as np
+
+    from rps7200 import library, tiff
+
+    if not tiff._has_tifffile():
+        pytest.skip("only tifffile compresses; there is nothing to deflate")
+    root = tmp_path / "library"
+    path = library.save(np.full((8, 16, 3), 900, np.uint16),
+                        {"resolution_dpi": 300, "channels": 3},
+                        root=root, compress=False)
+    assert library._uncompressed_tiffs(path)
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"compacted: {path.name}" in done.stdout
+    assert not library._uncompressed_tiffs(path)
+    assert not library.wants_compacting(path)
 
 
 def test_migrate_direction_carries_on_past_bytes_it_cannot_decode(tmp_path):

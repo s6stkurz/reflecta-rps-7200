@@ -388,6 +388,15 @@ class DeviceSuspect(RuntimeError):
     """
 
 
+class StoppedBeforePass(Exception):
+    """A pass was asked to stop, and stopped before it started.
+
+    Raised by `DirectScanner.scan` given ``should_stop`` when that says so
+    between metering and the pass: the probes are done, and nothing of the
+    pass itself has been sent, so stopping here abandons nothing.
+    """
+
+
 class EndOfData(ScanReadError):
     """The scanner has no more scan lines to give.
 

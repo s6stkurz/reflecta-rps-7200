@@ -28,10 +28,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import export, library
+from rps7200.awake import KeepAwake
 from rps7200.bracket import sensor_rail
 from rps7200.console import (DeferredInterrupt, film_unconfirmed,
                              use_utf8_stdout)
-from rps7200.direct import DirectScanner, supports_infrared
+from rps7200.direct import DirectScanner, StoppedBeforePass, supports_infrared
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
@@ -305,7 +306,9 @@ def main() -> int:
     #: The scanner, once opened, for `debug_settle` after the filing below.
     scanner: DirectScanner | None = None
     try:
-        with interrupt:
+        # And the host out of idle sleep until the device has closed: a
+        # machine that sleeps mid-pass abandons the read (`awake`).
+        with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)):
             device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
             with device as s:
                 scanner = s
@@ -427,6 +430,7 @@ def main() -> int:
                         shading=not args.no_shading,
                         fast_infrared=args.fast_ir,
                         on_pass=on_pass,
+                        should_stop=interrupt.requested,
                     )
                     image, meta = bracket[0][-1], bracket[2][-1]
                 else:
@@ -441,6 +445,10 @@ def main() -> int:
                         shading=not args.no_shading,
                         keep_raw=args.library is not None,
                         fast_infrared=args.fast_ir,
+                        # Asked again after metering: `scan_unless_stopped`
+                        # asks only before, and a Ctrl-C during the probes
+                        # otherwise still cost the whole pass.
+                        should_stop=interrupt.requested,
                     )
                     hold(image, meta, s.capture_record())
     except BaseException as exc:                          # noqa: BLE001
@@ -517,7 +525,8 @@ def main() -> int:
         for e in entries:
             print(f"filed before stopping: {e}")
         return 130 if isinstance(trouble, (KeyboardInterrupt,
-                                           _StoppedBetweenPasses)) else 1
+                                           _StoppedBetweenPasses,
+                                           StoppedBeforePass)) else 1
 
     if bracket is not None:
         from rps7200.bracket import merge_bracket

@@ -933,6 +933,33 @@ def test_ctrl_c_through_the_calibration_scans_nothing(tmp_path, monkeypatch):
         assert not (tmp_path / "out.tif").exists()
 
 
+def test_ctrl_c_during_metering_is_asked_again_before_the_pass(tmp_path,
+                                                              monkeypatch):
+    """`scan_unless_stopped` asks before `scan` is called, and `scan` meters
+    and then starts the pass with nothing in between -- so a Ctrl-C pressed
+    during the probes still cost the whole pass. The tool hands `scan` and
+    `scan_bracket` the question to ask after metering, and a stop there
+    exits as a Ctrl-C does."""
+    from rps7200 import console
+    from rps7200.direct import StoppedBeforePass
+
+    for argv in ((), ("--bracket", "3")):
+        created, code = run_correcting(tmp_path, monkeypatch, *argv)
+        assert code == 0, argv
+        asked = [kw.get("should_stop") for kw in created[-1].kwargs]
+        assert asked and all(
+            getattr(a, "__func__", None) is console.DeferredInterrupt.requested
+            for a in asked), (argv, asked)
+
+    class StopsAfterMetering(FakeCorrectingScanner):
+        def scan(self, **kw):
+            raise StoppedBeforePass("stopped before the pass, after metering")
+
+    created, code = run_correcting(tmp_path / "stopped", monkeypatch,
+                                   scanner=StopsAfterMetering)
+    assert code == 130
+
+
 def test_a_pass_that_cannot_be_filed_does_not_cost_the_rest(tmp_path,
                                                             monkeypatch):
     """Filing ran with no per-pass handling: one save refused by the disk

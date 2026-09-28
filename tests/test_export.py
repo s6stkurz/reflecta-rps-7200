@@ -242,3 +242,76 @@ def test_without_pillow_the_scan_is_written_as_a_tiff_instead(tmp_path, monkeypa
         "the TIFF it fell back to carries the plane itself; a DNG as well "
         "would be a second copy of a file nobody asked for"
     )
+
+
+# -- written whole ----------------------------------------------------------
+
+
+def _cut_short(target, *args, **kwargs):
+    """A write that gets part way and stops, as a full disk or a kill does."""
+    with open(target, "wb") as fh:
+        fh.write(b"half a file")
+    raise OSError(28, "No space left on device")
+
+
+def test_a_jpeg_and_its_dng_written_again_are_never_left_half_written(
+        tmp_path, monkeypatch):
+    """The window's Save As, Save all and Export call this directly, and a
+    JPEG and its DNG were written in place: a failure part-way left a
+    truncated file under the name a good one had, and the retry found the
+    name taken and wrote the good copy to `-2`."""
+    Image = pytest.importorskip("PIL.Image")
+
+    out = tmp_path / "frame.jpg"
+    export.write(out, picture(channels=4))
+    jpeg, dng = out.read_bytes(), (tmp_path / "frame.dng").read_bytes()
+
+    with monkeypatch.context() as failing:
+        failing.setattr(Image.Image, "save",
+                        lambda self, target, **kw: _cut_short(target))
+        with pytest.raises(OSError):
+            export.write(out, picture(channels=4, height=20))
+    assert out.read_bytes() == jpeg, "the good JPEG was lost"
+
+    with monkeypatch.context() as failing:
+        failing.setattr(export.dng, "write", _cut_short)
+        note = export.write(out, picture(channels=4, height=20))
+    assert "could not be written" in note
+    assert (tmp_path / "frame.dng").read_bytes() == dng, "the good DNG was lost"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["frame.dng",
+                                                          "frame.jpg"]
+
+
+def test_a_tiff_written_again_is_never_left_half_written(tmp_path, monkeypatch):
+    out = tmp_path / "frame.tif"
+    export.write(out, picture())
+    before = out.read_bytes()
+    monkeypatch.setattr(export.tiff, "write", _cut_short)
+    with pytest.raises(OSError):
+        export.write(out, picture(height=20))
+    assert out.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["frame.tif"]
+
+
+def test_a_failed_write_is_reported_not_the_temporary_left_behind(
+        tmp_path, monkeypatch):
+    """On Windows the hand holding the file through a refused rename holds
+    it for the cleanup too, and the unlink's PermissionError replaced the
+    failure: Save As reported the temporary, not the write."""
+    from pathlib import Path
+
+    monkeypatch.setattr(export.tiff, "write", _cut_short)
+
+    def held(self, *a, **k):
+        raise PermissionError(13, "held by another process")
+
+    monkeypatch.setattr(Path, "unlink", held)
+    with pytest.raises(OSError, match="No space left"):
+        export.write(tmp_path / "frame.tif", picture())
+
+
+def test_the_dng_is_named_from_the_picture_not_its_temporary_name(tmp_path):
+    pytest.importorskip("PIL")
+    export.write(tmp_path / "frame.jpg", picture(channels=4))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["frame.dng",
+                                                          "frame.jpg"]

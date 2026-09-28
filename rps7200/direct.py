@@ -90,6 +90,7 @@ from .protocol import (
     MM_PER_INCH,
     MM_PER_UNIT,
     say_units,
+    units,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
@@ -132,6 +133,7 @@ from .protocol import (
     ScanReadError,
     ShadingUnavailable,
     Sense,
+    StoppedBeforePass,
     Settings,
     State,
     _cmd,
@@ -233,6 +235,7 @@ __all__ = [
     "ScanReadError",
     "ShadingUnavailable",
     "Sense",
+    "StoppedBeforePass",
     "Settings",
     "ShadingReference",
     "State",
@@ -744,6 +747,11 @@ class DirectScanner:
     #: The library tag a debug-filed pass gets for its ``pass_role``. The
     #: hold loop takes an aim's verification passes too.
     _ROLE_TAGS = {"metering probe": "probe", "verification prescan": "hold"}
+    #: The sub-frame moves sent since the last pass, in the transport's own
+    #: terms (`move_record`), for the next pass's meta as ``moves_before``.
+    #: Consumed by `scan`, so each move is recorded with the one pass that
+    #: first saw where it left the film.
+    _moves_since_pass: list[dict[str, Any]] | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
     #: resolutions; this is the conservative end, which the estimates use.
@@ -1007,6 +1015,15 @@ class DirectScanner:
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime(Path(path).stat().st_mtime)),
             "loaded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
+        # And the calibration it was reduced from, where `save_shading` left
+        # word of one: the next calibration overwrites the cache, so a path to
+        # it names nothing a month later, and `verify` checks only the
+        # archives an entry names. Trusted only while it describes these
+        # very bytes -- a sidecar left beside some other file names the
+        # wrong calibration, which is worse than naming none.
+        link = self._shading_link(Path(path))
+        if link is not None:
+            self._shading_origin.update(link)
         self._log(
             f"loaded shading from {path}: {self._shading.pixels_per_line} columns, "
             f"channels {self._shading.channels}"
@@ -1024,8 +1041,52 @@ class DirectScanner:
         temp = path.with_name(f".{path.stem}.part.npz")
         # Uncompressed: `ensure_shading` writes it with the device open.
         self._shading.save(temp, compress=False)
-        os.replace(temp, path)
+        from .library import _replace, _write_atomic
+
+        # The old word on where the cache came from goes before the cache it
+        # describes does: stopped between the two, the cache names no
+        # calibration rather than the one it has just stopped being.
+        sidecar = self._shading_sidecar(path)
+        sidecar.unlink(missing_ok=True)
+        _replace(temp, path)
+        origin = self._shading_origin or {}
+        if origin.get("archive"):
+            import hashlib
+            try:
+                _write_atomic(sidecar, json.dumps({
+                    "archive": origin["archive"],
+                    "archive_sha256": origin.get("archive_sha256"),
+                    "reference_sha256": hashlib.sha256(
+                        path.read_bytes()).hexdigest(),
+                }, indent=2))
+            except OSError as exc:
+                # Costs the link, not the cache: `library.calibration_of`
+                # still finds the archive by content.
+                self._log(f"could not say beside {path} which calibration it "
+                          f"came from ({exc})")
         return path
+
+    @staticmethod
+    def _shading_sidecar(path: Path) -> Path:
+        """Where `save_shading` says which archived calibration a cache is."""
+        return path.with_name(path.name + ".json")
+
+    def _shading_link(self, path: Path) -> dict[str, Any] | None:
+        """The archive a cached reference names, if it names one for these
+        bytes; None otherwise, and never raises -- a reference that loaded is
+        in force whatever its sidecar says."""
+        import hashlib
+        try:
+            link = json.loads(
+                self._shading_sidecar(path).read_text(encoding="utf-8"))
+            if (not isinstance(link, dict) or not link.get("archive")
+                    or link.get("reference_sha256")
+                    != hashlib.sha256(path.read_bytes()).hexdigest()):
+                return None
+        except (OSError, ValueError):
+            return None
+        return {"archive": str(link["archive"]),
+                "archive_sha256": link.get("archive_sha256")}
 
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:
@@ -1192,7 +1253,11 @@ class DirectScanner:
         archive = None
         try:
             archive = self.archive_calibration(result, path.parent)
-        except OSError as exc:
+        except Exception as exc:                      # noqa: BLE001
+            # Anything, not only a disk: a record that would not serialise
+            # raised past this and threw away a successful 3-4 minute
+            # calibration, neither cached nor put in force. The bytes are the
+            # loss; the reference is still good.
             self._log(f"could not keep the calibration's bytes ({exc})")
         if result["reference"] is None:
             # Kept, and said, but neither cached nor put in force: see
@@ -1211,7 +1276,13 @@ class DirectScanner:
                 + (f"; its bytes are in {archive}." if archive is not None
                    else "."))
         if archive is not None and self._shading_origin is not None:
+            import hashlib
             self._shading_origin["archive"] = str(archive)
+            # Which bytes, not only where: `save_shading` passes both on, so
+            # a pass corrected by this reference reloaded another day still
+            # names the lines it was reduced from.
+            self._shading_origin["archive_sha256"] = hashlib.sha256(
+                result["data"]).hexdigest()
         # A cache that cannot be written costs the cache, not the calibration:
         # the reference is in hand, and discarding a successful 3-4 minute
         # calibration over a full disk left every scan refused.
@@ -1492,6 +1563,16 @@ class DirectScanner:
 
     def _debug_spool_dir(self) -> Path:
         """This session's spool, made on first use beside the library."""
+        if self._debug_spool is not None and not self._debug_spool.is_dir():
+            # Gone under a session that is still open -- a temporary-file
+            # cleaner, where the library could not be written, or a hand.
+            # Every pass after was refused at np.save, one log line each, and
+            # the session's unfiled passes went with it. Made again, and said.
+            self._log(f"debug: the spool {self._debug_spool} has gone; "
+                      "passes spooled there before are lost, and a new one "
+                      "is made for the rest of this session")
+            self._debug_spool = None
+            self._debug_reference_saved = None
         if self._debug_spool is None:
             parent = self._debug_root() / self.DEBUG_SPOOL_DIR
             try:
@@ -1598,8 +1679,10 @@ class DirectScanner:
                       inquiry: Any = None) -> Path:
         """File one spooled pass in the library at ``root``. Returns the entry.
 
-        Its pixels are mapped, not loaded -- tiff.write walks them once, so a
-        570 MB frame need not be resident -- and the mapping is let go before
+        Its pixels are mapped, not loaded -- tifffile's writer walks them a
+        strip at a time, so a 570 MB frame need not be resident; the built-in
+        writer, without tifffile, copies the whole of it into one `bytes` and
+        so does not keep this promise -- and the mapping is let go before
         this returns. POSIX lets a file be unlinked while it is mapped and
         keeps the inode until the mapping goes; Windows refuses outright, with
         WinError 32. That refusal was swallowed, so on Windows nothing was
@@ -1691,6 +1774,7 @@ class DirectScanner:
         root = self._debug_root()
         stuck = 0
         failed = 0
+        lost = 0
         for n, item in enumerate(pending, 1):
             filed = False
             if item.get("claimed"):
@@ -1699,6 +1783,30 @@ class DirectScanner:
                 # twice is a nuisance where one filed nowhere is a loss.
                 self._log(f"debug: scan {n}/{len(pending)} was claimed and "
                           "never filed by its caller; filing it here")
+            # Its files, before the library is asked: a spool whose files
+            # were removed under it was reported "kept in" a folder that did
+            # not hold them, and a pass whose raw bytes alone had gone left
+            # an INCOMPLETE entry around an empty raw.bin.gz.
+            spooled = [Path(p) for p in (item.get("image_path"),
+                                         item.get("raw_path"))
+                       if p is not None]
+            gone = [str(p) for p in spooled if not p.exists()]
+            if gone:
+                left = [str(p) for p in spooled if p.exists()]
+                self._log(f"debug: scan {n}/{len(pending)} cannot be filed: "
+                          f"its spooled {', '.join(gone)} was deleted before "
+                          "it could be"
+                          + (f"; {', '.join(left)} is kept" if left else ""))
+                # What is left of it stays, as a failure's does. With nothing
+                # left it is lost, not failed: counted as failed, a spool
+                # made again after the first was deleted was reported as
+                # holding a pass it never saw, and kept on disk, empty, for
+                # the sake of it.
+                if left:
+                    failed += 1
+                else:
+                    lost += 1
+                continue
             try:
                 entry = self._file_spooled(item, root, self._inquiry)
                 self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
@@ -1724,6 +1832,9 @@ class DirectScanner:
             # leak above run for a whole platform without anyone noticing.
             self._log(f"debug: {stuck} spooled file(s) could not be removed; "
                       f"{self._debug_spool} is still on disk")
+        if lost:
+            self._log(f"debug: {lost} scan(s) were deleted from the spool "
+                      "before they could be filed, and are lost")
         if failed:
             # Kept, all of it: the directory is the only copy of what failed.
             self._log(f"debug: {failed} scan(s) could not be filed and remain "
@@ -2206,6 +2317,7 @@ class DirectScanner:
             before = self.position()
         if before is None and self.last_state is not None:
             before = self.last_state.position
+        self._moves_left_behind()
         self.slide(action, param=0x01, value=0x01)
 
         deadline = time.monotonic() + timeout
@@ -3254,8 +3366,12 @@ class DirectScanner:
         infrared_blue_headroom: float | None = None,
         max_rounds: int | None = None,
         shading: bool = True,
+        role: dict[str, Any] | None = None,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
+
+        ``role`` is added to each probe's ``pass_role``: the roll and frame
+        it metered for, where a roll does the metering.
 
         Aims to put ``percentile`` of each channel at ``target`` of full scale
         -- high enough to use the range, with headroom so highlights do not
@@ -3351,11 +3467,15 @@ class DirectScanner:
         probes: list[dict[str, Any]] = []
         #: Where the film is, found on the first probe while it is still dark.
         region: tuple[slice, slice] | None = None
+        #: The same, as a record: rows and columns of the probe, and the
+        #: probe's size, so a pass at another resolution can be read over it.
+        region_record: dict[str, list[int]] | None = None
 
         for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
             asked = list(scales)
-            self._pass_role = {"kind": "metering probe", "round": round_no}
+            self._pass_role = dict(role or {}, kind="metering probe",
+                                   round=round_no)
             image, _ = self.scan(
                 resolution=resolution,
                 infrared=False,
@@ -3387,6 +3507,12 @@ class DirectScanner:
             # working exactly when it mattered.
             if region is None:
                 region = metering_slice(image)
+                rows, cols = image.shape[:2]
+                region_record = {
+                    "rows": list(region[0].indices(rows)[:2]),
+                    "cols": list(region[1].indices(cols)[:2]),
+                    "of": [int(rows), int(cols)],
+                }
             crop = image[region]
             levels = [
                 float(np.percentile(crop[..., c], percentile)) / full
@@ -3511,6 +3637,11 @@ class DirectScanner:
             "rounds": probes,
             "scales": [round(v, 4) for v in scales],
             "limited": list(limited),
+            # Where every round was read. Detected once, on the first probe
+            # (see above), and otherwise lost: a caller that reads the passes
+            # it meters had to detect it again on each, and could judge two
+            # rungs of one ladder over different pixels.
+            "region": region_record,
         }
 
         # Exposure is a 16-bit timer count, and past full scale the firmware
@@ -3620,6 +3751,7 @@ class DirectScanner:
         fast_infrared: bool = True,
         on_pass: Callable[[int, np.ndarray, dict[str, Any], dict[str, Any]], None]
         | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> tuple[list[np.ndarray], list[float], list[dict[str, Any]]]:
         """Scan one frame several times at different exposures.
 
@@ -3628,23 +3760,20 @@ class DirectScanner:
         the shading reference is acquired once for the whole bracket, so every
         pass describes the same frame through the same sensor state.
 
-        Infrared is deliberately *not* bracketed. It costs its own ~212 s floor
-        per pass however few lines are asked for, and its exposure is a device
+        Infrared is deliberately *not* bracketed. Its exposure is a device
         constant the vendor never meters, so bracketing it would multiply the
-        scan time for nothing. With ``infrared`` set, one pass -- the brightest,
-        which carries the most signal -- is taken as RGBI and the rest as RGB.
-        Nothing merges such a bracket yet: metering aims blue low for the RGBI
+        scan time for nothing. ``infrared=True`` is refused, before anything
+        is sent: it used to take the brightest pass as RGBI and the rest as
+        RGB, and nothing merges that -- metering aims blue low for the RGBI
         pass and every RGB pass inherits it, and `rps7200.bracket` fits one
         relation on green for all three channels, so the RGBI pass's blue --
         about five times brighter -- would enter five times too high.
-        `tools/scan.py` refuses ``--bracket`` with ``--ir`` for that reason.
+        `tools/scan.py` refuses ``--bracket`` with ``--ir`` in the same words;
+        the driver accepted it and spent the passes.
 
-        ``fast_infrared`` reaches that one pass and is inert on the others,
-        which :meth:`scan` gates on ``infrared`` for itself. It is here because
-        it was missing: `tools/scan.py` parsed ``--no-fast-ir`` and then did not
-        pass it on this path, so a bracket ran tied whatever was asked for --
-        and below 1800 dpi the tied pass's quality is waived rather than
-        measured, which makes that flag the escape hatch from a waiver.
+        ``fast_infrared`` is inert here, as :meth:`scan` gates it on
+        ``infrared``; it stays so a caller passing its setting through is not
+        refused for it.
 
         ``on_pass(index, image, meta, capture)`` is called as each pass lands,
         with that pass's :meth:`capture_record`. It exists because only one
@@ -3652,18 +3781,30 @@ class DirectScanner:
         the pass after it, so a caller that waits for the return value can file
         the last pass and no other. Do no heavy work in it -- the session is
         open and the next pass is about to start.
+
+        ``should_stop`` reaches every pass (`scan`), so a stop asked for during
+        metering or a pass is taken before the next pass starts, and raises
+        `StoppedBeforePass`.
         """
         if not self.MIN_BRACKET_PASSES <= passes <= self.MAX_BRACKET_PASSES:
             raise ValueError(
                 f"a bracket is {self.MIN_BRACKET_PASSES} to "
                 f"{self.MAX_BRACKET_PASSES} passes, got {passes}"
             )
+        if infrared:
+            raise ValueError(
+                "a bracket is RGB only. One RGBI pass among RGB ones cannot "
+                "be merged -- its blue comes back about five times brighter, "
+                "and the merge fits one relation on green for all three "
+                "channels. Take the infrared plane in a pass of its own.")
 
+        metering = None
         if exposure_scale is not None:
             scales = list(exposure_scale)
         elif auto_exposure:
             scales = self.auto_exposure(film=film, infrared=infrared,
                                         shading=shading)
+            metering = dict(self.last_metering or {}) or None
         else:
             scales = [1.0, 1.0, 1.0]
 
@@ -3688,7 +3829,14 @@ class DirectScanner:
                 shading=shading,
                 film=film,
                 fast_infrared=fast_infrared,
+                should_stop=should_stop,
             )
+            # The metering the ladder was built on. Each rung's exposure is
+            # still the one asked for -- it is what tells the rungs apart --
+            # so `exposure_metered` stays false; but what that request was
+            # derived from was lost with every bracket.
+            if metering is not None:
+                meta["metering"] = metering
             meta["bracket_index"] = i
             meta["bracket_ratio"] = float(k)
             meta["bracket_passes"] = passes
@@ -3729,6 +3877,8 @@ class DirectScanner:
         byte14: int | None = None,
         fast_infrared: bool = True,
         slide_init_param: int = 0x16,
+        metering: dict[str, Any] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -3783,6 +3933,16 @@ class DirectScanner:
         **CyberView sends it in none of 3,955 captured commands**, so this is
         the one field here with no capture behind it -- `tests/test_fast_infrared.py`
         holds the payload byte by byte instead. See `docs/fast-infrared-plan.md`.
+
+        ``metering`` is the `last_metering` of a caller that metered this pass
+        itself and hands over its ``exposure_scale`` -- a roll meters each
+        frame before scanning it. The pass is then recorded as metered, with
+        that record, exactly as one that set ``auto_exposure``.
+
+        ``should_stop`` is asked once, after metering and before the pass's
+        first command, and a yes raises `StoppedBeforePass`: a Ctrl-C through
+        metering's probes was otherwise followed by the whole pass it was
+        pressed to prevent.
         """
         # What the caller took this pass for (`_pass_role`), taken now so that
         # a pass refused below cannot leave it to describe the next one.
@@ -3859,6 +4019,11 @@ class DirectScanner:
             self._log(
                 f"auto-exposure: {[round(v, 3) for v in exposure_scale]}"
             )
+
+        # Between the probes and the pass, where stopping abandons nothing:
+        # the probes are read to their last line, and nothing of this pass
+        # has been sent.
+        self._stop_before_pass(should_stop, metered=auto_exposure)
 
         # From here to the last line read is this pass: recorded, so the entry
         # can say exactly what it was sent. After metering on purpose -- the
@@ -4113,7 +4278,7 @@ class DirectScanner:
             # it is the request, and it is the only thing distinguishing the
             # members of a bracket, which are otherwise the same frame at the
             # same dpi, depth and channel count.
-            "exposure_metered": bool(auto_exposure),
+            "exposure_metered": bool(auto_exposure) or metering is not None,
             # Recorded on every pass, not only the ones that set it. A ladder
             # is six passes of one frame differing in nothing else, so an
             # entry that does not say which side it came from is not evidence.
@@ -4133,19 +4298,33 @@ class DirectScanner:
             # mode choices, and every command sent with what came back.
             "mode": mode,
             "commands": commands,
-            # Where this pass's shading reference came from, and when.
+            # Where this pass's shading reference came from, and when --
+            # whenever there is one in force, applied or not: a pass taken raw
+            # on purpose is filed with it all the same (`capture_record`), and
+            # its entry said nothing of whether that was this session's
+            # reference or a cache from weeks before.
             "shading_origin": (dict(origin)
-                               if shading and (origin := self._shading_origin)
+                               if self._shading is not None
+                               and (origin := self._shading_origin)
                                else None),
             # The READ STATE taken before the pass, kept as evidence of where
             # the carriage was. `carriage_record` says why nothing acts on it.
             "carriage_state": carriage,
+            # The sub-frame moves since the pass before (`nudge`): what put
+            # the film where this pass saw it.
+            "moves_before": self._take_moves(),
         }
         # Only for a scan that did its own metering. The probe passes inside
         # auto_exposure() are scans too, and attaching this to them would file
         # the *previous* frame's metering against them.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = self.last_metering
+        elif metering is not None:
+            # Metered by the caller, and so every roll frame: they were filed
+            # `exposure_metered: false` with no block at all, which is what
+            # a commanded exposure looks like -- and `signature` then took
+            # an outcome of metering for the request.
+            meta["metering"] = metering
         # A pass only debug filing keeps -- a metering probe, a verification
         # prescan -- says what it was for, where nothing else would: filed
         # tagged `debug` and nothing more, it could not be told from any other
@@ -4251,6 +4430,7 @@ class DirectScanner:
         source: str = "operator",
         shading: bool = True,
         film: str = FILM_NEGATIVE,
+        roll: str | None = None,
     ) -> dict[str, Any]:
         """Move the film until this frame sits where it was decided to go.
 
@@ -4293,8 +4473,42 @@ class DirectScanner:
             "spent_mm": 0.0,
             "history": [], "prescan": None, "roll_abort": None,
             "source": source, "clamped": False,
+            # Every SLIDE this hold sent, in units of `param`
+            # (`move_record`): `history` holds only what was measured, and
+            # the moves were a log line.
+            "moves_sent": [],
+            # What every measurement in `history` was taken against. An
+            # operator's reference is a walk's prescan, filed as its own
+            # entry; named nowhere, the confidences could not be recomputed.
+            "reference_entry": (str(entry) if (entry := getattr(
+                approved, "reference_entry", None)) else None),
+            "reference_shape": (list(shape) if (shape := getattr(
+                approved.reference, "shape", None)) is not None else None),
         }
+        try:
+            return self._hold_loop(index, image, prescan_resolution, approved,
+                                   out, keep_raw=keep_raw,
+                                   should_stop=should_stop, rejudge=rejudge,
+                                   source=source, shading=shading, film=film,
+                                   roll=roll)
+        except BaseException as exc:
+            # A verification pass that raised took with it the only record
+            # of the moves already sent: the film has moved, and the frame's
+            # marks said nothing about how. Carried on the exception for the
+            # roll to put in the failed frame's marks.
+            setattr(exc, "hold", {k: v for k, v in out.items()
+                                  if k != "prescan"})
+            raise
 
+    def _hold_loop(
+        self, index: int, image: np.ndarray, prescan_resolution: int,
+        approved: Any, out: dict[str, Any], *, keep_raw: bool,
+        should_stop: Callable[[], bool] | None,
+        rejudge: Callable[[np.ndarray], tuple[bool, str]] | None,
+        source: str, shading: bool, film: str, roll: str | None = None,
+    ) -> dict[str, Any]:
+        """`_hold_to_approved`'s loop, filling ``out`` as it goes."""
+        target = approved.offset_mm
         measured, detail = measure_shift_mm(approved.reference, image)
         out["history"].append(detail)
         spent = 0.0
@@ -4312,6 +4526,7 @@ class DirectScanner:
 
             before = measured
             asked = self.nudge(want)
+            out["moves_sent"].append(self.move_record(asked))
             out["clamped"] = out["clamped"] or bool(asked.get("clamped"))
             delivered_mm = asked["asked_mm"] * (1 if want > 0 else -1)
             spent += abs(delivered_mm)
@@ -4326,7 +4541,8 @@ class DirectScanner:
             # or an aim moved was recorded as a colour negative, and filed by
             # debug filing alone it said "negative" and nothing else.
             self._pass_role = {"kind": "verification prescan", "for": source,
-                               "roll_index": index, "move": out["moves"]}
+                               "roll": roll, "roll_index": index,
+                               "move": out["moves"]}
             image, _ = self.prescan(resolution=prescan_resolution,
                                     keep_raw=keep_raw, shading=shading,
                                     film=film)
@@ -4390,6 +4606,7 @@ class DirectScanner:
         walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
         should_stop: Callable[[], bool] | None = None,
         shading: bool = True, film: str = FILM_NEGATIVE,
+        roll: str | None = None,
     ) -> dict[str, Any]:
         """Judge where this frame sits, put it there, and check the work.
 
@@ -4463,13 +4680,21 @@ class DirectScanner:
 
         self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
                   f"(from {detail.get('chose') or detail.get('reason', '?')})")
-        fix = self._hold_to_approved(
-            index, image, prescan_resolution,
-            _Aim(offset_mm=decision, reference=image),
-            keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
-            rejudge=self._rejudge_for(index, walk, decision),
-            shading=shading, film=film,
-        )
+        try:
+            fix = self._hold_to_approved(
+                index, image, prescan_resolution,
+                _Aim(offset_mm=decision, reference=image),
+                keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
+                rejudge=self._rejudge_for(index, walk, decision),
+                shading=shading, film=film, roll=roll,
+            )
+        except BaseException as exc:
+            # The decision with the moves it had sent (`_hold_to_approved`),
+            # for the failed frame's marks, as a finished aim leaves them.
+            setattr(exc, "aim", dict(out, **(getattr(exc, "hold", None) or {}),
+                                     moved=bool((getattr(exc, "hold", None)
+                                                 or {}).get("moves"))))
+            raise
         out.update({k: v for k, v in fix.items() if k != "prescan"})
         out["prescan"] = fix.get("prescan")
         out["moved"] = fix["moves"] > 0
@@ -4591,10 +4816,65 @@ class DirectScanner:
                f"{say_units(short, signed=False)} remains" if clamped else "")
         )
         self.slide(0x00 if forward else 0x01, param=param, value=0x04)
-        return {"param": param, "forward": forward,
-                "asked_mm": round(asked if forward else -asked, 3),
-                "requested_mm": round(millimetres, 3), "clamped": clamped,
-                "short_mm": round(short, 4) if clamped else 0.0}
+        answer = {"param": param, "forward": forward,
+                  "asked_mm": round(asked if forward else -asked, 3),
+                  "requested_mm": round(millimetres, 3), "clamped": clamped,
+                  "short_mm": round(short, 4) if clamped else 0.0}
+        # Kept for the next pass's record. The window's Move button, a hold
+        # and an aim all come through here, and none of them left the SLIDE
+        # bytes anywhere a library entry could show: which command placed a
+        # frame was a log line.
+        if self._moves_since_pass is None:
+            self._moves_since_pass = []
+        self._moves_since_pass.append(self.move_record(answer))
+        return answer
+
+    @staticmethod
+    def move_record(answer: dict[str, Any]) -> dict[str, Any]:
+        """One `nudge` as a record: the bytes it sent and what they were
+        for, in units of `param`, never millimetres."""
+        return {
+            "action": 0x00 if answer["forward"] else 0x01,
+            "param": int(answer["param"]),
+            "asked_units": round(units(answer["asked_mm"]), 2),
+            "requested_units": round(units(answer["requested_mm"]), 2),
+            "clamped": bool(answer["clamped"]),
+            "short_units": round(units(answer["short_mm"]), 2),
+        }
+
+    def _take_moves(self) -> list[dict[str, Any]] | None:
+        """The moves since the last pass, handed to this one and forgotten."""
+        moves, self._moves_since_pass = self._moves_since_pass, None
+        return moves or None
+
+    @staticmethod
+    def _stop_before_pass(should_stop: Callable[[], bool] | None,
+                          metered: bool) -> None:
+        """Raise `StoppedBeforePass` if a stop has been asked for.
+
+        Asked between metering and a pass's first command, where stopping
+        abandons nothing. Here rather than in `scan` so the demo's `scan`
+        stops where this one does, with the same words.
+        """
+        if should_stop is not None and should_stop():
+            raise StoppedBeforePass(
+                "stopped before the pass" + (", after metering"
+                                             if metered else ""))
+
+    def _moves_left_behind(self) -> None:
+        """Forget the sub-frame moves no pass saw, before a whole-frame move.
+
+        They placed the frame being left, not the one the film is going to:
+        kept, a Move on frame 3 and then Next filed frame 4's pass with frame
+        3's nudges as how it got there -- and so did the next frame's prescan
+        after a hold whose verification pass raised, whose moves the roll has
+        already filed in the failed frame's marks. A wrong record is worse
+        than none, so they go, with a line in the log saying so.
+        """
+        moves, self._moves_since_pass = self._moves_since_pass, None
+        if moves:
+            self._log(f"{len(moves)} sub-frame move(s) seen by no pass, "
+                      f"left behind with the frame")
 
     # -- rolls -------------------------------------------------------------
 
@@ -4741,6 +5021,7 @@ class DirectScanner:
         first_index: int = 0,
         edge_reader: Callable[[str], Any] | None = None,
         shading: bool = True,
+        roll: str | None = None,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -4964,7 +5245,7 @@ class DirectScanner:
                         # `operator` -- the one thing `source`'s own docstring
                         # says the field exists to prevent.
                         source=getattr(held, "source", None) or "operator",
-                        shading=shading, film=film,
+                        shading=shading, film=film, roll=roll,
                     )
                     if fix.get("roll_abort"):
                         holding = False
@@ -5011,6 +5292,7 @@ class DirectScanner:
                         index, prescan_image, prescan_resolution, walk,
                         dry_run=correct_dry_run, keep_raw=keep_raw,
                         should_stop=should_stop, shading=shading, film=film,
+                        roll=roll,
                     )
                     marks["correction"] = {k: v for k, v in fix.items()
                                            if k != "prescan"}
@@ -5073,6 +5355,9 @@ class DirectScanner:
                         scales = self.auto_exposure(
                             target=exposure_target, infrared=infrared, film=film,
                             shading=shading,
+                            # Which roll and frame the probes served: kept
+                            # only by debug filing, a probe named neither.
+                            role={"roll": roll, "roll_index": index},
                         )
                         metered = True
 
@@ -5086,6 +5371,10 @@ class DirectScanner:
                     # frame to frame. One write costs nothing and keeps the roll
                     # right if that ever stops being true.
                     self.set_gain_offset(baseline, infrared=infrared)
+                    # What decided `scales`: this frame's metering or, metering
+                    # once, the roll's first.
+                    last = getattr(self, "last_metering", None)
+                    decided_by = dict(last) if metered and last else None
                     image, meta = self.scan(
                         resolution=resolution,
                         infrared=infrared,
@@ -5095,6 +5384,7 @@ class DirectScanner:
                         keep_raw=keep_raw,
                         fast_infrared=fast_infrared,
                         shading=shading,
+                        metering=decided_by,
                     )
                     meta["roll_index"] = index
                     meta["roll_position"] = position
@@ -5116,6 +5406,17 @@ class DirectScanner:
                 failures += 1
                 self._log(f"frame {index + 1} failed "
                           f"({failures}/{max_failures}): {exc}")
+                # A hold or an aim that raised part way had already moved the
+                # film: what it sent and measured comes with the exception
+                # (`_hold_to_approved`), and belongs in this frame's marks as
+                # it would have been had the frame finished.
+                aimed, held_part = (getattr(exc, "aim", None),
+                                    getattr(exc, "hold", None))
+                if aimed is not None:
+                    marks["correction"] = {k: v for k, v in aimed.items()
+                                           if k != "prescan"}
+                elif held_part is not None:
+                    marks["approved"] = held_part
                 # With the prescans it did take, and their records: a frame
                 # that failed is the one whose prescan is the only account
                 # of it, and it was dropped by every caller.

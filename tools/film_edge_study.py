@@ -31,11 +31,22 @@ What this CANNOT tell you:
 * **Whether cropping helps metering on a frame with real aperture in it.** The
   5.6-10.0% figure that motivated `metering_region` was measured against
   aperture; against clear base the same crop moves the percentile by ~0.0%.
+  That figure came from a study that compared each crop with the whole pass,
+  where production always insets 5% (`METERING_INSET`); the deltas are now
+  taken against production's own abstaining crop, inset included.
+
+The metering probes are the ones production detects on: round-1 RGB probes,
+by their recorded `pass_role`, corrected by `library.corrected` as `scan()`
+hands them to `metering_slice`. The corpus admitted every 16-bit 428-column
+pass -- raw decodes carrying the ~39% lamp falloff, RGBI passes, ladders and
+every later metering round, where the contrast is gone by design -- and the
+"almost never fires" above was measured on that. Re-run before trusting it.
 """
 from __future__ import annotations
 
 import argparse
 import glob
+import inspect
 import json
 import sys
 from dataclasses import dataclass, field
@@ -46,25 +57,22 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import tiff                                          # noqa: E402
+from rps7200 import library, tiff                                 # noqa: E402
+from rps7200.console import use_utf8_stdout                       # noqa: E402
+from rps7200.direct import DirectScanner                          # noqa: E402
 from rps7200.framing import (                                     # noqa: E402
+    CLEAR_PERCENTILE,
     CLEAR_RATIO,
     FILM_LEVEL,
-    FULL_FRAME,
-    MM_PER_INCH,
+    METERING_INSET,
     gap_edges,
+    units_per_column,
 )
-from rps7200.protocol import COORD_PER_INCH, units                # noqa: E402
 
-#: The percentile `film_bounds` calls "clear". Not the maximum, deliberately:
-#: a threshold set as a fraction of the maximum is set by its worst outlier,
-#: which is the lesson `docs/whole-roll-plan.md` records from the detector this
-#: one replaced.
-CLEAR_PERCENTILE = 98.0
-
-#: Where metering reads. Matches `auto_exposure`, so a delta here means what it
-#: means there.
-METER_PERCENTILE = 99.5
+#: Where metering reads: `auto_exposure`'s own default, taken rather than
+#: retyped, so a delta here means what it means there.
+METER_PERCENTILE = float(inspect.signature(DirectScanner.auto_exposure)
+                         .parameters["percentile"].default)
 
 #: A rule that leaves a real negative holding less than this much of the window
 #: is cropping a frame where the film fills it, which is the one thing no rule
@@ -229,28 +237,76 @@ class Frame:
     notes: dict[str, Any] = field(default_factory=dict)
 
 
-def load_corpus(root: Path) -> list[Frame]:
-    """Every prescan-like image on disk, read back from the file itself."""
+def _read(path: str, skipped: list[str]) -> np.ndarray | None:
+    """One stored file, or None and why: one cut short ended the study."""
+    try:
+        return tiff.read(path)
+    except (OSError, ValueError) as exc:
+        skipped.append(f"{path}: {exc}")
+        return None
+
+
+def _record(entry: Path) -> dict[str, Any] | None:
+    """A finished library entry's record, or None for one to leave out:
+    unfinished (`INCOMPLETE`, or no record yet), unreadable, or a demo pass --
+    another stored picture moved by a pretend transport, not a scan."""
+    if (entry / "INCOMPLETE").exists():
+        return None
+    try:
+        record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (record.get("extra") or {}).get("demo"):
+        return None
+    return record
+
+
+def _first_round_probe(record: dict[str, Any]) -> bool:
+    """A round-1 RGB metering probe at the prescan's width: the one pass
+    `auto_exposure` runs `metering_slice` on. Later rounds are brightened
+    towards the rail, where its docstring says the contrast is gone."""
+    role = (record.get("extra") or {}).get("pass_role") or {}
+    shape = (record.get("image") or {}).get("shape") or []
+    return (role.get("kind") == "metering probe" and role.get("round") == 1
+            and len(shape) == 3 and shape[1] == 428 and shape[2] == 3)
+
+
+def load_corpus(root: Path, skipped: list[str] | None = None) -> list[Frame]:
+    """Every prescan-like image on disk, read back from the file itself.
+
+    What could not be read is left out and named in ``skipped``.
+    """
+    skipped = [] if skipped is None else skipped
     out: list[Frame] = []
     for p in sorted(glob.glob(str(root / "library" / "*" / "prescan.tif"))):
-        out.append(Frame(p, tiff.read(p), "prescan"))
+        if _record(Path(p).parent) is None:
+            continue
+        image = _read(p, skipped)
+        if image is not None:
+            out.append(Frame(p, image, "prescan"))
     for p in sorted(glob.glob(str(root / "rolls" / "*" / "prescan*.tif"))):
-        out.append(Frame(p, tiff.read(p), "roll"))
+        image = _read(p, skipped)
+        if image is not None:
+            out.append(Frame(p, image, "roll"))
 
-    # The metering probes: what metering_slice actually sees in production.
+    # The metering probes: what metering_slice actually sees in production --
+    # the round-1 probe, corrected, as `scan()` returns it to `auto_exposure`.
     # scan() takes these at DEPTH_16 where prescan() hard-codes DEPTH_8, so
     # they are a different regime and belong in the corpus on their own.
     for entry in sorted(glob.glob(str(root / "library" / "*" / "scan.json"))):
-        try:
-            record = json.loads(Path(entry).read_text())
-        except (OSError, ValueError):
+        folder = Path(entry).parent
+        record = _record(folder)
+        if record is None or not _first_round_probe(record):
             continue
-        image_meta = record.get("image") or {}
-        shape = image_meta.get("shape") or []
-        if image_meta.get("dtype") == "uint16" and len(shape) == 3 and shape[1] == 428:
-            path = str(Path(entry).with_name("scan.tif"))
-            if Path(path).exists():
-                out.append(Frame(path, tiff.read(path), "probe"))
+        try:
+            image, state = library.corrected(folder)
+        except Exception as exc:                          # noqa: BLE001
+            skipped.append(f"{folder}: {exc}")
+            continue
+        if state.get("corrected") != "applied":
+            skipped.append(f"{folder}: not corrected ({state.get('corrected')})")
+            continue
+        out.append(Frame(str(folder / "scan.tif"), image, "probe"))
     return out
 
 
@@ -268,7 +324,19 @@ def colour_of_band(image: np.ndarray, columns: np.ndarray) -> float | None:
 # --- measuring one frame under one rule ----------------------------------
 
 
-def meter_delta(image: np.ndarray, sl: tuple[slice, slice]) -> list[float]:
+def inset(sl: tuple[slice, slice], h: int, w: int) -> tuple[slice, slice]:
+    """A crop stepped in by `METERING_INSET`, as `metering_slice` always
+    steps in -- its whole window included, when nothing is found."""
+    out = []
+    for s, n in zip(sl, (h, w)):
+        lo, hi, _ = s.indices(n)
+        pad = int(round((hi - lo) * METERING_INSET))
+        out.append(slice(lo + pad, hi - pad) if hi - lo - 2 * pad >= 2 else s)
+    return out[0], out[1]
+
+
+def meter_delta(image: np.ndarray, sl: tuple[slice, slice],
+                base: tuple[slice, slice] | None = None) -> list[float]:
     """Signed change in the metering percentile from cropping, per channel.
 
     The number that actually decides this: `auto_exposure` reads this
@@ -276,8 +344,13 @@ def meter_delta(image: np.ndarray, sl: tuple[slice, slice]) -> list[float]:
     the exposure of the real scan. Negative means the crop *lowered* it, which
     raises exposure -- the direction that clips, and nothing downstream undoes
     a clipped highlight.
+
+    Against ``base``, production's crop when it finds nothing -- the whole
+    window stepped in -- where given: against the whole pass, a rule that
+    abstained read 0.0 while production still cropped to 81% of it.
     """
-    whole = image.reshape(-1, image.shape[2]) if image.ndim == 3 else image.reshape(-1, 1)
+    full = image if base is None else image[base]
+    whole = full.reshape(-1, full.shape[2]) if full.ndim == 3 else full.reshape(-1, 1)
     crop = image[sl]
     crop = crop.reshape(-1, crop.shape[2]) if crop.ndim == 3 else crop.reshape(-1, 1)
     if crop.size == 0:
@@ -304,12 +377,12 @@ def assess(frame: Frame, rule: Rule) -> dict[str, Any]:
     retained_x = ((x[1] - x[0] + 1) / w) if x else 1.0
     retained_y = ((y[1] - y[0] + 1) / h) if y else 1.0
 
-    deltas = meter_delta(frame.image, sl)
-    # Registration reports x only. In param units, never millimetres: the
-    # conversion goes through `protocol.units`, the one place it lives.
-    span_coords = FULL_FRAME[2] - FULL_FRAME[0] + 1
-    mm_per_px = span_coords * MM_PER_INCH / COORD_PER_INCH / max(w, 1)
-    shortfall = units((w - (x[1] - x[0] + 1)) * mm_per_px) if x else 0.0
+    deltas = meter_delta(frame.image, inset(sl, h, w),
+                         inset((slice(None), slice(None)), h, w))
+    # Registration reports x only. In param units, through
+    # `framing.units_per_column`, never through millimetres: the aperture
+    # over the width it replaced is wrong by 0.7%.
+    shortfall = (w - (x[1] - x[0] + 1)) * units_per_column(w) if x else 0.0
 
     return {
         "abstain_x": x is None,
@@ -342,6 +415,7 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def main() -> int:
+    use_utf8_stdout()
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -350,7 +424,10 @@ def main() -> int:
     args = ap.parse_args()
 
     root = Path(args.root)
-    corpus = load_corpus(root)
+    skipped: list[str] = []
+    corpus = load_corpus(root, skipped)
+    for why in skipped:
+        print(f"skipped {why}", file=sys.stderr)
     if not corpus:
         print("no prescans found -- library/ and rolls/ are gitignored, so a "
               "fresh clone has none", file=sys.stderr)
@@ -376,7 +453,7 @@ def main() -> int:
           f"max {ry.max():.2f}")
     print(f"x profiles reaching the gate: {int((rx >= CLEAR_RATIO).sum())}/{len(corpus)}"
           f"    y: {int((ry >= CLEAR_RATIO).sum())}/{len(corpus)}")
-    print(f"clear level (98th pct): min {min(clears):.0f}  median "
+    print(f"clear level ({CLEAR_PERCENTILE:g}th pct): min {min(clears):.0f}  median "
           f"{np.median(clears):.0f}  max {max(clears):.0f}")
 
     # --- the independent detector ----------------------------------------

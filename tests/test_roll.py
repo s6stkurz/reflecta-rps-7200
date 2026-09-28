@@ -1253,12 +1253,33 @@ def test_a_verification_prescan_says_which_frame_it_served():
     scanner = Asked([reference])
     scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
     list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
-                           meter=METER_NONE, film="bw",
+                           meter=METER_NONE, film="bw", roll="strip-a",
                            approved={0: _approved(1, 0.5, reference)}))
     verification = scanner.asked[1:]
+    # The roll by name: an index alone is the same in every roll.
     assert verification == [("bw", {"kind": "verification prescan",
-                                     "for": "operator", "roll_index": 0,
-                                     "move": 1})]
+                                     "for": "operator", "roll": "strip-a",
+                                     "roll_index": 0, "move": 1})]
+
+
+def test_a_roll_s_metering_probes_say_which_roll_and_frame_they_served(
+        monkeypatch):
+    """Kept only by debug filing, a probe said `metering probe` and its
+    round, and nothing tied it to a frame of a roll but its timestamp."""
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    roles = []
+    monkeypatch.setattr(scanner, "_debug_capture",
+                        lambda image, meta, **kw: roles.append(
+                            meta.get("pass_role")))
+    list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                           meter="each", roll="strip-a", first_index=0))
+    probes = [r for r in roles if r and r.get("kind") == "metering probe"]
+    assert probes, roles
+    assert all(r["roll"] == "strip-a" and r["roll_index"] == 0
+               for r in probes), probes
 
 
 def test_debug_filing_goes_into_the_callers_library(tmp_path, monkeypatch):
@@ -1309,6 +1330,84 @@ def test_scans_are_spooled_to_disk_not_held_in_ram(tmp_path, monkeypatch):
     assert held["image_path"].is_relative_to(spool)
     assert library.entries(tmp_path / "lib") == []
     assert library.verify(tmp_path / "lib") == []
+
+
+def _spool_a_pass(s):
+    s.last_raw = b"\x00" * (8 * (48 + 2))
+    s.last_raw_layout = {"format": "index", "width": 16, "lines": 8,
+                         "channels": 3, "bytes_per_line": 48,
+                         "line_stride": 50, "index_header": 2}
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channels": 3,
+                      "channel_order": ["r", "g", "b"], "width": 16, "height": 8,
+                      "depth": 8, "frame": [0, 0, 10343, 6887],
+                      "bytes_per_line": 48, "film": "negative",
+                      "protocol_revision": 1})
+
+
+def test_a_spool_removed_under_an_open_session_is_made_again(tmp_path,
+                                                             monkeypatch):
+    """Made once and never looked at again: with its directory gone -- a
+    temporary-file cleaner, a hand -- every later pass failed at `np.save`
+    with one log line each, for the rest of a session that can run days."""
+    import shutil
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    lines = []
+    s.log_hook = lines.append
+    _spool_a_pass(s)
+    shutil.rmtree(s._debug_spool)
+    _spool_a_pass(s)
+    assert s._debug_pending[-1]["image_path"].exists()
+    assert any("has gone" in line for line in lines), lines
+
+
+def test_a_pass_whose_spooled_files_went_is_not_filed_as_kept(tmp_path,
+                                                             monkeypatch):
+    """Its bytes deleted, a pass was reported 'kept in' a spool that did not
+    hold them, and filing it left an INCOMPLETE entry around an empty
+    raw.bin.gz. It is said to be gone, and no entry is begun."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    lines = []
+    s.log_hook = lines.append
+    _spool_a_pass(s)
+    s._debug_pending[0]["raw_path"].unlink()
+    image = s._debug_pending[0]["image_path"]
+    s._debug_flush()
+    assert any("was deleted before it could be" in line for line in lines), \
+        lines
+    assert not [p for p in (tmp_path / "lib").iterdir()
+                if p.is_dir() and p.name != DirectScanner.DEBUG_SPOOL_DIR]
+    assert library.verify(tmp_path / "lib") == []
+    # Its pixels were not deleted, and are said to be kept where they are.
+    assert image.exists()
+    assert any(f"remain in {image.parent}" in line for line in lines), lines
+
+
+def test_a_spool_deleted_under_the_session_is_not_said_to_keep_its_pass(
+        tmp_path, monkeypatch):
+    """The spool removed whole, a second pass spooled into a new one, and the
+    flush reported the first as remaining in that new spool -- which never
+    held it -- and left the new one on disk, empty, as a failure's is kept."""
+    import shutil
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    lines = []
+    s.log_hook = lines.append
+    _spool_a_pass(s)
+    shutil.rmtree(s._debug_spool)
+    _spool_a_pass(s)
+    spool = s._debug_spool
+    s._debug_flush()
+    assert any("are lost" in line for line in lines), lines
+    assert not any("remain in" in line for line in lines), lines
+    assert not spool.exists(), "an empty spool was kept as if it held a pass"
+    assert s._debug_spool is None
 
 
 def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
@@ -1820,6 +1919,123 @@ def test_an_offset_is_applied_and_confirmed_by_looking_again():
     assert len(scanner.slid) == 1
     assert scanner.slid[0][0] == 0x00, "forward"
     assert frame.image is not None
+
+
+def test_a_hold_records_the_slide_bytes_it_sent_in_units():
+    """Which SLIDE placed a frame was a log line: `history` held only what
+    was measured. Each move is in the frame's marks now -- the param that
+    went on the wire, and what it travels in units of that param."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    sent = frame.registration["approved"]["moves_sent"]
+
+    assert [(m["action"], m["param"]) for m in sent] == \
+        [(a, p) for a, p, _ in scanner.slid]
+    assert sent[0]["asked_units"] == pytest.approx(
+        protocol.units_for_param(sent[0]["param"]), abs=0.01)
+    assert not any(k.endswith("_mm") for k in sent[0]), sent[0]
+
+
+def test_a_hold_names_the_reference_it_measured_against():
+    """Every confidence in `history` is against the approved reference -- a
+    walk's prescan, filed as its own entry -- and the hold record did not
+    say which, so none of them could be recomputed (RDM-01)."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    held = replace(_approved(1, 0.5, reference),
+                   reference_entry="library/20260927T101500Z_walk_f01_300dpi")
+    frame = _roll_once(scanner, {0: held})
+    record = frame.registration["approved"]
+    assert record["reference_entry"] == held.reference_entry
+    assert record["reference_shape"] == list(reference.shape)
+
+
+def test_a_hold_that_raises_keeps_the_moves_it_had_sent():
+    """The film had moved and the verification pass failed: the frame was
+    yielded failed with marks that said nothing of the move."""
+    reference = _lit()
+
+    class Fails(FakeRoll):
+        looks = 0
+
+        def prescan(self, *a, **kw):
+            self.looks += 1
+            if self.looks == 2:
+                raise TimeoutError("the verification pass stalled")
+            return super().prescan(*a, **kw)
+
+    scanner = Fails([reference])
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+
+    assert frame.error and "stalled" in frame.error
+    held = frame.registration["approved"]
+    assert held["moves"] == 1
+    assert [m["param"] for m in held["moves_sent"]] == \
+        [p for _, p, _ in scanner.slid]
+
+
+def test_an_aim_that_raises_keeps_its_decision_and_its_moves():
+    from rps7200.framing import StripWalk
+
+    class Aimed(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"agreed": ["left", "right"]}
+
+    class Fails(FakeRoll):
+        def prescan(self, *a, **kw):
+            raise TimeoutError("the verification pass stalled")
+
+    reference = _lit()
+    scanner = Fails([reference])
+    with pytest.raises(TimeoutError) as raised:
+        scanner._aim_frame(0, reference, 300, Aimed())
+    aim = raised.value.aim
+    assert aim["decision_mm"] == 0.5 and aim["moved"]
+    assert [m["param"] for m in aim["moves_sent"]] == \
+        [p for _, p, _ in scanner.slid]
+
+
+def test_a_move_between_passes_is_in_the_next_passs_record(monkeypatch):
+    """The window's Move button nudges and files nothing; the pass after it
+    is where the film's new place is seen, so that pass says how it got
+    there -- once, and not again on the pass after."""
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    answer = scanner.nudge(0.5)
+    _, meta = scanner.scan(resolution=300, infrared=False)
+    assert meta["moves_before"] == [DirectScanner.move_record(answer)]
+    _, meta = scanner.scan(resolution=300, infrared=False)
+    assert meta["moves_before"] is None
+
+
+def test_a_move_on_one_frame_is_not_filed_as_how_the_next_got_there(
+        monkeypatch):
+    """Move on frame 3, then Next, then a pass: the nudge placed frame 3, not
+    frame 4, and frame 4's entry had said it was how frame 4 got there. The
+    same after a hold whose verification pass raised -- its moves are in the
+    failed frame's marks, and the next frame's prescan carried them again.
+    Back as well as forward: both are whole-frame moves."""
+    from conftest import scanner_at_commands
+
+    scanner, device = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    for move in (scanner.advance, scanner.retreat):
+        scanner.nudge(0.5)
+        at = device.position
+        assert move() is not None and device.position != at
+        _, meta = scanner.scan(resolution=300, infrared=False)
+        assert meta["moves_before"] is None, move.__name__
+    # A move after the whole-frame one is still the pass's own.
+    scanner.advance()
+    answer = scanner.nudge(-0.5)
+    _, meta = scanner.scan(resolution=300, infrared=False)
+    assert meta["moves_before"] == [DirectScanner.move_record(answer)]
 
 
 def test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film():

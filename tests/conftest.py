@@ -92,6 +92,11 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     monkeypatch.delenv(DirectScanner.DEBUG_ENV, raising=False)
     monkeypatch.delenv(DirectScanner.DEBUG_ROOT_ENV, raising=False)
     monkeypatch.setattr(library, "DEFAULT_ROOT", isolated / "library")
+    # Nor does a test keep the machine awake: `KeepAwake` would spawn a real
+    # `caffeinate` or `systemd-inhibit`, or change Windows' power state, for
+    # every job a test runs. `tests/test_awake.py` turns it on with fakes.
+    from rps7200 import awake
+    monkeypatch.setattr(awake.KeepAwake, "enabled", False)
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two
@@ -262,7 +267,8 @@ class StripScanner(FilmOnFrame):
                   should_stop=None, **kw):
         self.rolls.append({"first_index": first_index, "skip": skip,
                            "only": only, "frames": frames,
-                           "moves_before": len(self.moves), "at": self.at})
+                           "moves_before": len(self.moves), "at": self.at,
+                           "roll": kw.get("roll")})
         index = first_index
         for _ in range(skip):
             if self.advance() is None:
@@ -276,8 +282,11 @@ class StripScanner(FilmOnFrame):
                 prescan, _ = self.prescan()
                 image, meta = ((None, {}) if dry_run
                                else self.scan(resolution, infrared))
+                # With the prescan's own meta, as the driver publishes it.
                 yield RollFrame(index=index, position=self.at, image=image,
-                                meta=meta, prescan=prescan, registration={})
+                                meta=meta, prescan=prescan, registration={},
+                                prescan_meta={"resolution_dpi": 300,
+                                              "channel_order": list("RGB")})
             index += 1
             if finished(index):
                 return

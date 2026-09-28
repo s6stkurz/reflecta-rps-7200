@@ -132,8 +132,8 @@ def _ladder(transport: Transport) -> int:
         transport.open()
     except ScannerNotFound as exc:
         # It is on the bus -- rung 2 just said so -- so this is the driver
-        # binding, which is exactly what Zadig changes. The transport's own
-        # message names this platform's version of the problem.
+        # binding or another program holding it, and the transport's own
+        # message says which (`Transport._why_not_found`).
         return failed(str(exc))
     except UsbError as exc:
         return failed(
