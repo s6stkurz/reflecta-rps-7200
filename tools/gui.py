@@ -204,6 +204,41 @@ def changed_controls(values: dict, defaults: dict, names) -> tuple:
 PRESET_KEYS = ("dpi", "predpi", "ir", "fast_ir", "film", "expmode", "exposure",
                "shading", "meter")
 
+#: The values a preset's choice-valued keys may take: what their controls
+#: offer. A read-only chooser cannot show anything else, and cannot be moved
+#: off it either.
+PRESET_CHOICES = {
+    "film": tuple(FILM_TYPES),
+    "meter": tuple(METER_MODES),
+    "expmode": ("auto", "manual"),
+    "shading": ("measure", "reuse"),
+    "ir": ("0", "1"),
+    "fast_ir": ("0", "1"),
+}
+
+
+def preset_values(stored: dict) -> tuple[dict, list[str]]:
+    """What a stored preset may set, and the keys it had that it may not.
+
+    Presets live in `gui-settings.json`, which is edited by hand. Choosing one
+    used to set `v_<key>` for *every* key it held, so a hand-added
+    `mono_channel` -- no preset key -- reached that chooser unchecked, and a
+    film type the chooser does not offer went straight to the next roll. Only
+    `PRESET_KEYS` are taken, and a choice only when it is one on offer.
+    """
+    out: dict = {}
+    refused: list[str] = []
+    for key, value in stored.items():
+        if key not in PRESET_KEYS:
+            refused.append(key)
+            continue
+        allowed = PRESET_CHOICES.get(key)
+        if allowed is not None and as_text(value) not in allowed:
+            refused.append(key)
+            continue
+        out[key] = value
+    return out, refused
+
 #: Film fields safe to carry over. `stock`, `process` and `tags` describe the
 #: film and are the same all roll; `roll`, `frame`, `subject` and `notes`
 #: describe one shot, and a stale value there would file today's scan under
@@ -1040,9 +1075,15 @@ class ScannerGui:
 
     def on_preset_chosen(self, _event=None) -> None:
         stored = self.presets.get(self.v_preset.get())
-        if not stored:
+        if not stored or not isinstance(stored, dict):
             return
-        for key, value in stored.items():
+        values, refused = preset_values(stored)
+        if refused:
+            self._say(f"preset {self.v_preset.get()!r}: ignored "
+                      + ", ".join(f"{k}={stored[k]!r}" for k in refused)
+                      + " -- not a setting a preset carries, or not one of "
+                      "its choices")
+        for key, value in values.items():
             variable = getattr(self, f"v_{key}", None)
             if variable is not None:
                 try:

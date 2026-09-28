@@ -7038,3 +7038,33 @@ def test_a_pass_pressed_with_no_scanner_leaves_the_window_usable(
     app.open_roll(folder)
     assert app._loaded_roll == folder
     app.sheet.top.destroy()
+
+
+# -- presets -----------------------------------------------------------------
+
+
+def test_a_hand_edited_preset_sets_only_what_a_preset_carries(window):
+    """Choosing a preset set `v_<key>` for every key it held, so a
+    `mono_channel` added by hand -- not a preset key -- reached the chooser
+    unchecked, and a film type nobody offers went to the next roll."""
+    app, root = window
+    app.v_mono_channel.set("G")
+    app.v_film.set("negative")
+    app.presets["edited"] = {"dpi": "3600", "film": "kodachrome-ish",
+                             "mono_channel": "I", "meter": "each"}
+    app.v_preset.set("edited")
+    app.on_preset_chosen()
+    assert app.v_dpi.get() == "3600", "what a preset carries still arrives"
+    assert app.v_meter.get() == "each"
+    assert app.v_film.get() == "negative", "a film the chooser does not offer"
+    assert app.v_mono_channel.get() == "G", "not a preset key at all"
+    said = app.log.get("1.0", "end")
+    assert "mono_channel='I'" in said and "film='kodachrome-ish'" in said
+
+
+def test_a_preset_is_taken_key_by_key_against_its_choices():
+    values, refused = gui.preset_values(
+        {"film": gui.FILM_TYPES[0], "ir": True, "fast_ir": "maybe",
+         "shading": "reuse", "expmode": "sometimes", "v_mono": 1})
+    assert values == {"film": gui.FILM_TYPES[0], "ir": True, "shading": "reuse"}
+    assert sorted(refused) == ["expmode", "fast_ir", "v_mono"]
