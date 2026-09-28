@@ -1,0 +1,111 @@
+{
+ "type": "result",
+ "key": "v2:9fe0aa519bec0a9b71ec292bcad186d72a9988d75345a56767c06e60bd2f903f",
+ "agentId": "a02ff1f879f9265e3",
+ "result": {
+  "branch": "fix3b/session-cli",
+  "commits": [
+   "dd83e5b filing_load_test: the exit status says which verdict",
+   "7df2e2d scan_roll: a roll stopped at Ctrl-C exits 130, not 0",
+   "8d83f26 Walk prescans: named by the writer's answer, with their entries",
+   "0024015 Session: a roll stopped by a frame it could not file says so",
+   "8ccc706 Keep the host awake while a pass or a roll reads (PLAT-01)",
+   "63c914e Check free space before a roll and before each frame (CRA-01)",
+   "4778233 Manifests: the kept .bak is renamed into place, never cut short (CRA-09)",
+   "9b9a15f The prescan before an aim is filed on its own meta or not at all"
+  ],
+  "done": [
+   {
+    "item": "CLI-15: filing_load_test exits 0 whatever its verdict",
+    "change": "tools/filing_load_test.py: main() now returns EXIT_CODES[outcome]: 0 for safe, 1 for unsafe, 3 for inconclusive. 130 on Ctrl-C is kept. The help epilog and the docstring say so. I used 3 instead of the 2 the triage proposed, because 2 is argparse's own code for refused arguments and a gating script needs to tell a refused run from an inconclusive one. Test: test_the_exit_status_says_which_verdict, which fails without the fix."
+   },
+   {
+    "item": "CLI-02 exit-code half: scan_roll exits 0 when stopped by Ctrl-C",
+    "change": "tools/scan_roll.py: returns 1 on any loss as before. Otherwise it now returns 130 when interrupt.requested(), and 0 only when nothing stopped it. Test: test_a_roll_stopped_by_ctrl_c_exits_130."
+   },
+   {
+    "item": "GUI2-13 + P19/P20 + CONC-04/CRA-03: walk prescans named before they were written, and no link from a prescan to its entry",
+    "change": "rps7200/session.py: RollManifest has new expect(), amend(record, **fields) and prescan_told(record, path, key, entry_key). The writer's answer now adds `prescan`/`prescan_before`, but only for a file it actually wrote. It also adds `prescan_entry`/`prescan_before_entry` (the entry id) and `<key>_error` when filing failed. It amends the record dict itself, so an answer that arrives before the record is written is kept. A manifest still waiting for an amendment counts as ahead_of_disk, so a walk started straight after into the same folder carries it on. The scanning-thread `record['prescan'] = surveyed_name` is removed from session._roll and from scan_roll's walk. New walked_prescan_entries(folder, records, library_root) resolves prescan_entry against the library. For walks recorded before this change it falls back to the entries' own roll_membership (kind=prescan, same folder, newest, not tagged before). tools/gui.py read_survey takes library_root, and the Open-roll call passes session.root, so a reopened walk's results carry their entries. That is a small change in gui.py, which the item explicitly asked for. scan_roll's _read_walk and _differs_from_earlier now use session.read_manifest: .bak fallback, non-dict refused. Tests: test_a_walk_records_the_entry_each_prescan_was_filed_as, test_a_walk_names_no_prescan_its_writer_did_not_write, test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file, test_a_reopened_walk_knows_the_entry_of_each_prescan (gui), test_a_walk_names_a_prescan_and_its_entry_once_the_writer_has_them and test_a_torn_walk_is_read_from_the_version_kept_beside_it (scan_roll). Each fails without the fix."
+   },
+   {
+    "item": "DEMO-15: the session invents a prescan meta when the scanner published none",
+    "change": "session._roll no longer builds {'resolution_dpi', 'channel_order'} for the entry. A prescan with no meta is still written to the roll and output folders, named only for those copies, but it is kept out of the library (new _file(file_entry=False) and _unpublished(), which logs why). The picture from before an aim is now filed only on its own prescan_before_meta, never on the later pass's, in session.py and scan_roll.py alike. scan_roll's file_prescan does the same. The test doubles (conftest, test_session, test_scan_roll_tool) now publish a prescan_meta as the driver does. Tests: test_a_prescan_the_scanner_published_no_meta_for_is_not_filed and test_the_prescan_before_an_aim_is_never_filed_with_the_later_ones_meta, both in session and in scan_roll."
+   },
+   {
+    "item": "P24(3) / GUI1-19 session half: filing-failure stop recorded as 'as asked'",
+    "change": "_filed now sets self._stop_reason before request_stop(), and _run clears it as each job starts. The roll ends 'stopped after frame N: picture M could not be filed (<why>)' in roll.json and in the log. An operator's Stop still reads 'as asked' (new _stopped_how). New event kind 'unfiled' (done=seq, total=frame number, text=error), added to KINDS, is sent only for real failures and never for a picture written with no entry on purpose. Tests: test_a_roll_stopped_by_a_frame_it_could_not_file_says_so, plus an assertion in the existing no-library test that no 'unfiled' is sent."
+   },
+   {
+    "item": "PLAT-01 (high): nothing keeps the host awake during a pass or a roll",
+    "change": "New rps7200/awake.py KeepAwake. On Windows it calls SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED) and clears it on the same thread. On macOS it runs `caffeinate -i -w <pid>`. On Linux it runs `systemd-inhibit --what=sleep:idle ... tail --pid=<pid> -f /dev/null`, so a killed process never leaves the machine unable to sleep. If it cannot take the assertion it says so once and the job runs anyway. ScanSession holds it per job that reads passes (not a Move, and not while idle between jobs) through a new keep_awake= seam. tools/scan.py and tools/scan_roll.py hold it for as long as the device is open. It is disabled in tests/conftest.py's autouse fixture. tests/test_awake.py drives each platform with fakes and checks the session and both tools; its tests fail without the fix."
+   },
+   {
+    "item": "CRA-01 / P24(2): no free-space check before a roll",
+    "change": "session.py has new frame_bytes(dpi, ir), which is the transport's FULL_FRAME at 16 bits uncompressed (570 MB at 7200 dpi RGBI, matching CLAUDE.md). Also new: roll_space() (library 2x per frame for decode plus raw, roll folder 1x, output folder 1x) and short_of_space(needs, factor), which adds up needs per disk (st_dev of the nearest existing folder) and compares with shutil.disk_usage. It refuses below SPACE_REFUSE=1x and warns below SPACE_WARN=2x. ScanSession._roll checks before the seek and raises, so the failed-job path reports it. Before each further frame it checks again for 1 + the frames still waiting to be filed (new RollManifest.waiting()) and stops with 'no room for the next frame: ...'. tools/scan_roll.py does the same before the device opens (ap.error) and between frames through should_stop, recording it in the manifest and exiting 1. A roll that runs to the end of the strip is refused only when its first frame does not fit, and is warned about for the whole strip. Tests in test_session.py and test_scan_roll_tool.py fail without the fix."
+   },
+   {
+    "item": "CRA-09 (low, few lines): .bak copied in place; .legacy temp left on failure",
+    "change": "write_manifest now copies the previous file to a temp and renames it over <name>.bak, and removes a copy that fails, so a full disk never leaves a truncated .bak for read_manifest to fall back on. keep_first_numbering removes its temp when the copy fails. Tests: test_a_kept_copy_cut_short_does_not_replace_the_last_one and test_a_first_numbering_copy_cut_short_leaves_nothing_behind."
+   }
+  ],
+  "left": [
+   {
+    "item": "CRA-A1 (high): debug_claim marks a pass filed when only queued; flush before the writer finishes",
+    "why": "Already fixed at 49bd7d0. The claim returns a receipt that the writer answers (session.answering). ScanSession._run closes the device, finishes the writer, then runs scanner.close()/debug_settle. scan_roll and scan.py release HeldOpen only after their filing."
+   },
+   {
+    "item": "PLAT-A1 (medium): Ctrl-C / terminal close kills the daemon worker mid-read",
+    "why": "Mostly fixed in round 3: DeferredInterrupt now takes SIGINT, SIGTERM, SIGHUP and SIGBREAK in the tools and in the window. The rest (the worker and writer are still daemon threads; Windows CTRL_CLOSE_EVENT, logoff and shutdown are not handled) is in the window/console subsystem, not mine.",
+    "proposal": "Register SetConsoleCtrlHandler on Windows to route close, logoff and shutdown to on_close's stop-after-the-pass path. Join the worker at interpreter exit instead of relying on daemon threads."
+   },
+   {
+    "item": "CONC-03 (medium): roll frames never file their metering; exposure_metered=False",
+    "why": "The metering happens in DirectScanner.scan_roll (rps7200/direct.py), which is the driver subsystem. Patching the meta in session._roll would leave tools/scan_roll.py and the demo wrong.",
+    "proposal": "In direct.scan_roll, after the frame's scan(), set meta['metering'] = self.last_metering and meta['exposure_metered'] = meter != METER_NONE. For METER_ONCE, record which frame's metering was reused."
+   },
+   {
+    "item": "CONC-A1 (medium): library.save reindex failure reports a filed entry as failed",
+    "why": "The fix belongs in rps7200/library.py (save/entries/reindex), which is not my subsystem."
+   },
+   {
+    "item": "PLAT-02 (medium): debug spool deleted by the OS temp cleaner",
+    "why": "The spool lives in rps7200/direct.py, which is not my subsystem."
+   },
+   {
+    "item": "CRA-02 (medium): nothing finds .part files, orphan spools or plain entries after a crash",
+    "why": "The fix is in library.verify, a new tools/library.py sweep, and direct.py's save_shading, none of which are mine. The session's own manifest temps already clean up (write_manifest, and now keep_first_numbering and the .bak)."
+   },
+   {
+    "item": "CRA-01 remainder: free space for single scans, brackets, compaction and the debug spool",
+    "why": "The item assigned here covers rolls. A single scan or bracket (tools/scan.py, the window's Scan), compaction at close, and the debug spool in the temp dir are not checked. The thresholds are also a decision.",
+    "proposal": "Reuse session.frame_bytes/short_of_space: in tools/scan.py before the device opens, with passes x 2 x frame_bytes on the library; in the window before a Scan; in library.compact against the entry size; and add tempfile.gettempdir() to roll_space when RPS7200_DEBUG is on (about 2 x frame_bytes per pass still spooled). SPACE_REFUSE=1 and SPACE_WARN=2 are chosen, not measured, and can be adjusted."
+   },
+   {
+    "item": "PLAT-01 UI half: say in the Roll/Scan dialogs when the inhibitor could not be taken",
+    "why": "That is a window UI choice. The session already logs the failure once per job through the log event.",
+    "proposal": "Show KeepAwake.problem in the Roll confirmation dialog, next to the time estimate."
+   },
+   {
+    "item": "CONC-08 (low, test-gap): filing_load_test's load is in-memory gzip, not real filing",
+    "why": "Changing what the measurement measures is a design decision, and any verdict from it would need a hardware run.",
+    "proposal": "Make the background load call library.save (raw, scan.tif, reindex) into a scratch library of realistic size, and record the longest gap between successful READs and the NoDataYet count as well as pass duration."
+   },
+   {
+    "item": "CONC-04 remainder: one truncated prescan makes read_survey refuse the whole walk; hold_from_walk crashes on it",
+    "why": "Roll-folder TIFFs are now written beside and renamed over (_write_whole, round 3), and a walk only names a file after it has been written, so truncation is now limited to files written before these fixes. read_survey is in gui.py.",
+    "proposal": "In read_survey and scan_roll.hold_from_walk, skip and report a prescan that tiff.read refuses, rather than failing the whole walk."
+   },
+   {
+    "item": "PLAT-11 frame half (low): roll.json does not record whether frameNN.tif was rewritten",
+    "why": "The walk half is fixed: a walk now names its prescan only once it has been written. For frames, Export re-derives from the entry, so only the roll-folder copy is stale. Deciding what roll.json records is a storage-layout decision.",
+    "proposal": "Pass `written` into the frame's on_filed and record `file` (as scan_roll does) only when frameNN.tif was actually written."
+   },
+   {
+    "item": "CRA-10 (low): mkdir(parents=True) can recreate a missing drive's folder on the system disk",
+    "why": "Whether to refuse a library or rolls root that does not exist is a UX/storage decision that affects every tool.",
+    "proposal": "Refuse a root whose parent does not exist unless it was just created by an explicit option, and say so."
+   }
+  ],
+  "tests": "All five commands pass at HEAD 9b9a15f (and before every commit). Main suite: 1777 passed, 31 skipped, 9 deselected, 3 xfailed. GUI (xvfb, -n 2): 469 passed. RPS7200_NO_TIFFFILE=1: 1710 passed, 99 skipped, 2 xfailed. ruff check: all checks passed. ty check (rps7200): all checks passed. For every new behaviour test I put the pre-fix source back (git show HEAD:<file> into place, then restored) and confirmed the test fails. No hardware tests were run and no device was opened."
+ }
+}
