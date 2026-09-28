@@ -299,6 +299,43 @@ def test_a_member_that_raises_abstains_and_the_others_still_vote(monkeypatch):
     assert "failed" not in failed.debug["members"]["changepoint"]
 
 
+def test_a_member_that_raises_is_named_in_the_note(monkeypatch):
+    """FE-01: the abstention lived only in the debug dict, which nothing read,
+    so a member broken on every frame made a quiet three-member vote with a
+    green light. The note the sheet shows and a roll keeps says so."""
+    import types
+
+    def raises(image, ctx):
+        raise ZeroDivisionError("float division by zero")
+
+    monkeypatch.setitem(vote.MEMBERS, "chroma", types.SimpleNamespace(detect=raises))
+    frames = _walk()
+    _, notes = frame_edges.propose_centred(frames, film="negative")
+    for note in notes.values():
+        assert "ZeroDivisionError" in note["abstained"]["chroma"]
+        assert "abstained: chroma failed" in note["reason"]
+    walk = StripWalk(reader=frame_edges.walk_reader("negative"))
+    for n, im in frames:
+        walk.observe(n, im)
+    _, detail = walk.judge(1, frames[0][1])
+    assert "chroma" in detail["abstained"]
+
+
+@pytest.mark.parametrize("film", ["negative", "bw"])
+def test_no_member_fails_on_an_ordinary_walk(film):
+    """FE-01: the synthetic walk still read with a member broken, so no test
+    would notice one breaking. None may abstain on ordinary frames."""
+    frames = _walk()
+    if film == "bw":
+        frames = [(n, np.repeat(im.mean(axis=2, keepdims=True), 3, axis=2
+                                ).astype(np.uint8)) for n, im in frames]
+    _, notes = frame_edges.propose_centred(frames, film=film)
+    for n, im in frames:
+        members = frame_edges.detect(im, film=film).debug["members"]
+        assert not [k for k, v in members.items() if "failed" in v], (n, members)
+        assert "abstained" not in notes[n]
+
+
 def test_a_near_black_frame_costs_nothing_on_the_roll_path():
     """It passes the blank check, so a roll with correction on judges it --
     and `gapmodel`'s ZeroDivisionError was not in `scan_roll`'s net, so the

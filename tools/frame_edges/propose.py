@@ -164,6 +164,16 @@ def centring(result: EdgeResult, width: int, *,
     dec = decide(result, SCALE, frame_columns(SCALE, frame_units))
     note: dict[str, Any] = {"edges": _edges_note(result), "width": int(width),
                             "reason": dec.why or dec.caption()}
+    # A member that raised abstains (`vote._member`), and said so only in the
+    # debug dict nothing read: a member broken on every frame left a quiet
+    # three-member vote, a green light and notes naming only the members that
+    # agreed. Said here, in the note the sheet shows and a roll keeps.
+    abstained = {role: answer["failed"] for role, answer in
+                 ((result.debug or {}).get("members") or {}).items()
+                 if answer.get("failed")}
+    if abstained:
+        note["abstained"] = abstained
+        note["reason"] += "; abstained: " + "; ".join(abstained.values())
     if dec.action == "refuse" or dec.units is None:
         gate = {result.left.state, result.right.state} & {NO_FILM, ALL_BASE}
         note["source"] = "none" if gate else "refused"
