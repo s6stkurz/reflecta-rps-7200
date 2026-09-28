@@ -31,7 +31,7 @@ Not in the plan, by CLAUDE.md: anything that drives the scanner.
 |---|---|---|
 | 1. Second audit | **done** | 15 areas and 6 gap passes, every finding verified: 437 findings (0 critical, 24 high), 1 refuted |
 | 2. Write-up | **done** | README, status.md, areas/, dataflow, persisted state, library exactness, demo, user errors, doc mismatches; regenerate with `run/gen/merge2.py` then `run/gen/gen3.py` |
-| 3. Fix round 3 | merging | base `e700609`. All seven groups fixed, reviewed, and their review issues fixed (library's review fixes still running in `wf_98e160af-0b4`). Six branches are being merged by an agent in the local worktree `/home/user/integ3` (branch `integ3`); library follows; then the full suites, push, CI. **Three commits change when film moves** (3358414 holds no longer mirror under "reverse", 2cccdbb an unconfirmed one-member reading moves nothing on a walk, b9bee37 `scan_roll --approved` holds every walked frame, clamped); PROTOCOL_REVISION is 7; to be tried on the scanner first, each one revert away. |
+| 3. Fix round 3 | merging | base `e700609`. All seven groups fixed, reviewed, and their review issues fixed. Being merged in the local worktree `/home/user/integ3` (branch `integ3`): capture and device are in; filing, library, window, demo-framing-outputs and tests are being merged by an agent (restarted after a container restart on 2026-09-28 00:13 UTC cut the first one off mid-merge; nothing was lost). Then the full suites, push, CI. **Three commits change when film moves** (3358414 holds no longer mirror under "reverse", 2cccdbb an unconfirmed one-member reading moves nothing on a walk, b9bee37 `scan_roll --approved` holds every walked frame, clamped); PROTOCOL_REVISION is 7; to be tried on the scanner first, each one revert away. |
 | 3b. Follow-up round | ready | `run/audit-fixes-round3b.js`: a triage agent sorts the 144 items the round-3 fixers left (resolved elsewhere / defect / decision for Stefan) against the merged code, then five subsystem fixers take the defects plus the gap passes' findings, each reviewed. Starts once round 3 is merged. |
 | 4. Docs, re-check | not started | docs pass with the fixers' proposals as "Decisions for Stefan" in TODO.md; re-check P01-P32 and the round-3 items; CI on three systems |
 
@@ -57,5 +57,6 @@ that says what is already done.
 - **The checkpoint loop** (`run/checkpoint3.sh`) follows every journal listed in
   the scratchpad's `journals.txt` (`<journal> <out dir>` per line) and commits
   finished results; add the new run's journal there when a workflow is restarted.
+- **The merge:** in `/home/user/integ3`, `git merge-base --is-ancestor fix3/<g> HEAD` says which branches are in; abort a half-done merge and merge the rest in the order filing, library, window, demo-framing-outputs, tests, with a "Merge fix-up" commit wherever the suites need one.
 - Fix branches (`fix3/*`) live only in the local clone until merged; the
   merged branch is what is pushed.
