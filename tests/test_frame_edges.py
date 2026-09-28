@@ -205,6 +205,21 @@ def test_a_600_dpi_prescan_is_read_at_the_prescan_scale_and_scaled_back():
     assert odd.left.state == REFUSE and "not a multiple" in odd.left.note
 
 
+@pytest.mark.parametrize(("left", "right"), [(12.0, 0.0), (0.0, 9.5)])
+def test_a_pass_twice_the_width_is_moved_as_the_prescan_is(left, right):
+    """FE-03: the positions came back scaled up and were then decided as
+    428-column ones: at 856 columns a left base moved about 1.8x too far and
+    a right one was refused. The demo reaches it at 600 dpi (FE-A1)."""
+    img = negative_prescan(left, right, seed=13)
+    big = np.kron(img, np.ones((2, 2, 1), dtype=img.dtype))
+    mm, note = propose.read_frame(img, film="negative")
+    mm2, note2 = propose.read_frame(big, film="negative")
+    assert mm is not None and mm2 is not None, (note, note2)
+    assert note2["units"] == pytest.approx(note["units"], abs=0.3)
+    from rps7200.protocol import units
+    assert units(mm2) == pytest.approx(units(mm), abs=0.3)
+
+
 @pytest.mark.parametrize("width", [860, 862, 1292])
 def test_the_devices_own_600_and_900_dpi_widths_are_refused(width):
     """The kron test above uses 856 columns, a width the device never

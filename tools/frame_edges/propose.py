@@ -99,7 +99,7 @@ def _downscaled(image: np.ndarray) -> tuple[np.ndarray, int] | None:
     return small.astype(np.float32), k
 
 
-def _scaled(result: EdgeResult, k: int) -> EdgeResult:
+def _scaled(result: EdgeResult, k: float) -> EdgeResult:
     if k == 1:
         return result
 
@@ -161,7 +161,14 @@ def centring(result: EdgeResult, width: int, *,
     ``reason`` and the ``edges`` themselves for drawing.
     """
     scale = width / SCALE
-    dec = decide(result, SCALE, frame_columns(SCALE, frame_units))
+    # Decided on the positions at the detector's own scale. `detect` hands a
+    # pass averaged down from a whole multiple of 428 back with its positions
+    # scaled up, for drawing; deciding on those as though they were 428-column
+    # ones moved a left base about 1.8x too far at 856 columns and refused a
+    # right one outright.
+    k = width // SCALE if width > SCALE and width % SCALE == 0 else 1
+    dec = decide(_scaled(result, 1 / k) if k > 1 else result, SCALE,
+                 frame_columns(SCALE, frame_units))
     note: dict[str, Any] = {"edges": _edges_note(result), "width": int(width),
                             "reason": dec.why or dec.caption()}
     # A member that raised abstains (`vote._member`), and said so only in the
