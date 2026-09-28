@@ -1,0 +1,130 @@
+{
+ "type": "result",
+ "key": "v2:46bd2c5a8cfc4c9d7738c00d0f0561bdefd5679fea191be59676f6f9a909f186",
+ "agentId": "a73aff9e8be26ead2",
+ "result": {
+  "problems": [
+   {
+    "id": "P01",
+    "title": "A single Scan from the window files corrected pixels as the raw scan.tif",
+    "status": "fixed",
+    "commits": [
+     "338970a",
+     "38405eb"
+    ],
+    "evidence": "Every reachable path now files raw pixels. rps7200/session.py:2989 `raw_image = getattr(self._scanner, \"last_pixels_raw\", None)` and :2994-2997 `self._file(..., raw_image=raw_image, ...)` in _scan; _prescan does the same at :2947/:2966. The invariant is structural in FrameWriter._write, rps7200/session.py:2219-2234: `if raw_image is None and (job[\"meta\"] or {}).get(\"shading\"): corrections = [\"shading\"]` (with a note), then `pixels = raw_image`, then library.save(..., corrections=corrections) at :2245. DirectScanner clears last_pixels_raw at the start of every pass (direct.py:4042) and sets it on every pass (direct.py:4344), so it cannot go stale. The repair `tools/library.py migrate-raw` is still there (tools/library.py:71-92 `_one_shading_explains`, :269). Tests: tests/test_session.py:283 and :294.",
+    "remaining": "Nothing on any path DirectScanner or DemoScanner can reach. Two latent leftovers are unchanged from the second audit. (a) library.save (rps7200/library.py:266-285, 402-411) still takes corrected pixels labelled `corrections_applied: []` from any caller that does not say otherwise; the guard exists only in FrameWriter. (b) tools/scan.py:386 `image=image if raw is None else raw` would file corrected pixels unlabelled if a scanner had no last_pixels_raw. Related, not the P01 defect itself: ScanSession._prescan still has a hand-built fallback meta (session.py:2944-2946 `or {\"resolution_dpi\": ..., \"film\": ..., \"channel_order\": ...}`) for a stand-in with no last_scan_meta, which CLAUDE.md forbids. The roll path refuses to file in that case (_unpublished, session.py:3891).",
+    "new_problems": "none found"
+   },
+   {
+    "id": "P02",
+    "title": "Debug filing pairs a pass with the previous pass's raw bytes (or none)",
+    "status": "mostly-fixed",
+    "commits": [
+     "7fb75d4",
+     "69039d7",
+     "3e96647",
+     "2aded37",
+     "9b9a15f"
+    ],
+    "evidence": "(1) Fixed. scan() now clears last_raw, last_raw_layout, last_pixels_raw and last_scan_meta at the start of every pass, after metering and before any command: rps7200/direct.py:4035-4044 (\"Nothing a pass before this one left may describe it\"). read_planes also clears them for a pass that keeps no bytes (direct.py:2699-2708). The hold/aim scenario from status.md is closed: scan_roll takes each prescan's own record as the pass lands (direct.py:5210, 5277, 5312 `prescan_capture = self.capture_record()`) and the RollFrame carries it (direct.py:474-484 `_prescans_kept`). The session files a roll prescan with `capture = rf.prescan_capture` (session.py:3526), and tools/scan_roll.py:1105-1111 does the same. A later same-shaped pass is caught by identity (session.py:909-923 `bytes_are_another_pass`, used at :3991 and tools/scan_roll.py:1107). Debug mode forces keep_raw (direct.py:4392-4394). (3) Fixed. The debug spool guard now uses raw_bytes_disagree, which judges height too (direct.py:1391-1402), and raw_bytes_disagree judges the received lines less the stagger (direct.py:438-471).",
+    "remaining": "(2) library.save still never decodes `raw`/`raw_path` to check them against `image` (rps7200/library.py:318-350 writes the bytes without any check); fix step 3 was not done. Every caller guards before calling, but the library itself does not. Minor residual: a pass that raises after read_planes has set `last_raw = blob` (direct.py:2699-2701, before decode_index at :2709) leaves its own bytes in last_raw. _after_a_failed_pass (direct.py:1475) does not clear them, so a capture_record() read after a failed pass hands them out. No current caller does that: prescans use their own snapshot, and the scan_roll fallback runs only when the first prescan never completed. So this is latent, not reachable.",
+    "new_problems": "none found"
+   },
+   {
+    "id": "P03",
+    "title": "The debug spool is deleted on a failed save and lost on a crash",
+    "status": "fixed",
+    "commits": [
+     "4685464",
+     "f758694",
+     "f4ef116",
+     "cab6b13",
+     "75d7956",
+     "5f4b43e",
+     "d5b0a5e"
+    ],
+    "evidence": "Unlink only after a successful save: direct.py:1810-1829 (`if filed: stuck += self._debug_unlink(item)`); a failure keeps the spool and forgets it for later passes (direct.py:1838-1846). (1) The spool is under the library: direct.py:1535-1545, `parent = self._debug_root() / self.DEBUG_SPOOL_DIR` with DEBUG_SPOOL_DIR = \".spool\" (direct.py:799). It is pointed at the caller's library by session.py:2373-2388 debug_filing_into (called at session.py:2696, tools/scan.py:317, tools/scan_roll.py:820). (2) `tools/library.py file-spool` exists (tools/library.py:168-186) and drives direct.py:595 file_spool. (3) Each sidecar names its own files, the reference included (direct.py:1455-1467, `\"shading\": name(\"reference_path\")`). (4) The entry id and `created` are the capture time: direct.py:1693-1697 `created = datetime.fromtimestamp(captured)` passed to library.save(created=...) (library.py:284, 318). (5) After force_abort, the worker now calls self._scanner.close() and debug_settle regardless of `dead` (session.py:2791-2812). Test: tests/test_session.py:2008. The new problem from the second audit (a claim deleting the copy before the claimant filed) is fixed: debug_claim returns a receipt, and the spooled copy goes only when the caller answers with an entry (direct.py:1593-1650). close() files only unclaimed passes; claimed ones wait for settle (direct.py:1700-1725). tools/scan.py:504-520 answers each receipt and then settles. Tests: tests/test_roll.py:818, 902, 918, 936, 986.",
+    "remaining": "Nothing harmful. Small: when the library cannot be written, the spool falls back to system temp (direct.py:1546-1551). `file-spool` with no argument looks only in `<library>/.spool` (tools/library.py:171-172), so that spool is found only by the path the log names. A claimed pass left in a spool is skipped by `file-spool` unless `--claimed` is given, by design (direct.py:606-607).",
+    "new_problems": "none found"
+   },
+   {
+    "id": "P04",
+    "title": "A failed delivered copy (output folder, rolls/) costs the library entry",
+    "status": "fixed",
+    "commits": [
+     "9c636a9",
+     "a0f6e66",
+     "86807e8",
+     "3d3067b",
+     "ffdfaf4"
+    ],
+    "evidence": "The entry is filed first, and library.save is now inside a try: session.py:2203-2254 (`try: entry = library.save(...) except Exception as exc: refused = exc`). Each copy is in its own try (session.py:2276-2298). The one-channel conversion is part of the copies, so a refusal there does not cost the entry (:2268-2274). If the library refused, the copies are still written and the raw data is kept elsewhere with keep_unfiled before NotFiled is raised (session.py:2303-2322). This closes the second audit's new problem, where a library failure lost the frame entirely. A failed copy with a filed entry becomes 'picture N: could not write ...; the library entry is safe and can be exported again' in errors and notes (session.py:2326-2330). The window now surfaces it: tools/gui.py:262-264 NOT_FILED and COPY_NOT_WRITTEN; gui.py:4410-4447 `_filing_trouble` marks the filmstrip result, sets the progress line and opens a non-modal notice. The CLI prints the notes as they happen (tools/scan_roll.py:750-755). Tests: tests/test_session.py:2293, 2347, 2360, 2376, 2406.",
+    "remaining": "Nothing harmful. The window recognises both failures by regex over log text (tools/gui.py:258-264). A reworded message would silently stop the marking; a test ties them together, and a structured event would be sturdier. tools/scan_roll.py:1294-1296 prints each writer error, including 'copy not written, entry safe', as 'could not file ...' and counts it in `failed`. That misstates what happened, though the message it wraps says the entry is safe.",
+    "new_problems": "none found"
+   },
+   {
+    "id": "P05",
+    "title": "Calibration bytes are thrown away; only a derived reference is kept",
+    "status": "mostly-fixed",
+    "commits": [
+     "2dc8a14",
+     "468733a",
+     "c2e6ac7",
+     "4666493",
+     "51e1cb8",
+     "f227873",
+     "1e24ce1"
+    ],
+    "evidence": "The bytes are archived on every calibration (direct.py:1244 `calibrate_shading(keep_data=True)`, :1252-1262 archive_calibration). The archive is written like an entry: INCOMPLETE marker, atomic record, sha256, commands (direct.py:1091-1182). (1) The archive is now read back: library.py:1768-1792 read_calibration and rebuild_reference with today's calculate_shading; :1804-1836 recalibrate; :1839-1882 calibration_of; `tools/library.py calibrations` (tools/library.py:500-520). (2) A reused reference names its calibration: save_shading writes a sidecar with archive, archive_sha256 and reference_sha256 (direct.py:1033-1066), and load_shading adopts it only when the checksum matches (direct.py:1019-1026, 1072-1089). Content matching is the fallback (library.py:1860-1882). Provenance on every pass: direct.py:4306-4309 `shading_origin`, with action calibrated/loaded and times (direct.py:1012-1017, 3251-3254). (3) verify now checks every named archive for presence and checksum (library.py:1567-1580, 1620-1633). (4) tools/uniformity.py:790 now goes through ensure_shading; there is no direct calibrate_shading call left in tools/. (5) A failed calibration's lines are archived tagged failed (direct.py:1245-1247, 1183-1195). (6) Any Exception from the archive is caught, and the reference is still adopted and cached (direct.py:1254-1262). The cache write is atomic (direct.py:1040-1053).",
+    "remaining": "(3, partly) The archive still lives outside the library, in `calibration/<UTC>` (library.py:64 DEFAULT_CALIBRATIONS = Path(\"calibration\")) or beside a --reference. An entry holds only a path string, and copying the library alone does not carry the calibration bytes. verify now reports them missing. Whether archives belong inside library/ is an owner decision. (1, partly) library.corrected() (library.py:860-900) always corrects with the entry's stored shading.npz and offers no way to use a re-reduced reference. rebuild_reference is a building block a caller must combine with apply_shading by hand; no view or export applies it, so fix step 3 ('corrected() can rebuild ... when asked') is only half there.",
+    "new_problems": "none found"
+   },
+   {
+    "id": "P06",
+    "title": "At 7200 dpi scan.tif is not the plain decode, and nothing records it",
+    "status": "fixed",
+    "commits": [
+     "8b01894",
+     "3f5cce0"
+    ],
+    "evidence": "The realignment is recorded: direct.py:4174-4185 `stagger_realigned = self.NATIVE_COLUMN_STAGGER_LINES`, meta at :4293, and the flight meta for a failed pass at :4180-4181. It is in the record's scan block (library.py:229-231 SCAN_FIELDS). decode_raw and reconstruct replay it: library.py:964-991 stagger_lines/_replay, :1019, :1186; legacy entries are recognised by a shortfall of exactly 4 rows (:977-982). The shape guard subtracts it (direct.py:462-464). A shaded 7200 dpi pass is refused before metering or any command (direct.py:3966-3978, ahead of `_stop_before_pass(..., metered=auto_exposure)` at :4026). The demo refuses the same way (demo.py:694-695), as do tools/scan.py:203 and tools/scan_roll.py:519.",
+    "remaining": "Nothing harmful. The window's ladder still offers 7200 (tools/gui.py:134 DPI_LADDER), but it is refused before anything is sent. Whether to drop the rung is the owner's call.",
+    "new_problems": "none found"
+   },
+   {
+    "id": "P07",
+    "title": "A short or failed pass loses its raw bytes",
+    "status": "fixed",
+    "commits": [
+     "2aded37",
+     "3e96647",
+     "cf52b76",
+     "88c6d62"
+    ],
+    "evidence": "Short reads: raw_bytes_disagree judges the lines received, not the lines declared (direct.py:458-464). The pass records short_read and lines_declared (tests/test_failed_pass.py:272). Failed passes: scan() and calibrate_shading are wrapped by `_keeps_what_a_failed_pass_left` (direct.py:692-713, applied at :2959 and :3861). The pass in flight holds its lines as they arrive (direct.py:2629-2634), and its joined bytes and layout before the decode (:2690-2697). Its decoded pixels are kept after decode (:2710-2711) and after realignment (:4179-4181). On any raise, `_after_a_failed_pass` (direct.py:1469-1491) keeps what arrived, including a read given up part way (cut_short). `_keep_failed_pass` (:1493-1558) spools it with failed=True, filed tagged `failed` with stage and error, even with debug off (direct.py:1349, 1365). This covers every case the second audit listed: a decode refusal (stage 'in the decode', the lines stored as rows), the post-read width refusal and the realignment ValueError (stage 'after the decode'), and TimeoutError/ScanReadError mid-read (stage 'during the read'). Tests: tests/test_failed_pass.py:125, 148, 172, 209, 230.",
+    "remaining": "Nothing in the problem as written. By design, a failed pass is kept only where its bytes were kept at all: keep_raw=True or debug (direct.py:2632, 2693, 4392-4394). A caller running with keep_raw=False and debug off keeps nothing of a failed pass (tests/test_failed_pass.py:230). Every library-filing path passes keep_raw=True.",
+    "new_problems": "A failed pass whose bytes did not decode (stage 'in the decode') is filed with a record that says so. Every run of `tools/library.py reconstruct` then reports it as a FAILED decode: library.reconstruct returns `Verdict(f\"could not decode: {exc}\", FAILED)` (rps7200/library.py:1134-1140). The CLI counts that as 'a decode regression until shown otherwise' and exits 1 (tools/library.py:222-223, 235-237, 244). Nothing in reconstruct or the CLI reads `extra.failed` or the `failed` tag. So each such entry keeps `make reconstruct` red for good. This is the permanent false alarm in the regression gate that CLAUDE.md warns about."
+   },
+   {
+    "id": "P08",
+    "title": "Whole classes of passes are never filed, and RPS7200_DEBUG is overridden",
+    "status": "mostly-fixed",
+    "commits": [
+     "abc3bb3",
+     "1ee856f",
+     "a95b93d",
+     "9b9a15f",
+     "8d83f26",
+     "e28038f",
+     "f4ef116",
+     "cab6b13",
+     "1dbc0ff"
+    ],
+    "evidence": "RPS7200_DEBUG is honoured: session.py:2683 `debug=None`, tools/scan.py:312, tools/scan_roll.py:812. (1) Every prescan a roll takes is filed raw in its own entry, with its own bytes, mask and reference, on a walk and on a real roll alike, and for a frame that failed. GUI: session.py:3490-3570, `raw_image=rf.raw_prescan, capture=rf.prescan_capture`. CLI: tools/scan_roll.py:955-1011 file_prescan and :1072-1113. The frame entry's prescan.tif is labelled (library.py:455-470 prescan.corrections_applied). (2) The pre-correction prescan is now its own entry (session.py:3583-3622; tools/scan_roll.py:1076-1085), with debug on or off. (3) Debug-filed probes and verification passes are tagged by role: direct.py:749 `_ROLE_TAGS = {\"metering probe\": \"probe\", \"verification prescan\": \"hold\"}`, applied at :1369-1374. pass_role carries roll and roll_index (direct.py:3477-3478, 4543-4545). (4) The CLI walk writes prescanNN.tif and -before on the writer thread and files errored frames' prescans (tools/scan_roll.py:1004-1011, 1072-1113). The second audit's new problem, the debug_claim loss, is fixed by receipts (direct.py:1593-1650; session.py:4031-4039 and `answering`; tools/scan.py:379-381, 504-520).",
+    "remaining": "(2, partly) With RPS7200_DEBUG off, the default, metering probes and a hold's intermediate verification prescans (all but the last, which becomes the frame's prescan) are still not filed. The fix plan asked for this 'in debug mode at least', and CLAUDE.md makes debug off by default deliberate, so filing them always is an owner decision. (3, partly) Probes and hold passes are linked to their frame by roll and roll_index in `pass_role`, not by the frame entry's id as fix step 4 asked. A join on roll and number works; a direct id link does not exist.",
+    "new_problems": "none found"
+   }
+  ]
+ }
+}
