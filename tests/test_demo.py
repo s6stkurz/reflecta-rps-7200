@@ -917,6 +917,24 @@ def test_the_demo_records_a_move_with_the_pass_after_it_as_the_driver_does(
     assert scanner.last_scan_meta["moves_before"] is None
 
 
+def test_a_demo_roll_frame_is_filed_as_metered_as_the_drivers_is(monkeypatch):
+    """The driver's roll hands each frame the metering that decided it; the
+    demo's `scan` must take it the same way, marked simulated as its own
+    metered passes are."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter="each", shading=False))[0]
+    assert frame.error is None, frame.error
+    assert frame.meta["exposure_metered"] is True
+    assert frame.meta["metering"] == dict(scanner.last_metering,
+                                          simulated=True)
+
+
 def test_the_demo_converges_on_an_approved_position(monkeypatch):
     held = _hold(monkeypatch, 2, {0: 0.5, 1: 0.0})
     assert held[0]["outcome"] == "held"

@@ -324,6 +324,32 @@ def test_a_calibration_whose_archive_raises_is_still_adopted_and_cached(
     assert cache.exists()
 
 
+def test_a_metered_roll_frame_is_filed_as_metered_with_its_metering(
+        monkeypatch):
+    """A roll meters each frame and then scans it at those scales. The frame
+    was filed `exposure_metered: false` with no metering block -- a
+    commanded exposure, to `signature` -- and blue's headroom, the rounds
+    and what was limited went nowhere (P09 rem. 1, RDM-A1)."""
+    scanner, _ = _calibrated(monkeypatch)
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter="each"))[0]
+    assert frame.error is None, frame.error
+    assert frame.meta["exposure_metered"] is True
+    assert frame.meta["metering"] == _json(scanner.last_metering)
+    assert frame.meta["metering"]["region"] is not None
+
+
+def test_a_metered_bracket_carries_the_metering_its_ladder_came_from(
+        monkeypatch):
+    """Each rung's exposure is the one asked for -- that is what tells the
+    rungs apart -- so it stays commanded; but what it was asked relative to
+    was lost from every pass."""
+    scanner, _ = _calibrated(monkeypatch)
+    _, _, metas = scanner.scan_bracket(passes=3, resolution=300)
+    assert [m["exposure_metered"] for m in metas] == [False] * 3
+    assert all(m["metering"] == _json(scanner.last_metering) for m in metas)
+
+
 # -- through the session ------------------------------------------------------
 
 

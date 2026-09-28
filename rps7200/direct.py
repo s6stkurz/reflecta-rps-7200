@@ -3420,6 +3420,9 @@ class DirectScanner:
         probes: list[dict[str, Any]] = []
         #: Where the film is, found on the first probe while it is still dark.
         region: tuple[slice, slice] | None = None
+        #: The same, as a record: rows and columns of the probe, and the
+        #: probe's size, so a pass at another resolution can be read over it.
+        region_record: dict[str, list[int]] | None = None
 
         for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
@@ -3456,6 +3459,12 @@ class DirectScanner:
             # working exactly when it mattered.
             if region is None:
                 region = metering_slice(image)
+                rows, cols = image.shape[:2]
+                region_record = {
+                    "rows": list(region[0].indices(rows)[:2]),
+                    "cols": list(region[1].indices(cols)[:2]),
+                    "of": [int(rows), int(cols)],
+                }
             crop = image[region]
             levels = [
                 float(np.percentile(crop[..., c], percentile)) / full
@@ -3580,6 +3589,11 @@ class DirectScanner:
             "rounds": probes,
             "scales": [round(v, 4) for v in scales],
             "limited": list(limited),
+            # Where every round was read. Detected once, on the first probe
+            # (see above), and otherwise lost: a caller that reads the passes
+            # it meters had to detect it again on each, and could judge two
+            # rungs of one ladder over different pixels.
+            "region": region_record,
         }
 
         # Exposure is a 16-bit timer count, and past full scale the firmware
@@ -3728,11 +3742,13 @@ class DirectScanner:
                 f"{self.MAX_BRACKET_PASSES} passes, got {passes}"
             )
 
+        metering = None
         if exposure_scale is not None:
             scales = list(exposure_scale)
         elif auto_exposure:
             scales = self.auto_exposure(film=film, infrared=infrared,
                                         shading=shading)
+            metering = dict(self.last_metering or {}) or None
         else:
             scales = [1.0, 1.0, 1.0]
 
@@ -3758,6 +3774,12 @@ class DirectScanner:
                 film=film,
                 fast_infrared=fast_infrared,
             )
+            # The metering the ladder was built on. Each rung's exposure is
+            # still the one asked for -- it is what tells the rungs apart --
+            # so `exposure_metered` stays false; but what that request was
+            # derived from was lost with every bracket.
+            if metering is not None:
+                meta["metering"] = metering
             meta["bracket_index"] = i
             meta["bracket_ratio"] = float(k)
             meta["bracket_passes"] = passes
@@ -3798,6 +3820,7 @@ class DirectScanner:
         byte14: int | None = None,
         fast_infrared: bool = True,
         slide_init_param: int = 0x16,
+        metering: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
@@ -3852,6 +3875,11 @@ class DirectScanner:
         **CyberView sends it in none of 3,955 captured commands**, so this is
         the one field here with no capture behind it -- `tests/test_fast_infrared.py`
         holds the payload byte by byte instead. See `docs/fast-infrared-plan.md`.
+
+        ``metering`` is the `last_metering` of a caller that metered this pass
+        itself and hands over its ``exposure_scale`` -- a roll meters each
+        frame before scanning it. The pass is then recorded as metered, with
+        that record, exactly as one that set ``auto_exposure``.
         """
         # What the caller took this pass for (`_pass_role`), taken now so that
         # a pass refused below cannot leave it to describe the next one.
@@ -4182,7 +4210,7 @@ class DirectScanner:
             # it is the request, and it is the only thing distinguishing the
             # members of a bracket, which are otherwise the same frame at the
             # same dpi, depth and channel count.
-            "exposure_metered": bool(auto_exposure),
+            "exposure_metered": bool(auto_exposure) or metering is not None,
             # Recorded on every pass, not only the ones that set it. A ladder
             # is six passes of one frame differing in nothing else, so an
             # entry that does not say which side it came from is not evidence.
@@ -4218,6 +4246,12 @@ class DirectScanner:
         # the *previous* frame's metering against them.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = self.last_metering
+        elif metering is not None:
+            # Metered by the caller, and so every roll frame: they were filed
+            # `exposure_metered: false` with no block at all, which is what
+            # a commanded exposure looks like -- and `signature` then took
+            # an outcome of metering for the request.
+            meta["metering"] = metering
         # A pass only debug filing keeps -- a metering probe, a verification
         # prescan -- says what it was for, where nothing else would: filed
         # tagged `debug` and nothing more, it could not be told from any other
@@ -5219,6 +5253,10 @@ class DirectScanner:
                     # frame to frame. One write costs nothing and keeps the roll
                     # right if that ever stops being true.
                     self.set_gain_offset(baseline, infrared=infrared)
+                    # What decided `scales`: this frame's metering or, metering
+                    # once, the roll's first.
+                    last = getattr(self, "last_metering", None)
+                    decided_by = dict(last) if metered and last else None
                     image, meta = self.scan(
                         resolution=resolution,
                         infrared=infrared,
@@ -5228,6 +5266,7 @@ class DirectScanner:
                         keep_raw=keep_raw,
                         fast_infrared=fast_infrared,
                         shading=shading,
+                        metering=decided_by,
                     )
                     meta["roll_index"] = index
                     meta["roll_position"] = position

@@ -191,16 +191,33 @@ def verdict(level: float | None, target: float = EXPOSURE_TARGET,
     return "in band"
 
 
-def levels_of(image: np.ndarray, percentile: float = 99.5) -> list[float]:
+def levels_of(image: np.ndarray, percentile: float = 99.5,
+              region: dict | None = None) -> list[float]:
     """The delivered level per channel, read as `auto_exposure` reads a probe.
 
     Inside the film rather than the whole window: the empty aperture is far
     brighter than any part of the picture, and metering the whole frame lets
     however much of it is in view decide the answer.
+
+    Over ``region`` -- the one metering recorded (`last_metering["region"]`)
+    -- where there is one. Detected again on every rung, each rung of a
+    ladder could be read over different pixels, and the region depends on
+    exposure: it is found on a dark pass because a bright one hides it.
     """
-    crop = image[metering_slice(image)]
+    crop = image[region_slices(region, image.shape)
+                 if region else metering_slice(image)]
     return [round(float(np.percentile(crop[..., c], percentile)) / FULL_SCALE, 4)
             for c in range(crop.shape[2])]
+
+
+def region_slices(region: dict, shape: tuple[int, ...]) -> tuple[slice, slice]:
+    """A recorded metering region, scaled from the probe it was found on to
+    a pass of ``shape``."""
+    (r0, r1), (c0, c1) = region["rows"], region["cols"]
+    rows, cols = region["of"]
+    sy, sx = shape[0] / rows, shape[1] / cols
+    return (slice(int(round(r0 * sy)), int(round(r1 * sy))),
+            slice(int(round(c0 * sx)), int(round(c1 * sx))))
 
 
 def main() -> int:
@@ -356,7 +373,8 @@ def main() -> int:
                 # Read off the delivered pixels while they are in hand. The
                 # library keeps the raw bytes, so this is a convenience for the
                 # report rather than the only chance to measure it.
-                delivered = levels_of(image)
+                # Over the region this frame's metering read, on every rung.
+                delivered = levels_of(image, region=metering.get("region"))
                 passes.append({
                     "frame": number, "rung": rung,
                     "transport_position": here,

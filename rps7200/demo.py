@@ -797,6 +797,7 @@ class DemoScanner:
         keep_raw: bool = False,
         fast_infrared: bool = True,
         depth: int = DEPTH_16,
+        metering: dict[str, Any] | None = None,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """A pass, as the driver's `scan` takes one, from the stored film.
@@ -841,8 +842,10 @@ class DemoScanner:
             "scan", film, resolution, channels=4 if infrared else 3,
             depth=bits, shading=shading, keep_raw=keep_raw,
             passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
-        meta.update(self._settings_meta(exposure_scale, metered=auto_exposure,
-                                        fast=fast),
+        meta.update(self._settings_meta(
+                        exposure_scale,
+                        metered=auto_exposure or metering is not None,
+                        fast=fast),
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1),
@@ -854,6 +857,10 @@ class DemoScanner:
         # unmarked, that read as the metering's own behaviour.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = dict(self.last_metering, simulated=True)
+        elif metering is not None:
+            # Metered by the caller -- the roll -- as the driver's `scan`
+            # takes it, and marked for the same reason.
+            meta["metering"] = dict(metering, simulated=True)
         self.last_scan_meta = dict(meta)
         return image, meta
 
