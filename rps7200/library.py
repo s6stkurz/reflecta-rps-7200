@@ -40,6 +40,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import warnings
 import zipfile
 from dataclasses import asdict, dataclass, is_dataclass
@@ -1496,7 +1497,12 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     archives: dict[str, int] = {}
     for record in entries(root):
         path = entry_path(root, record)
-        if str(record.get("id")) != path.name:
+        # Compared as the same text, not the same code points: HFS+ hands a
+        # name back decomposed where the record keeps it as typed, so every
+        # entry of a roll called "Südtirol" on such a disk -- or copied off
+        # one -- recorded itself as someone else.
+        if (unicodedata.normalize("NFC", str(record.get("id")))
+                != unicodedata.normalize("NFC", path.name)):
             problems.append(f"{path.name}: records itself as {record.get('id')}")
         problems += [f"{path.name}: {p}" for p in damage(path, record)]
         named = ((record.get("extra") or {}).get("shading_origin") or {}).get("archive")

@@ -1143,6 +1143,20 @@ def test_a_renamed_entry_is_found_where_it_is(tmp_path):
     assert any("records itself as" in p for p in library.verify(tmp_path))
 
 
+def test_a_name_the_filesystem_decomposed_is_still_its_own(tmp_path):
+    """HFS+ returns names decomposed (NFD) where the record keeps the id as
+    typed (NFC); every entry with an umlaut in it failed the id check."""
+    import unicodedata
+
+    path, _, _ = make_entry(tmp_path)
+    composed = path.name + "-s\u00fcd"
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["id"] = composed
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    path.rename(path.with_name(unicodedata.normalize("NFD", composed)))
+    assert not any("records itself" in p for p in library.verify(tmp_path))
+
+
 def test_a_scan_taken_raw_on_purpose_is_not_a_problem(tmp_path):
     """Reported as one -- 'correction was asked for', about the sentinel that
     says it was not -- it kept `make verify` red for a week."""
