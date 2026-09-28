@@ -6636,7 +6636,14 @@ def test_a_failed_filing_is_shown_and_not_only_logged(window, tmp_path,
     from rps7200.demo import DemoScanner
     from rps7200.session import Scan, ScanSession
 
+    from rps7200 import session as session_module
+
     app, root = window
+    # A refused library keeps the pass in the system's temp folder when there
+    # is no delivered copy to keep it beside: that would be the machine's own
+    # %TEMP%, gaining a real entry on every run of the suite.
+    temp = tmp_path / "temp"
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
     blocker = tmp_path / "blocker"
     blocker.write_bytes(b"")
     good = tmp_path / "filed"
@@ -6663,7 +6670,13 @@ def test_a_failed_filing_is_shown_and_not_only_logged(window, tmp_path,
     assert scanned and scanned[-1].error, "the pass is marked"
     assert app.strip.find_withtag("failed"), "and so is its thumbnail"
     assert len(notices) == 1, "one notice, outside the pump"
+    # The notice is once per job whatever is said; the count is what shows a
+    # line repeated at close was taken once.
+    assert app._filing_failed == 1, "the repeated line counted again"
     assert "see the log" in app.v_progress.get()
+    if broken == "library":
+        assert any((temp / session_module.UNFILED_TEMP).iterdir()), \
+            "kept in the test's own temp folder"
     # and the notice itself is a window of its own, not a modal
     gui.ScannerGui._filing_notice(app, notices[0])
     assert app._filing_window.winfo_exists()
